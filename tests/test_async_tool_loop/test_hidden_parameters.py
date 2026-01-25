@@ -113,22 +113,25 @@ def test_hidden_parameters_are_removed_from_schema_and_docs(fn) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Test that _parent_chat_context_cont is hidden from steering methods      #
+# 4. Test that parent_chat_context_cont is hidden from steering methods       #
 # --------------------------------------------------------------------------- #
 def test_parent_chat_context_cont_hidden_from_steering_methods() -> None:
     """
-    The _parent_chat_context_cont parameter (plumbing for context propagation)
+    The parent_chat_context_cont parameter (plumbing for context propagation)
     must be hidden from LLM tool schemas because it's automatically injected
     by the orchestrating code layer, not supplied by the LLM.
+
+    This parameter is hidden via an explicit list in method_to_schema, not by
+    underscore prefix convention.
     """
     from typing import Optional
     from unity.image_manager.types.image_refs import ImageRefs
 
-    # Simulate a steering method with _parent_chat_context_cont
+    # Simulate a steering method with parent_chat_context_cont
     async def interject(
         message: str,
         *,
-        _parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context_cont: list[dict] | None = None,
         images: Optional[ImageRefs] = None,
     ) -> str:
         """Provide additional information or instructions to the running task.
@@ -147,10 +150,10 @@ def test_parent_chat_context_cont_hidden_from_steering_methods() -> None:
     required = schema["function"]["parameters"]["required"]
     desc = schema["function"]["description"]
 
-    # _parent_chat_context_cont MUST be hidden
-    assert "_parent_chat_context_cont" not in props
-    assert "_parent_chat_context_cont" not in required
-    assert "_parent_chat_context_cont" not in desc
+    # parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "parent_chat_context_cont" not in props
+    assert "parent_chat_context_cont" not in required
+    assert "parent_chat_context_cont" not in desc
 
     # message and images SHOULD be visible
     assert "message" in props
@@ -219,7 +222,7 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
             *,
             priority: int = 1,
             category: str = "general",
-            _parent_chat_context_cont: list[dict] | None = None,
+            parent_chat_context_cont: list[dict] | None = None,
             images: Optional[ImageRefs] = None,
         ) -> str:
             """Custom interject with priority and category.
@@ -323,8 +326,8 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
     # message SHOULD be visible (either from handle or content alias)
     assert "message" in props or "content" in props
 
-    # _parent_chat_context_cont MUST be hidden (starts with _)
-    assert "_parent_chat_context_cont" not in props
+    # parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "parent_chat_context_cont" not in props
 
     # images SHOULD be visible
     assert "images" in props
@@ -335,12 +338,12 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Test parity between _parent_chat_context_cont and images across methods  #
+# 6. Test parity between parent_chat_context_cont and images across methods   #
 # --------------------------------------------------------------------------- #
 def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     """
-    Verify that ask, interject, and stop all have both _parent_chat_context_cont
-    (hidden plumbing) and images (visible) parameters for full parity.
+    Verify that ask, interject, and stop all have both parent_chat_context_cont
+    (hidden plumbing via explicit list) and images (visible) parameters for full parity.
     """
     from unity.common.async_tool_loop import SteerableHandle, SteerableToolHandle
     import inspect
@@ -349,24 +352,24 @@ def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     ask_sig = inspect.signature(SteerableHandle.ask)
     ask_params = set(ask_sig.parameters.keys()) - {"self"}
     assert (
-        "_parent_chat_context_cont" in ask_params
-    ), "ask should have _parent_chat_context_cont"
+        "parent_chat_context_cont" in ask_params
+    ), "ask should have parent_chat_context_cont"
     assert "images" in ask_params, "ask should have images"
 
     # Check SteerableHandle.interject
     interject_sig = inspect.signature(SteerableHandle.interject)
     interject_params = set(interject_sig.parameters.keys()) - {"self"}
     assert (
-        "_parent_chat_context_cont" in interject_params
-    ), "interject should have _parent_chat_context_cont"
+        "parent_chat_context_cont" in interject_params
+    ), "interject should have parent_chat_context_cont"
     assert "images" in interject_params, "interject should have images"
 
     # Check SteerableToolHandle.stop
     stop_sig = inspect.signature(SteerableToolHandle.stop)
     stop_params = set(stop_sig.parameters.keys()) - {"self"}
     assert (
-        "_parent_chat_context_cont" in stop_params
-    ), "stop should have _parent_chat_context_cont"
+        "parent_chat_context_cont" in stop_params
+    ), "stop should have parent_chat_context_cont"
     assert "images" in stop_params, "stop should have images"
 
 
@@ -395,7 +398,7 @@ async def test_dynamic_factory_stop_tool_has_images_from_handle() -> None:
             self,
             reason: Optional[str] = None,
             *,
-            _parent_chat_context_cont: list[dict] | None = None,
+            parent_chat_context_cont: list[dict] | None = None,
             images: Optional[ImageRefs] = None,
         ) -> str:
             """Stop with images.
@@ -493,8 +496,8 @@ async def test_dynamic_factory_stop_tool_has_images_from_handle() -> None:
         "reason" in props
     ), f"Expected 'reason' in stop schema, got: {list(props.keys())}"
 
-    # _parent_chat_context_cont MUST be hidden
-    assert "_parent_chat_context_cont" not in props
+    # parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "parent_chat_context_cont" not in props
 
     with suppress(BaseException):
         pending_task.cancel()
