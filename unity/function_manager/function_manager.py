@@ -3303,10 +3303,12 @@ class FunctionManager(BaseFunctionManager):
 
             # Handle venv dependencies: proxy goes in namespace (only way to call them)
             if dep_data.get("venv_id") is not None:
-                namespace[dep_name] = self._create_venv_callable(
+                _venv_cb = self._create_venv_callable(
                     dep_data,
                     namespace=namespace,
                 )
+                # Wrap boundary so inter-function calls create lineage frames.
+                namespace[dep_name] = _LineageTrackedFunction(_venv_cb, dep_name)
                 # Treat venv functions as atomic; do not recurse into their deps.
                 continue
 
@@ -3318,7 +3320,16 @@ class FunctionManager(BaseFunctionManager):
                 dep_data,
                 namespace=namespace,
             )
-            # Note: proxy is discarded; namespace[dep_name] remains the raw function
+            # replace namespace[dep_name] with wrapper so inter-function calls
+            # also flow through lineage/event boundaries.
+            try:
+                raw_dep = namespace.get(dep_name)
+                if callable(raw_dep):
+                    # Avoid double-wrapping.
+                    if not isinstance(raw_dep, _LineageTrackedFunction):
+                        namespace[dep_name] = _LineageTrackedFunction(raw_dep, dep_name)
+            except Exception:
+                pass
 
             nested = dep_data.get("depends_on") or []
             if isinstance(nested, list):
@@ -3360,6 +3371,14 @@ class FunctionManager(BaseFunctionManager):
                 else:
                     raw_fn = namespace.get(name)
                     if callable(raw_fn):
+                        # If the namespace contains our wrapper, unwrap for the proxy.
+                        try:
+                            if hasattr(raw_fn, "__wrapped__"):
+                                raw_fn_for_proxy = getattr(raw_fn, "__wrapped__")
+                                if callable(raw_fn_for_proxy):
+                                    raw_fn = raw_fn_for_proxy
+                        except Exception:
+                            pass
                         fn = _InProcessFunctionProxy(
                             function_manager=self,
                             func_data=func_data,
@@ -3382,12 +3401,23 @@ class FunctionManager(BaseFunctionManager):
             if func_data.get("venv_id") is not None:
                 # Venv: proxy goes in namespace (only way to call them)
                 fn = self._create_venv_callable(func_data, namespace=namespace)
-                namespace[name] = fn
+                # Wrap boundary for lineage/events and keep proxy for return value.
+                namespace[name] = _LineageTrackedFunction(fn, name)
             else:
                 # In-process: exec puts raw function in namespace, return proxy to caller
                 # DON'T overwrite namespace - raw function stays for internal use
                 fn = self._create_in_process_callable(func_data, namespace=namespace)
-                # Note: namespace[name] remains the raw function from exec()
+                # replace namespace[name] with wrapper so inter-function calls
+                # also flow through lineage/event boundaries.
+                try:
+                    raw_root = namespace.get(name)
+                    if callable(raw_root) and not isinstance(
+                        raw_root,
+                        _LineageTrackedFunction,
+                    ):
+                        namespace[name] = _LineageTrackedFunction(raw_root, name)
+                except Exception:
+                    pass
 
             callables.append(fn)
 
