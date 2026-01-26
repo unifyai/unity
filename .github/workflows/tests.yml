@@ -63,11 +63,29 @@ jobs:
         PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
       run: |
         # Helper function to extract [parallel_run.sh ...] content
+        # Matches ALL occurrences and combines their arguments
         extract_parallel_cmd() {
           local msg="$1"
-          # Extract content between [parallel_run.sh and ]
-          if [[ "$msg" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; then
-            echo "${BASH_REMATCH[1]}"
+          local result=""
+          local remaining="$msg"
+
+          # Loop through all matches of [parallel_run.sh ...]
+          while [[ "$remaining" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; do
+            local match="${BASH_REMATCH[1]}"
+            # Skip literal "..." which is just documentation/example text
+            if [[ "$match" != "..." ]]; then
+              if [[ -n "$result" ]]; then
+                result="$result $match"
+              else
+                result="$match"
+              fi
+            fi
+            # Remove the matched portion and continue searching
+            remaining="${remaining#*"${BASH_REMATCH[0]}"}"
+          done
+
+          if [[ -n "$result" ]]; then
+            echo "$result"
           fi
         }
 
