@@ -287,7 +287,7 @@ Options:
 ${HELP_EXTRA_OPTIONS:-}
 Examples:
   $script_name tests/                    # Run all tests
-  $script_name tests/test_foo.py        # Run one file
+  $script_name tests/foo.py             # Run one file
   $script_name --timeout 300 tests/     # 5-minute timeout
   $script_name -s tests/                # Serial mode (per-file)
   $script_name -j 8 tests/              # Limit to 8 concurrent

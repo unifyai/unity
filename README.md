@@ -323,12 +323,12 @@ Run tests locally or offload them to GitHub Actions (24 parallel jobs, no local 
 ```bash
 # Quick start (local)
 tests/parallel_run.sh tests/                    # Run all tests
-tests/parallel_run.sh tests/test_actor/         # Run one folder
+tests/parallel_run.sh tests/actor/         # Run one folder
 tests/parallel_run.sh --timeout 300 tests/      # With 5-minute timeout
 
 # CI trigger (via commit message)
 git commit -m "Fix bug [run-tests]"                           # All tests
-git commit -m "Fix bug [parallel_run.sh tests/test_actor]"    # Specific folder
+git commit -m "Fix bug [parallel_run.sh tests/actor]"    # Specific folder
 ```
 
 See **[tests/README.md](tests/README.md)** for complete documentation:
@@ -411,7 +411,7 @@ unity/
 1. Create a feature branch
 2. Make your changes
 3. Run pre-commit hooks: `.venv/bin/python -m pre_commit run --all-files`
-4. Run relevant tests: `tests/parallel_run.sh tests/test_<manager>/`
+4. Run relevant tests: `tests/parallel_run.sh tests/<manager>/`
 5. Submit a pull request
 
 ### Code Style

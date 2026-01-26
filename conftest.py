@@ -57,9 +57,9 @@ def _path_to_name(path: str) -> str:
     """Convert a test path to a filename-safe string.
 
     Examples:
-        tests/test_contact_manager/test_ask.py → test_contact_manager-test_ask
+        tests/contact_manager/test_ask.py → contact_manager-test_ask
         test_foo.py → test_foo
-        /abs/path/to/workspace/tests/test_foo.py → test_foo
+        /abs/path/to/workspace/tests/foo.py → foo
     """
     name = path.rstrip("/\\")
 
@@ -218,12 +218,12 @@ def _derive_log_name_from_args(args: list) -> str:
     """Derive a semantic log filename from pytest command-line args.
 
     Examples:
-        ['tests/test_contact_manager/test_ask.py']
-            → 'test_contact_manager-test_ask'
-        ['tests/test_contact_manager/test_ask.py::test_foo']
-            → 'test_contact_manager-test_ask--test_foo'
-        ['tests/test_contact_manager/']
-            → 'test_contact_manager'
+        ['tests/contact_manager/test_ask.py']
+            → 'contact_manager-test_ask'
+        ['tests/contact_manager/test_ask.py::test_foo']
+            → 'contact_manager-test_ask--test_foo'
+        ['tests/contact_manager/']
+            → 'contact_manager'
         ['tests/']
             → 'tests'
         [] (no args)

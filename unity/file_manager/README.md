@@ -74,7 +74,7 @@ Adapters should be thin: no parsing, no LLM usage, no ingestion logic.
 1. Implement a backend subclassing `file_parsers.types.backend.BaseFileParserBackend` under:
    - `file_parsers/implementations/<impl>/backends/`
 2. Register it in `file_parsers/registry.py` (`DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT`) or override per-call via config.
-3. Add tests under `tests/test_file_manager/test_file_parser/`.
+3. Add tests under `tests/file_manager/file_parser/`.
 
 ### Changing how parse results are lowered
 
@@ -87,10 +87,10 @@ The parser must stay ingestion-agnostic. If you need to change `/Content/` row s
 
 File-manager parsing tests live under:
 
-- `tests/test_file_manager/test_file_parser/`
+- `tests/file_manager/file_parser/`
 
 Use the sample fixtures under:
 
-- `tests/test_file_manager/sample/`
+- `tests/file_manager/sample/`
 
 Avoid writing tests against deprecated legacy parser modules; new work should target the `FileParseRequest → FileParseResult` boundary and the `parse_adapter` lowering rules.
