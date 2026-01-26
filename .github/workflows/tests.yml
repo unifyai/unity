@@ -537,6 +537,8 @@ jobs:
       ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
       ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      # Unify API key for _prepare_shared_project.py and tests
+      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
       # Ensure local unillm/unify packages are found correctly
       # The repos are cloned to ./unillm/ and ./unify/, with packages inside
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
