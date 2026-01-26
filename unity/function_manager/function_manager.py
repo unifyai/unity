@@ -7,13 +7,26 @@ import functools
 import json
 import os
 import re
+import traceback
 import signal
 import socket
 import sys
 import tempfile
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
+from secrets import token_hex
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+)
 import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
@@ -41,6 +54,160 @@ from .custom_functions import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover
+    import aiohttp
+
+
+class _LineageTrackedFunction:
+    """Boundary wrapper for FunctionManager callables injected into CodeActActor sandboxes.
+
+    This wrapper preserves hierarchical lineage across mixed execution, e.g.:
+
+        CodeActActor.act -> execute_code -> <function> -> primitives.contacts.ask -> ...
+
+    It is injected into the Python namespace **in place of** the raw callable so that
+    inter-function calls (function A calling function B) still pass through a boundary that:
+    - updates `TOOL_LOOP_LINEAGE` (ContextVar)
+    - publishes ManagerMethod events with `hierarchy` + `hierarchy_label`
+    - emits a concise boundary log line for terminal debugging
+
+    Note: async functions can be awaited in a different task context than the call-site.
+    ContextVar tokens are only valid in the context they were created, so this wrapper sets
+    lineage around coroutine construction (call-site) and again inside the awaited coroutine
+    (execution-site).
+    """
+
+    def __init__(self, wrapped_callable: Callable[..., Any], function_name: str):
+        self._wrapped = wrapped_callable
+        self._function_name = function_name
+
+        # Preserve introspection attributes.
+        self.__name__ = function_name
+        self.__doc__ = getattr(wrapped_callable, "__doc__", None)
+        self.__wrapped__ = wrapped_callable
+
+    def __getattr__(self, name: str) -> Any:
+        # Preserve wrapped callable API (e.g. venv proxy state helpers).
+        return getattr(self._wrapped, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Local imports to avoid import-time cycles.
+        from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+        from unity.common.hierarchical_logger import (
+            build_hierarchy_label,
+            log_boundary_event,
+        )
+        from unity.events.manager_event_logging import (
+            new_call_id,
+            publish_manager_method_event,
+        )
+
+        suffix = token_hex(2)
+        call_id = new_call_id()
+
+        parent = TOOL_LOOP_LINEAGE.get([])
+        parent_lineage = list(parent) if isinstance(parent, list) else []
+        hierarchy = [*parent_lineage, self._function_name]
+        hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+
+        async def _publish_safe(**payload: Any) -> None:
+            try:
+                await publish_manager_method_event(
+                    call_id,
+                    "FunctionManager",
+                    self._function_name,
+                    hierarchy=hierarchy,
+                    hierarchy_label=hierarchy_label,
+                    **payload,
+                )
+            except Exception as e:
+                # Best-effort visibility; never fail execution due to event issues.
+                log_boundary_event(
+                    hierarchy_label,
+                    f"Warning: failed to publish event: {type(e).__name__}: {e}",
+                    icon="⚠️",
+                    level="warning",
+                )
+
+        # Publish incoming before running the function (best-effort).
+        try:
+            asyncio.create_task(_publish_safe(phase="incoming"))
+        except Exception:
+            pass
+        try:
+            log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
+        except Exception:
+            pass
+
+        # Ensure synchronous work at call-time (if any) happens under the lineage frame.
+        token_call = TOOL_LOOP_LINEAGE.set(hierarchy)
+        try:
+            result = self._wrapped(*args, **kwargs)
+        except Exception as e:
+            try:
+                try:
+                    asyncio.create_task(
+                        _publish_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            traceback=traceback.format_exc()[:2000],
+                        ),
+                    )
+                except Exception:
+                    pass
+            finally:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            raise
+        finally:
+            # For async results we only needed the lineage during coroutine construction.
+            # The actual awaited execution will run under a new token created in the
+            # awaiting task context below.
+            try:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            except Exception:
+                pass
+
+        if inspect.isawaitable(result):
+
+            async def _await_and_finalize():
+                token_run = TOOL_LOOP_LINEAGE.set(hierarchy)
+                try:
+                    out = await result
+                    try:
+                        await _publish_safe(phase="outgoing", status="ok")
+                    except Exception:
+                        pass
+                    return out
+                except Exception as e:
+                    try:
+                        await _publish_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            traceback=traceback.format_exc()[:2000],
+                        )
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    TOOL_LOOP_LINEAGE.reset(token_run)
+
+            return _await_and_finalize()
+
+        # Sync success path: publish outgoing best-effort and restore lineage.
+        try:
+            try:
+                asyncio.create_task(_publish_safe(phase="outgoing", status="ok"))
+            except Exception:
+                pass
+        finally:
+            # token_call already reset above; nothing to do here.
+            pass
+        return result
 
 
 class _DependencyVisitor(ast.NodeVisitor):
