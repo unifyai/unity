@@ -1,3 +1,12 @@
+"""
+File-focused ConversationManager → CodeActActor integration tests.
+
+These validate the production path where a user provides a file path and the actor:
+- reads/parses the file (PDF/CSV fixtures)
+- extracts/summarizes content
+- handles missing paths gracefully
+"""
+
 import pytest
 
 from tests.helpers import _handle_project
@@ -15,7 +24,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_file_summarize_pdf_smoke(initialized_cm_codeact, test_files):
+async def test_file_summarize_pdf_by_path(initialized_cm_codeact, test_files):
     """Summarize a PDF by file path (basic FileManager read + extraction path)."""
     cm = initialized_cm_codeact
     pdf_path = test_files["test_report.pdf"]
@@ -38,7 +47,7 @@ async def test_file_summarize_pdf_smoke(initialized_cm_codeact, test_files):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_file_read_csv_smoke(initialized_cm_codeact, test_files):
+async def test_file_read_csv_extracts_names(initialized_cm_codeact, test_files):
     """Read a CSV by file path and extract simple structured facts (rows + names)."""
     cm = initialized_cm_codeact
     csv_path = test_files["test_data.csv"]
@@ -64,7 +73,7 @@ async def test_file_read_csv_smoke(initialized_cm_codeact, test_files):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_file_not_found_smoke(initialized_cm_codeact):
+async def test_file_missing_path_returns_helpful_error(initialized_cm_codeact):
     """Missing file path is handled gracefully (no crash; returns a helpful error)."""
     cm = initialized_cm_codeact
 

@@ -1,9 +1,19 @@
+"""
+Multi-step ConversationManager → CodeActActor integration tests.
+
+These cover realistic “do X then Y” workflows where ConversationManager must:
+- start an actor action
+- observe completion (sometimes via injected ActorResult in step-driven tests)
+- continue the workflow and emit the correct outbound events / persist side effects
+"""
+
 import pytest
 
 from tests.helpers import _handle_project, get_or_create_contact
 from tests.test_conversation_manager.conftest import BOSS
 from tests.test_conversation_manager.test_actions.integration.helpers import (
     assert_no_errors,
+    find_task_id_by_name_contains,
     get_actor_started_event,
     inject_actor_result,
     run_cm_until_wait,
@@ -13,36 +23,13 @@ from tests.test_conversation_manager.test_actions.integration.helpers import (
 )
 from unity.conversation_manager.events import SMSReceived, SMSSent, EmailSent
 
-
-def _find_task_id_by_name(cm_driver, *, name: str) -> int:
-    from unity.manager_registry import ManagerRegistry
-
-    scheduler = ManagerRegistry.get_task_scheduler()
-    store = getattr(scheduler, "_store", None)
-    assert store is not None, "TaskScheduler missing _store"
-    # Be tolerant of minor formatting differences (quotes, punctuation) by scanning
-    # a small recent window instead of relying on exact equality.
-    rows = store.get_rows(
-        limit=25,
-        include_fields=["task_id", "name"],
-    )
-    needle = name.lower()
-    for r in rows or []:
-        nm = str((getattr(r, "entries", None) or {}).get("name") or "")
-        if needle in nm.lower():
-            return int((r.entries or {}).get("task_id"))
-    raise AssertionError(
-        f"Expected to find a task whose name contains {name!r}, got 0 matches.",
-    )
-
-
 pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_find_contact_then_send_sms_smoke(initialized_cm_codeact):
+async def test_find_contact_then_send_sms(initialized_cm_codeact):
     """
     Find a contact, then send an SMS.
 
@@ -83,7 +70,7 @@ async def test_find_contact_then_send_sms_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_find_contact_then_send_email_smoke(initialized_cm_codeact):
+async def test_find_contact_then_send_email(initialized_cm_codeact):
     """
     Find a contact, then send an email.
 
@@ -116,7 +103,7 @@ async def test_find_contact_then_send_email_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_summarize_file_then_create_task_smoke(
+async def test_summarize_file_then_create_task(
     initialized_cm_codeact,
     test_files,
 ):
@@ -158,7 +145,7 @@ async def test_summarize_file_then_create_task_smoke(
     handle_id2 = actor_event2.handle_id
     _final = await wait_for_actor_completion(cm, handle_id2, timeout=90)
 
-    task_id = _find_task_id_by_name(cm, name=task_name)
+    task_id = find_task_id_by_name_contains(name=task_name)
     verify_task_in_db(
         cm,
         task_id,
@@ -220,7 +207,7 @@ async def test_single_message_file_then_create_task(
     handle_id = get_actor_started_event(result).handle_id
     _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
 
-    task_id = _find_task_id_by_name(cm, name=task_name)
+    task_id = find_task_id_by_name_contains(name=task_name)
     row = verify_task_in_db(cm, task_id, expected_fields={"name": task_name})
     desc = str(row.get("description") or "")
     assert (
@@ -313,7 +300,7 @@ async def test_single_message_update_contact_then_create_task(initialized_cm_cod
     )
 
     # Verify the task creation persisted.
-    task_id = _find_task_id_by_name(cm, name=task_name)
+    task_id = find_task_id_by_name_contains(name=task_name)
     verify_task_in_db(
         cm,
         task_id,

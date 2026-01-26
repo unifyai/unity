@@ -2,8 +2,7 @@
 Fixtures for ConversationManager → CodeActActor integration tests.
 
 Key properties:
-- Module-scoped ConversationManager (expensive startup + DB seeding is reused)
-- Function-scoped CodeActActor (fresh actor per test for isolation)
+- Function-scoped ConversationManager and CodeActActor (shared async event loop per test)
 - Deterministic waits: no fixed sleeps; explicit timeouts everywhere
 """
 
@@ -39,7 +38,7 @@ def pytest_configure(config) -> None:
     # Enable FileManager for attachment/file flows.
     os.environ["UNITY_FILE_ENABLED"] = "true"
 
-    # Defer KnowledgeManager until later phases.
+    # Keep KnowledgeManager disabled for determinism/performance in this suite.
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
 
     # Keep optional managers disabled for focus + determinism.
