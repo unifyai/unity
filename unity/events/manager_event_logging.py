@@ -5,10 +5,14 @@ from typing import Any
 import functools
 from uuid import uuid4
 import json
+from secrets import token_hex
 
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.types.manager_method import ManagerMethodPayload
 from ..common.async_tool_loop import SteerableToolHandle
+from ..common.hierarchical_logger import build_hierarchy_label
+
+from ..common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 
 __all__ = [
     "new_call_id",
@@ -39,12 +43,80 @@ async def publish_manager_method_event(  # noqa: D401 – imperative name
     Thin wrapper around :pyfunc:`EVENT_BUS.publish` for *ManagerMethod* events.
 
     Uses the typed ManagerMethodPayload model for schema consistency.
+
+    Hierarchy behavior:
+    - Reads the current async tool loop lineage from ``TOOL_LOOP_LINEAGE``.
+    - If the caller provides ``hierarchy`` / ``hierarchy_label`` (e.g., boundary wrappers),
+      those are used as-is.
+    - Otherwise, appends a ``{manager}.{method}`` leaf to the current lineage and derives
+      a label using the same ``->`` separator as async tool loops.
     """
+    # Work on a copy so we can safely pop internal-only keys without mutating caller dict.
+    extra_clean: dict[str, Any] = dict(extra)
+
+    # Best-effort lineage read (ContextVar).
+    parent_lineage: list[str] = []
+    try:
+        val = TOOL_LOOP_LINEAGE.get([])
+        if isinstance(val, list):
+            parent_lineage = list(val)
+    except Exception:
+        parent_lineage = []
+
+    # Determine effective hierarchy:
+    # - If caller provided explicit hierarchy (e.g., function wrappers), trust it.
+    # - Otherwise append this manager.method leaf to current lineage.
+    hierarchy: list[str]
+    if "hierarchy" in extra_clean and isinstance(extra_clean.get("hierarchy"), list):
+        try:
+            hierarchy = list(extra_clean.get("hierarchy") or [])
+        except Exception:
+            hierarchy = []
+    else:
+        leaf = f"{manager_name}.{method_name}" if manager_name and method_name else ""
+        hierarchy = [*parent_lineage, leaf] if leaf else list(parent_lineage)
+
+    # Determine effective hierarchy_label:
+    # 1) Use caller-provided hierarchy_label if present (wrappers, etc.)
+    # 2) Fall back to a passed-through async tool loop label (e.g., from handle._log_label)
+    # 3) Otherwise build from hierarchy + suffix (caller-provided or generated)
+    hierarchy_label: str = ""
+    try:
+        if isinstance(extra_clean.get("hierarchy_label"), str) and extra_clean.get(
+            "hierarchy_label",
+        ):
+            hierarchy_label = str(extra_clean.get("hierarchy_label"))
+        elif isinstance(extra_clean.get("_log_label"), str) and extra_clean.get(
+            "_log_label",
+        ):
+            hierarchy_label = str(extra_clean.get("_log_label"))
+        else:
+            suffix = extra_clean.get("suffix")
+            if not isinstance(suffix, str) or not suffix:
+                suffix = token_hex(2)
+            hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+    except Exception:
+        hierarchy_label = ""
+
+    # Truncate traceback to avoid large payloads (best-effort).
+    try:
+        tb = extra_clean.get("traceback")
+        if isinstance(tb, str) and len(tb) > 2000:
+            extra_clean["traceback"] = tb[:2000]
+    except Exception:
+        pass
+
+    # Internal-only keys should not be stored in payload.
+    for k in ("hierarchy", "hierarchy_label", "suffix", "_log_label"):
+        extra_clean.pop(k, None)
+
     payload = ManagerMethodPayload(
         manager=manager_name,
         method=method_name,
         source=source,
-        **extra,
+        hierarchy=hierarchy,
+        hierarchy_label=hierarchy_label,
+        **extra_clean,
     )
     await EVENT_BUS.publish(
         Event(
