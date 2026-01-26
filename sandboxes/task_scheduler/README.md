@@ -13,7 +13,7 @@ What is the `TaskScheduler`?
 * **`update(text)`**    – mutations such as *"Move task 7 behind task 3 and set its priority to high."*
 * **`execute(text)`** – begin **working** on a task inferred from free‑form text (e.g., *"Start task 12"* or *"Start researching ACME now"*). If the text is a numeric id, it is started directly; otherwise the scheduler identifies (or creates) the task before launching it.
 
-Under the hood all three methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_create_task`, `_update_task_status`, `_get_task_queue`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_task_scheduler/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
+Under the hood all three methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_create_task`, `_update_task_status`, `_get_task_queue`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/task_scheduler/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
 
 Running the sandbox
 -------------------

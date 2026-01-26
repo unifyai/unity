@@ -640,7 +640,7 @@ jobs:
         echo "test_args=${{ matrix.test_path }}" >> $GITHUB_OUTPUT
 
         # Normalize for artifact naming
-        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | sed 's|^tests/||' | tr '/' '_')
+        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/||' | tr '/' '_')
         if [[ -z "$normalized" || "$normalized" == "." ]]; then normalized="all"; fi
         echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
 

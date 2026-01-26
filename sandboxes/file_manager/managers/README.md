@@ -80,7 +80,7 @@ Interactive commands inside the REPL
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Once the sandbox starts you will see a prompt and a small help table. The most important commands are:
 
-* `seed-sample`            Import and parse sample files from `tests/test_file_manager/sample`
+* `seed-sample`            Import and parse sample files from `tests/file_manager/sample`
 * `list`                   List files known to the adapter
 * `stat <path>`            Show unified status for a path
 * `askf <file> <question>` Ask about a specific file (uses `--schema/--model` when supplied)

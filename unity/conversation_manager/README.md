@@ -15,7 +15,7 @@ The `ConversationManager` is the live orchestration layer that handles real-time
 ### Running Tests
 
 ```bash
-tests/parallel_run.sh tests/test_conversation_manager/
+tests/parallel_run.sh tests/conversation_manager/
 ```
 
 ---
@@ -237,7 +237,7 @@ conversation_manager/
 
 ## Testing
 
-Tests are located in `tests/test_conversation_manager/`:
+Tests are located in `tests/conversation_manager/`:
 
 | File | Description |
 |------|-------------|
@@ -255,13 +255,13 @@ Tests are located in `tests/test_conversation_manager/`:
 
 ```bash
 # Run all conversation_manager tests (with per-test parallelism)
-tests/parallel_run.sh tests/test_conversation_manager/
+tests/parallel_run.sh tests/conversation_manager/
 
 # Run a specific test file
-tests/parallel_run.sh tests/test_conversation_manager/test_comms.py
+tests/parallel_run.sh tests/conversation_manager/test_comms.py
 
 # Run directly with pytest (for debugging)
-.venv/bin/python -m pytest tests/test_conversation_manager/test_comms.py -v --timeout=300
+.venv/bin/python -m pytest tests/conversation_manager/test_comms.py -v --timeout=300
 ```
 
 ### Test Categories

@@ -16,7 +16,7 @@ What is the `ContactManager`?
 * **`ask(text)`**   – read-only questions such as *"What is Alice's phone number?"*
 * **`update(text)`** – mutations such as *"Update Bob's phone number to +123…"*
 
-Under the hood both methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_contacts`, `_create_contact`, `update_contact`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_contact/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
+Under the hood both methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_contacts`, `_create_contact`, `update_contact`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/contact/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
 
 ### New since the original README
 
