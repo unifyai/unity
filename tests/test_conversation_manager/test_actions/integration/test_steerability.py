@@ -1,3 +1,13 @@
+"""
+Steerability ConversationManager → CodeActActor integration tests.
+
+These validate the core SteerableToolHandle contract as exercised through CM:
+- pause/resume
+- stop
+- interject
+- steering isolation when multiple handles are in-flight
+"""
+
 import pytest
 
 from tests.helpers import _handle_project
@@ -19,7 +29,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_pause_resume_smoke(initialized_cm_codeact):
+async def test_pause_resume_inflight_handle(initialized_cm_codeact):
     """Pause and resume an in-flight actor handle (steerability surface stays functional)."""
     cm = initialized_cm_codeact
 
@@ -57,7 +67,7 @@ async def test_pause_resume_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_stop_action_smoke(initialized_cm_codeact):
+async def test_stop_inflight_handle(initialized_cm_codeact):
     """
     Stop an in-flight actor handle (basic steerability).
 
@@ -88,7 +98,7 @@ async def test_stop_action_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_interject_constraints_smoke(initialized_cm_codeact):
+async def test_interject_midflight_constraints(initialized_cm_codeact):
     """Interject constraints mid-flight and ensure the handle remains healthy through completion."""
     cm = initialized_cm_codeact
 

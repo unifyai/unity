@@ -1,5 +1,15 @@
-import pytest
+"""
+Contact-focused ConversationManager → CodeActActor integration tests.
+
+These validate that natural-language contact operations routed through CM→Actor:
+- read contact details deterministically (lookup by email)
+- create/update contacts and persist them in ContactManager storage
+"""
+
 import re
+import uuid
+
+import pytest
 
 from tests.helpers import _handle_project, get_or_create_contact
 from tests.test_conversation_manager.conftest import BOSS
@@ -17,7 +27,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_contact_query_smoke(initialized_cm_codeact):
+async def test_contact_lookup_by_email_returns_phone(initialized_cm_codeact):
     """Ask for a contact detail via CM→Actor and get back the correct phone number."""
     cm = initialized_cm_codeact
 
@@ -44,14 +54,15 @@ async def test_contact_query_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_contact_create_and_verify_db_smoke(initialized_cm_codeact):
+async def test_contact_create_persists_in_db(initialized_cm_codeact):
     """Create a new contact via CM→Actor and verify it was written to ContactManager storage."""
     cm = initialized_cm_codeact
+    email = f"jane.{uuid.uuid4().hex[:8]}@example.com"
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Please save a new contact: Jane Doe, email jane@example.com",
+            content=f"Please save a new contact: Jane Doe, email {email}",
         ),
     )
 
@@ -62,7 +73,7 @@ async def test_contact_create_and_verify_db_smoke(initialized_cm_codeact):
 
     # Find the created contact by filtering ContactManager context (deterministic).
     payload = cm.cm.contact_manager.filter_contacts(
-        filter="email_address == 'jane@example.com'",
+        filter=f"email_address == '{email}'",
         limit=5,
     )
     contacts = payload.get("contacts") or []
@@ -81,7 +92,7 @@ async def test_contact_create_and_verify_db_smoke(initialized_cm_codeact):
         expected_fields={
             "first_name": "Jane",
             "surname": "Doe",
-            "email_address": "jane@example.com",
+            "email_address": email,
         },
     )
     assert_no_errors(result)
@@ -90,16 +101,17 @@ async def test_contact_create_and_verify_db_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_contact_update_and_verify_db_smoke(initialized_cm_codeact):
+async def test_contact_update_persists_in_db(initialized_cm_codeact):
     """Update an existing contact via CM→Actor and verify the change persisted."""
     cm = initialized_cm_codeact
+    email = f"eve.{uuid.uuid4().hex[:8]}@example.com"
 
     # Create a baseline contact deterministically.
     created = get_or_create_contact(
         cm.cm.contact_manager,
         first_name="Eve",
         surname="Adams",
-        email_address="eve@example.com",
+        email_address=email,
         phone_number="+15555550900",
     )
     assert created is not None
@@ -107,7 +119,7 @@ async def test_contact_update_and_verify_db_smoke(initialized_cm_codeact):
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Update the contact with email eve@example.com to have phone number +15555550901.",
+            content=f"Update the contact with email {email} to have phone number +15555550901.",
         ),
     )
 
@@ -116,7 +128,7 @@ async def test_contact_update_and_verify_db_smoke(initialized_cm_codeact):
     _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
 
     payload = cm.cm.contact_manager.filter_contacts(
-        filter="email_address == 'eve@example.com'",
+        filter=f"email_address == '{email}'",
         limit=5,
     )
     contacts = payload.get("contacts") or []
@@ -130,7 +142,7 @@ async def test_contact_update_and_verify_db_smoke(initialized_cm_codeact):
         cm,
         contact_id,
         expected_fields={
-            "email_address": "eve@example.com",
+            "email_address": email,
             "phone_number": "+15555550901",
         },
     )

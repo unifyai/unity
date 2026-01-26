@@ -407,6 +407,56 @@ def verify_task_in_db(
     return row
 
 
+def find_task_id_by_exact_name(*, name: str) -> int:
+    """
+    Find a task_id by exact name match (deterministic helper).
+
+    Prefer this in tests that control the exact task name they created.
+    """
+    from unity.manager_registry import ManagerRegistry
+
+    scheduler = ManagerRegistry.get_task_scheduler()
+    assert scheduler is not None, "TaskScheduler is not available"
+    store = getattr(scheduler, "_store", None)
+    assert store is not None, "TaskScheduler missing _store"
+
+    rows = store.get_rows(
+        filter=f"name == '{name}'",
+        limit=5,
+        include_fields=["task_id", "name", "description", "status"],
+    )
+    assert rows, f"Expected at least one task row for name={name!r}"
+    first = rows[0]
+    entries = getattr(first, "entries", None) or {}
+    task_id = entries.get("task_id")
+    assert task_id is not None, f"Task row missing task_id for name={name!r}: {entries}"
+    return int(task_id)
+
+
+def find_task_id_by_name_contains(*, name: str, limit: int = 25) -> int:
+    """
+    Find a task_id by substring match on name (tolerant helper).
+
+    Use this when the LLM may introduce minor formatting differences (quotes/punctuation).
+    """
+    from unity.manager_registry import ManagerRegistry
+
+    scheduler = ManagerRegistry.get_task_scheduler()
+    assert scheduler is not None, "TaskScheduler is not available"
+    store = getattr(scheduler, "_store", None)
+    assert store is not None, "TaskScheduler missing _store"
+
+    rows = store.get_rows(limit=int(limit), include_fields=["task_id", "name"])
+    needle = name.lower()
+    for r in rows or []:
+        nm = str((getattr(r, "entries", None) or {}).get("name") or "")
+        if needle in nm.lower():
+            return int((r.entries or {}).get("task_id"))
+    raise AssertionError(
+        f"Expected to find a task whose name contains {name!r}, got 0 matches.",
+    )
+
+
 def verify_transcript_logged(
     cm: Any,
     *,

@@ -1,3 +1,12 @@
+"""
+Task-focused ConversationManager → CodeActActor integration tests.
+
+These tests validate that natural-language task operations routed through CM→Actor:
+- perform the expected mutation/read on TaskScheduler
+- are robust to clarifications
+- persist side effects in the underlying Tasks store
+"""
+
 import pytest
 
 from tests.helpers import _handle_project
@@ -5,6 +14,7 @@ from tests.test_conversation_manager.conftest import BOSS
 from tests.test_conversation_manager.test_actions.integration.helpers import (
     assert_no_errors,
     answer_clarification_and_continue,
+    find_task_id_by_exact_name,
     get_actor_started_event,
     wait_for_clarification,
     verify_task_in_db,
@@ -15,32 +25,11 @@ from unity.conversation_manager.events import SMSReceived
 pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
-def _find_task_id_by_name(cm_driver, *, name: str) -> int:
-    from unity.manager_registry import ManagerRegistry
-
-    scheduler = ManagerRegistry.get_task_scheduler()
-    assert scheduler is not None, "TaskScheduler is not available"
-    store = getattr(scheduler, "_store", None)
-    assert store is not None, "TaskScheduler missing _store"
-
-    rows = store.get_rows(
-        filter=f"name == '{name}'",
-        limit=5,
-        include_fields=["task_id", "name", "description", "status"],
-    )
-    assert rows, f"Expected at least one task row for name={name!r}"
-    first = rows[0]
-    entries = getattr(first, "entries", None) or {}
-    task_id = entries.get("task_id")
-    assert task_id is not None, f"Task row missing task_id for name={name!r}: {entries}"
-    return int(task_id)
-
-
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_task_create_and_verify_db_smoke(initialized_cm_codeact):
-    """Create a task via CM→Actor and verify it persisted in TaskScheduler."""
+async def test_task_create_persists_in_db(initialized_cm_codeact):
+    """Create a task via CM→Actor and verify it persisted."""
     cm = initialized_cm_codeact
     task_name = "Review Q3 report (integration)"
     task_desc = "Review the Q3 report and send feedback to the team."
@@ -56,7 +45,7 @@ async def test_task_create_and_verify_db_smoke(initialized_cm_codeact):
     handle_id = actor_event.handle_id
     _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
 
-    task_id = _find_task_id_by_name(cm, name=task_name)
+    task_id = find_task_id_by_exact_name(name=task_name)
     verify_task_in_db(
         cm,
         task_id,
@@ -71,7 +60,7 @@ async def test_task_create_and_verify_db_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_task_query_smoke(initialized_cm_codeact):
+async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
     """Query an existing task via CM→Actor and get back the correct description."""
     cm = initialized_cm_codeact
     import os
@@ -131,8 +120,8 @@ async def test_task_query_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_task_complete_smoke(initialized_cm_codeact):
-    """Mark a task completed via CM→Actor and verify status persisted in TaskScheduler."""
+async def test_task_mark_completed_persists_status(initialized_cm_codeact):
+    """Mark a task completed via CM→Actor and verify status persisted."""
     cm = initialized_cm_codeact
     task_name = "Close loop with Bob (integration)"
     task_desc = "Reply to Bob with the final decision."
@@ -155,7 +144,7 @@ async def test_task_complete_smoke(initialized_cm_codeact):
     h2 = get_actor_started_event(result2).handle_id
     _ = await wait_for_actor_completion(cm, h2, timeout=90)
 
-    task_id = _find_task_id_by_name(cm, name=task_name)
+    task_id = find_task_id_by_exact_name(name=task_name)
     verify_task_in_db(
         cm,
         task_id,
@@ -193,7 +182,7 @@ async def test_single_message_task_create_then_query(initialized_cm_codeact):
     final = await wait_for_actor_completion(cm, handle_id, timeout=90)
 
     # Side-effect verification: task exists with correct fields.
-    task_id = _find_task_id_by_name(cm, name=task_name)
+    task_id = find_task_id_by_exact_name(name=task_name)
     verify_task_in_db(
         cm,
         task_id,

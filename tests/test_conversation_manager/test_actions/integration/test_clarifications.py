@@ -1,3 +1,12 @@
+"""
+Clarification ConversationManager → CodeActActor integration tests.
+
+These validate that when an actor run needs clarification, CM can:
+- receive the clarification request
+- present it / route it back into the handle
+- continue execution deterministically
+"""
+
 import pytest
 
 from tests.helpers import _handle_project, get_or_create_contact
@@ -18,7 +27,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_clarification_direct_handle_smoke(initialized_cm_codeact):
+async def test_clarification_handle_contract(initialized_cm_codeact):
     """
     Smoke: CM → CodeActActor clarification contract works end-to-end.
 
@@ -97,7 +106,7 @@ async def test_clarification_direct_handle_smoke(initialized_cm_codeact):
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 @_handle_project
-async def test_clarification_cm_event_based_golden(initialized_cm_codeact):
+async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
     """
     CM event-based clarification wiring works end-to-end (golden path).
 
