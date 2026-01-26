@@ -336,13 +336,16 @@ async def async_tool_loop_inner(
         The assistant's final plain-text reply *after* every tool result has
         been fed back into the conversation.
     """
-    # unique id / lineage
+    # Loop identity / lineage
     cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
-    # Expose the resolved human-friendly label (with 4-hex suffix) to the outer handle
-    # so that any steering logs (stop/pause/resume/interject/ask) include the same suffix.
+    # Expose the resolved label (with 4-hex suffix) to the outer handle so steering logs
+    # (stop/pause/resume/interject/ask) share the same label as the tool loop.
     with suppress(Exception):
         if outer_handle_container and outer_handle_container[0] is not None:
             setattr(outer_handle_container[0], "_log_label", cfg.label)
+            # Also expose the resolved lineage list so event payloads can include the full
+            # parent->child stack even when called outside the tool loop ContextVar scope.
+            setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
