@@ -182,6 +182,27 @@ def wrap_handle_with_logging(
             self._inner = _h
 
         async def _publish(self, **payload):
+            # Best-effort: attach tool loop label from the inner handle when available
+            # so ManagerMethod events can reproduce the same label used in terminal logs.
+            try:
+                if "hierarchy_label" not in payload or not payload.get(
+                    "hierarchy_label",
+                ):
+                    lbl = getattr(self._inner, "_log_label", None)
+                    if isinstance(lbl, str) and lbl:
+                        payload["hierarchy_label"] = lbl
+            except Exception:
+                pass
+            # Best-effort: attach lineage list (when available) so outgoing events
+            # preserve the full parent→child stack even though handle methods are
+            # typically called outside the tool loop's ContextVar scope.
+            try:
+                if "hierarchy" not in payload or not payload.get("hierarchy"):
+                    h = getattr(self._inner, "_log_hierarchy", None)
+                    if isinstance(h, list) and h:
+                        payload["hierarchy"] = list(h)
+            except Exception:
+                pass
             await publish_manager_method_event(
                 call_id,
                 manager_name,
