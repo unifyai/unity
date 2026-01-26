@@ -299,12 +299,16 @@ class ComputerPrimitives:
         )
         client.set_system_message(system_message)
 
+        # Some providers reject empty user message blocks. We keep content in the system
+        # message above and send a minimal, non-empty user prompt for compatibility.
+        user_prompt = "."
+
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             client.set_response_format(response_format)
-            raw_response = await client.generate("")
+            raw_response = await client.generate(user_prompt)
             return response_format.model_validate_json(raw_response)
         else:
-            return await client.generate("")
+            return await client.generate(user_prompt)
 
 
 # ────────────────────────────────────────────────────────────────────────────
