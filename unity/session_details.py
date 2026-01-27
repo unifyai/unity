@@ -89,6 +89,17 @@ class UserDetails:
 
 
 @dataclass
+class OrgDetails:
+    """Details about the organization (when in org context).
+
+    None/empty values indicate personal (non-org) context.
+    """
+
+    id: int | None = None  # Organization ID, None for personal context
+    name: str = ""  # Organization name
+
+
+@dataclass
 class VoiceConfig:
     """Voice configuration for the session."""
 
@@ -134,6 +145,9 @@ class SessionDetails:
     # Raw assistant record from Unify API (for contexts that need the full dict)
     assistant_record: dict | None = field(default=None, repr=False)
 
+    # Organization context (None id for personal/non-org context)
+    org: OrgDetails = field(default_factory=OrgDetails)
+
     _initialized: bool = field(default=False, repr=False)
 
     @property
@@ -171,6 +185,29 @@ class SessionDetails:
     def is_initialized(self) -> bool:
         """Returns True if populate() has been called."""
         return self._initialized
+
+    @property
+    def user_id(self) -> str:
+        """Shortcut to user.id for convenient access."""
+        return self.user.id
+
+    @property
+    def org_id(self) -> int | None:
+        """Shortcut to org.id for convenient access."""
+        return self.org.id
+
+    @org_id.setter
+    def org_id(self, value: int | None) -> None:
+        self.org.id = value
+
+    @property
+    def org_name(self) -> str:
+        """Shortcut to org.name for convenient access."""
+        return self.org.name
+
+    @org_name.setter
+    def org_name(self, value: str) -> None:
+        self.org.name = value
 
     @property
     def unify_key(self) -> str:
@@ -217,6 +254,8 @@ class SessionDetails:
         user_name: str = "",
         user_number: str = "",
         user_email: str = "",
+        org_id: int | None = None,
+        org_name: str = "",
         voice_provider: str = "",
         voice_id: str = "",
         voice_mode: str = "",
@@ -244,6 +283,8 @@ class SessionDetails:
         self.user.name = user_name
         self.user.number = user_number
         self.user.email = user_email
+        self.org.id = org_id
+        self.org.name = org_name
         self.voice.provider = voice_provider
         self.voice.id = voice_id
         self.voice.mode = voice_mode
@@ -253,6 +294,7 @@ class SessionDetails:
         """Reset to default state (useful for tests)."""
         self.assistant = AssistantDetails()
         self.user = UserDetails()
+        self.org = OrgDetails()
         self.voice = VoiceConfig()
         self.voice_call = VoiceCallConfig()
         self._unify_key = ""
@@ -280,6 +322,8 @@ class SessionDetails:
         os.environ["USER_NAME"] = self.user.name
         os.environ["USER_NUMBER"] = self.user.number
         os.environ["USER_EMAIL"] = self.user.email
+        os.environ["ORG_ID"] = str(self.org.id) if self.org.id is not None else ""
+        os.environ["ORG_NAME"] = self.org.name
         os.environ["VOICE_PROVIDER"] = self.voice.provider
         os.environ["VOICE_ID"] = self.voice.id
         os.environ["VOICE_MODE"] = self.voice.mode
@@ -331,6 +375,13 @@ class SessionDetails:
             self.user.number = val
         if val := os.environ.get("USER_EMAIL"):
             self.user.email = val
+        if val := os.environ.get("ORG_ID"):
+            try:
+                self.org.id = int(val)
+            except ValueError:
+                pass
+        if val := os.environ.get("ORG_NAME"):
+            self.org.name = val
         if val := os.environ.get("VOICE_PROVIDER"):
             self.voice.provider = val
         if val := os.environ.get("VOICE_ID"):
