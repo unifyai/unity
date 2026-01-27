@@ -1088,3 +1088,37 @@ class TestActionNameFormatIntegration:
             parsed = parse_action_name(action_name)
             assert parsed.handle_id == expected_handle, f"Failed for {action_name}"
             assert parsed.call_id_suffix == expected_suffix, f"Failed for {action_name}"
+
+
+# =============================================================================
+# dispatch_livekit_agent code quality tests
+# =============================================================================
+
+
+class TestDispatchLivekitAgentCodeQuality:
+    """Regression tests for dispatch_livekit_agent implementation.
+
+    These tests inspect the source code to prevent accidental regressions.
+    """
+
+    def test_uses_requests_post_not_http_post(self):
+        """dispatch_livekit_agent must use requests.post directly, not http.post.
+
+        The http module from unify.utils has retry logic baked in. For this
+        fire-and-forget dispatch, we intentionally want NO retries - the timeout
+        is expected and we should move on immediately. Using http.post would
+        cause multiple retry attempts with backoff delays, defeating the purpose.
+        """
+        import inspect
+        from unity.conversation_manager.utils import dispatch_livekit_agent
+
+        source = inspect.getsource(dispatch_livekit_agent)
+
+        # Must use requests.post directly
+        check = "requests.post(" in source and "http.post(" not in source
+        assert "requests.post(" in source, (
+            "dispatch_livekit_agent must use requests.post() directly, "
+            "not http.post(). The http module has retry logic that would "
+            "dispatch multiple agents due to the expected timeout - "
+            "we want fire-and-forget behavior."
+        )
