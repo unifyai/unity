@@ -322,7 +322,6 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
         _call_id: Optional[str] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,

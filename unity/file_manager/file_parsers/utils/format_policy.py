@@ -46,7 +46,6 @@ from unity.file_manager.file_parsers.utils.summary_compression import (
     generate_summary_with_compression,
 )
 
-
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_\\-]{2,}")
 
 

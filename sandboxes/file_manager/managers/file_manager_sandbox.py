@@ -8,7 +8,7 @@ Public surface exercised via natural language:
 - organize(text)
 
 Additionally provides:
-- seed-sample: import and parse sample files from tests/test_file_manager/sample
+- seed-sample: import and parse sample files from tests/file_manager/sample
 - list, stat: light helpers for inspection
 
 Construction controls via CLI:

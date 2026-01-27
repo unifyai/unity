@@ -15,8 +15,8 @@ set -euo pipefail
 # args override .env values (later values win).
 #
 # Usage:
-#   parallel_cloud_run.sh tests/test_contact_manager
-#   parallel_cloud_run.sh tests/test_actor tests/test_contact_manager
+#   parallel_cloud_run.sh tests/contact_manager
+#   parallel_cloud_run.sh tests/actor tests/contact_manager
 #   parallel_cloud_run.sh .                    # All tests
 #   parallel_cloud_run.sh -s                   # All tests, serial mode (implicit ".")
 #   parallel_cloud_run.sh -s tests/            # Specific path, serial mode

@@ -8,6 +8,7 @@ import ast
 import copy
 import uuid
 from datetime import datetime, timezone
+from secrets import token_hex as _token_hex
 import logging
 from contextlib import redirect_stdout, redirect_stderr
 from typing import (
@@ -33,6 +34,15 @@ from unity.events.manager_event_logging import log_manager_call
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+from unity.common.hierarchical_logger import (
+    build_hierarchy_label,
+    log_boundary_event,
+)
+from unity.events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+)
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
@@ -229,12 +239,19 @@ def _validate_execution_params(
             )
 
     # Optional: enforce a global session cap (actor-owned pools, so this is per-actor).
+    # Note: `stateful` with no session specified means "use the default session" (session_id=0),
+    # so it does NOT create a new session and should not be rejected by the global cap here.
+    #
+    # We only apply the cap when the call would CREATE a new stateful session:
+    # - session_name is provided but does not resolve (new session would be allocated)
     if (
         max_sessions_total is not None
         and active_session_count is not None
         and state_mode == "stateful"
         and session_id is None
-        and session_name is None
+        and session_name is not None
+        and resolve_session_name is not None
+        and resolve_session_name(session_name) is None
         and active_session_count >= max_sessions_total
     ):
         return _validation_error(
@@ -463,12 +480,14 @@ class PythonExecutionSession:
         # Expose sandbox metadata to user code (best-effort; callers may ignore).
         self.global_state["__sandbox_id__"] = self.id
 
-        # Notification queue is injected per-call by CodeActActor via:
+        # Notification queue is injected dynamically by execute_code when it
+        # receives a _notification_up_q from the async tool loop:
         # sandbox.global_state["__notification_up_q__"] = <asyncio.Queue>
         #
         # Provide a user-driven progress helper:
         #   notify({"type": "...", ...})
         # This helper is intentionally synchronous; it uses put_nowait.
+        # Notifications bubble up through the async tool loop to the outer handle.
         def notify(payload: dict) -> None:
             try:
                 q = self.global_state.get("__notification_up_q__")
@@ -574,6 +593,50 @@ class PythonExecutionSession:
         print_patched = False
 
         try:
+            # Guardrails: prevent agent code from accidentally shadowing critical
+            # injected environment globals (common failure mode in LLM-generated code).
+            #
+            # We do this via an AST rewrite (not brittle string heuristics):
+            # rewrite any assignment targets named `primitives` / `computer_primitives`
+            # to `_primitives_local` / `_computer_primitives_local`.
+            #
+            # This preserves the injected globals for the rest of the session.
+            try:
+
+                class _ShadowingGuard(ast.NodeTransformer):
+                    _REMAP = {
+                        "primitives": "_primitives_local",
+                        "computer_primitives": "_computer_primitives_local",
+                    }
+
+                    def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
+                        # Only rewrite *assignments* (Store context). Loads are preserved.
+                        if isinstance(node.ctx, ast.Store) and node.id in self._REMAP:
+                            return ast.copy_location(
+                                ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
+                                node,
+                            )
+                        return node
+
+                    def visit_Global(self, node: ast.Global) -> ast.AST:  # noqa: N802
+                        node.names = [self._REMAP.get(n, n) for n in node.names]
+                        return node
+
+                    def visit_Nonlocal(
+                        self,
+                        node: ast.Nonlocal,
+                    ) -> ast.AST:  # noqa: N802
+                        node.names = [self._REMAP.get(n, n) for n in node.names]
+                        return node
+
+                tree = ast.parse(code)
+                tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
+                ast.fix_missing_locations(tree)
+                code = ast.unparse(tree)
+            except Exception:
+                # Best-effort only; if rewriting fails, proceed with original code.
+                pass
+
             is_empty_or_comment_only = all(
                 line.strip() == "" or line.strip().startswith("#")
                 for line in code.splitlines()
@@ -1409,6 +1472,7 @@ class CodeActActor(BaseCodeActActor):
             session_id: int | None = None,
             session_name: str | None = None,
             venv_id: int | None = None,
+            _notification_up_q: asyncio.Queue[dict] | None = None,
         ) -> Any:
             """
             Execute code in a specified language and state mode, optionally within a session.
@@ -1425,7 +1489,9 @@ class CodeActActor(BaseCodeActActor):
               - "read_only": reads from an existing session but does not persist changes
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
-              - for stateful: if omitted, a new session_id is allocated automatically
+              - for stateful: if omitted, defaults to **session_id=0** (the default session)
+              - to create an additional stateful session, provide a fresh `session_name` (recommended)
+                or an explicit `session_id` > 0
               - **Python session_id=0** is special:
                 - If this tool is called from inside a running CodeAct `act()` loop, session 0 maps to the
                   **current per-call Python sandbox** (shared via the ContextVar binding).
@@ -1466,175 +1532,245 @@ class CodeActActor(BaseCodeActActor):
                     "browser_used": False,
                 }
 
-            # Resolve / allocate sessions for stateful.
-            if state_mode == "stateful":
-                if session_name:
-                    resolved = self._resolve_session_name(session_name)
-                    if resolved is not None:
-                        language, venv_id, session_id = resolved
+            # ──────────────────────────────────────────────────────────────
+            # Boundary wrapper: execute_code (lineage + events + terminal log)
+            # ──────────────────────────────────────────────────────────────
+
+            _suffix = _token_hex(2)
+            _call_id = new_call_id()
+            _parent = TOOL_LOOP_LINEAGE.get([])
+            _parent_lineage = list(_parent) if isinstance(_parent, list) else []
+            _hierarchy = [*_parent_lineage, "execute_code"]
+            _hierarchy_label = build_hierarchy_label(_hierarchy, _suffix)
+            # Establish a boundary lineage frame so nested calls (e.g., FunctionManager-injected
+            # functions calling state managers) keep a consistent parent->child chain.
+            _lineage_token = TOOL_LOOP_LINEAGE.set(_hierarchy)
+
+            async def _pub_safe(**payload: Any) -> None:
+                try:
+                    await publish_manager_method_event(
+                        _call_id,
+                        "CodeActActor",
+                        "execute_code",
+                        hierarchy=_hierarchy,
+                        hierarchy_label=_hierarchy_label,
+                        **payload,
+                    )
+                except Exception as e:
+                    log_boundary_event(
+                        _hierarchy_label,
+                        f"Warning: failed to publish event: {type(e).__name__}: {e}",
+                        icon="⚠️",
+                        level="warning",
+                    )
+
+            try:
+                await _pub_safe(phase="incoming")
+            except Exception:
+                pass
+            log_boundary_event(_hierarchy_label, "Executing code...", icon="🛠️")
+
+            out: dict[str, Any] | None = None
+            tb_str: str | None = None
+            exec_exc: Exception | None = None
+
+            notification_q = _notification_up_q
+            sandbox_id = None
+            try:
+                # Resolve / allocate sessions for stateful.
+                if state_mode == "stateful":
+                    if session_name:
+                        resolved = self._resolve_session_name(session_name)
+                        if resolved is not None:
+                            language, venv_id, session_id = resolved
+                        elif session_id is None:
+                            # Allocate a new session id (reserve 0 for default sandbox).
+                            key = (
+                                str(language),
+                                int(venv_id) if venv_id is not None else None,
+                            )
+                            next_id = self._next_session_id.get(key, 1)
+                            session_id = next_id
+                            self._next_session_id[key] = next_id + 1
+                            self._register_session_name(
+                                name=session_name,
+                                language=str(language),
+                                venv_id=venv_id,
+                                session_id=int(session_id),
+                            )
                     elif session_id is None:
-                        # Allocate a new session id (reserve 0 for default sandbox).
-                        key = (
-                            str(language),
-                            int(venv_id) if venv_id is not None else None,
-                        )
-                        next_id = self._next_session_id.get(key, 1)
-                        session_id = next_id
-                        self._next_session_id[key] = next_id + 1
+                        # Default stateful session for each language/venv is session_id=0.
+                        # This is especially important for Python because FunctionManager-injected
+                        # callables are available in the default/bound Python sandbox (session 0).
+                        session_id = 0
+
+                # If name + id are both set but not registered yet, register alias.
+                if state_mode == "stateful" and session_name and session_id is not None:
+                    if self._resolve_session_name(session_name) is None:
                         self._register_session_name(
                             name=session_name,
                             language=str(language),
                             venv_id=venv_id,
                             session_id=int(session_id),
                         )
-                elif session_id is None:
-                    key = (str(language), int(venv_id) if venv_id is not None else None)
-                    next_id = self._next_session_id.get(key, 1)
-                    session_id = next_id
-                    self._next_session_id[key] = next_id + 1
 
-            # If name + id are both set but not registered yet, register alias.
-            if state_mode == "stateful" and session_name and session_id is not None:
-                if self._resolve_session_name(session_name) is None:
-                    self._register_session_name(
-                        name=session_name,
-                        language=str(language),
-                        venv_id=venv_id,
-                        session_id=int(session_id),
-                    )
+                # Validate.
+                err = self._validate_execution_params(
+                    state_mode=state_mode,
+                    session_id=session_id,
+                    session_name=session_name,
+                    language=str(language),
+                    venv_id=venv_id,
+                )
+                if err is not None:
+                    out = err
+                    return out
 
-            # Validate.
-            err = self._validate_execution_params(
-                state_mode=state_mode,
-                session_id=session_id,
-                session_name=session_name,
-                language=str(language),
-                venv_id=venv_id,
-            )
-            if err is not None:
-                return err
-
-            # Emit notifications for Python execution when a notification queue is attached
-            # to the currently-bound sandbox.
-            notification_q = None
-            sandbox_id = None
-            try:
-                sb_for_notifs = _CURRENT_SANDBOX.get()
-                notification_q = sb_for_notifs.global_state.get("__notification_up_q__")
-                sandbox_id = getattr(sb_for_notifs, "id", None)
-            except Exception:
-                pass
-
-            if notification_q is not None and str(language) == "python":
+                # Inject per-tool notification queue into bound sandbox so notify() works.
                 try:
-                    await notification_q.put(
-                        {
-                            "type": "execution_started",
-                            "sandbox_id": sandbox_id,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        },
-                    )
+                    sb_for_notifs = _CURRENT_SANDBOX.get()
+                    sandbox_id = getattr(sb_for_notifs, "id", None)
+                    if notification_q is not None:
+                        sb_for_notifs.global_state["__notification_up_q__"] = (
+                            notification_q
+                        )
                 except Exception:
                     pass
 
-            # Execute via SessionExecutor. Route primitives if available in current sandbox.
-            primitives = None
-            computer_primitives = self._computer_primitives
-            try:
-                sb = _CURRENT_SANDBOX.get()
-                primitives = sb.global_state.get("primitives")
-                computer_primitives = sb.global_state.get(
-                    "computer_primitives",
-                    computer_primitives,
-                )
-            except Exception:
-                pass
-
-            try:
-                out = await self._session_executor.execute(
-                    code=code,
-                    language=str(language),  # type: ignore[arg-type]
-                    state_mode=state_mode,  # type: ignore[arg-type]
-                    session_id=session_id,
-                    venv_id=venv_id,
-                    primitives=primitives,
-                    computer_primitives=computer_primitives,
-                )
-            except Exception:
-                tb = traceback.format_exc()
                 if notification_q is not None and str(language) == "python":
                     try:
                         await notification_q.put(
                             {
-                                "type": "execution_error",
+                                "type": "execution_started",
                                 "sandbox_id": sandbox_id,
-                                "error_kind": "exception",
-                                "traceback_preview": tb[:2000],
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )
                     except Exception:
                         pass
-                return {
-                    "stdout": "",
-                    "stderr": "",
-                    "result": None,
-                    "error": tb,
-                    "language": language,
-                    "state_mode": state_mode,
-                    "session_id": session_id,
-                    "session_name": session_name,
-                    "venv_id": venv_id,
-                    "session_created": False,
-                    "duration_ms": 0,
-                    "browser_used": False,
-                }
 
-            # Enrich with session name.
-            if out.get("session_id") is not None:
-                out["session_name"] = self._get_session_name(
-                    language=str(out.get("language")),
-                    venv_id=out.get("venv_id"),
-                    session_id=int(out["session_id"]),
-                )
-            else:
-                out["session_name"] = None
-
-            # Attach browser state for Python runs when browser tools were used.
-            if (
-                str(out.get("language")) == "python"
-                and out.get("browser_used")
-                and self._computer_primitives is not None
-            ):
+                # Execute via SessionExecutor. Route primitives if available in current sandbox.
+                primitives = None
+                computer_primitives = self._computer_primitives
                 try:
-                    url = await self._computer_primitives.computer.get_current_url()
-                    screenshot_b64 = (
-                        await self._computer_primitives.computer.get_screenshot()
-                    )
-                    out["browser_state"] = {
-                        "url": url,
-                        "screenshot": screenshot_b64,
-                    }
-                except Exception as e:
-                    out["browser_state"] = {"error": str(e)}
-
-            if notification_q is not None and str(language) == "python":
-                try:
-                    await notification_q.put(
-                        {
-                            "type": "execution_finished",
-                            "sandbox_id": sandbox_id,
-                            "status": ("ok" if not out.get("error") else "error"),
-                            "stdout_len": len(out.get("stdout") or ""),
-                            "stderr_len": len(out.get("stderr") or ""),
-                            "browser_used": bool(out.get("browser_used")),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        },
+                    sb = _CURRENT_SANDBOX.get()
+                    primitives = sb.global_state.get("primitives")
+                    computer_primitives = sb.global_state.get(
+                        "computer_primitives",
+                        computer_primitives,
                     )
                 except Exception:
                     pass
 
-            return out
+                try:
+                    out = await self._session_executor.execute(
+                        code=code,
+                        language=str(language),  # type: ignore[arg-type]
+                        state_mode=state_mode,  # type: ignore[arg-type]
+                        session_id=session_id,
+                        venv_id=venv_id,
+                        primitives=primitives,
+                        computer_primitives=computer_primitives,
+                    )
+                except Exception as e:
+                    exec_exc = e
+                    tb = traceback.format_exc()
+                    tb_str = tb
+                    if notification_q is not None and str(language) == "python":
+                        try:
+                            await notification_q.put(
+                                {
+                                    "type": "execution_error",
+                                    "sandbox_id": sandbox_id,
+                                    "error_kind": "exception",
+                                    "traceback_preview": tb[:2000],
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                },
+                            )
+                        except Exception:
+                            pass
+                    out = {
+                        "stdout": "",
+                        "stderr": "",
+                        "result": None,
+                        "error": tb,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                        "venv_id": venv_id,
+                        "session_created": False,
+                        "duration_ms": 0,
+                        "browser_used": False,
+                    }
+
+                # Enrich with session name.
+                if out.get("session_id") is not None:
+                    out["session_name"] = self._get_session_name(
+                        language=str(out.get("language")),
+                        venv_id=out.get("venv_id"),
+                        session_id=int(out["session_id"]),
+                    )
+                else:
+                    out["session_name"] = None
+
+                # Attach browser state for Python runs when browser tools were used.
+                if (
+                    str(out.get("language")) == "python"
+                    and out.get("browser_used")
+                    and self._computer_primitives is not None
+                ):
+                    try:
+                        url = await self._computer_primitives.computer.get_current_url()
+                        screenshot_b64 = (
+                            await self._computer_primitives.computer.get_screenshot()
+                        )
+                        out["browser_state"] = {
+                            "url": url,
+                            "screenshot": screenshot_b64,
+                        }
+                    except Exception as e:
+                        out["browser_state"] = {"error": str(e)}
+
+                if notification_q is not None and str(language) == "python":
+                    try:
+                        await notification_q.put(
+                            {
+                                "type": "execution_finished",
+                                "sandbox_id": sandbox_id,
+                                "status": ("ok" if not out.get("error") else "error"),
+                                "stdout_len": len(out.get("stdout") or ""),
+                                "stderr_len": len(out.get("stderr") or ""),
+                                "browser_used": bool(out.get("browser_used")),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
+                    except Exception:
+                        pass
+
+                return out
+            finally:
+                try:
+                    if out is not None and out.get("error"):
+                        await _pub_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(out.get("error")),
+                            error_type=(
+                                type(exec_exc).__name__
+                                if exec_exc is not None
+                                else "Error"
+                            ),
+                            traceback=(tb_str or "")[:2000],
+                        )
+                    else:
+                        await _pub_safe(phase="outgoing", status="ok")
+                except Exception:
+                    pass
+                try:
+                    TOOL_LOOP_LINEAGE.reset(_lineage_token)
+                except Exception:
+                    pass
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
             "execute_code": execute_code,
@@ -2224,7 +2360,6 @@ class CodeActActor(BaseCodeActActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
         _call_id: Optional[str] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
@@ -2405,8 +2540,8 @@ class CodeActActor(BaseCodeActActor):
             venv_pool=self._venv_pool,
             shell_pool=self._shell_pool,
         )
-        if _notification_up_q is not None:
-            sandbox.global_state["__notification_up_q__"] = _notification_up_q
+        # Note: __notification_up_q__ is injected dynamically by execute_code
+        # when it receives a _notification_up_q from the async tool loop.
         token = _CURRENT_SANDBOX.set(sandbox)
 
         async def _cleanup() -> None:
@@ -2524,7 +2659,6 @@ class CodeActActor(BaseCodeActActor):
             parent_chat_context=_parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            notification_up_q=_notification_up_q,
             call_id=_call_id,
             on_finally=_cleanup,
             main_event_loop=self._main_event_loop,

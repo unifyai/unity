@@ -97,10 +97,10 @@ Use `-s/--serial` to create one session per *file* instead (tests within a file 
 
 ```bash
 # DEFAULT: 15 tests run concurrently in 15 sessions (~1 min)
-parallel_run tests/test_contact_manager/test_ask.py
+parallel_run tests/contact_manager/test_ask.py
 
 # WITH -s: 15 tests in one file run serially (~10 min)
-parallel_run -s tests/test_contact_manager/test_ask.py
+parallel_run -s tests/contact_manager/test_ask.py
 ```
 
 **When to use `-s`:**
@@ -122,7 +122,7 @@ By default, `parallel_run` limits concurrent sessions to **25** to prevent resou
 
 ```bash
 # Lower concurrency for resource-constrained systems
-parallel_run -j 8 tests/test_contact_manager/
+parallel_run -j 8 tests/contact_manager/
 
 # Higher concurrency for powerful machines
 parallel_run -j 100 tests/
@@ -158,10 +158,10 @@ parallel_run --timeout 120 tests/my_tests
 **Timeout examples:**
 ```bash
 # Quick sanity check with 60s timeout
-parallel_run --timeout 60 tests/test_basic.py
+parallel_run --timeout 60 tests/basic.py
 
 # Long-running tests with 5 minute timeout
-parallel_run --timeout 300 tests/test_slow_suite/
+parallel_run --timeout 300 tests/slow_suite/
 ```
 
 ---
@@ -235,7 +235,7 @@ The `--repeat N` flag runs each test target N times. **The primary use case is f
 
 ```bash
 # Run a specific eval test 10 times without caching
-parallel_run --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
+parallel_run --env UNIFY_CACHE=false --repeat 10 --eval-only tests/contact_manager/test_ask.py
 
 # Run all eval tests 5 times each
 parallel_run --env UNIFY_CACHE=false --repeat 5 --eval-only tests
@@ -324,8 +324,8 @@ parallel_run --symbolic-only tests
 parallel_run --tags "experiment-1" tests
 
 # Combine options
-parallel_run --eval-only tests/test_contact_manager
-parallel_run --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
+parallel_run --eval-only tests/contact_manager
+parallel_run --env UNIFY_CACHE=false --eval-only tests/contact_manager
 ```
 
 ---

@@ -56,4 +56,4 @@ To add a format:
 
 1. Implement a backend under `implementations/<impl>/backends/` (subclass `BaseFileParserBackend`).
 2. Register it in `DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT` (or provide config override).
-3. Add tests under `tests/test_file_manager/test_file_parser/` that assert format-aware invariants and trace identity.
+3. Add tests under `tests/file_manager/file_parser/` that assert format-aware invariants and trace identity.

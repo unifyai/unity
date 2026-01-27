@@ -7,7 +7,7 @@ Usage:
     python discover_test_paths.py
 
     # Expand specific paths to their leaf directories
-    python discover_test_paths.py tests/test_function_manager tests/test_actor
+    python discover_test_paths.py tests/function_manager tests/actor
 
 When explicit paths are provided:
 - Files are kept as-is (no expansion)
@@ -17,6 +17,7 @@ Option A algorithm:
 - Leaf directories (have test files, no test subdirs) → one job per directory
 - Non-leaf directories with test files → one job per individual test file
 """
+
 import os
 import sys
 from pathlib import Path

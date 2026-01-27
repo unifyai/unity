@@ -51,6 +51,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         language: FunctionLanguage = "python",
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -63,6 +64,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             language: Literal["python", "bash", "zsh", "sh", "powershell"] = "python",
             preconditions: dict[str, dict] | None = None,
             verify: dict[str, bool] | None = None,
+            raise_on_error: bool = True,
         ) -> dict[str, str]
 
         Parameters
@@ -84,12 +86,22 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Optional mapping from function name → verification requirement.
             If a function name is present and mapped to ``True`` (default) or ``False``,
             it sets the ``verify`` field on the ``Function`` record.
+        raise_on_error : bool, default ``True``
+            If ``True``, raises ``ValueError`` when any function fails to add
+            (parse error, validation error, etc.). If ``False``, errors are
+            returned in the result dictionary instead of raising.
 
         Returns
         -------
         dict[str, str]
             Mapping of function name to status string, e.g.
             ``{"my_func": "added"}`` or ``{"my_func": "error: <message>"}``.
+
+        Raises
+        ------
+        ValueError
+            If ``raise_on_error=True`` and any function fails to add. The
+            exception message contains the failed function names and errors.
 
         Notes
         -----

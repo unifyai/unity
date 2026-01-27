@@ -299,12 +299,16 @@ class ComputerPrimitives:
         )
         client.set_system_message(system_message)
 
+        # Some providers reject empty user message blocks. We keep content in the system
+        # message above and send a minimal, non-empty user prompt for compatibility.
+        user_prompt = "."
+
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             client.set_response_format(response_format)
-            raw_response = await client.generate("")
+            raw_response = await client.generate(user_prompt)
             return response_format.model_validate_json(raw_response)
         else:
-            return await client.generate("")
+            return await client.generate(user_prompt)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -525,6 +529,63 @@ MANAGER_METADATA: Dict[str, Dict[str, Any]] = {
         "priority": 8,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Routing Guidance for Commonly Confused Manager Pairs
+# ---------------------------------------------------------------------------
+# When two managers have overlapping domains, this defines explicit guidance
+# to help the LLM route correctly. Each entry specifies:
+#   - managers: The pair of managers that can be confused (order doesn't matter)
+#   - title: Section title in the prompt
+#   - guidance: Brief explanation of when to use each
+#   - examples: List of (question, correct_manager, call_example) tuples
+#
+# StateManagerEnvironment.get_prompt_context() renders this automatically
+# when both managers in a pair are exposed.
+
+ROUTING_GUIDANCE: List[Dict[str, Any]] = [
+    {
+        "managers": {"data", "files"},
+        "title": "`primitives.data.*` vs `primitives.files.*`",
+        "guidance": [
+            (
+                "data",
+                "Use for **data operations on table contents** - filtering rows, "
+                "aggregating/reducing values (sum, avg, count), joining tables, transforming data. "
+                "Use when the question is about the DATA INSIDE a table/dataset.",
+            ),
+            (
+                "files",
+                "Use for **file-level operations** - listing files in directories, "
+                "describing storage layout, getting file metadata, asking about what a file contains (high-level). "
+                "Use when the question is about FILES themselves.",
+            ),
+        ],
+        "examples": [
+            (
+                "Calculate the sum of the amount column",
+                "data",
+                "primitives.data.reduce(...)",
+            ),
+            (
+                "Filter rows where status is active",
+                "data",
+                "primitives.data.filter(...)",
+            ),
+            (
+                "What files are in /reports?",
+                "files",
+                "primitives.files.filter_files(...)",
+            ),
+            (
+                "Describe the storage layout of report.csv",
+                "files",
+                "primitives.files.describe(...)",
+            ),
+        ],
+    },
+]
 
 
 def _get_stable_id(class_name: str, method_name: str) -> int:

@@ -440,7 +440,7 @@ async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwar
     ensuring contacts from recent inbounds are always available even before
     or during ContactManager initialization.
     """
-    if cm.contact_index._contact_manager is None:
+    if cm.contact_index._contact_manager:
         return
     cm._session_logger.debug(
         "backup_contacts",

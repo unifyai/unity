@@ -62,7 +62,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_MODEL: str = "gpt-5.2@openai"
+    UNIFY_MODEL: str = "claude-4.5-opus@anthropic"
     UNIFY_CACHE: bool | str = True
 
     # ─────────────────────────────────────────────────────────────────────────

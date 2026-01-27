@@ -101,6 +101,38 @@ class Function(BaseModel):
         ),
     )
 
+    windows_os_required: bool = Field(
+        False,
+        description=(
+            "Whether this function requires execution on a Windows OS. "
+            "When True and the assistant has desktop_mode='windows' with "
+            "is_user_desktop=False, execution routes to the remote Windows VM. "
+            "Typically used for functions that depend on Windows-only libraries "
+            "like xlwings or other COM automation tools."
+        ),
+    )
+
+    # Remote execution data transfer
+    data_required: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of items specifying data to upload before remote execution. "
+            "Each item is either: (1) an argument name whose runtime value is a local "
+            "file/directory path, or (2) a static absolute path string (starts with '/'). "
+            "At runtime, paths are uploaded to the remote VM preserving full directory "
+            "structure under C:\\Unity, and argument values are rewritten to remote equivalents."
+        ),
+    )
+
+    data_output: List[str] = Field(
+        default_factory=list,
+        description=(
+            "List of argument names whose values are output file/directory paths "
+            "that should be downloaded from the remote VM after execution completes. "
+            "The remote paths are downloaded back to their corresponding local paths."
+        ),
+    )
+
     # Source-defined custom function tracking
     custom_hash: Optional[str] = Field(
         None,

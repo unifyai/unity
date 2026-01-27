@@ -683,6 +683,7 @@ class ConversationManagerBrainActionTools:
         call_id: str | None = None,
     ) -> "Callable[..., Any]":
         """Create a closure for an action steering operation."""
+
         cm = self._cm
         # Use cm.event_broker to ensure the same broker is used throughout
         # (important for test patching)
@@ -721,7 +722,7 @@ class ConversationManagerBrainActionTools:
                                 # Start the ask operation (does the LLM roundtrip)
                                 ask_handle = await _handle.ask(
                                     _param_value,
-                                    parent_chat_context_cont=_cm_chat_history,
+                                    _parent_chat_context_cont=_cm_chat_history,
                                 )
                                 # Await the result
                                 ask_result = await ask_handle.result()
@@ -761,7 +762,8 @@ class ConversationManagerBrainActionTools:
                             )
                         await handle.interject(
                             param_value,
-                            parent_chat_context_cont=cm.chat_history,
+                            _parent_chat_context_cont=cm.chat_history,
+                            images=kwargs.get("images"),
                         )
                         result = "Interjected successfully"
                     case "stop":
@@ -822,7 +824,9 @@ class ConversationManagerBrainActionTools:
 
             return {"status": "ok", "operation": operation, "result": result}
 
-        # Copy signature from the handle's method to get proper tool schema
+        # Copy signature from the handle's method to get proper tool schema.
+        # Parameters starting with _ (like _parent_chat_context_cont) are automatically
+        # hidden by method_to_schema, and images: Optional[ImageRefs] is schema-safe.
         if handle is not None and hasattr(handle, operation):
             DynamicToolFactory._adopt_signature_and_annotations(
                 getattr(handle, operation),

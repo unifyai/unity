@@ -122,6 +122,9 @@ def _compute_function_hash(
     venv_id: Optional[int],
     verify: bool,
     precondition: Optional[Dict[str, Any]],
+    windows_os_required: bool = False,
+    data_required: Optional[List[str]] = None,
+    data_output: Optional[List[str]] = None,
 ) -> str:
     """
     Compute a hash for a custom function based on its metadata.
@@ -142,6 +145,9 @@ def _compute_function_hash(
         str(venv_id) if venv_id is not None else "",
         str(verify),
         json.dumps(precondition, sort_keys=True) if precondition else "",
+        str(windows_os_required),
+        json.dumps(sorted(data_required or []), sort_keys=True),
+        json.dumps(sorted(data_output or []), sort_keys=True),
     ]
     combined = "\n".join(components)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
@@ -235,6 +241,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
         - precondition: Optional[dict]
         - custom_hash: str
         - embedding_text: str
+        - windows_os_required: bool (route to Windows VM when True)
     """
     functions_folder = _get_custom_functions_folder()
     if not functions_folder.exists():
@@ -292,6 +299,9 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
             venv_id=metadata.venv_id,
             verify=metadata.verify,
             precondition=metadata.precondition,
+            windows_os_required=metadata.windows_os_required,
+            data_required=metadata.data_required,
+            data_output=metadata.data_output,
         )
 
         # Rebuild embedding text (deterministic)
@@ -313,6 +323,9 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
             "depends_on": deps,
             "is_primitive": False,
             "guidance_ids": [],
+            "windows_os_required": metadata.windows_os_required,
+            "data_required": metadata.data_required,
+            "data_output": metadata.data_output,
         }
 
     logger.debug(f"Collected {len(functions)} custom functions")

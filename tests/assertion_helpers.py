@@ -217,15 +217,18 @@ def assert_time_footer(prompt: str, prefix: str) -> None:
     """Assert the final non-empty line matches the standardized time footer.
 
     `prefix` is the literal prefix used by the builder (e.g.,
-    "Current UTC time is " or "Current UTC time: ").
+    "Current UTC time is ").
+
+    Expected format: "Friday, June 13, 2025 at 12:00 PM UTC."
     """
     non_empty_lines = [ln for ln in prompt.splitlines() if ln.strip()]
     assert non_empty_lines, (
         "Prompt should not be empty\n\nFull system prompt:\n\n" + prompt
     )
     last = non_empty_lines[-1]
+    # Human-readable format: "Friday, June 13, 2025 at 12:00 PM UTC."
     pattern = re.compile(
-        rf"{re.escape(prefix)}\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}} UTC\.",
+        rf"{re.escape(prefix)}[A-Z][a-z]+, [A-Z][a-z]+ \d{{1,2}}, \d{{4}} at \d{{1,2}}:\d{{2}} [AP]M [A-Za-z/_]+\.",
     )
     assert pattern.fullmatch(
         last,

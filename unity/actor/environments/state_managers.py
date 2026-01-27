@@ -10,6 +10,7 @@ from unity.actor.environments.base import (
 )
 from unity.function_manager.primitives import (
     MANAGER_METADATA,
+    ROUTING_GUIDANCE,
     get_primitive_sources,
     Primitives,
 )
@@ -295,6 +296,25 @@ class StateManagerEnvironment(BaseEnvironment):
             if meta.get("special_note"):
                 parts.append(f"- **Note**: {meta['special_note']}")
 
+        # Add routing guidance for commonly confused manager pairs (driven by ROUTING_GUIDANCE)
+        exposed_names = {e[0] for e in exposed}
+        for guidance in ROUTING_GUIDANCE:
+            # Only show guidance if both managers in the pair are exposed
+            if not guidance["managers"].issubset(exposed_names):
+                continue
+
+            parts.append(f"\n**CRITICAL: {guidance['title']} Routing**:")
+            parts.append(
+                "These managers serve DIFFERENT purposes - do not confuse them:",
+            )
+            for manager_name, description in guidance["guidance"]:
+                parts.append(f"- **`primitives.{manager_name}.*`**: {description}")
+
+            if guidance.get("examples"):
+                parts.append("\n**Examples**:")
+                for question, manager, call in guidance["examples"]:
+                    parts.append(f'  - "{question}" → `{call}` ({manager})')
+
         # Add general rules only if multiple managers exposed
         if len(exposed) > 1:
             parts.append("\n**Manager Selection Priorities**:")
@@ -311,7 +331,7 @@ class StateManagerEnvironment(BaseEnvironment):
             )
             parts.append("6. **guidance** for execution instructions and runbooks")
             parts.append(
-                "7. **files** when dealing with specific documents or data operations",
+                "7. **files** when dealing with specific documents or file-level operations",
             )
 
             parts.append("\n**General Rules**:")

@@ -7,13 +7,26 @@ import functools
 import json
 import os
 import re
+import traceback
 import signal
 import socket
 import sys
 import tempfile
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
+from secrets import token_hex
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+)
 import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
@@ -40,8 +53,161 @@ from .custom_functions import (
     compute_custom_venvs_hash,
 )
 
-
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover
+    import aiohttp
+
+
+class _LineageTrackedFunction:
+    """Boundary wrapper for FunctionManager callables injected into CodeActActor sandboxes.
+
+    This wrapper preserves hierarchical lineage across mixed execution, e.g.:
+
+        CodeActActor.act -> execute_code -> <function> -> primitives.contacts.ask -> ...
+
+    It is injected into the Python namespace **in place of** the raw callable so that
+    inter-function calls (function A calling function B) still pass through a boundary that:
+    - updates `TOOL_LOOP_LINEAGE` (ContextVar)
+    - publishes ManagerMethod events with `hierarchy` + `hierarchy_label`
+    - emits a concise boundary log line for terminal debugging
+
+    Note: async functions can be awaited in a different task context than the call-site.
+    ContextVar tokens are only valid in the context they were created, so this wrapper sets
+    lineage around coroutine construction (call-site) and again inside the awaited coroutine
+    (execution-site).
+    """
+
+    def __init__(self, wrapped_callable: Callable[..., Any], function_name: str):
+        self._wrapped = wrapped_callable
+        self._function_name = function_name
+
+        # Preserve introspection attributes.
+        self.__name__ = function_name
+        self.__doc__ = getattr(wrapped_callable, "__doc__", None)
+        self.__wrapped__ = wrapped_callable
+
+    def __getattr__(self, name: str) -> Any:
+        # Preserve wrapped callable API (e.g. venv proxy state helpers).
+        return getattr(self._wrapped, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Local imports to avoid import-time cycles.
+        from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+        from unity.common.hierarchical_logger import (
+            build_hierarchy_label,
+            log_boundary_event,
+        )
+        from unity.events.manager_event_logging import (
+            new_call_id,
+            publish_manager_method_event,
+        )
+
+        suffix = token_hex(2)
+        call_id = new_call_id()
+
+        parent = TOOL_LOOP_LINEAGE.get([])
+        parent_lineage = list(parent) if isinstance(parent, list) else []
+        hierarchy = [*parent_lineage, self._function_name]
+        hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+
+        async def _publish_safe(**payload: Any) -> None:
+            try:
+                await publish_manager_method_event(
+                    call_id,
+                    "FunctionManager",
+                    self._function_name,
+                    hierarchy=hierarchy,
+                    hierarchy_label=hierarchy_label,
+                    **payload,
+                )
+            except Exception as e:
+                # Best-effort visibility; never fail execution due to event issues.
+                log_boundary_event(
+                    hierarchy_label,
+                    f"Warning: failed to publish event: {type(e).__name__}: {e}",
+                    icon="⚠️",
+                    level="warning",
+                )
+
+        # Publish incoming before running the function (best-effort).
+        try:
+            asyncio.create_task(_publish_safe(phase="incoming"))
+        except Exception:
+            pass
+        try:
+            log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
+        except Exception:
+            pass
+
+        # Ensure synchronous work at call-time (if any) happens under the lineage frame.
+        token_call = TOOL_LOOP_LINEAGE.set(hierarchy)
+        try:
+            result = self._wrapped(*args, **kwargs)
+        except Exception as e:
+            try:
+                try:
+                    asyncio.create_task(
+                        _publish_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            traceback=traceback.format_exc()[:2000],
+                        ),
+                    )
+                except Exception:
+                    pass
+            finally:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            raise
+        finally:
+            # For async results we only needed the lineage during coroutine construction.
+            # The actual awaited execution will run under a new token created in the
+            # awaiting task context below.
+            try:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            except Exception:
+                pass
+
+        if inspect.isawaitable(result):
+
+            async def _await_and_finalize():
+                token_run = TOOL_LOOP_LINEAGE.set(hierarchy)
+                try:
+                    out = await result
+                    try:
+                        await _publish_safe(phase="outgoing", status="ok")
+                    except Exception:
+                        pass
+                    return out
+                except Exception as e:
+                    try:
+                        await _publish_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            traceback=traceback.format_exc()[:2000],
+                        )
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    TOOL_LOOP_LINEAGE.reset(token_run)
+
+            return _await_and_finalize()
+
+        # Sync success path: publish outgoing best-effort and restore lineage.
+        try:
+            try:
+                asyncio.create_task(_publish_safe(phase="outgoing", status="ok"))
+            except Exception:
+                pass
+        finally:
+            # token_call already reset above; nothing to do here.
+            pass
+        return result
 
 
 class _DependencyVisitor(ast.NodeVisitor):
@@ -117,6 +283,13 @@ def _strip_custom_function_decorators(source: str) -> str:
     The @custom_function decorator is used for sync metadata only (it is effectively
     a no-op at runtime), but the symbol is not guaranteed to exist inside execution
     environments (e.g., Actor sandboxes or venv runner subprocesses).
+
+    Handles both single-line and multi-line decorator syntax:
+        @custom_function(venv_name="foo")  # single-line
+        @custom_function(                   # multi-line
+            venv_name="foo",
+            verify=True,
+        )
     """
     try:
         lines = source.splitlines(keepends=True)
@@ -125,13 +298,44 @@ def _strip_custom_function_decorators(source: str) -> str:
 
     out: List[str] = []
     seen_def = False
+    in_custom_decorator = False
+    paren_depth = 0
+
     for line in lines:
         stripped = line.lstrip()
-        if not seen_def and stripped.startswith("@custom_function"):
+
+        # Once we've seen the function definition, keep all lines
+        if seen_def:
+            out.append(line)
             continue
+
         if stripped.startswith("def ") or stripped.startswith("async def "):
             seen_def = True
+            out.append(line)
+            continue
+
+        # Check if this line starts a @custom_function decorator
+        if stripped.startswith("@custom_function"):
+            in_custom_decorator = True
+            # Count parentheses to handle multi-line decorators
+            paren_depth += stripped.count("(") - stripped.count(")")
+            # If parens are balanced on this line, decorator is complete
+            if paren_depth <= 0:
+                in_custom_decorator = False
+                paren_depth = 0
+            continue
+
+        # If we're inside a multi-line @custom_function decorator, skip lines
+        if in_custom_decorator:
+            paren_depth += stripped.count("(") - stripped.count(")")
+            if paren_depth <= 0:
+                in_custom_decorator = False
+                paren_depth = 0
+            continue
+
+        # Keep other decorators and lines before the function def
         out.append(line)
+
     return "".join(out)
 
 
@@ -2426,6 +2630,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
@@ -2436,9 +2641,14 @@ class FunctionManager(BaseFunctionManager):
             preconditions: Optional preconditions for functions.
             verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
+            raise_on_error: If True (default), raise ValueError when any function
+                fails to add. If False, errors are returned in the result dict.
 
         Returns:
             Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
+
+        Raises:
+            ValueError: If raise_on_error=True and any function fails to add.
         """
 
         if preconditions is None:
@@ -2456,6 +2666,7 @@ class FunctionManager(BaseFunctionManager):
                 preconditions=preconditions,
                 verify=verify,
                 overwrite=overwrite,
+                raise_on_error=raise_on_error,
             )
 
         # Python-specific parsing and validation
@@ -2626,6 +2837,13 @@ class FunctionManager(BaseFunctionManager):
             if p is not None:
                 self._register_function_file(name, p)
 
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
+
         return results
 
     def _add_shell_functions(
@@ -2636,6 +2854,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Dict[str, Dict],
         verify: Dict[str, bool],
         overwrite: bool,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add shell script functions (bash, zsh, sh, powershell).
@@ -2800,6 +3019,13 @@ class FunctionManager(BaseFunctionManager):
             p = self._write_function_file(f"{name}{ext}", source)
             if p is not None:
                 self._register_function_file(name, p)
+
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
 
         return results
 
@@ -3077,10 +3303,12 @@ class FunctionManager(BaseFunctionManager):
 
             # Handle venv dependencies: proxy goes in namespace (only way to call them)
             if dep_data.get("venv_id") is not None:
-                namespace[dep_name] = self._create_venv_callable(
+                _venv_cb = self._create_venv_callable(
                     dep_data,
                     namespace=namespace,
                 )
+                # Wrap boundary so inter-function calls create lineage frames.
+                namespace[dep_name] = _LineageTrackedFunction(_venv_cb, dep_name)
                 # Treat venv functions as atomic; do not recurse into their deps.
                 continue
 
@@ -3092,7 +3320,16 @@ class FunctionManager(BaseFunctionManager):
                 dep_data,
                 namespace=namespace,
             )
-            # Note: proxy is discarded; namespace[dep_name] remains the raw function
+            # replace namespace[dep_name] with wrapper so inter-function calls
+            # also flow through lineage/event boundaries.
+            try:
+                raw_dep = namespace.get(dep_name)
+                if callable(raw_dep):
+                    # Avoid double-wrapping.
+                    if not isinstance(raw_dep, _LineageTrackedFunction):
+                        namespace[dep_name] = _LineageTrackedFunction(raw_dep, dep_name)
+            except Exception:
+                pass
 
             nested = dep_data.get("depends_on") or []
             if isinstance(nested, list):
@@ -3134,6 +3371,14 @@ class FunctionManager(BaseFunctionManager):
                 else:
                     raw_fn = namespace.get(name)
                     if callable(raw_fn):
+                        # If the namespace contains our wrapper, unwrap for the proxy.
+                        try:
+                            if hasattr(raw_fn, "__wrapped__"):
+                                raw_fn_for_proxy = getattr(raw_fn, "__wrapped__")
+                                if callable(raw_fn_for_proxy):
+                                    raw_fn = raw_fn_for_proxy
+                        except Exception:
+                            pass
                         fn = _InProcessFunctionProxy(
                             function_manager=self,
                             func_data=func_data,
@@ -3156,12 +3401,23 @@ class FunctionManager(BaseFunctionManager):
             if func_data.get("venv_id") is not None:
                 # Venv: proxy goes in namespace (only way to call them)
                 fn = self._create_venv_callable(func_data, namespace=namespace)
-                namespace[name] = fn
+                # Wrap boundary for lineage/events and keep proxy for return value.
+                namespace[name] = _LineageTrackedFunction(fn, name)
             else:
                 # In-process: exec puts raw function in namespace, return proxy to caller
                 # DON'T overwrite namespace - raw function stays for internal use
                 fn = self._create_in_process_callable(func_data, namespace=namespace)
-                # Note: namespace[name] remains the raw function from exec()
+                # replace namespace[name] with wrapper so inter-function calls
+                # also flow through lineage/event boundaries.
+                try:
+                    raw_root = namespace.get(name)
+                    if callable(raw_root) and not isinstance(
+                        raw_root,
+                        _LineageTrackedFunction,
+                    ):
+                        namespace[name] = _LineageTrackedFunction(raw_root, name)
+                except Exception:
+                    pass
 
             callables.append(fn)
 
@@ -4564,6 +4820,699 @@ class FunctionManager(BaseFunctionManager):
         else:
             raise ValueError(f"Unsupported function language: {language}")
 
+    # ------------------------------------------------------------------ #
+    #  Remote Windows Execution Helpers                                  #
+    # ------------------------------------------------------------------ #
+
+    # Remote Windows workspace directory (matches UNITY_WORKSPACE_DIR in agent-service)
+    # agent-service: path.join(path.parse(process.cwd()).root, 'Unity')
+    # On Windows: 'C:\Unity'
+    REMOTE_WINDOWS_WORKSPACE_DIR = "C:\\Unity"
+
+    # Shell mode for remote Windows command execution ('powershell' or 'cmd')
+    REMOTE_WINDOWS_SHELL_MODE = "powershell"
+
+    def _local_to_remote_path(self, local_path: str) -> str:
+        """
+        Convert a local absolute path to its remote Windows equivalent.
+
+        Preserves full directory structure under C:\\Unity.
+
+        Example:
+            /Users/julia/colliers2/data/file.xlsx
+            → C:\\Unity\\Users\\julia\\colliers2\\data\\file.xlsx
+        """
+        from pathlib import Path
+
+        local_abs = Path(local_path).resolve()
+        # Remove leading slash and convert to Windows path
+        # /Users/julia/... → Users\\julia\\...
+        relative = str(local_abs).lstrip("/").replace("/", "\\")
+        return f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{relative}"
+
+    async def _upload_data_to_remote(
+        self,
+        session: "aiohttp.ClientSession",
+        desktop_url: str,
+        headers: Dict[str, str],
+        local_path: str,
+    ) -> str:
+        """
+        Upload a file or directory to the remote VM via multipart.
+
+        Preserves full local directory structure under C:\\Unity.
+        Returns the remote Windows path.
+        """
+        import os
+        from pathlib import Path
+
+        local_path_obj = Path(local_path).resolve()
+
+        if not local_path_obj.exists():
+            raise FileNotFoundError(f"Data path does not exist: {local_path}")
+
+        # Compute the target directory on remote (preserving structure)
+        # /Users/julia/data/ → Users/julia/data/
+        path_relative_to_root = str(local_path_obj).lstrip("/")
+
+        if local_path_obj.is_file():
+            # Single file upload
+            target_dir = str(Path(path_relative_to_root).parent)
+            files_to_upload = [(local_path_obj, local_path_obj.name)]
+        else:
+            # Directory: collect all files recursively
+            target_dir = path_relative_to_root
+            files_to_upload = []
+            for root, _, filenames in os.walk(local_path_obj):
+                for fname in filenames:
+                    full_path = Path(root) / fname
+                    # Relative path within the directory
+                    rel_within_dir = full_path.relative_to(local_path_obj)
+                    files_to_upload.append((full_path, str(rel_within_dir)))
+
+        if not files_to_upload:
+            print(f"[windows exec] No files to upload from {local_path}")
+            return self._local_to_remote_path(local_path)
+
+        # Build multipart form
+        import aiohttp
+
+        form = aiohttp.FormData()
+        form.add_field("target_dir", target_dir)
+
+        file_handles = []
+        try:
+            for full_path, rel_name in files_to_upload:
+                fh = open(full_path, "rb")
+                file_handles.append(fh)
+                form.add_field(
+                    "files",
+                    fh,
+                    filename=rel_name,
+                    content_type="application/octet-stream",
+                )
+
+            print(
+                f"[windows exec] Uploading {len(files_to_upload)} files to {target_dir}",
+            )
+
+            async with session.post(
+                f"{desktop_url}/api/files",
+                data=form,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=600),  # 10 min for large uploads
+            ) as resp:
+                result = await resp.json()
+                if not resp.ok:
+                    raise RuntimeError(f"Upload failed: {result}")
+                print(f"[windows exec] Upload complete: {result.get('files', [])}")
+        finally:
+            for fh in file_handles:
+                fh.close()
+
+        return self._local_to_remote_path(local_path)
+
+    async def _download_data_from_remote(
+        self,
+        session: "aiohttp.ClientSession",
+        desktop_url: str,
+        headers: Dict[str, str],
+        local_path: str,
+    ) -> None:
+        """
+        Download output files from remote VM back to local path.
+
+        Uses the same path mapping: C:\\Unity\\path\\... → /path/...
+        """
+        import aiohttp
+        import base64
+        from pathlib import Path
+
+        local_path_obj = Path(local_path).resolve()
+
+        # Convert to relative path for remote listing
+        path_relative = str(local_path_obj).lstrip("/")
+
+        # First, list files at remote path
+        async with session.post(
+            f"{desktop_url}/api/files",
+            json={"action": "list", "path": path_relative},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            if not resp.ok:
+                print(
+                    f"[windows exec] Could not list remote output path: {path_relative}",
+                )
+                return
+            listing = await resp.json()
+
+        files_to_download = listing.get("files", [])
+        if not files_to_download:
+            print(f"[windows exec] No output files found at {path_relative}")
+            return
+
+        # Download each file
+        for file_info in files_to_download:
+            if file_info.get("type") == "directory":
+                # Recurse into subdirectory
+                subdir_local = local_path_obj / file_info["name"]
+                await self._download_data_from_remote(
+                    session,
+                    desktop_url,
+                    headers,
+                    str(subdir_local),
+                )
+                continue
+
+            filename = file_info["name"]
+            remote_file_path = f"{path_relative}/{filename}"
+
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "read",
+                    "filename": remote_file_path,
+                    "encoding": "base64",
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                if not resp.ok:
+                    print(f"[windows exec] Failed to download {remote_file_path}")
+                    continue
+                file_data = await resp.json()
+
+            # Write to local
+            local_file = local_path_obj / filename
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+
+            content = file_data.get("content", "")
+            encoding = file_data.get("encoding", "text")
+
+            if encoding == "base64":
+                local_file.write_bytes(base64.b64decode(content))
+            else:
+                local_file.write_text(content)
+
+            print(f"[windows exec] Downloaded: {remote_file_path} → {local_file}")
+
+    def _should_execute_python_function_on_remote_windows(
+        self,
+        func_data: Dict[str, Any],
+    ) -> bool:
+        """
+        Determine if a Python function should execute on a remote Windows VM.
+
+        Returns True when ALL of the following conditions are met:
+        - Function has windows_os_required=True
+        - Assistant has desktop_mode='windows'
+        - Assistant has is_user_desktop=False (managed VM, not user's machine)
+
+        Args:
+            func_data: Function metadata dict from the function store.
+
+        Returns:
+            True if remote Windows execution is required, False otherwise.
+        """
+        windows_os_required = func_data.get("windows_os_required", False)
+        if not windows_os_required:
+            return False
+
+        from unity.session_details import SESSION_DETAILS
+
+        assistant = SESSION_DETAILS.assistant
+        should_execute_remote = (
+            assistant.desktop_mode == "windows" and not assistant.is_user_desktop
+        )
+        return should_execute_remote
+
+    def _calculate_wait_time_from_vm_ready_at(
+        self,
+        vm_ready_at: Optional[str],
+    ) -> int:
+        """
+        Calculate seconds to wait based on vm_ready_at timestamp.
+
+        Uses the same logic as debug_logger._calc_wait_from_ready_at().
+
+        Args:
+            vm_ready_at: ISO timestamp string (e.g., "2025-01-16T14:02:00.000-08:00")
+
+        Returns:
+            Wait time in seconds, minimum 5 (no maximum).
+        """
+        if not vm_ready_at:
+            return 10  # Default if no timestamp
+
+        try:
+            from datetime import datetime, timezone
+
+            ready_dt = datetime.fromisoformat(vm_ready_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = (ready_dt - now).total_seconds()
+            return max(5, int(delta))
+        except Exception:
+            return 10  # Fallback on parse error
+
+    async def _wait_for_remote_windows_vm_ready(
+        self,
+        timeout: float = 300.0,
+    ) -> str:
+        """
+        Wait for the remote Windows VM to be ready before execution.
+
+        Polls the /infra/vm/status/{assistant_id} endpoint until vm_ready=True.
+        Uses the same endpoint pattern as debug_logger._resolve_windows_vm_liveview().
+
+        Args:
+            timeout: Maximum time to wait in seconds (default 5 minutes).
+
+        Returns:
+            The desktop_url when VM is ready.
+
+        Raises:
+            TimeoutError: If VM not ready within timeout.
+            RuntimeError: If configuration is missing.
+        """
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+        from unity.settings import SETTINGS
+
+        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+        assistant_id = SESSION_DETAILS.assistant.id
+
+        if not comms_url or not admin_key:
+            raise RuntimeError(
+                "Cannot check Windows VM status: COMMS_URL or ORCHESTRA_ADMIN_KEY "
+                "not configured",
+            )
+
+        start_time = asyncio.get_event_loop().time()
+        print(f"[windows exec] Waiting for VM ready (timeout={timeout}s)")
+
+        async with aiohttp.ClientSession() as session:
+            while True:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if elapsed > timeout:
+                    raise TimeoutError(
+                        f"Windows VM not ready after {timeout}s for assistant "
+                        f"{assistant_id}",
+                    )
+
+                try:
+                    async with session.get(
+                        f"{comms_url}/infra/vm/status/{assistant_id}",
+                        headers={"Authorization": f"Bearer {admin_key}"},
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as resp:
+                        if resp.ok:
+                            data = await resp.json()
+                            vm_ready = data.get("vm_ready", False)
+                            desktop_url = data.get("desktop_url")
+
+                            if vm_ready and desktop_url:
+                                print(f"[windows exec] VM ready")
+                                logger.info(
+                                    f"Windows VM ready for {assistant_id}: "
+                                    f"{desktop_url}",
+                                )
+                                return desktop_url.rstrip("/")
+
+                            vm_ready_at = data.get("vm_ready_at")
+                            wait_secs = self._calculate_wait_time_from_vm_ready_at(
+                                vm_ready_at,
+                            )
+                            remaining = timeout - elapsed
+                            await asyncio.sleep(min(wait_secs, remaining))
+                        else:
+                            resp_text = await resp.text()
+                            logger.warning(
+                                f"VM status check failed: {resp.status} "
+                                f"{resp_text}",
+                            )
+                            await asyncio.sleep(10)
+                except aiohttp.ClientError as e:
+                    logger.warning(f"VM status check error: {e}")
+                    await asyncio.sleep(10)
+
+    async def _prepare_venv_on_remote_windows(
+        self,
+        desktop_url: str,
+        venv_id: int,
+    ) -> str:
+        """
+        Prepare virtual environment on remote Windows VM.
+
+        Uses the existing /files endpoint to write pyproject.toml,
+        then the existing /exec endpoint to run 'uv sync'.
+
+        Args:
+            desktop_url: Base URL for the Windows VM agent-service.
+            venv_id: The venv ID to prepare.
+
+        Returns:
+            Path to the Python executable in the prepared venv.
+
+        Raises:
+            ValueError: If venv_id does not exist.
+            RuntimeError: If venv preparation fails.
+        """
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+
+        venv_data = self.get_venv(venv_id=venv_id)
+        if venv_data is None:
+            raise ValueError(f"VirtualEnv with ID {venv_id} not found")
+
+        pyproject_content = venv_data["venv"]
+        venv_dir = f"venvs\\venv_{venv_id}"
+        headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
+
+        print(f"[windows exec] Preparing venv {venv_id}")
+
+        async with aiohttp.ClientSession() as session:
+            # Step 1: Write pyproject.toml
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "save",
+                    "files": [
+                        {
+                            "filename": f"{venv_dir}\\pyproject.toml",
+                            "content": pyproject_content,
+                            "encoding": "text",
+                        },
+                    ],
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if not resp.ok:
+                    resp_text = await resp.text()
+                    raise RuntimeError(
+                        f"Failed to write pyproject.toml to remote: {resp_text}",
+                    )
+
+            # Step 2: Install uv via pip
+            print(f"[windows exec] Installing uv")
+            async with session.post(
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": "pip install uv",
+                    "cwd": self.REMOTE_WINDOWS_WORKSPACE_DIR,
+                    "timeout": 300000,
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=360),
+            ) as resp:
+                await resp.json()  # Don't fail if uv already installed
+
+            # Step 3: Run 'uv sync'
+            venv_full_path = f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{venv_dir}"
+            print(f"[windows exec] Running uv sync")
+            async with session.post(
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": "uv sync",
+                    "cwd": venv_full_path,
+                    "timeout": 600000,
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=660),
+            ) as resp:
+                result = await resp.json()
+                if result.get("exitCode", 1) != 0:
+                    raise RuntimeError(
+                        f"Failed to sync venv on remote: "
+                        f"{result.get('stderr', result.get('stdout', 'Unknown error'))}",
+                    )
+
+            python_path = f"{venv_full_path}\\.venv\\Scripts\\python.exe"
+            logger.info(f"Prepared venv {venv_id} on remote Windows VM")
+            return python_path
+
+    async def _execute_python_function_on_remote_windows(
+        self,
+        *,
+        func_data: Dict[str, Any],
+        implementation: str,
+        call_kwargs: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Execute a Python function on a remote Windows VM.
+
+        Uses the existing /files and /exec endpoints:
+        1. Wait for VM to be ready
+        2. Prepare venv on remote (if venv_id specified)
+        3. Write Python script to remote using /files (CRUD)
+        4. Execute script using /exec (general command execution)
+        5. Read results and clean up
+
+        Args:
+            func_data: Function metadata dict.
+            implementation: Function source code.
+            call_kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            Dict with keys: result, error, stdout, stderr
+        """
+        import uuid
+
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+
+        # Strip @custom_function decorators (not available on remote Windows)
+        implementation = _strip_custom_function_decorators(implementation)
+
+        func_name_meta = func_data.get("name", "unknown")
+        print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
+
+        # Step 1: Get desktop URL
+        desktop_url = await self._wait_for_remote_windows_vm_ready()
+        headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
+
+        # Step 2: Prepare venv on remote (if specified)
+        venv_id = func_data.get("venv_id")
+        if venv_id is not None:
+            python_path = await self._prepare_venv_on_remote_windows(
+                desktop_url,
+                venv_id,
+            )
+        else:
+            python_path = "python"
+
+        async with aiohttp.ClientSession() as session:
+            # Step 2.5: Upload required data files
+            data_required = func_data.get("data_required") or []
+            rewritten_kwargs = dict(call_kwargs or {})
+
+            for item in data_required:
+                if item.startswith("/"):
+                    # Static path - upload directly
+                    local_path = item
+                else:
+                    # Argument name - get value from kwargs
+                    if item not in rewritten_kwargs:
+                        print(
+                            f"[windows exec] Warning: data_required item "
+                            f"'{item}' not found in kwargs",
+                        )
+                        continue
+                    local_path = rewritten_kwargs[item]
+
+                try:
+                    remote_path = await self._upload_data_to_remote(
+                        session=session,
+                        desktop_url=desktop_url,
+                        headers=headers,
+                        local_path=local_path,
+                    )
+                    # Rewrite kwargs for arg-based items
+                    if item in rewritten_kwargs:
+                        rewritten_kwargs[item] = remote_path
+                        print(
+                            f"[windows exec] Rewrote {item}: {local_path} → {remote_path}",
+                        )
+                except Exception as e:
+                    print(f"[windows exec] Failed to upload {item}: {e}")
+                    return {
+                        "result": None,
+                        "error": f"Data upload failed for '{item}': {e}",
+                        "stdout": "",
+                        "stderr": "",
+                    }
+
+            # Also rewrite output paths to their remote equivalents
+            data_output = func_data.get("data_output") or []
+            output_local_paths: Dict[str, str] = {}  # Store for download phase
+
+            for arg_name in data_output:
+                if arg_name in rewritten_kwargs:
+                    local_path = rewritten_kwargs[arg_name]
+                    remote_path = self._local_to_remote_path(local_path)
+                    output_local_paths[arg_name] = local_path
+                    rewritten_kwargs[arg_name] = remote_path
+                    print(
+                        f"[windows exec] Output path {arg_name}: "
+                        f"{local_path} → {remote_path}",
+                    )
+
+            # Step 3: Build wrapper script
+            exec_id = uuid.uuid4().hex[:8]
+            is_async = "async def" in implementation
+
+            try:
+                tree = ast.parse(implementation)
+                func_name = tree.body[0].name if tree.body else "main"
+            except Exception:
+                func_name = "main"
+
+            call_kwargs_json = json.dumps(rewritten_kwargs)
+
+            if is_async:
+                invoke_code = f"result = asyncio.run({func_name}(**call_kwargs))"
+            else:
+                invoke_code = f"result = {func_name}(**call_kwargs)"
+
+            wrapper_script = f"""
+import json
+import asyncio
+import sys
+
+# Function implementation
+{implementation}
+
+# Execution wrapper
+def _main():
+    call_kwargs = json.loads({repr(call_kwargs_json)})
+    try:
+        {invoke_code}
+        output = {{"result": result, "error": None}}
+    except Exception as e:
+        import traceback
+        output = {{"result": None, "error": traceback.format_exc()}}
+
+    # Write result to file
+    with open("_result_{exec_id}.json", "w", encoding="utf-8") as f:
+        json.dump(output, f, default=str)
+
+    print("__EXECUTION_COMPLETE__")
+
+if __name__ == "__main__":
+    _main()
+"""
+
+            # Step 4: Write script to remote
+            script_filename = f"scripts\\_exec_{exec_id}.py"
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "save",
+                    "files": [
+                        {
+                            "filename": script_filename,
+                            "content": wrapper_script,
+                            "encoding": "text",
+                        },
+                    ],
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if not resp.ok:
+                    resp_text = await resp.text()
+                    return {
+                        "result": None,
+                        "error": (f"Failed to write script to remote: {resp_text}"),
+                        "stdout": "",
+                        "stderr": "",
+                    }
+
+            # Step 5: Execute script
+            cwd = self.REMOTE_WINDOWS_WORKSPACE_DIR
+            exec_command = f'& "{python_path}" "{script_filename}"'
+            print(
+                f"[windows exec] Starting script: {exec_command} - CWD: {cwd} - Kwargs: {rewritten_kwargs}",
+            )
+
+            async with session.post(
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": exec_command,
+                    "cwd": cwd,
+                    "timeout": 3600000,  # 1 hour
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                    "user_session": True,  # Run in interactive user session for COM/Excel
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=3660),
+            ) as resp:
+                exec_result = await resp.json()
+
+            stdout = exec_result.get("stdout", "")
+            stderr = exec_result.get("stderr", "")
+            exit_code = exec_result.get("exitCode")
+            print(f"[windows exec] Execution complete (exitCode={exit_code})")
+
+            # Step 6: Read result file
+            result_filename = f"_result_{exec_id}.json"
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "read",
+                    "filename": result_filename,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if resp.ok:
+                    file_data = await resp.json()
+                    content = file_data.get("content", "{}")
+                    try:
+                        result_data = json.loads(content)
+                    except json.JSONDecodeError:
+                        result_data = {
+                            "result": None,
+                            "error": "Failed to parse result JSON",
+                        }
+                else:
+                    result_data = {
+                        "result": None,
+                        "error": (
+                            f"Execution failed: {stderr}" if stderr else "Unknown error"
+                        ),
+                    }
+
+            # Step 7: Download output data
+            for arg_name, local_path in output_local_paths.items():
+                try:
+                    await self._download_data_from_remote(
+                        session=session,
+                        desktop_url=desktop_url,
+                        headers=headers,
+                        local_path=local_path,
+                    )
+                except Exception as e:
+                    print(
+                        f"[windows exec] Warning: Failed to download "
+                        f"output '{arg_name}': {e}",
+                    )
+                    # Don't fail the whole execution for output download issues
+
+            return {
+                "result": result_data.get("result"),
+                "error": result_data.get("error"),
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+
     async def _execute_python_function(
         self,
         *,
@@ -4578,6 +5527,14 @@ class FunctionManager(BaseFunctionManager):
         computer_primitives: Optional[Any],
     ) -> Dict[str, Any]:
         """Execute a Python function with venv and state mode support."""
+        # Check if remote Windows execution is required
+        if self._should_execute_python_function_on_remote_windows(func_data):
+            return await self._execute_python_function_on_remote_windows(
+                func_data=func_data,
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+            )
+
         # Strip @custom_function decorators (not available in subprocess runner)
         implementation = _strip_custom_function_decorators(implementation)
 

@@ -1,8 +1,6 @@
 import requests
-from unify.utils import http
 
 from unity.settings import SETTINGS
-
 
 # admin headers and URLs
 admin_headers = {
@@ -16,7 +14,9 @@ def dispatch_livekit_agent(livekit_agent_name: str, room_name: str = None):
     try:
         if not room_name:
             room_name = livekit_agent_name
-        response = http.post(
+        # Fire-and-forget: use requests.post directly (not unify.utils.http)
+        # to avoid retry logic. Timeout is expected; we dispatch and move on.
+        response = requests.post(
             f"{unity_comms_url}/phone/dispatch-livekit-agent",
             headers=admin_headers,
             json={"livekit_agent_name": livekit_agent_name, "room_name": room_name},

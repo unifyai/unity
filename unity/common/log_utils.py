@@ -143,8 +143,8 @@ def _derive_all_contexts(context: str) -> List[str]:
         "JohnDoe/MyAssistant/Contacts" -> ["JohnDoe/All/Contacts", "All/Contacts"]
 
         Testing:
-        "tests/test_foo/DefaultUser/Assistant/Contacts" ->
-            ["tests/test_foo/DefaultUser/All/Contacts", "tests/test_foo/All/Contacts"]
+        "tests/foo/DefaultUser/Assistant/Contacts" ->
+            ["tests/foo/DefaultUser/All/Contacts", "tests/foo/All/Contacts"]
 
         Invalid (too few parts):
         "JohnDoe/Contacts" -> []

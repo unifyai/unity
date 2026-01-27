@@ -60,6 +60,9 @@ class _StaticAnswerHandle(SteerableToolHandle):
     def done(self) -> bool:
         return True
 
+    def trigger_completion(self, result: str | None = None) -> None:
+        """No-op for static answer handles (already complete)."""
+
     async def result(self) -> str:
         return self._answer
 
@@ -305,10 +308,13 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 pass
 
     async def result(self) -> str:
-        # Simulate consuming the final step *if* steps are used and not yet done
-        if self._steps is not None and not self._done_event.is_set():
-            self.simulate_step()
-        await asyncio.to_thread(self._done_event.wait)
+        # Wait for action to complete using polling instead of asyncio.to_thread().
+        # Using asyncio.to_thread(_done_event.wait) creates executor threads that block
+        # indefinitely, which prevents pytest-asyncio from cleaning up the event loop
+        # after tests complete. Polling with asyncio.sleep() allows the coroutine to be
+        # cancelled cleanly during event loop shutdown.
+        while not self._done_event.is_set():
+            await asyncio.sleep(0.1)
         raw_result = self._result_str  # type: ignore
 
         # If response_format is specified, generate structured output
@@ -667,6 +673,29 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     def done(self) -> bool:
         return self._done_event.is_set()
 
+    def trigger_completion(self, result: str | None = None) -> None:
+        """Trigger immediate completion of the simulated actor.
+
+        This is a test-only method that forces the actor to complete immediately,
+        unblocking any awaiting result() calls. Useful for deterministic testing
+        without relying on step counts or durations.
+
+        Args:
+            result: Optional result string. If not provided, uses a default
+                    completion message.
+
+        Note: Idempotent - calling on an already-completed actor has no effect.
+        """
+        if self._done_event.is_set():
+            return  # Already done, no-op
+
+        msg = (
+            result
+            if result is not None
+            else f"Completed '{self._description}' (triggered)."
+        )
+        self._complete(msg)
+
     # ------------------------
     # Status query helpers
     # ------------------------
@@ -705,31 +734,35 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     # Event APIs required by SteerableToolHandle
     # ------------------------
     async def next_clarification(self) -> dict:
+        # If no clarification queue, block until the action completes
+        # (similar to next_notification when emit_notifications=False)
+        # Use polling instead of asyncio.to_thread() to allow clean cancellation
+        if self._clarification_up_q is None:
+            while not self._done_event.is_set():
+                await asyncio.sleep(0.1)
+            return {}
+
         try:
-            if self._clarification_up_q is not None:
-                msg = await self._clarification_up_q.get()
-                return {
-                    "type": "clarification",
-                    "call_id": "unknown",
-                    "tool_name": "simulated_actor",
-                    "question": msg,
-                }
+            msg = await self._clarification_up_q.get()
+            return {
+                "type": "clarification",
+                "call_id": "unknown",
+                "tool_name": "simulated_actor",
+                "question": msg,
+            }
         except Exception:
             pass
         return {}
 
     async def next_notification(self) -> dict:
         # If notifications are disabled, block until the action completes
+        # Use polling instead of asyncio.to_thread() to allow clean cancellation
         if not self._emit_notifications:
-            await asyncio.to_thread(self._done_event.wait)
+            while not self._done_event.is_set():
+                await asyncio.sleep(0.1)
             return {}
 
-        # Consume a unit of progress and report a concise, simulation‑consistent update
-        try:
-            self.simulate_step()
-        except Exception:
-            pass
-
+        # Report progress without consuming steps (observing isn't work)
         # Compose a small progress message consistent with the configured mode
         try:
             desc = str(self._description) if self._description else "activity"

@@ -46,6 +46,11 @@ class SteerableHandle(ABC):
     i.e., a continuation of the parent "conversation" (which may itself be another
     tool loop). Implementations should ensure that, when provided, this context is
     surfaced to the LLM in an appropriate way.
+
+    This parameter is a plumbing parameter that is automatically hidden from LLM
+    tool schemas by ``method_to_schema`` (LLMs should not control this value; it is
+    injected by the orchestrating code layer). This matches the naming convention
+    of ``parent_chat_context`` used in ``start_async_tool_loop``.
     """
 
     @abstractmethod
@@ -54,7 +59,7 @@ class SteerableHandle(ABC):
         question: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        images: "Optional[ImageRefs]" = None,
     ) -> "SteerableHandle":
         """
         Query the status or progress of this running task (async - result arrives on next turn).
@@ -71,13 +76,7 @@ class SteerableHandle(ABC):
         ----------
         question : str
             The follow-up user question.
-        parent_chat_context_cont : list[dict] | None, optional
-            The parent chat context continued since the start of this loop.
-            This is the continuation of the parent conversation to date. When
-            provided, implementations should thread this into the LLM input. The
-            user message should be packaged as a dict content containing keys
-            "parent_chat_context_continuted" and "message".
-        images : list | dict | None, optional
+        images : ImageRefs | None, optional
             Live image references to make available during this ask flow.
             Implementations should forward these to any nested asks so inner
             loops can attach/ask about images (optionally with new annotations).
@@ -89,7 +88,7 @@ class SteerableHandle(ABC):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Provide additional information or instructions to the running task.
 
@@ -100,11 +99,7 @@ class SteerableHandle(ABC):
         ----------
         message : str
             The user interjection to inject into the loop.
-        parent_chat_context_cont : list[dict] | None, optional
-            The parent chat context continued since the start of this loop.
-            When provided, implementations should ensure the LLM sees this
-            continuation alongside the interjection.
-        images : list | dict | None, optional
+        images : ImageRefs | None, optional
             Live image references to make available during this interjection.
         """
 
@@ -124,6 +119,7 @@ class SteerableToolHandle(SteerableHandle):
         reason: Optional[str] = None,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Stop this task immediately, cancelling any pending work.
 
@@ -134,10 +130,8 @@ class SteerableToolHandle(SteerableHandle):
         ----------
         reason : str | None
             Optional human-readable reason for stopping.
-        parent_chat_context_cont : list[dict] | None, optional
-            The parent chat context continued since the start of this loop.
-            Included for signature parity; no LLM call is made here, but this
-            value is forwarded to any delegated handle if present.
+        images : ImageRefs | None, optional
+            Live image references to attach at the time of this stop command.
         """
 
     @abstractmethod
@@ -333,7 +327,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         question: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        images: "Optional[ImageRefs]" = None,
         _return_reasoning_steps: bool = False,
         **kwargs,
     ) -> "SteerableToolHandle":
@@ -528,7 +522,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: list | None = None,
+        images: "Optional[ImageRefs]" = None,
         trigger_immediate_llm_turn: bool = True,
         **kwargs,
     ) -> None:
@@ -572,6 +566,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         reason: Optional[str] = None,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: "Optional[ImageRefs]" = None,
         **kwargs,
     ) -> None:
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
@@ -589,7 +584,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "stop",
-                        "kwargs": {"reason": reason, **(kwargs or {})},
+                        "kwargs": {
+                            "reason": reason,
+                            "images": images,
+                            **(kwargs or {}),
+                        },
                     },
                 },
             )
