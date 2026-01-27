@@ -337,7 +337,9 @@ async def check_spending_limits_callback(
             logger.warning(f"Limit check failed with exception: {result}")
             continue
         if result.exceeded:
-            current = f"${result.current_spend:.2f}" if result.current_spend else "unknown"
+            current = (
+                f"${result.current_spend:.2f}" if result.current_spend else "unknown"
+            )
             limit = f"${result.limit_value:.2f}" if result.limit_value else "unknown"
             reason = f"Monthly spending limit exceeded: {result.limit_type} limit of {limit} reached (current: {current})"
             return LimitCheckResponse(
@@ -391,4 +393,3 @@ def uninstall_limit_check_hook() -> None:
         pass
     except Exception:
         pass
-

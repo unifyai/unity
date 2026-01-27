@@ -657,7 +657,9 @@ class TestCheckSpendingLimitsCallback:
         mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -689,7 +691,9 @@ class TestCheckSpendingLimitsCallback:
         mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -732,7 +736,9 @@ class TestPersonalContextLimitChecks:
             return mock_response
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -776,7 +782,9 @@ class TestOrgContextLimitChecks:
             return mock_response
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -796,7 +804,9 @@ class TestOrgContextLimitChecks:
         # Should check assistant, member, and org limits
         assert any("assistant" in url for url in captured_urls)
         assert any("members" in url for url in captured_urls)
-        assert any("organization" in url and "members" not in url for url in captured_urls)
+        assert any(
+            "organization" in url and "members" not in url for url in captured_urls
+        )
 
     @pytest.mark.asyncio
     async def test_member_limit_exceeded(self):
@@ -819,7 +829,9 @@ class TestOrgContextLimitChecks:
             return mock_response
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -852,7 +864,9 @@ class TestLimitCheckErrorHandling:
             raise httpx.TimeoutException("Timeout")
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -888,7 +902,9 @@ class TestLimitCheckErrorHandling:
             return mock_response
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -924,7 +940,9 @@ class TestLimitCheckErrorHandling:
             return mock_response
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -966,7 +984,9 @@ class TestParallelLimitChecks:
             return mock_response
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -1012,7 +1032,9 @@ class TestNoLimitSet:
         mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -1081,7 +1103,9 @@ class TestLimitBoundary:
         mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -1113,7 +1137,9 @@ class TestLimitBoundary:
         mock_response.raise_for_status = MagicMock()
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
-            with patch("unity.spending_limits._get_base_url", return_value="http://test/v0"):
+            with patch(
+                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+            ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
                     mock_session.user_id = "user_456"
@@ -1247,9 +1273,9 @@ class TestE2ESpendingLimits:
         from unillm import is_limit_check_enabled
 
         unity.init()
-        assert is_limit_check_enabled(), (
-            "Limit check hook should be installed after unity.init()"
-        )
+        assert (
+            is_limit_check_enabled()
+        ), "Limit check hook should be installed after unity.init()"
 
     @pytest.mark.asyncio
     async def test_limit_check_callback_allows_under_limit(self, e2e_config):
@@ -1338,9 +1364,9 @@ class TestE2ESpendingLimits:
                 else 0
             )
 
-        assert spend_after >= spend_before, (
-            f"Spend should not decrease: {spend_before} -> {spend_after}"
-        )
+        assert (
+            spend_after >= spend_before
+        ), f"Spend should not decrease: {spend_before} -> {spend_after}"
 
     @pytest.mark.asyncio
     async def test_limit_exceeded_blocks_llm_call(self, e2e_config):
@@ -1553,7 +1579,9 @@ class TestE2ESpendingLimits:
         )
 
         # At least some calls should succeed
-        successful = [r for r in results if r is not None and not isinstance(r, Exception)]
+        successful = [
+            r for r in results if r is not None and not isinstance(r, Exception)
+        ]
         assert len(successful) > 0, "At least one concurrent call should succeed"
 
         # Wait for async logging
@@ -1573,9 +1601,9 @@ class TestE2ESpendingLimits:
             )
 
         # Spend should have increased
-        assert spend_after >= spend_before, (
-            f"Spend should increase after concurrent calls: {spend_before} -> {spend_after}"
-        )
+        assert (
+            spend_after >= spend_before
+        ), f"Spend should increase after concurrent calls: {spend_before} -> {spend_after}"
 
     @pytest.mark.asyncio
     async def test_all_spending_monthly_context(self, e2e_config):
@@ -1615,13 +1643,15 @@ class TestE2ESpendingLimits:
             # Should find at least one log with required fields
             current_month = datetime.now().strftime("%Y-%m")
             matching_logs = [
-                log for log in logs
+                log
+                for log in logs
                 if log.get("entries", {}).get("month") == current_month
-                and log.get("entries", {}).get("_assistant_id") == str(e2e_config.test_agent_id)
+                and log.get("entries", {}).get("_assistant_id")
+                == str(e2e_config.test_agent_id)
             ]
-            assert len(matching_logs) > 0 or len(logs) > 0, (
-                "Should find spending logs in All/Spending/Monthly context"
-            )
+            assert (
+                len(matching_logs) > 0 or len(logs) > 0
+            ), "Should find spending logs in All/Spending/Monthly context"
 
     @pytest.mark.asyncio
     async def test_user_limit_check(self, e2e_config):
@@ -1679,9 +1709,9 @@ class TestE2ESpendingLimits:
             )
 
         # Should successfully retrieve user spend (even if 0)
-        assert response.status_code == 200, (
-            f"User spend endpoint failed: {response.status_code} {response.text}"
-        )
+        assert (
+            response.status_code == 200
+        ), f"User spend endpoint failed: {response.status_code} {response.text}"
         data = response.json()
         assert "cumulative_spend" in data or "error" not in data
 
@@ -1703,7 +1733,9 @@ class TestE2ESpendingLimits:
             )
             original_limit = 25.0
             if response.status_code == 200:
-                original_limit = response.json().get("monthly_spending_cap", 25.0) or 25.0
+                original_limit = (
+                    response.json().get("monthly_spending_cap", 25.0) or 25.0
+                )
 
         # Set assistant limit to $0
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1779,9 +1811,9 @@ class TestE2ESpendingLimits:
             )
 
         # Should successfully retrieve org spend
-        assert response.status_code == 200, (
-            f"Org spend endpoint failed: {response.status_code} {response.text}"
-        )
+        assert (
+            response.status_code == 200
+        ), f"Org spend endpoint failed: {response.status_code} {response.text}"
 
     @pytest.mark.asyncio
     async def test_org_limit_check(self, e2e_config):
@@ -1868,6 +1900,7 @@ class TestE2ESpendingLimits:
 
             # Reset session to personal context
             from unity.session_details import SESSION_DETAILS
+
             SESSION_DETAILS.populate(
                 user_id=e2e_config.test_user_id,
                 assistant_id=str(e2e_config.test_agent_id),

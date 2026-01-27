@@ -53,7 +53,7 @@ def _check_orchestra_available() -> bool:
     """Check if Orchestra server is reachable. Cached after first call."""
     if hasattr(_check_orchestra_available, "_cached"):
         return _check_orchestra_available._cached
-    
+
     orchestra_url = os.environ.get("ORCHESTRA_URL", "http://localhost:8000")
     try:
         with httpx.Client(timeout=2.0) as client:
@@ -63,7 +63,7 @@ def _check_orchestra_available() -> bool:
             _check_orchestra_available._cached = resp.status_code in (200, 401, 403)
     except Exception:
         _check_orchestra_available._cached = False
-    
+
     return _check_orchestra_available._cached
 
 
@@ -600,7 +600,7 @@ def pytest_configure(config):
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
     _set_unify_context_for_test(item)
-    
+
     # Skip requires_orchestra tests if Orchestra is not running
     if item.get_closest_marker("requires_orchestra"):
         if not _check_orchestra_available():
