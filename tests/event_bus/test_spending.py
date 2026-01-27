@@ -1205,12 +1205,37 @@ class E2ETestConfig:
 
 @pytest_asyncio.fixture
 async def e2e_config():
-    """Set up e2e test environment with seeded assistant."""
+    """Set up e2e test environment with seeded assistant and user."""
     config = E2ETestConfig.from_env()
     headers = {"Authorization": f"Bearer {config.api_key}"}
+    admin_headers = {"Authorization": f"Bearer {config.admin_key}"}
 
-    # Seed test assistant
     async with httpx.AsyncClient(timeout=30.0) as client:
+        # Seed test user (required for user spend endpoint tests)
+        # Check if user exists first
+        response = await client.get(
+            f"{config.base_url}/admin/user/{config.test_user_id}/spend",
+            headers=admin_headers,
+            params={"month": "2026-01"},
+        )
+        if response.status_code == 404:
+            # Create the test user
+            response = await client.post(
+                f"{config.base_url}/admin/auth-user",
+                headers=admin_headers,
+                json={
+                    "email": f"{config.test_user_id}@test.local",
+                    "name": "Test",
+                    "last_name": "User",
+                },
+            )
+            if response.status_code in (200, 201):
+                # Update test_user_id to match the created user's ID
+                user_data = response.json()
+                if "id" in user_data:
+                    config.test_user_id = user_data["id"]
+
+        # Seed test assistant
         # Check if assistant exists
         response = await client.get(f"{config.base_url}/assistant", headers=headers)
         if response.status_code == 200:
@@ -1257,6 +1282,22 @@ async def e2e_config():
     }
 
     yield config
+
+    # Cleanup: reset assistant spending cap to NULL (no limit) to ensure clean state
+    if config.test_agent_id:
+
+        async def reset_spending_cap():
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.patch(
+                    f"{config.base_url}/assistant/{config.test_agent_id}/config",
+                    headers={"Authorization": f"Bearer {config.api_key}"},
+                    json={"monthly_spending_cap": None},
+                )
+
+        try:
+            asyncio.get_event_loop().run_until_complete(reset_spending_cap())
+        except Exception:
+            pass  # Best effort cleanup
 
     # Cleanup: reset SESSION_DETAILS
     SESSION_DETAILS.reset()
@@ -1378,15 +1419,25 @@ class TestE2ESpendingLimits:
 
         headers = {"Authorization": f"Bearer {e2e_config.api_key}"}
 
-        # Set assistant limit to $0
+        # Save original limit before modifying
+        original_limit = None
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.patch(
-                f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/config",
+            response = await client.get(
+                f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}",
                 headers=headers,
-                json={"monthly_spending_cap": 0.0},
             )
+            if response.status_code == 200:
+                original_limit = response.json().get("monthly_spending_cap")
 
         try:
+            # Set assistant limit to $0
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.patch(
+                    f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/config",
+                    headers=headers,
+                    json={"monthly_spending_cap": 0.0},
+                )
+
             llm_client = unillm.AsyncUnify(e2e_config.model)
 
             with pytest.raises(unillm.SpendingLimitExceededError):
@@ -1395,12 +1446,12 @@ class TestE2ESpendingLimits:
                     max_tokens=10,
                 )
         finally:
-            # Restore limit
+            # Restore original limit (None means no limit)
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.patch(
                     f"{e2e_config.base_url}/assistant/{e2e_config.test_agent_id}/config",
                     headers=headers,
-                    json={"monthly_spending_cap": 25.0},
+                    json={"monthly_spending_cap": original_limit},
                 )
 
     @pytest.mark.asyncio
@@ -1663,17 +1714,27 @@ class TestE2ESpendingLimits:
 
         headers = {"Authorization": f"Bearer {e2e_config.api_key}"}
 
-        # Set user limit to $0
+        # Save original user limit before modifying
+        original_limit = None
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.put(
+            response = await client.get(
                 f"{e2e_config.base_url}/user/spending-limit",
                 headers=headers,
-                json={"monthly_spending_cap": 0.0},
             )
-            if response.status_code not in (200, 201):
-                pytest.skip("Cannot set user spending limit")
+            if response.status_code == 200:
+                original_limit = response.json().get("monthly_spending_cap")
 
         try:
+            # Set user limit to $0
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.put(
+                    f"{e2e_config.base_url}/user/spending-limit",
+                    headers=headers,
+                    json={"monthly_spending_cap": 0.0},
+                )
+                if response.status_code not in (200, 201):
+                    pytest.skip("Cannot set user spending limit")
+
             llm_client = unillm.AsyncUnify(e2e_config.model)
 
             # Should be blocked by user or assistant limit
@@ -1683,12 +1744,12 @@ class TestE2ESpendingLimits:
                     max_tokens=10,
                 )
         finally:
-            # Restore user limit
+            # Restore original user limit (None means no limit)
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.put(
                     f"{e2e_config.base_url}/user/spending-limit",
                     headers=headers,
-                    json={"monthly_spending_cap": 50.0},
+                    json={"monthly_spending_cap": original_limit},
                 )
 
     @pytest.mark.asyncio
@@ -1859,17 +1920,26 @@ class TestE2ESpendingLimits:
             if not org_id or not org_api_key:
                 pytest.skip("Cannot create organization with API key for test")
 
-        # Set org limit to $0
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.put(
+            # Save original org limit before modifying
+            original_org_limit = None
+            response = await client.get(
                 f"{e2e_config.base_url}/organizations/{org_id}/spending-limit",
                 headers=headers,
-                json={"monthly_spending_cap": 0.0},
             )
-            if response.status_code not in (200, 201):
-                pytest.skip("Cannot set org spending limit")
+            if response.status_code == 200:
+                original_org_limit = response.json().get("monthly_spending_cap")
 
         try:
+            # Set org limit to $0
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.put(
+                    f"{e2e_config.base_url}/organizations/{org_id}/spending-limit",
+                    headers=headers,
+                    json={"monthly_spending_cap": 0.0},
+                )
+                if response.status_code not in (200, 201):
+                    pytest.skip("Cannot set org spending limit")
+
             # Update SESSION_DETAILS with org context
             from unity.session_details import SESSION_DETAILS
 
@@ -1890,12 +1960,12 @@ class TestE2ESpendingLimits:
                     max_tokens=10,
                 )
         finally:
-            # Restore org limit and session
+            # Restore original org limit (None means no limit) and session
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.put(
                     f"{e2e_config.base_url}/organizations/{org_id}/spending-limit",
                     headers=headers,
-                    json={"monthly_spending_cap": 1000.0},
+                    json={"monthly_spending_cap": original_org_limit},
                 )
 
             # Reset session to personal context
