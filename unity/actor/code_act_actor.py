@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import contextlib
 import contextvars
 import functools
 import inspect
@@ -7,10 +9,11 @@ import traceback
 import ast
 import copy
 import uuid
+import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from secrets import token_hex as _token_hex
 import logging
-from contextlib import redirect_stdout, redirect_stderr
 from typing import (
     Any,
     Dict,
@@ -21,6 +24,7 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
     Literal,
+    Union,
 )
 from pydantic import BaseModel
 
@@ -56,6 +60,225 @@ _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Structured output types for sandbox execution
+# ---------------------------------------------------------------------------
+@dataclass
+class TextOutput:
+    """A text output part from sandbox execution."""
+
+    text: str
+
+
+@dataclass
+class ImageOutput:
+    """An image output part from sandbox execution (e.g., from display())."""
+
+    image_mime: str
+    data: str  # base64 encoded
+
+
+@dataclass
+class ErrorOutput:
+    """An error output part from sandbox execution."""
+
+    exception: Union[Exception, BaseException]
+
+
+OutputPart = Union[TextOutput, ImageOutput, ErrorOutput]
+
+
+def parts_to_text(parts: list[OutputPart]) -> str:
+    """Convert a list of OutputPart to a plain text string.
+
+    Useful for backward compatibility and simple text extraction.
+    Only TextOutput parts are included; ImageOutput and ErrorOutput are skipped.
+    """
+    return "".join(p.text for p in parts if isinstance(p, TextOutput))
+
+
+# ---------------------------------------------------------------------------
+# ContextVars for per-execution stream isolation
+# ---------------------------------------------------------------------------
+_stdout_parts: contextvars.ContextVar[list[OutputPart]] = contextvars.ContextVar(
+    "sandbox_stdout_parts",
+)
+_stderr_parts: contextvars.ContextVar[list[OutputPart]] = contextvars.ContextVar(
+    "sandbox_stderr_parts",
+)
+_current_stdout: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "sandbox_current_stdout",
+)
+_current_stderr: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "sandbox_current_stderr",
+)
+
+
+# ---------------------------------------------------------------------------
+# Stream capture classes
+# ---------------------------------------------------------------------------
+class StreamLike:
+    """Captures output to a parts list, supporting text and images."""
+
+    def __init__(self, parts_var: contextvars.ContextVar[list[OutputPart]]):
+        self._parts_var = parts_var
+
+    def write(self, obj: str) -> int:
+        parts = self._parts_var.get()
+        if parts and isinstance(parts[-1], TextOutput):
+            parts[-1].text += obj
+        else:
+            parts.append(TextOutput(text=obj))
+        return len(obj)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+
+class StreamRouter:
+    """Routes writes to the current context's stream, falls back to original stream.
+
+    Uses __getattr__ to forward ALL unknown attributes/methods to the current stream,
+    ensuring compatibility with Jupyter's introspection (e.g., _ipython_* methods),
+    and any future stream methods we haven't explicitly handled.
+    """
+
+    def __init__(
+        self,
+        context_var: contextvars.ContextVar[Any],
+        fallback: Any,
+    ):
+        # Use object.__setattr__ to avoid triggering our __getattr__
+        object.__setattr__(self, "_context_var", context_var)
+        object.__setattr__(self, "_fallback", fallback)
+
+    def _get_stream(self) -> Any:
+        try:
+            return self._context_var.get()
+        except LookupError:
+            return self._fallback
+
+    def write(self, s: str) -> int:
+        return self._get_stream().write(s)
+
+    def flush(self) -> None:
+        return self._get_stream().flush()
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward any unknown attribute to the current stream."""
+        return getattr(self._get_stream(), name)
+
+
+# ---------------------------------------------------------------------------
+# Lazy StreamRouter installation (installed on first sandbox use)
+# ---------------------------------------------------------------------------
+# We install the StreamRouter lazily (on first sandbox use) rather than at
+# module load to avoid conflicts with pytest and other test frameworks that
+# replace sys.stdout after imports. By installing on first use, we capture
+# whatever stdout is current at that moment (e.g., pytest's capture) as our
+# fallback, ensuring proper output routing.
+_stream_router_installed = False
+_original_stdout: Any = None
+_original_stderr: Any = None
+
+
+def _ensure_stream_router_installed() -> None:
+    """Install StreamRouters for sys.stdout/stderr if not already installed.
+
+    This is called at the start of each sandbox execution. We check if
+    sys.stdout is actually a StreamRouter (not just a flag) because pytest
+    and other frameworks may replace sys.stdout between tests.
+    """
+    global _stream_router_installed, _original_stdout, _original_stderr
+
+    # Check if sys.stdout is still our StreamRouter (pytest may have replaced it)
+    if isinstance(sys.stdout, StreamRouter):
+        return  # Already installed
+
+    # Install StreamRouter, capturing current stdout as fallback
+    _original_stdout = sys.stdout
+    _original_stderr = sys.stderr
+    sys.stdout = StreamRouter(_current_stdout, _original_stdout)  # type: ignore[assignment]
+    sys.stderr = StreamRouter(_current_stderr, _original_stderr)  # type: ignore[assignment]
+    _stream_router_installed = True
+
+
+# ---------------------------------------------------------------------------
+# Display function for rich output (images, etc.)
+# ---------------------------------------------------------------------------
+def _make_display(
+    parts_var: contextvars.ContextVar[list[OutputPart]],
+) -> Callable[[Any], None]:
+    """Create a display function that adds images to output parts."""
+
+    def display(obj: Any) -> None:
+        try:
+            from PIL import Image
+        except ImportError:
+            Image = None  # type: ignore[misc, assignment]
+
+        parts = parts_var.get()
+
+        if Image is not None and isinstance(obj, Image.Image):
+            buf = io.BytesIO()
+            obj.save(buf, format="PNG")
+            b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+            parts.append(ImageOutput(image_mime="image/png", data=b64_data))
+        elif isinstance(obj, str):
+            parts.append(TextOutput(text=obj + "\n"))
+        else:
+            # Fallback: convert to string
+            parts.append(TextOutput(text=str(obj) + "\n"))
+
+    return display
+
+
+# ---------------------------------------------------------------------------
+# Context manager for sandbox output capture
+# ---------------------------------------------------------------------------
+@contextlib.contextmanager
+def capture_sandbox_output():
+    """Context manager that sets up stream capture for a sandbox execution.
+
+    Yields (stdout_parts, stderr_parts, display_fn) tuple.
+    All ContextVars are properly reset on exit.
+
+    The StreamRouter is installed lazily on first use (not at module load)
+    to avoid conflicts with pytest and other test frameworks that replace
+    sys.stdout after imports.
+    """
+    # Ensure StreamRouter is installed (lazy, once per process)
+    _ensure_stream_router_installed()
+
+    stdout_parts: list[OutputPart] = []
+    stderr_parts: list[OutputPart] = []
+
+    # Set up ContextVars
+    stdout_token = _stdout_parts.set(stdout_parts)
+    stderr_token = _stderr_parts.set(stderr_parts)
+
+    # Create StreamLike instances for this execution
+    stdout_stream = StreamLike(_stdout_parts)
+    stderr_stream = StreamLike(_stderr_parts)
+
+    stdout_stream_token = _current_stdout.set(stdout_stream)
+    stderr_stream_token = _current_stderr.set(stderr_stream)
+
+    display_fn = _make_display(_stdout_parts)
+
+    try:
+        yield stdout_parts, stderr_parts, display_fn
+    finally:
+        _stdout_parts.reset(stdout_token)
+        _stderr_parts.reset(stderr_token)
+        _current_stdout.reset(stdout_stream_token)
+        _current_stderr.reset(stderr_stream_token)
+
 
 SupportedShellLanguage = Literal["bash", "zsh", "sh", "powershell"]
 SupportedLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
@@ -581,184 +804,125 @@ class PythonExecutionSession:
     async def execute(self, code: str) -> Dict[str, Any]:
         """
         Executes a string of Python code within the sandbox's stateful environment.
+
+        Returns a dict with:
+            stdout: list[OutputPart] - structured output parts (TextOutput, ImageOutput)
+            stderr: list[OutputPart] - structured error output parts
+            result: Any - return value of the last expression
+            error: str | None - traceback if an exception occurred
+            browser_used: bool - whether browser primitives were accessed
         """
         # Reset per-execution usage flags.
         self._browser_used = False
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
         result = None
         error = None
-        builtins_dict: Any = None
-        original_print: Any = None
-        print_patched = False
 
-        try:
-            # Guardrails: prevent agent code from accidentally shadowing critical
-            # injected environment globals (common failure mode in LLM-generated code).
-            #
-            # We do this via an AST rewrite (not brittle string heuristics):
-            # rewrite any assignment targets named `primitives` / `computer_primitives`
-            # to `_primitives_local` / `_computer_primitives_local`.
-            #
-            # This preserves the injected globals for the rest of the session.
+        with capture_sandbox_output() as (stdout_parts, stderr_parts, display_fn):
+            # Inject display function into globals
+            self.global_state["display"] = display_fn
+
             try:
+                # Guardrails: prevent agent code from accidentally shadowing critical
+                # injected environment globals (common failure mode in LLM-generated code).
+                #
+                # We do this via an AST rewrite (not brittle string heuristics):
+                # rewrite any assignment targets named `primitives` / `computer_primitives`
+                # to `_primitives_local` / `_computer_primitives_local`.
+                #
+                # This preserves the injected globals for the rest of the session.
+                try:
 
-                class _ShadowingGuard(ast.NodeTransformer):
-                    _REMAP = {
-                        "primitives": "_primitives_local",
-                        "computer_primitives": "_computer_primitives_local",
-                    }
+                    class _ShadowingGuard(ast.NodeTransformer):
+                        _REMAP = {
+                            "primitives": "_primitives_local",
+                            "computer_primitives": "_computer_primitives_local",
+                        }
 
-                    def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
-                        # Only rewrite *assignments* (Store context). Loads are preserved.
-                        if isinstance(node.ctx, ast.Store) and node.id in self._REMAP:
-                            return ast.copy_location(
-                                ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
-                                node,
-                            )
-                        return node
+                        def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
+                            # Only rewrite *assignments* (Store context). Loads are preserved.
+                            if isinstance(node.ctx, ast.Store) and node.id in self._REMAP:
+                                return ast.copy_location(
+                                    ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
+                                    node,
+                                )
+                            return node
 
-                    def visit_Global(self, node: ast.Global) -> ast.AST:  # noqa: N802
-                        node.names = [self._REMAP.get(n, n) for n in node.names]
-                        return node
+                        def visit_Global(self, node: ast.Global) -> ast.AST:  # noqa: N802
+                            node.names = [self._REMAP.get(n, n) for n in node.names]
+                            return node
 
-                    def visit_Nonlocal(
-                        self,
-                        node: ast.Nonlocal,
-                    ) -> ast.AST:  # noqa: N802
-                        node.names = [self._REMAP.get(n, n) for n in node.names]
-                        return node
+                        def visit_Nonlocal(
+                            self,
+                            node: ast.Nonlocal,
+                        ) -> ast.AST:  # noqa: N802
+                            node.names = [self._REMAP.get(n, n) for n in node.names]
+                            return node
+
+                    tree = ast.parse(code)
+                    tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
+                    ast.fix_missing_locations(tree)
+                    code = ast.unparse(tree)
+                except Exception:
+                    # Best-effort only; if rewriting fails, proceed with original code.
+                    pass
+
+                is_empty_or_comment_only = all(
+                    line.strip() == "" or line.strip().startswith("#")
+                    for line in code.splitlines()
+                )
+                if is_empty_or_comment_only:
+                    code += "\npass"
 
                 tree = ast.parse(code)
-                tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
-                ast.fix_missing_locations(tree)
-                code = ast.unparse(tree)
-            except Exception:
-                # Best-effort only; if rewriting fails, proceed with original code.
-                pass
+                top_level_assign_targets = set()
+                for node in tree.body:
+                    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                        targets = []
+                        if isinstance(node, ast.Assign):
+                            targets.extend(node.targets)
+                        else:
+                            targets.append(node.target)
 
-            is_empty_or_comment_only = all(
-                line.strip() == "" or line.strip().startswith("#")
-                for line in code.splitlines()
-            )
-            if is_empty_or_comment_only:
-                code += "\npass"
+                        for target in targets:
+                            if isinstance(target, ast.Name):
+                                top_level_assign_targets.add(target.id)
+                            elif isinstance(target, ast.Tuple):
+                                for elt in target.elts:
+                                    if isinstance(elt, ast.Name):
+                                        top_level_assign_targets.add(elt.id)
 
-            tree = ast.parse(code)
-            top_level_assign_targets = set()
-            for node in tree.body:
-                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                    targets = []
-                    if isinstance(node, ast.Assign):
-                        targets.extend(node.targets)
-                    else:
-                        targets.append(node.target)
+                    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                        for alias in node.names:
+                            top_level_assign_targets.add(
+                                alias.asname or alias.name.split(".")[0],
+                            )
 
-                    for target in targets:
-                        if isinstance(target, ast.Name):
-                            top_level_assign_targets.add(target.id)
-                        elif isinstance(target, ast.Tuple):
-                            for elt in target.elts:
-                                if isinstance(elt, ast.Name):
-                                    top_level_assign_targets.add(elt.id)
+                    elif isinstance(
+                        node,
+                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                    ):
+                        top_level_assign_targets.add(node.name)
 
-                elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                    for alias in node.names:
-                        top_level_assign_targets.add(
-                            alias.asname or alias.name.split(".")[0],
-                        )
+                async_code = "async def __exec_wrapper():\n"
+                if top_level_assign_targets:
+                    async_code += (
+                        f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
+                    )
 
-                elif isinstance(
-                    node,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                ):
-                    top_level_assign_targets.add(node.name)
+                async_code += "".join(f"    {line}\n" for line in code.splitlines())
 
-            async_code = "async def __exec_wrapper():\n"
-            if top_level_assign_targets:
-                async_code += (
-                    f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
-                )
-
-            async_code += "".join(f"    {line}\n" for line in code.splitlines())
-
-            exec(async_code, self.global_state)
-
-            # Robust stdout capture for agent code:
-            #
-            # In practice, some nested tool loops may temporarily replace `sys.stdout`
-            # (e.g. for their own logging/capture), which can bypass `redirect_stdout`
-            # and cause `print(...)` output to leak to the outer process instead of
-            # appearing in the tool result.
-            #
-            # To keep CodeAct reliable, we patch the sandbox built-in `print` so that
-            # it always writes to our per-execution `stdout_capture`, regardless of
-            # any temporary `sys.stdout` replacements inside awaited tool calls.
-            try:
-                builtins_dict = self.global_state.get("__builtins__")
-                if (
-                    isinstance(builtins_dict, dict)
-                    and builtins_dict.get("print") is not None
-                ):
-                    original_print = builtins_dict.get("print")
-
-                    def _captured_print(
-                        *args: Any,
-                        sep: str = " ",
-                        end: str = "\n",
-                        file: Any = None,
-                        flush: bool = False,
-                    ) -> None:
-                        text = sep.join(str(a) for a in args) + end
-                        if file is None:
-                            stdout_capture.write(text)
-                            if flush:
-                                try:
-                                    stdout_capture.flush()
-                                except Exception:
-                                    pass
-                            return
-
-                        # Respect explicit `file=` when possible, but fall back to
-                        # stdout_capture to avoid losing output.
-                        try:
-                            file.write(text)
-                            if flush:
-                                try:
-                                    file.flush()
-                                except Exception:
-                                    pass
-                        except Exception:
-                            stdout_capture.write(text)
-                            if flush:
-                                try:
-                                    stdout_capture.flush()
-                                except Exception:
-                                    pass
-
-                    builtins_dict["print"] = _captured_print
-                    print_patched = True
-            except Exception:
-                # Best-effort: if patching fails, keep executing.
-                print_patched = False
-
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                exec(async_code, self.global_state)
                 result = await self.global_state["__exec_wrapper"]()
 
-        except Exception:
-            error = traceback.format_exc()
-        finally:
-            if print_patched and isinstance(builtins_dict, dict):
-                try:
-                    builtins_dict["print"] = original_print
-                except Exception:
-                    pass
-            if "__exec_wrapper" in self.global_state:
-                del self.global_state["__exec_wrapper"]
+            except Exception:
+                error = traceback.format_exc()
+            finally:
+                if "__exec_wrapper" in self.global_state:
+                    del self.global_state["__exec_wrapper"]
 
         return {
-            "stdout": stdout_capture.getvalue(),
-            "stderr": stderr_capture.getvalue(),
+            "stdout": stdout_parts,
+            "stderr": stderr_parts,
             "result": result,
             "error": error,
             "browser_used": self._browser_used,

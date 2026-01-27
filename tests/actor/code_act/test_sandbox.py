@@ -1,6 +1,6 @@
 import pytest
 
-from unity.actor.code_act_actor import PythonExecutionSession
+from unity.actor.code_act_actor import PythonExecutionSession, parts_to_text
 
 
 @pytest.mark.asyncio
@@ -18,7 +18,7 @@ async def test_sandbox_stateful_variable_execution():
     assert result2["error"] is None
     assert "y" in sandbox.global_state
     assert sandbox.global_state["y"] == 200
-    assert result2["stdout"] == "200\n"
+    assert parts_to_text(result2["stdout"]) == "200\n"
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_sandbox_stateful_import_execution():
         "my_dict = {'key': 'value'}\nprint(json.dumps(my_dict))",
     )
     assert result2["error"] is None
-    assert result2["stdout"].strip() == '{"key": "value"}'
+    assert parts_to_text(result2["stdout"]).strip() == '{"key": "value"}'
 
 
 @pytest.mark.asyncio
@@ -52,7 +52,7 @@ async def test_sandbox_stateful_function_definition():
     func_call_code = "result = my_adder(10, 5)\nprint(result)"
     result2 = await sandbox.execute(func_call_code)
     assert result2["error"] is None
-    assert result2["stdout"].strip() == "15"
+    assert parts_to_text(result2["stdout"]).strip() == "15"
     assert sandbox.global_state["result"] == 15
 
 
@@ -76,7 +76,7 @@ async def test_sandbox_stateful_class_definition():
     class_use_code = "g = Greeter('World')\nprint(g.greet())"
     result2 = await sandbox.execute(class_use_code)
     assert result2["error"] is None
-    assert result2["stdout"].strip() == "Hello, World!"
+    assert parts_to_text(result2["stdout"]).strip() == "Hello, World!"
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ print(result['data'])
 """
     observe_result = await sandbox.execute(observe_code)
     assert observe_result["error"] is None
-    assert observe_result["stdout"].strip() == "observed_data"
+    assert parts_to_text(observe_result["stdout"]).strip() == "observed_data"
     mock_computer_primitives.observe.assert_awaited_once()
     assert mock_computer_primitives.observe.call_args[0][0] == "get data"
 
@@ -121,8 +121,8 @@ async def test_sandbox_error_handling():
     sandbox = PythonExecutionSession()
     result = await sandbox.execute("x = 1 / 0")
 
-    assert result["stdout"] == ""
-    assert result["stderr"] == ""
+    assert parts_to_text(result["stdout"]) == ""
+    assert parts_to_text(result["stderr"]) == ""
     assert result["result"] is None
     assert result["error"] is not None
     assert "ZeroDivisionError" in result["error"]
