@@ -46,6 +46,27 @@ from tests.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
 
 
+# --------------------------------------------------------------------------- #
+# Orchestra availability check for requires_orchestra marker                   #
+# --------------------------------------------------------------------------- #
+def _check_orchestra_available() -> bool:
+    """Check if Orchestra server is reachable. Cached after first call."""
+    if hasattr(_check_orchestra_available, "_cached"):
+        return _check_orchestra_available._cached
+
+    orchestra_url = os.environ.get("ORCHESTRA_URL", "http://localhost:8000")
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            # Check a known endpoint - /v0/projects works and 404 on root is fine
+            resp = client.get(f"{orchestra_url}/v0/projects")
+            # 200 = success, 401/403 = auth required but server is up
+            _check_orchestra_available._cached = resp.status_code in (200, 401, 403)
+    except Exception:
+        _check_orchestra_available._cached = False
+
+    return _check_orchestra_available._cached
+
+
 def _derive_test_context(item: pytest.Item) -> str:
     """
     Derive a per-test Unify context path that is stable and unique.
@@ -540,6 +561,10 @@ def pytest_configure(config):
         "markers",
         "enable_eventbus: enable EventBus publishing for this test",
     )
+    config.addinivalue_line(
+        "markers",
+        "requires_orchestra: mark test as requiring a running Orchestra server",
+    )
 
     # Required to disable explicit log level if set from pytest.ini or command line options
     if os.environ.get("UNITY_TESTS_CLI_LOGGING", "true").lower() == "false":
@@ -571,9 +596,15 @@ def pytest_configure(config):
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
+# Skip tests marked with requires_orchestra when Orchestra is not available
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
     _set_unify_context_for_test(item)
+
+    # Skip requires_orchestra tests if Orchestra is not running
+    if item.get_closest_marker("requires_orchestra"):
+        if not _check_orchestra_available():
+            pytest.skip("Orchestra server not available")
 
 
 def _normalize_pytest_nodeid(nodeid):

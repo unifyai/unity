@@ -201,6 +201,11 @@ def init(
 
     install_llm_event_hook()
 
+    # 5. Wire up spending limit check hook
+    from .spending_limits import install_limit_check_hook
+
+    install_limit_check_hook()
+
     _INITIALISED = True
 
 

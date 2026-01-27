@@ -171,8 +171,11 @@ class TestHookInstallation:
 
     def test_hook_installed_during_unity_init(self):
         """The hook should be installed during unity.init()."""
-        # unity.init() runs before tests via _handle_project, so hook should be set
-        hook = unillm.get_llm_event_hook()
+        import unity
+
+        unity.init()
+        # Unity uses the global hook (works across threads)
+        hook = unillm.get_global_llm_event_hook()
         assert hook is _llm_event_to_eventbus
 
     def test_install_hook_multiple_calls_safe(self):
