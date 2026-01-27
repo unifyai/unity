@@ -18,6 +18,6 @@ def pytest_collection_modifyitems(config, items):
     """
     marker = pytest.mark.enable_eventbus
     for item in items:
-        # Check if the test is in this directory (test_event_bus)
-        if "test_event_bus" in str(item.fspath):
+        # Check if the test is in this directory (event_bus)
+        if "/event_bus/" in str(item.fspath):
             item.add_marker(marker)
