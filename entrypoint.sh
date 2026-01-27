@@ -3,11 +3,6 @@
 # Exit on any error
 set -e
 
-# Source orchestra URL configuration (set during Docker build based on branch)
-if [ -f /app/.env.orchestra ]; then
-    source /app/.env.orchestra
-fi
-
 # Global variables to track processes
 REDIS_PID=""
 MAIN_PID=""
