@@ -23,7 +23,6 @@ from unity.events.llm_event_hook import (
     _update_cumulative_spend,
 )
 
-
 # ===========================================================================
 # Part 1: Cumulative Spend Tracking
 # ===========================================================================
