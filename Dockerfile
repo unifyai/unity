@@ -102,12 +102,6 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}
 
-# Set UNIFY_BASE_URL based on branch (main→production, otherwise→staging orchestra)
-RUN if [ "$BRANCH" = "main" ]; then \
-      echo 'export UNIFY_BASE_URL="https://api.unify.ai/v0"' > /app/.env.orchestra; \
-    else \
-      echo 'export UNIFY_BASE_URL="https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0"' > /app/.env.orchestra; \
-    fi
 RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Download the turn detector model files
