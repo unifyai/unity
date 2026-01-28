@@ -5,6 +5,7 @@ import pytest
 from unity.actor.code_act_actor import (
     SessionExecutor,
     _validate_execution_params,
+    parts_to_text,
 )
 from unity.function_manager.function_manager import VenvPool
 from unity.function_manager.shell_pool import ShellPool
@@ -168,13 +169,15 @@ async def test_session_executor_python_read_only_does_not_mutate_state():
             venv_id=None,
         )
         assert r2["error"] is None
-        assert "1" in (r2["stdout"] or "")
+        assert "1" in parts_to_text(r2["stdout"])
     finally:
         await ex.close()
 
 
 @pytest.mark.asyncio
 async def test_session_executor_shell_stateless_executes():
+    if sys.platform == "win32":
+        pytest.skip("shell pool tests are unix-focused")
     ex = SessionExecutor(
         venv_pool=VenvPool(),
         shell_pool=ShellPool(),
@@ -320,7 +323,7 @@ async def test_session_executor_isolation_between_python_sessions():
             session_id=1,
             venv_id=None,
         )
-        assert "1" in (a2["stdout"] or "")
-        assert "2" in (b2["stdout"] or "")
+        assert "1" in parts_to_text(a2["stdout"])
+        assert "2" in parts_to_text(b2["stdout"])
     finally:
         await ex.close()
