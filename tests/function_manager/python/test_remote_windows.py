@@ -90,7 +90,6 @@ def mock_session_details_windows(monkeypatch):
     from unity.session_details import SESSION_DETAILS
 
     monkeypatch.setattr(SESSION_DETAILS.assistant, "desktop_mode", "windows")
-    monkeypatch.setattr(SESSION_DETAILS.assistant, "is_user_desktop", False)
     monkeypatch.setattr(SESSION_DETAILS.assistant, "id", "test-assistant")
     monkeypatch.setattr(
         SESSION_DETAILS.assistant,
@@ -108,7 +107,6 @@ def mock_session_details_ubuntu(monkeypatch):
     from unity.session_details import SESSION_DETAILS
 
     monkeypatch.setattr(SESSION_DETAILS.assistant, "desktop_mode", "ubuntu")
-    monkeypatch.setattr(SESSION_DETAILS.assistant, "is_user_desktop", False)
     monkeypatch.setattr(SESSION_DETAILS.assistant, "id", "test-assistant-ubuntu")
     monkeypatch.setattr(
         SESSION_DETAILS.assistant,
@@ -359,28 +357,12 @@ class TestRemoteWindowsRoutingLogic:
         assert fm._should_execute_python_function_on_remote_windows(func_data) is False
 
     @_handle_project
-    def test_returns_false_when_is_user_desktop_is_true(
-        self,
-        function_manager_factory,
-        monkeypatch,
-    ):
-        """User's own desktop stays local (no managed VM)."""
-        from unity.session_details import SESSION_DETAILS
-
-        monkeypatch.setattr(SESSION_DETAILS.assistant, "desktop_mode", "windows")
-        monkeypatch.setattr(SESSION_DETAILS.assistant, "is_user_desktop", True)
-
-        fm = function_manager_factory()
-        func_data = {"windows_os_required": True}
-        assert fm._should_execute_python_function_on_remote_windows(func_data) is False
-
-    @_handle_project
     def test_returns_true_when_all_conditions_met(
         self,
         function_manager_factory,
         mock_session_details_windows,
     ):
-        """All three conditions met → remote execution."""
+        """All conditions met → remote execution."""
         fm = function_manager_factory()
         func_data = {"windows_os_required": True}
         assert fm._should_execute_python_function_on_remote_windows(func_data) is True

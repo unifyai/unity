@@ -72,11 +72,15 @@ class AssistantDetails:
     number: str = ""
     email: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
-    is_user_desktop: bool = False  # True if user-owned desktop (don't auto-stop VM)
-    desktop_mode: str = (
-        "ubuntu"  # "ubuntu" or "windows" - VM-based when is_user_desktop=False
+    desktop_mode: str = "ubuntu"  # "ubuntu" or "windows" - determines VM type
+    desktop_url: str | None = None  # URL for managed VM desktop access
+    user_desktop_mode: str | None = (
+        None  # "ubuntu", "windows", or "macos" if user has own desktop
     )
-    desktop_url: str | None = None  # URL for desktop access
+    user_desktop_filesys_sync: bool = False  # Whether to sync files to user's desktop
+    user_desktop_url: str | None = (
+        None  # URL for user's own desktop (not the managed VM)
+    )
 
 
 @dataclass
@@ -261,9 +265,11 @@ class SessionDetails:
         voice_provider: str = "",
         voice_id: str = "",
         voice_mode: str = "",
-        is_user_desktop: bool = False,
         desktop_mode: str = "ubuntu",
         desktop_url: str | None = None,
+        user_desktop_mode: str | None = None,
+        user_desktop_filesys_sync: bool = False,
+        user_desktop_url: str | None = None,
     ) -> None:
         """Populate the session with runtime values.
 
@@ -278,9 +284,11 @@ class SessionDetails:
         self.assistant.number = assistant_number
         self.assistant.email = assistant_email
         self.assistant.contact_id = assistant_contact_id
-        self.assistant.is_user_desktop = is_user_desktop
         self.assistant.desktop_mode = desktop_mode
         self.assistant.desktop_url = desktop_url
+        self.assistant.user_desktop_mode = user_desktop_mode
+        self.assistant.user_desktop_filesys_sync = user_desktop_filesys_sync
+        self.assistant.user_desktop_url = user_desktop_url
         self.user.id = user_id
         self.user.name = user_name
         self.user.number = user_number
@@ -317,9 +325,15 @@ class SessionDetails:
         os.environ["ASSISTANT_ABOUT"] = self.assistant.about
         os.environ["ASSISTANT_NUMBER"] = self.assistant.number
         os.environ["ASSISTANT_EMAIL"] = self.assistant.email
-        os.environ["ASSISTANT_IS_USER_DESKTOP"] = str(self.assistant.is_user_desktop)
         os.environ["ASSISTANT_DESKTOP_MODE"] = self.assistant.desktop_mode
         os.environ["ASSISTANT_DESKTOP_URL"] = self.assistant.desktop_url or ""
+        os.environ["ASSISTANT_USER_DESKTOP_MODE"] = (
+            self.assistant.user_desktop_mode or ""
+        )
+        os.environ["ASSISTANT_USER_DESKTOP_FILESYS_SYNC"] = str(
+            self.assistant.user_desktop_filesys_sync,
+        )
+        os.environ["ASSISTANT_USER_DESKTOP_URL"] = self.assistant.user_desktop_url or ""
         os.environ["USER_ID"] = self.user.id
         os.environ["USER_NAME"] = self.user.name
         os.environ["USER_NUMBER"] = self.user.number
@@ -363,12 +377,16 @@ class SessionDetails:
                 self.assistant.contact_id = int(val)
             except ValueError:
                 pass
-        if val := os.environ.get("ASSISTANT_IS_USER_DESKTOP"):
-            self.assistant.is_user_desktop = val == "True"
         if val := os.environ.get("ASSISTANT_DESKTOP_MODE"):
             self.assistant.desktop_mode = val
         if val := os.environ.get("ASSISTANT_DESKTOP_URL"):
             self.assistant.desktop_url = val if val else None
+        if val := os.environ.get("ASSISTANT_USER_DESKTOP_MODE"):
+            self.assistant.user_desktop_mode = val if val else None
+        if val := os.environ.get("ASSISTANT_USER_DESKTOP_FILESYS_SYNC"):
+            self.assistant.user_desktop_filesys_sync = val == "True"
+        if val := os.environ.get("ASSISTANT_USER_DESKTOP_URL"):
+            self.assistant.user_desktop_url = val if val else None
         if val := os.environ.get("USER_ID"):
             self.user.id = val
         if val := os.environ.get("USER_NAME"):

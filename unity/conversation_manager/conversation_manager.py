@@ -542,9 +542,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.voice_mode = payload["voice_mode"]
-        self.is_user_desktop = payload.get("is_user_desktop", False)
         self.desktop_mode = payload.get("desktop_mode", "ubuntu")
         self.desktop_url = payload.get("desktop_url")
+        self.user_desktop_mode = payload.get("user_desktop_mode")
+        self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
+        self.user_desktop_url = payload.get("user_desktop_url")
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -565,9 +567,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             voice_mode=self.voice_mode,
-            is_user_desktop=self.is_user_desktop,
             desktop_mode=self.desktop_mode,
             desktop_url=self.desktop_url,
+            user_desktop_mode=self.user_desktop_mode,
+            user_desktop_filesys_sync=self.user_desktop_filesys_sync,
+            user_desktop_url=self.user_desktop_url,
         )
         # Export to env vars for subprocess inheritance
         SESSION_DETAILS.export_to_env()
