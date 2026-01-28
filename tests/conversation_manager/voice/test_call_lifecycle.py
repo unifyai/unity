@@ -466,9 +466,7 @@ class TestCallSubprocessLifecycle:
 
             call_args = mock_run_script.call_args
             # Default names should use assistant_id
-            assert any(
-                "unity_my_assistant_web" in str(arg) for arg in call_args[0]
-            )
+            assert any("unity_my_assistant_web" in str(arg) for arg in call_args[0])
 
     @pytest.mark.asyncio
     async def test_cleanup_call_proc_no_process(self, call_manager):
