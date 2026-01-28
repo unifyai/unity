@@ -69,6 +69,118 @@ async def test_chat_context_propagation(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_chat_context_propagation_never(model) -> None:
+    """Verify that NEVER mode does NOT pass context to tools, even when they accept it."""
+    client = new_llm_client(model=model)
+
+    root_ctx = [{"role": "user", "content": "secret-context-message"}]
+    captured_ctx: List[list[dict]] = []
+
+    async def record_context(*, _parent_chat_context: list[dict] | None = None) -> str:
+        captured_ctx.append(_parent_chat_context or [])
+        return "context-recorded"
+
+    record_context.__name__ = "record_context"
+    record_context.__qualname__ = "record_context"
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="Please call the function `record_context()` once, then reply 'done'.",
+        tools={"record_context": record_context},
+        parent_chat_context=root_ctx,
+        propagate_chat_context=ChatContextPropagation.NEVER,
+    )
+
+    final_ans = await handle.result()
+    assert final_ans is not None, "Loop should complete with a response"
+
+    # Tool should have been called
+    assert len(captured_ctx) == 1, "Tool should have been called exactly once"
+
+    # But context should be empty (NEVER mode)
+    assert captured_ctx[0] == [], "Context should be empty in NEVER mode"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_chat_context_propagation_llm_decides_include(model) -> None:
+    """Verify that LLM_DECIDES mode passes context when LLM includes it (default)."""
+    client = new_llm_client(model=model)
+
+    root_ctx = [{"role": "user", "content": "root-level-context-marker"}]
+    captured_ctx: List[list[dict]] = []
+
+    async def record_context(*, _parent_chat_context: list[dict] | None = None) -> str:
+        captured_ctx.append(_parent_chat_context or [])
+        return "context-recorded"
+
+    record_context.__name__ = "record_context"
+    record_context.__qualname__ = "record_context"
+
+    # Prompt the LLM to explicitly include context
+    handle = start_async_tool_loop(
+        client=client,
+        message=(
+            "Please call the function `record_context()` once with "
+            "`include_parent_chat_context` set to `true`, then reply 'done'."
+        ),
+        tools={"record_context": record_context},
+        parent_chat_context=root_ctx,
+        propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
+    )
+
+    final_ans = await handle.result()
+    assert final_ans is not None, "Loop should complete with a response"
+
+    # Tool should have been called
+    assert len(captured_ctx) == 1, "Tool should have been called exactly once"
+
+    # Context should be passed (LLM chose to include it)
+    combined = captured_ctx[0]
+    assert len(combined) > 0, "Context should be non-empty when LLM includes it"
+    assert combined[0]["content"] == "root-level-context-marker"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_chat_context_propagation_llm_decides_exclude(model) -> None:
+    """Verify that LLM_DECIDES mode omits context when LLM explicitly excludes it."""
+    client = new_llm_client(model=model)
+
+    root_ctx = [{"role": "user", "content": "secret-context-should-not-appear"}]
+    captured_ctx: List[list[dict]] = []
+
+    async def record_context(*, _parent_chat_context: list[dict] | None = None) -> str:
+        captured_ctx.append(_parent_chat_context or [])
+        return "context-recorded"
+
+    record_context.__name__ = "record_context"
+    record_context.__qualname__ = "record_context"
+
+    # Prompt the LLM to explicitly exclude context
+    handle = start_async_tool_loop(
+        client=client,
+        message=(
+            "Please call the function `record_context()` once with "
+            "`include_parent_chat_context` set to `false`, then reply 'done'."
+        ),
+        tools={"record_context": record_context},
+        parent_chat_context=root_ctx,
+        propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
+    )
+
+    final_ans = await handle.result()
+    assert final_ans is not None, "Loop should complete with a response"
+
+    # Tool should have been called
+    assert len(captured_ctx) == 1, "Tool should have been called exactly once"
+
+    # Context should be empty (LLM chose to exclude it)
+    assert captured_ctx[0] == [], "Context should be empty when LLM excludes it"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_ask_uses_continued_parent_context(model) -> None:
     """Verify that ask() packages continued parent context and influences the answer.
 
