@@ -18,7 +18,6 @@ from typing import (
 from .tools_utils import ToolCallMetadata, create_tool_call_message
 from .messages import (
     insert_tool_message_after_assistant,
-    chat_context_repr,
     _normalise_kwargs_for_bound_method,
 )
 from ..tool_spec import normalise_tools
@@ -26,6 +25,7 @@ from ..llm_helpers import method_to_schema
 from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
 from contextlib import suppress
 from .propagation_mode import ChatContextPropagation
+from .context_tracker import LoopContextState
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -211,7 +211,7 @@ class ToolsData:
         args_json: Any,
         call_id: str,
         call_idx: int,
-        parent_chat_context,
+        context_state: LoopContextState,
         propagate_chat_context,
         assistant_meta,
         initial_paused: bool = False,
@@ -248,10 +248,11 @@ class ToolsData:
         # Pop include_parent_chat_context from args (only relevant in LLM_DECIDES mode)
         llm_include_ctx = call_args.pop("include_parent_chat_context", True)
         sig_accepts_parent_ctx = "_parent_chat_context" in params or has_varkw
+        sig_accepts_parent_ctx_cont = "_parent_chat_context_cont" in params or has_varkw
 
         # Determine whether to inject parent chat context based on propagation mode
         should_inject_ctx = False
-        if sig_accepts_parent_ctx:
+        if sig_accepts_parent_ctx or sig_accepts_parent_ctx_cont:
             if propagate_chat_context == ChatContextPropagation.ALWAYS:
                 should_inject_ctx = True
             elif propagate_chat_context == ChatContextPropagation.NEVER:
@@ -263,8 +264,20 @@ class ToolsData:
         extra_kwargs: dict = {}
         if should_inject_ctx:
             cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
-            ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
-            extra_kwargs["_parent_chat_context"] = ctx_repr
+
+            # Use incremental context tracking
+            parent_ctx, parent_ctx_cont = context_state.compute_context_for_inner_tool(
+                call_id,
+                cur_msgs,
+            )
+
+            # Pass parent_chat_context only on first call (when it's non-None)
+            if parent_ctx is not None and sig_accepts_parent_ctx:
+                extra_kwargs["_parent_chat_context"] = parent_ctx
+
+            # Pass parent_chat_context_cont for incremental updates
+            if parent_ctx_cont is not None and sig_accepts_parent_ctx_cont:
+                extra_kwargs["_parent_chat_context_cont"] = parent_ctx_cont
 
         sig_accepts_interject_q = "_interject_queue" in params or has_varkw
         sig_accepts_pause_event = "_pause_event" in params or has_varkw

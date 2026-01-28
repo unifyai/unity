@@ -20,11 +20,11 @@ from pydantic import BaseModel
 from ...constants import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
 from .propagation_mode import ChatContextPropagation
+from .context_tracker import LoopContextState
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
 from .messages import (
     find_unreplied_assistant_entries,
-    chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
 )
@@ -256,7 +256,7 @@ async def async_tool_loop_inner(
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
         mind mid-generation). When a dict is provided it should follow the
-        shape {"message": str, "parent_chat_context_continuted": list[dict]}.
+        shape {"message": str, "parent_chat_context_continued": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -299,9 +299,9 @@ async def async_tool_loop_inner(
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
-        ``propagate_chat_context`` is on, the helper
-        :pyfunc:`_chat_context_repr` merges this with the current
-        ``client.messages`` and forwards the result downward.
+        ``propagate_chat_context`` is enabled, this initial context is forwarded
+        to inner tools on their first call, with subsequent calls receiving only
+        incremental updates (new messages since the last call) to avoid token waste.
 
     log_steps : ``bool | str``, default ``True``
         Controls verbosity of step logging to ``LOGGER``:
@@ -566,6 +566,13 @@ async def async_tool_loop_inner(
             "content": "\n\n".join(runtime_context_parts),
         }
         await _msg_dispatcher.append_msgs([sys_msg])
+
+    # ── 0-a++. Initialize context state for incremental propagation ──────────
+    # Tracks initial parent context and any continued updates received via interjections.
+    # Used to forward context incrementally to inner tools (no repetition).
+    context_state = LoopContextState(
+        parent_chat_context=list(parent_chat_context) if parent_chat_context else [],
+    )
 
     # ── 0-a+. Optional: append an initial batch of messages (list support) ──
     seeded_batch = None
@@ -1670,7 +1677,9 @@ async def async_tool_loop_inner(
                 # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
-                    _ctx_cont = extra.get("parent_chat_context_continuted")
+                    _ctx_cont = extra.get("parent_chat_context_continued") or extra.get(
+                        "parent_chat_context_continuted",  # legacy typo support
+                    )
                     _incoming_images = extra.get("images")
                 else:
                     _msg_text = str(extra)
@@ -1682,6 +1691,23 @@ async def async_tool_loop_inner(
                     logger.info(f"Interjection received: {_msg_text}", prefix="💬")
                 except Exception:
                     pass
+
+                # Record continued context in our state for incremental propagation
+                if _ctx_cont:
+                    context_state.receive_context_continuation(_ctx_cont)
+                    # Forward to all active inner tool handles
+                    for task, info in tools_data.info.items():
+                        if info.interject_queue is not None:
+                            with suppress(Exception):
+                                # Forward the continued context to the inner handle
+                                info.interject_queue.put_nowait(
+                                    {
+                                        "message": "",  # Empty message, just context update
+                                        "parent_chat_context_continued": _ctx_cont,
+                                        "_context_only": True,  # Flag to indicate context-only update
+                                    },
+                                )
+                                context_state.mark_cont_forwarded_to_tool(info.call_id)
 
                 # On the FIRST interjection, inject user visibility guidance as a
                 # system message so the model understands why a user message is
@@ -1716,11 +1742,9 @@ async def async_tool_loop_inner(
                                 "content": (
                                     {
                                         "message": _msg_text,
-                                        "parent_chat_context_continuted": extra.get(
-                                            "parent_chat_context_continuted",
-                                        ),
+                                        "parent_chat_context_continued": _ctx_cont,
                                     }
-                                    if isinstance(extra, dict)
+                                    if isinstance(extra, dict) and _ctx_cont
                                     else _msg_text
                                 ),
                             },
@@ -3098,18 +3122,27 @@ async def async_tool_loop_inner(
 
                             # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
                             extra_kwargs: dict = {}
-                            # For dynamic helpers, inject context unless NEVER mode
+                            # For dynamic helpers (steering calls to running inner handles),
+                            # pass incremental context only (they already have initial context)
                             if propagate_chat_context != ChatContextPropagation.NEVER:
                                 cur_msgs = [
                                     m
                                     for m in client.messages
                                     if not m.get("_ctx_header")
                                 ]
-                                ctx_repr = chat_context_repr(
-                                    parent_chat_context,
-                                    cur_msgs,
+                                # Dynamic helpers get incremental context via parent_chat_context_cont
+                                # The target call_id is embedded in the helper name (e.g., ask_abc123)
+                                target_call_id = (
+                                    name.split("_")[-1] if "_" in name else call["id"]
                                 )
-                                extra_kwargs["_parent_chat_context"] = ctx_repr
+                                _, ctx_cont = (
+                                    context_state.compute_context_for_inner_tool(
+                                        f"dynamic_{target_call_id}_{call['id']}",  # unique key per dynamic call
+                                        cur_msgs,
+                                    )
+                                )
+                                if ctx_cont:
+                                    extra_kwargs["_parent_chat_context_cont"] = ctx_cont
 
                             sig = inspect.signature(fn)
                             params = sig.parameters
@@ -3239,7 +3272,7 @@ async def async_tool_loop_inner(
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
-                            parent_chat_context=parent_chat_context,
+                            context_state=context_state,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
                             initial_paused=not pause_event.is_set(),
