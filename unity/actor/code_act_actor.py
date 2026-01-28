@@ -10,13 +10,14 @@ import ast
 import copy
 import uuid
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from secrets import token_hex as _token_hex
 import logging
 from typing import (
+    Annotated,
     Any,
     Dict,
+    List,
     Optional,
     Callable,
     Awaitable,
@@ -26,7 +27,7 @@ from typing import (
     Literal,
     Union,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from unity.actor.base import BaseCodeActActor
 from unity.actor.handle import ActorHandle
@@ -63,50 +64,92 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Structured output types for sandbox execution
+# Structured output types for sandbox execution (Pydantic discriminated union)
 # ---------------------------------------------------------------------------
-@dataclass
-class TextOutput:
+
+
+class TextPart(BaseModel):
     """A text output part from sandbox execution."""
 
+    type: Literal["text"] = "text"
     text: str
 
+    def to_llm_content(self) -> dict:
+        """Convert to LLM content block format."""
+        return {"type": "text", "text": self.text}
 
-@dataclass
-class ImageOutput:
+
+class ImagePart(BaseModel):
     """An image output part from sandbox execution (e.g., from display())."""
 
-    image_mime: str
+    type: Literal["image"] = "image"
+    mime: str = "image/png"
     data: str  # base64 encoded
 
-
-@dataclass
-class ErrorOutput:
-    """An error output part from sandbox execution."""
-
-    exception: Union[Exception, BaseException]
-
-
-OutputPart = Union[TextOutput, ImageOutput, ErrorOutput]
+    def to_llm_content(self) -> dict:
+        """Convert to LLM content block format."""
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{self.mime};base64,{self.data}"},
+        }
 
 
-def parts_to_text(parts: list[OutputPart]) -> str:
+# Discriminated union - Pydantic auto-parses based on `type` field
+OutputPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
+
+
+def parts_to_text(parts: List[Union[TextPart, ImagePart]]) -> str:
     """Convert a list of OutputPart to a plain text string.
 
     Useful for backward compatibility and simple text extraction.
-    Only TextOutput parts are included; ImageOutput and ErrorOutput are skipped.
+    Only TextPart parts are included; ImagePart parts are skipped.
     """
-    return "".join(p.text for p in parts if isinstance(p, TextOutput))
+    return "".join(p.text for p in parts if isinstance(p, TextPart))
+
+
+def parts_to_llm_content(parts: List[Union[TextPart, ImagePart]]) -> List[dict]:
+    """Convert a list of OutputParts to LLM content blocks, preserving order.
+
+    This function maintains the original interleaving of text and images,
+    unlike the legacy approach which collected all images at the end.
+
+    Adjacent TextParts are merged into a single text block for cleaner output.
+    """
+    if not parts:
+        return []
+
+    blocks: List[dict] = []
+    pending_text = ""
+
+    for part in parts:
+        if isinstance(part, TextPart):
+            pending_text += part.text
+        elif isinstance(part, ImagePart):
+            # Flush any pending text before the image
+            if pending_text:
+                blocks.append({"type": "text", "text": pending_text})
+                pending_text = ""
+            blocks.append(part.to_llm_content())
+
+    # Flush any remaining text
+    if pending_text:
+        blocks.append({"type": "text", "text": pending_text})
+
+    return blocks
 
 
 # ---------------------------------------------------------------------------
 # ContextVars for per-execution stream isolation
 # ---------------------------------------------------------------------------
-_stdout_parts: contextvars.ContextVar[list[OutputPart]] = contextvars.ContextVar(
-    "sandbox_stdout_parts",
+_stdout_parts: contextvars.ContextVar[List[Union[TextPart, ImagePart]]] = (
+    contextvars.ContextVar(
+        "sandbox_stdout_parts",
+    )
 )
-_stderr_parts: contextvars.ContextVar[list[OutputPart]] = contextvars.ContextVar(
-    "sandbox_stderr_parts",
+_stderr_parts: contextvars.ContextVar[List[Union[TextPart, ImagePart]]] = (
+    contextvars.ContextVar(
+        "sandbox_stderr_parts",
+    )
 )
 _current_stdout: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "sandbox_current_stdout",
@@ -122,15 +165,21 @@ _current_stderr: contextvars.ContextVar[Any] = contextvars.ContextVar(
 class StreamLike:
     """Captures output to a parts list, supporting text and images."""
 
-    def __init__(self, parts_var: contextvars.ContextVar[list[OutputPart]]):
+    def __init__(
+        self,
+        parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
+    ):
         self._parts_var = parts_var
 
     def write(self, obj: str) -> int:
         parts = self._parts_var.get()
-        if parts and isinstance(parts[-1], TextOutput):
-            parts[-1].text += obj
+        # Merge consecutive text writes into a single TextPart
+        if parts and isinstance(parts[-1], TextPart):
+            # TextPart is immutable (Pydantic), so we need to replace it
+            last = parts[-1]
+            parts[-1] = TextPart(text=last.text + obj)
         else:
-            parts.append(TextOutput(text=obj))
+            parts.append(TextPart(text=obj))
         return len(obj)
 
     def flush(self) -> None:
@@ -212,7 +261,7 @@ def _ensure_stream_router_installed() -> None:
 # Display function for rich output (images, etc.)
 # ---------------------------------------------------------------------------
 def _make_display(
-    parts_var: contextvars.ContextVar[list[OutputPart]],
+    parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
 ) -> Callable[[Any], None]:
     """Create a display function that adds images to output parts."""
 
@@ -228,12 +277,12 @@ def _make_display(
             buf = io.BytesIO()
             obj.save(buf, format="PNG")
             b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
-            parts.append(ImageOutput(image_mime="image/png", data=b64_data))
+            parts.append(ImagePart(mime="image/png", data=b64_data))
         elif isinstance(obj, str):
-            parts.append(TextOutput(text=obj + "\n"))
+            parts.append(TextPart(text=obj + "\n"))
         else:
             # Fallback: convert to string
-            parts.append(TextOutput(text=str(obj) + "\n"))
+            parts.append(TextPart(text=str(obj) + "\n"))
 
     return display
 
@@ -255,8 +304,8 @@ def capture_sandbox_output():
     # Ensure StreamRouter is installed (lazy, once per process)
     _ensure_stream_router_installed()
 
-    stdout_parts: list[OutputPart] = []
-    stderr_parts: list[OutputPart] = []
+    stdout_parts: List[Union[TextPart, ImagePart]] = []
+    stderr_parts: List[Union[TextPart, ImagePart]] = []
 
     # Set up ContextVars
     stdout_token = _stdout_parts.set(stdout_parts)
@@ -806,7 +855,7 @@ class PythonExecutionSession:
         Executes a string of Python code within the sandbox's stateful environment.
 
         Returns a dict with:
-            stdout: list[OutputPart] - structured output parts (TextOutput, ImageOutput)
+            stdout: list[OutputPart] - structured output parts (TextPart, ImagePart)
             stderr: list[OutputPart] - structured error output parts
             result: Any - return value of the last expression
             error: str | None - traceback if an exception occurred
@@ -840,14 +889,20 @@ class PythonExecutionSession:
 
                         def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
                             # Only rewrite *assignments* (Store context). Loads are preserved.
-                            if isinstance(node.ctx, ast.Store) and node.id in self._REMAP:
+                            if (
+                                isinstance(node.ctx, ast.Store)
+                                and node.id in self._REMAP
+                            ):
                                 return ast.copy_location(
                                     ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
                                     node,
                                 )
                             return node
 
-                        def visit_Global(self, node: ast.Global) -> ast.AST:  # noqa: N802
+                        def visit_Global(
+                            self,
+                            node: ast.Global,
+                        ) -> ast.AST:  # noqa: N802
                             node.names = [self._REMAP.get(n, n) for n in node.names]
                             return node
 
@@ -905,9 +960,7 @@ class PythonExecutionSession:
 
                 async_code = "async def __exec_wrapper():\n"
                 if top_level_assign_targets:
-                    async_code += (
-                        f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
-                    )
+                    async_code += f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
 
                 async_code += "".join(f"    {line}\n" for line in code.splitlines())
 
