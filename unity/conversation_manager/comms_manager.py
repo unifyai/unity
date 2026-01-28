@@ -98,6 +98,9 @@ def _is_blacklisted(medium: str, contact_detail: str | None) -> bool:
     This is a fail-open check: returns False on any error to avoid
     blocking legitimate messages due to infrastructure issues.
 
+    Gated by SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED (default False).
+    When disabled, returns False immediately without any manager initialization.
+
     Args:
         medium: The communication medium (e.g., "sms_message", "email", "phone_call")
         contact_detail: The phone number or email address to check
@@ -105,6 +108,10 @@ def _is_blacklisted(medium: str, contact_detail: str | None) -> bool:
     Returns:
         True if the contact detail is blacklisted, False otherwise
     """
+    # Fast path: skip all manager initialization when blacklist checks disabled
+    if not SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED:
+        return False
+
     if not contact_detail:
         return False
 
@@ -138,6 +145,9 @@ def _get_or_create_unknown_contact(
     Uses a lock to prevent duplicate contact creation when multiple
     messages arrive from the same unknown sender simultaneously.
 
+    Gated by SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED (default False).
+    When disabled, returns None immediately without any manager initialization.
+
     Args:
         medium: The communication medium (determines which contact field to set)
         contact_detail: The phone number or email address
@@ -145,6 +155,10 @@ def _get_or_create_unknown_contact(
     Returns:
         The contact dict (existing or newly created), or None on error
     """
+    # Fast path: skip all manager initialization when blacklist checks disabled
+    if not SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED:
+        return None
+
     from unity.manager_registry import ManagerRegistry
     from unity.contact_manager.contact_manager import ContactManager
 
