@@ -133,9 +133,8 @@ def custom_function(
         precondition: Optional dict specifying required state before execution.
         auto_sync: If False, function is excluded from auto-sync (default True).
         windows_os_required: If True, function executes on remote Windows VM
-                             when assistant has desktop_mode='windows' and
-                             is_user_desktop=False. Use for Windows-only libraries
-                             like xlwings or COM automation.
+                             when assistant has desktop_mode='windows'. Use for
+                             Windows-only libraries like xlwings or COM automation.
         data_required: List of argument names or static paths for data to upload
                        before remote execution. Argument names have their runtime
                        values resolved; static paths (starting with '/') are uploaded

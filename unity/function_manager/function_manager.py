@@ -5027,7 +5027,6 @@ class FunctionManager(BaseFunctionManager):
         Returns True when ALL of the following conditions are met:
         - Function has windows_os_required=True
         - Assistant has desktop_mode='windows'
-        - Assistant has is_user_desktop=False (managed VM, not user's machine)
 
         Args:
             func_data: Function metadata dict from the function store.
@@ -5041,11 +5040,7 @@ class FunctionManager(BaseFunctionManager):
 
         from unity.session_details import SESSION_DETAILS
 
-        assistant = SESSION_DETAILS.assistant
-        should_execute_remote = (
-            assistant.desktop_mode == "windows" and not assistant.is_user_desktop
-        )
-        return should_execute_remote
+        return SESSION_DETAILS.assistant.desktop_mode == "windows"
 
     def _calculate_wait_time_from_vm_ready_at(
         self,

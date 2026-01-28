@@ -26,16 +26,11 @@ def _ensure_project_exists(api_key: str) -> None:
 
 
 def _is_managed_vm() -> bool:
-    """Check if running on a managed (non-user) VM.
+    """Check if running on a managed VM.
 
-    Returns True when:
-    - is_user_desktop=False (managed infrastructure, not user's own machine)
-    - desktop_mode is "windows" or "ubuntu" (VM-based modes)
+    Returns True when desktop_mode is "windows" or "ubuntu".
     """
-    return (
-        not SESSION_DETAILS.assistant.is_user_desktop
-        and SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
-    )
+    return SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
 
 
 def _calc_wait_from_ready_at(vm_ready_at: str | None) -> int:
@@ -183,7 +178,7 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
     """Stop the VM for the given assistant.
 
     Called when a job is marked done and the assistant was running on a
-    managed VM (is_user_desktop=False and desktop_mode in windows/ubuntu).
+    managed VM (desktop_mode in windows/ubuntu).
 
     Args:
         assistant_id: The assistant ID whose VM to stop.
