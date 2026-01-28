@@ -3,11 +3,16 @@ from pydantic import TypeAdapter
 
 from unity.actor.code_act_actor import (
     PythonExecutionSession,
+    ExecutionResult,
     parts_to_text,
     parts_to_llm_content,
     TextPart,
     ImagePart,
     OutputPart,
+)
+from unity.common._async_tool.formatting import (
+    serialize_tool_content,
+    FormattedToolResult,
 )
 
 
@@ -18,15 +23,15 @@ async def test_sandbox_stateful_variable_execution():
     sandbox = PythonExecutionSession()
 
     result1 = await sandbox.execute("x = 100")
-    assert result1["error"] is None
+    assert result1.error is None
     assert "x" in sandbox.global_state
     assert sandbox.global_state["x"] == 100
 
     result2 = await sandbox.execute("y = x * 2\nprint(y)")
-    assert result2["error"] is None
+    assert result2.error is None
     assert "y" in sandbox.global_state
     assert sandbox.global_state["y"] == 200
-    assert parts_to_text(result2["stdout"]) == "200\n"
+    assert parts_to_text(result2.stdout) == "200\n"
 
 
 @pytest.mark.asyncio
@@ -36,14 +41,14 @@ async def test_sandbox_stateful_import_execution():
     sandbox = PythonExecutionSession()
 
     result1 = await sandbox.execute("import json")
-    assert result1["error"] is None
+    assert result1.error is None
     assert "json" in sandbox.global_state
 
     result2 = await sandbox.execute(
         "my_dict = {'key': 'value'}\nprint(json.dumps(my_dict))",
     )
-    assert result2["error"] is None
-    assert parts_to_text(result2["stdout"]).strip() == '{"key": "value"}'
+    assert result2.error is None
+    assert parts_to_text(result2.stdout).strip() == '{"key": "value"}'
 
 
 @pytest.mark.asyncio
@@ -54,13 +59,13 @@ async def test_sandbox_stateful_function_definition():
 
     func_def_code = "def my_adder(a, b):\n    return a + b"
     result1 = await sandbox.execute(func_def_code)
-    assert result1["error"] is None
+    assert result1.error is None
     assert "my_adder" in sandbox.global_state
 
     func_call_code = "result = my_adder(10, 5)\nprint(result)"
     result2 = await sandbox.execute(func_call_code)
-    assert result2["error"] is None
-    assert parts_to_text(result2["stdout"]).strip() == "15"
+    assert result2.error is None
+    assert parts_to_text(result2.stdout).strip() == "15"
     assert sandbox.global_state["result"] == 15
 
 
@@ -78,13 +83,13 @@ async def test_sandbox_stateful_class_definition():
         "        return f'Hello, {self.name}!'\n"
     )
     result1 = await sandbox.execute(class_def_code)
-    assert result1["error"] is None
+    assert result1.error is None
     assert "Greeter" in sandbox.global_state
 
     class_use_code = "g = Greeter('World')\nprint(g.greet())"
     result2 = await sandbox.execute(class_use_code)
-    assert result2["error"] is None
-    assert parts_to_text(result2["stdout"]).strip() == "Hello, World!"
+    assert result2.error is None
+    assert parts_to_text(result2.stdout).strip() == "Hello, World!"
 
 
 @pytest.mark.asyncio
@@ -98,12 +103,12 @@ async def test_sandbox_browser_tool_execution(mock_computer_primitives):
 
     nav_code = "await computer_primitives.navigate('https://example.com')"
     nav_result = await sandbox.execute(nav_code)
-    assert nav_result["error"] is None
+    assert nav_result.error is None
     mock_computer_primitives.navigate.assert_awaited_once_with("https://example.com")
 
     act_code = "await computer_primitives.act('Click login button')"
     act_result = await sandbox.execute(act_code)
-    assert act_result["error"] is None
+    assert act_result.error is None
     mock_computer_primitives.act.assert_awaited_once_with("Click login button")
 
     observe_code = """
@@ -116,8 +121,8 @@ result = await computer_primitives.observe('get data', response_format=MyData)
 print(result['data'])
 """
     observe_result = await sandbox.execute(observe_code)
-    assert observe_result["error"] is None
-    assert parts_to_text(observe_result["stdout"]).strip() == "observed_data"
+    assert observe_result.error is None
+    assert parts_to_text(observe_result.stdout).strip() == "observed_data"
     mock_computer_primitives.observe.assert_awaited_once()
     assert mock_computer_primitives.observe.call_args[0][0] == "get data"
 
@@ -129,11 +134,11 @@ async def test_sandbox_error_handling():
     sandbox = PythonExecutionSession()
     result = await sandbox.execute("x = 1 / 0")
 
-    assert parts_to_text(result["stdout"]) == ""
-    assert parts_to_text(result["stderr"]) == ""
-    assert result["result"] is None
-    assert result["error"] is not None
-    assert "ZeroDivisionError" in result["error"]
+    assert parts_to_text(result.stdout) == ""
+    assert parts_to_text(result.stderr) == ""
+    assert result.result is None
+    assert result.error is not None
+    assert "ZeroDivisionError" in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -230,9 +235,9 @@ display(img)
 print("after")
 """
     result = await sandbox.execute(code)
-    assert result["error"] is None
+    assert result.error is None
 
-    stdout = result["stdout"]
+    stdout = result.stdout
 
     # Should have TextPart, ImagePart, TextPart in order
     assert len(stdout) == 3
@@ -253,3 +258,80 @@ print("after")
     assert llm_content[0]["type"] == "text"
     assert llm_content[1]["type"] == "image_url"
     assert llm_content[2]["type"] == "text"
+
+
+def test_execution_result_implements_formatted_tool_result():
+    """Tests that ExecutionResult implements the FormattedToolResult protocol."""
+    # ExecutionResult should be recognized as a FormattedToolResult
+    result = ExecutionResult(
+        stdout=[TextPart(text="hello\n")],
+        stderr=[],
+        result=42,
+        error=None,
+    )
+
+    # Protocol check
+    assert isinstance(result, FormattedToolResult)
+
+    # to_llm_content should return list of dicts
+    llm_content = result.to_llm_content()
+    assert isinstance(llm_content, list)
+    assert all(isinstance(block, dict) for block in llm_content)
+    assert all("type" in block for block in llm_content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_serialize_tool_content_delegates_to_execution_result():
+    """Tests that serialize_tool_content delegates to ExecutionResult.to_llm_content().
+
+    This verifies the protocol-based design: the tool result (ExecutionResult)
+    controls its own formatting, not serialize_tool_content.
+    """
+    sandbox = PythonExecutionSession()
+
+    code = """
+from PIL import Image
+img = Image.new("RGB", (10, 10), color="blue")
+print("text before image")
+display(img)
+print("text after image")
+"""
+    result = await sandbox.execute(code)
+    assert result.error is None
+
+    # Verify result is an ExecutionResult implementing the protocol
+    assert isinstance(result, ExecutionResult)
+    assert isinstance(result, FormattedToolResult)
+
+    # Pass through serialize_tool_content (simulating what happens in tool loop)
+    serialized = serialize_tool_content(
+        tool_name="execute_code",
+        payload=result,
+        is_final=True,
+    )
+
+    # Should be a list of content blocks
+    assert isinstance(serialized, list)
+
+    # Extract block types
+    block_types = [b.get("type") for b in serialized]
+
+    # Find image and text indices
+    image_indices = [i for i, t in enumerate(block_types) if t == "image_url"]
+    text_indices = [i for i, t in enumerate(block_types) if t == "text"]
+
+    # There should be at least one image
+    assert len(image_indices) >= 1, "Expected at least one image_url block"
+
+    # Critical: image should NOT be at the very end if there's text after it
+    # The last text block should come AFTER the image (preserving print order)
+    last_image_idx = max(image_indices)
+    last_text_idx = max(text_indices)
+
+    assert last_text_idx > last_image_idx, (
+        f"Image at index {last_image_idx} should not be after all text. "
+        f"Text indices: {text_indices}, Image indices: {image_indices}. "
+        "This indicates images are being collected at the end instead of "
+        "preserving their original interleaved positions."
+    )

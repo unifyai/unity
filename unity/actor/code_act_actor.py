@@ -138,6 +138,95 @@ def parts_to_llm_content(parts: List[Union[TextPart, ImagePart]]) -> List[dict]:
     return blocks
 
 
+class ExecutionResult(BaseModel):
+    """Result from sandbox code execution, implementing FormattedToolResult protocol.
+
+    This model gives the sandbox full control over how its output is formatted
+    for the LLM, preserving the original interleaving of text and images from
+    print() and display() calls.
+    """
+
+    stdout: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
+    stderr: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
+    result: Any = None
+    error: Optional[str] = None
+    browser_used: bool = False
+    language: Optional[str] = None
+    state_mode: Optional[str] = None
+    session_id: Optional[int] = None
+    session_name: Optional[str] = None
+    venv_id: Optional[int] = None
+    session_created: Optional[bool] = None
+    duration_ms: Optional[int] = None
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    def to_llm_content(self) -> List[dict]:
+        """Format this execution result for the LLM, preserving output order.
+
+        Implements the FormattedToolResult protocol, giving the sandbox full
+        control over how its output appears in the LLM transcript.
+        """
+        blocks: List[dict] = []
+
+        # Build metadata section (non-stdout/stderr fields)
+        meta: Dict[str, Any] = {}
+        if self.result is not None:
+            meta["result"] = self.result
+        if self.error is not None:
+            meta["error"] = self.error
+        if self.language is not None:
+            meta["language"] = self.language
+        if self.state_mode is not None:
+            meta["state_mode"] = self.state_mode
+        if self.session_id is not None:
+            meta["session_id"] = self.session_id
+        if self.session_name is not None:
+            meta["session_name"] = self.session_name
+        if self.venv_id is not None:
+            meta["venv_id"] = self.venv_id
+        if self.session_created is not None:
+            meta["session_created"] = self.session_created
+        if self.duration_ms is not None:
+            meta["duration_ms"] = self.duration_ms
+        if self.browser_used:
+            meta["browser_used"] = True
+
+        # Add metadata block if present
+        if meta:
+            import json
+
+            meta_text = json.dumps(meta, indent=2, default=str)
+            blocks.append({"type": "text", "text": meta_text})
+
+        # Add stdout with preserved ordering (interleaved text/images)
+        if self.stdout:
+            has_content = any(
+                (isinstance(p, TextPart) and p.text.strip()) or isinstance(p, ImagePart)
+                for p in self.stdout
+            )
+            if has_content:
+                if blocks:  # Add separator if we have metadata
+                    blocks.append({"type": "text", "text": "\n--- stdout ---\n"})
+                blocks.extend(parts_to_llm_content(self.stdout))
+
+        # Add stderr with preserved ordering (if non-empty)
+        if self.stderr:
+            has_content = any(
+                (isinstance(p, TextPart) and p.text.strip()) or isinstance(p, ImagePart)
+                for p in self.stderr
+            )
+            if has_content:
+                blocks.append({"type": "text", "text": "\n--- stderr ---\n"})
+                blocks.extend(parts_to_llm_content(self.stderr))
+
+        # Ensure we always return at least something
+        if not blocks:
+            blocks.append({"type": "text", "text": "(no output)"})
+
+        return blocks
+
+
 # ---------------------------------------------------------------------------
 # ContextVars for per-execution stream isolation
 # ---------------------------------------------------------------------------
@@ -850,16 +939,19 @@ class PythonExecutionSession:
             except Exception:
                 pass
 
-    async def execute(self, code: str) -> Dict[str, Any]:
+    async def execute(self, code: str) -> "ExecutionResult":
         """
         Executes a string of Python code within the sandbox's stateful environment.
 
-        Returns a dict with:
+        Returns an ExecutionResult (implements FormattedToolResult protocol) with:
             stdout: list[OutputPart] - structured output parts (TextPart, ImagePart)
             stderr: list[OutputPart] - structured error output parts
             result: Any - return value of the last expression
             error: str | None - traceback if an exception occurred
             browser_used: bool - whether browser primitives were accessed
+
+        The ExecutionResult controls its own LLM formatting via to_llm_content(),
+        preserving the original interleaving of text and images.
         """
         # Reset per-execution usage flags.
         self._browser_used = False
@@ -973,13 +1065,13 @@ class PythonExecutionSession:
                 if "__exec_wrapper" in self.global_state:
                     del self.global_state["__exec_wrapper"]
 
-        return {
-            "stdout": stdout_parts,
-            "stderr": stderr_parts,
-            "result": result,
-            "error": error,
-            "browser_used": self._browser_used,
-        }
+        return ExecutionResult(
+            stdout=stdout_parts,
+            stderr=stderr_parts,
+            result=result,
+            error=error,
+            browser_used=self._browser_used,
+        )
 
 
 class SessionExecutor:
