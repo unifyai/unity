@@ -374,9 +374,7 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
 
     # Store the screenshot and obtain an image id
     img_path = (
-        Path(__file__).parent.parent
-        / "test_task_scheduler"
-        / "organize_weekly_rotar.png"
+        Path(__file__).parent.parent / "task_scheduler" / "organize_weekly_rotar.png"
     )
     raw_bytes = img_path.read_bytes()
     img_b64 = base64.b64encode(raw_bytes).decode("utf-8")

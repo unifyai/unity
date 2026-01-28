@@ -14,7 +14,7 @@ from unity.contact_manager.types.contact import Contact
 def _load_contact_card_png_b64() -> str:
     here = os.path.dirname(__file__)
     img_path = os.path.abspath(
-        os.path.join(here, "..", "test_contact_manager", "details.png"),
+        os.path.join(here, "..", "contact_manager", "details.png"),
     )
     with open(img_path, "rb") as f:
         data = f.read()

@@ -31,9 +31,9 @@ show_help() {
   echo "  -h, --help         Show this help"
   echo ""
   echo "Examples:"
-  echo "  attach.sh 'p ✅ test_contact_manager-test_ask'"
-  echo "  attach.sh --socket unity_dev_ttys042 'f ❌ test_actor-test_code_act'"
-  echo "  attach.sh 'unity_dev_ttys042:f ❌ test_actor-test_code_act'"
+  echo "  attach.sh 'p ✅ contact_manager-test_ask'"
+  echo "  attach.sh --socket unity_dev_ttys042 'f ❌ actor-test_code_act'"
+  echo "  attach.sh 'unity_dev_ttys042:f ❌ actor-test_code_act'"
 }
 
 LIST_ALL=0

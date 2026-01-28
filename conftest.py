@@ -231,7 +231,7 @@ def _derive_log_name_from_args(args: list) -> str:
         Multiple from same file:
             → 'test_session_behavior--TestA-test_x+1more'
         Multiple from same directory:
-            → 'test_contact_manager--test_ask+2more'
+            → 'contact_manager--test_ask+2more'
     """
     if not args:
         return "all"
