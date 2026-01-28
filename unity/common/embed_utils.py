@@ -34,6 +34,7 @@ else:
         """Release the lock on the file (Unix)."""
         fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
 
+
 # Model to use for text embeddings
 EMBED_MODEL = "text-embedding-3-small"
 
