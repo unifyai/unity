@@ -338,7 +338,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         The calling parent loop is left completely untouched.
         When ``parent_chat_context_cont`` is provided, the continued context is
         included in the inspection loop's system message to provide additional
-        context from the outer conversation.
+        context from your conversation (messages that arrived since the tool started).
 
         If ``images`` are provided, the spawned inspection loop receives live
         images (helpers exposed, synthetic overview injected) and any nested asks
@@ -427,11 +427,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     "",
                     "## Parent Chat Context (continued)",
                     (
-                        "This is the next incremental chunk of the outer conversation since the "
-                        "last context update (either the initial Parent Chat Context in the system "
+                        "This is the next incremental chunk of the parent conversation since the "
+                        "last context update (either the initial Parent Chat Context in your system "
                         "message, or the previous continued context chunk). These messages arrived "
-                        "after this tool started but may be relevant to your current task. Use this "
-                        "to stay informed of any updates or new information from the outer conversation."
+                        "while you have been working on this request and may be relevant. Use this "
+                        "to stay informed of any updates or new information from the parent conversation."
                     ),
                     "",
                     json.dumps(parent_chat_context_cont, indent=2),

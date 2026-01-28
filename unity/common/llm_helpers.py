@@ -600,20 +600,22 @@ def method_to_schema(
         # Build conditional docstring based on whether the current loop has parent context
         if has_parent_context:
             ctx_desc = (
-                "Whether or not to pass the chat context from *this* outer loop "
-                "and also the accumulated parent_chat_context down into this new "
-                "tool invocation. Set `true` when the broader context of this loop "
-                "and the parent context could be useful for the inner tool. Set "
-                "`false` if the broader context would objectively not be helpful "
-                "for this new tool call."
+                "Whether to pass conversation context into this tool. When `true`, "
+                "the tool receives: (1) the Parent Chat Context from your system "
+                "message, and (2) your own conversation history up to this point. "
+                "This combined context helps the tool understand the broader "
+                "situation. Set `true` when context would help the tool perform "
+                "better. Set `false` when the tool's task is self-contained and "
+                "additional context would not be useful."
             )
         else:
             ctx_desc = (
-                "Whether or not to pass the chat context from *this* outer loop "
-                "down into this new tool invocation. Set `true` when the broader "
-                "context of this loop could be useful for the inner tool. Set "
-                "`false` if the broader context would objectively not be helpful "
-                "for this new tool call."
+                "Whether to pass conversation context into this tool. When `true`, "
+                "the tool receives your conversation history up to this point, "
+                "helping it understand the broader situation. Set `true` when "
+                "context would help the tool perform better. Set `false` when the "
+                "tool's task is self-contained and additional context would not "
+                "be useful."
             )
         props["include_parent_chat_context"] = {
             "type": "boolean",
@@ -625,11 +627,12 @@ def method_to_schema(
     # LLM control over context continuation propagation, inject the visible control param
     if accepts_parent_chat_context_cont and expose_context_cont_control:
         ctx_cont_desc = (
-            "Whether to forward context continuations (new messages since this tool "
-            "started) to the inner tool with this steering call. Set `true` when the "
-            "inner tool would benefit from knowing about recent conversation updates. "
-            "Set `false` if the update is purely about this specific call and new "
-            "context would not be helpful."
+            "Whether to forward recent conversation updates to this running tool. "
+            "When `true`, the tool receives any new messages that have arrived in "
+            "your conversation since the tool started running. Set `true` when the "
+            "tool would benefit from knowing about these recent updates (e.g., new "
+            "instructions or context). Set `false` when this steering call is "
+            "self-contained and the tool does not need the additional context."
         )
         props["include_parent_chat_context_cont"] = {
             "type": "boolean",
