@@ -227,7 +227,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         reason: Optional[str] = None,
         *,
         cancel: bool = False,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         """Cancel further processing so `.result()` raises.
 
@@ -238,8 +237,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         Args:
             reason: Optional reason for stopping.
             cancel: Ignored; interaction is always cancelled.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
@@ -304,7 +301,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
@@ -312,7 +309,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
             images: Optional image references. Accepted for API parity with real handles
                 but not currently used.
@@ -691,7 +688,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 *,
                 cancel: bool = False,
                 reason: Optional[str] = None,
-                parent_chat_context_cont: list[dict] | None = None,
             ) -> Optional[str]:  # type: ignore[override]
                 self._log_stop(reason)
                 # Prefer actor-style stop(reason) but tolerate both signatures
@@ -755,7 +751,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 question: str,
                 *,
-                parent_chat_context_cont: list[dict] | None = None,
+                _parent_chat_context: list[dict] | None = None,
                 images: object | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":

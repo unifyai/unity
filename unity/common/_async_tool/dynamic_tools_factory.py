@@ -329,6 +329,8 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_interject,
         )
+        # Mark as supporting context propagation so schema generation can expose include_parent_chat_context_cont
+        _interject.__supports_context_propagation__ = True  # type: ignore[attr-defined]
 
     def _create_ask_tool(
         self,
@@ -653,6 +655,10 @@ class DynamicToolFactory:
             safe_call_id=_safe_call_id,
         )
 
+        # Track context opt-in for steering methods
+        # This determines whether include_parent_chat_context_cont is exposed in schema
+        _context_opted_in = getattr(info, "context_opted_in", True)
+
         self._create_stop_tool(
             create_tool_ctx,
             task,
@@ -665,6 +671,10 @@ class DynamicToolFactory:
                 info,
                 handle,
             )
+            # Mark with context opt-in status
+            interject_key = f"interject_{_fn_name}_{_safe_call_id}"
+            if interject_key in self.dynamic_tools:
+                self.dynamic_tools[interject_key].__context_opted_in__ = _context_opted_in  # type: ignore[attr-defined]
 
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx, handle)

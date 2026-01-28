@@ -338,25 +338,30 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Test parity between parent_chat_context_cont and images across methods   #
+# 6. Test parity between context and images across steering methods           #
 # --------------------------------------------------------------------------- #
 def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     """
-    Verify that ask, interject, and stop all have both parent_chat_context_cont
-    (hidden plumbing via explicit list) and images (visible) parameters for full parity.
+    Verify that ask and interject have both context parameters (hidden plumbing)
+    and images (visible) parameters for full parity.
+
+    - ask() uses parent_chat_context (initial context for fresh inspection loop)
+    - interject() uses parent_chat_context_cont (continuation for ongoing loop)
+    - stop() only has images (stop is symbolic cancellation, no context propagation)
     """
     from unity.common.async_tool_loop import SteerableHandle, SteerableToolHandle
     import inspect
 
-    # Check SteerableHandle.ask
+    # Check SteerableHandle.ask - uses _parent_chat_context (not _cont) since it
+    # spawns a fresh inspection loop that needs initial context
+    # Note: underscore prefix makes it hidden from LLM schema
     ask_sig = inspect.signature(SteerableHandle.ask)
     ask_params = set(ask_sig.parameters.keys()) - {"self"}
-    assert (
-        "parent_chat_context_cont" in ask_params
-    ), "ask should have parent_chat_context_cont"
+    assert "_parent_chat_context" in ask_params, "ask should have _parent_chat_context"
     assert "images" in ask_params, "ask should have images"
 
-    # Check SteerableHandle.interject
+    # Check SteerableHandle.interject - uses parent_chat_context_cont since it
+    # adds to an ongoing conversation
     interject_sig = inspect.signature(SteerableHandle.interject)
     interject_params = set(interject_sig.parameters.keys()) - {"self"}
     assert (
@@ -364,13 +369,13 @@ def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     ), "interject should have parent_chat_context_cont"
     assert "images" in interject_params, "interject should have images"
 
-    # Check SteerableToolHandle.stop
+    # Check SteerableToolHandle.stop - only has images (stop is symbolic, no context propagation)
     stop_sig = inspect.signature(SteerableToolHandle.stop)
     stop_params = set(stop_sig.parameters.keys()) - {"self"}
-    assert (
-        "parent_chat_context_cont" in stop_params
-    ), "stop should have parent_chat_context_cont"
     assert "images" in stop_params, "stop should have images"
+    assert (
+        "parent_chat_context_cont" not in stop_params
+    ), "stop should NOT have parent_chat_context_cont (stop is symbolic cancellation)"
 
 
 @pytest.mark.asyncio

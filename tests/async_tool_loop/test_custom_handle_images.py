@@ -49,7 +49,7 @@ class CustomImagesHandle(SteerableToolHandle):
         )
         return None
 
-    def stop(self, reason: Optional[str] = None, *, parent_chat_context_cont=None):
+    def stop(self, reason: Optional[str] = None):
         self._done.set()
         return "stopped"
 

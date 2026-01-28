@@ -41,18 +41,18 @@ from abc import ABC, abstractmethod
 class SteerableHandle(ABC):
     """Abstract base class for steerable handles.
 
-    Notes on parent_chat_context_cont
-    ---------------------------------
-    Some steering methods accept an optional parameter ``parent_chat_context_cont``.
-    This represents the parent chat context continued since the start of this loop –
-    i.e., a continuation of the parent "conversation" (which may itself be another
-    tool loop). Implementations should ensure that, when provided, this context is
-    surfaced to the LLM in an appropriate way.
+    Notes on context parameters
+    ---------------------------
+    Steering methods accept context parameters that are plumbing parameters
+    automatically hidden from LLM tool schemas (injected by orchestrating code):
 
-    This parameter is a plumbing parameter that is automatically hidden from LLM
-    tool schemas by ``method_to_schema`` (LLMs should not control this value; it is
-    injected by the orchestrating code layer). This matches the naming convention
-    of ``parent_chat_context`` used in ``start_async_tool_loop``.
+    - ``parent_chat_context_cont`` (for ``interject``): Continuation of the parent
+      conversation since this loop started. Used to inject incremental updates into
+      an ongoing conversation.
+
+    - ``parent_chat_context`` (for ``ask``): Full context snapshot for initializing
+      a fresh inspection loop. Since ``ask`` spawns a new loop, it needs initial
+      context, not a continuation.
     """
 
     @abstractmethod
@@ -60,7 +60,7 @@ class SteerableHandle(ABC):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> "SteerableHandle":
         """
@@ -120,7 +120,6 @@ class SteerableToolHandle(SteerableHandle):
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Stop this task immediately, cancelling any pending work.
@@ -281,7 +280,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         parent_chat_context_cont: list[dict] | None,
     ) -> None:
-        # NOTE: key name 'parent_chat_context_continuted' is legacy and intentional
         with suppress(Exception):
             if parent_chat_context_cont is not None:
                 self._user_visible_history.append(
@@ -289,7 +287,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "role": "user",
                         "content": {
                             "message": message,
-                            "parent_chat_context_continuted": parent_chat_context_cont,
+                            "parent_chat_context_continued": parent_chat_context_cont,
                         },
                     },
                 )
@@ -328,7 +326,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         _return_reasoning_steps: bool = False,
         **kwargs,
@@ -337,10 +335,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         Answers *question* about this *pending* tool, associated with this handle.
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
-        When ``parent_chat_context_cont`` is provided, the user message will be
-        packaged as a dict with keys {"parent_chat_context_continuted", "message"}
-        to clearly signal the continuation of the parent conversation since the
-        start of this loop.
+        When ``parent_chat_context`` is provided, the context is included in the
+        inspection loop's system message to provide additional context about the
+        broader conversation that led to this question.
 
         If ``images`` are provided, the spawned inspection loop receives live
         images (helpers exposed, synthetic overview injected) and any nested asks
@@ -350,7 +347,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
 
         # Record the user-visible question immediately (even if delegated)
-        self._append_user_visible_user(question, parent_chat_context_cont)
+        self._append_user_visible_user(question, parent_chat_context)
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -412,15 +409,48 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         from .llm_client import new_llm_client
 
         inspection_client = new_llm_client()
-        inspection_client.set_system_message(
-            "You are inspecting a running tool-use conversation. The entire "
-            "transcript so far is attached below (read-only):\n"
-            f"{json.dumps(parent_ctx, indent=2)}\n\n"
-            "Answer the user's follow-up question using ONLY this context.\n"
-            "Do not attempt to run new tools unless they are exposed to you.\n"
-            "Do not ask the user questions or request clarification. If information is missing,\n"
-            "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
+
+        # Build system message with transcript and optional parent context
+        sys_msg_parts = [
+            "You are inspecting a running tool-use conversation to answer a question about it.",
+            "",
+            "## Inspected Loop Transcript",
+            (
+                "This is the transcript of the tool/loop you are being asked about. "
+                "Use this to answer the user's question about the current state or progress."
+            ),
+            "",
+            json.dumps(parent_ctx, indent=2),
+        ]
+
+        # If parent context is provided, add it as a separate section
+        if parent_chat_context:
+            sys_msg_parts.extend(
+                [
+                    "",
+                    "## Parent Chat Context",
+                    (
+                        "This is the broader conversation context from which this question originated. "
+                        "It may help explain why this question is being asked. Note: this is separate "
+                        "from the Inspected Loop Transcript above - that transcript is what you are "
+                        "answering questions about."
+                    ),
+                    "",
+                    json.dumps(parent_chat_context, indent=2),
+                ],
+            )
+
+        sys_msg_parts.extend(
+            [
+                "",
+                "Answer the user's follow-up question using ONLY this context.",
+                "Do not attempt to run new tools unless they are exposed to you.",
+                "Do not ask the user questions or request clarification. If information is missing,",
+                "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
+            ],
         )
+
+        inspection_client.set_system_message("\n".join(sys_msg_parts))
 
         # 3.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
@@ -437,18 +467,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         loop_id_label = f"Question({parent_label})"
 
-        # Build the message for the inspection loop – either a plain string or
-        # a single string that embeds the continued parent context.
-        if parent_chat_context_cont is not None:
-            _ctx_text = str(parent_chat_context_cont)
-            with suppress(Exception):
-                _ctx_text = json.dumps(parent_chat_context_cont, indent=2)
-            _ask_message = {
-                "role": "user",
-                "content": f"{question}\n\nparent_chat_context_continuted:\n{_ctx_text}",
-            }
-        else:
-            _ask_message = question
+        # The question is sent as a plain user message (context is in system message)
+        _ask_message = question
 
         helper_handle = start_async_tool_loop(
             inspection_client,
@@ -536,7 +556,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
         payload = {
             "message": message,
-            "parent_chat_context_continuted": parent_chat_context_cont,
+            "parent_chat_context_continued": parent_chat_context_cont,
             "images": images,
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
         }
@@ -567,7 +587,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         **kwargs,
     ) -> None:
