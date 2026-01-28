@@ -13,7 +13,7 @@ from __future__ import annotations
 # On some Python builds the built-in ``input()`` function lacks readline
 # capabilities, meaning arrow keys emit escape sequences like ``^[[D`` instead
 # of moving the cursor.  Simply importing the *readline* module (or its
-# platform-specific shim) activates those features globally for the current
+# platform-specific shim) activates those features globally for the active
 # process.  We do this **once**, right at the top-level of ``sandboxes.utils``
 # so that every sandbox script benefits without further changes.
 #
@@ -49,7 +49,17 @@ from av import AudioFrame
 import pyaudio
 import math
 import struct
-from deepgram import DeepgramClient
+
+try:
+    # Deepgram SDK v4+ exports these names
+    from deepgram import DeepgramClient, PrerecordedOptions, FileSource
+except Exception:  # pragma: no cover - optional dependency shape
+    from deepgram import DeepgramClient  # type: ignore
+
+    # Fallbacks to keep non-voice sandboxes working even if Deepgram SDK surface changes.
+    from typing import Any as FileSource  # type: ignore
+
+    PrerecordedOptions = object  # type: ignore
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
@@ -99,7 +109,7 @@ c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
 # ---------------------------------------------------------------------------
 
 _TTS_LOCK = threading.Lock()
-# Track the current TTS skip event to allow external cancellation
+# Track the active TTS skip event to allow external cancellation
 _CURRENT_TTS_SKIP: Optional[threading.Event] = None
 
 
@@ -397,15 +407,61 @@ def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
 
 
 def transcribe_deepgram(audio_bytes: bytes) -> str:
-    "Send *audio_bytes* to Deepgram SDK v4 and return the transcript."
+    """
+    Transcribe *audio_bytes* with Deepgram and return the transcript.
+
+    This sandbox intentionally degrades gracefully:
+    - If `DEEPGRAM_API_KEY` is missing, fall back to manual CLI text input.
+    - If Deepgram is unavailable or errors, fall back to manual CLI text input.
+
+    Implementation note:
+    We prefer calling Deepgram's HTTP API directly to avoid tight coupling to
+    a specific Deepgram Python SDK version/surface (which can drift).
+    """
     key = os.getenv("DEEPGRAM_API_KEY")
     if not key:
         print("[Voice] Deepgram key missing – fallback to CLI input.")
         return input("> ")
 
+    # Prefer the Deepgram HTTP API (SDKs have had breaking surface changes).
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+
+        req = _urlreq.Request(
+            url="https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true",
+            data=audio_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Token {key}",
+                "Content-Type": "audio/wav",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+        transcript = (
+            payload.get("results", {})
+            .get("channels", [{}])[0]
+            .get("alternatives", [{}])[0]
+            .get("transcript", "")
+        )
+        transcript = (transcript or "").strip()
+        if transcript:
+            return transcript
+        print("[Voice] Deepgram returned empty transcript – fallback to CLI input.")
+        return input("> ")
+    except Exception as exc:
+        print(f"[Voice] Deepgram HTTP error ({exc}) – fallback to CLI input.")
+        return input("> ")
+
+    # Legacy fallback: keep SDK path as a last resort if needed.
     dg = DeepgramClient(api_key=key)
-    payload: FileSource = {"buffer": audio_bytes}
-    opts = PrerecordedOptions(model="nova-3", smart_format=True, punctuate=True)
+    try:
+        payload: FileSource = {"buffer": audio_bytes}  # type: ignore[valid-type]
+        opts = PrerecordedOptions(model="nova-3", smart_format=True, punctuate=True)  # type: ignore[call-arg]
+    except Exception:
+        print("[Voice] Deepgram SDK mismatch – fallback to CLI input.")
+        return input("> ")
 
     try:
         response = dg.listen.rest.v("1").transcribe_file(payload, opts)
@@ -470,7 +526,7 @@ async def _speak_async(text: str) -> None:
                     return frame.to_pcm_bytes()
                 if hasattr(frame, "data"):  # mid-2024 builds
                     return bytes(frame.data)
-                if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
+                if hasattr(frame, "to_wav_bytes"):  # wav-bytes path → strip header
                     return cast(bytes, frame.to_wav_bytes())[44:]
                 return bytes(frame)  # last-resort
 
@@ -1524,7 +1580,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
             except Exception:
                 pass
 
-        txt = input_now(poll * 2)  # same cadence as old versions
+        txt = input_now(poll * 2)  # keep polling cadence stable across sandboxes
         if txt is not None and txt != "":
             # Use a left-trimmed view only for recognizing commands, but keep the original text intact
             working = txt.lstrip()
@@ -2114,10 +2170,10 @@ class TranscriptGenerator:
                 if match:
                     return match[0]
             except Exception:
-                # Any backend/cycle issues → fall through to new contact generation
+                # Any backend/cycle issues → fall through to contact generation
                 pass
 
-            # 2️⃣  No existing contact found → fabricate a new one
+            # 2️⃣  No existing contact found → fabricate a contact record
             details = details or {}
             # Robustly split *name* into first_name and (optional) surname so that
             # we never treat the full name as the first_name.  This fixes the issue
@@ -2334,7 +2390,7 @@ class TranscriptGenerator:
                         receiver_c = _others[0]
                     else:
                         # Use the existing assistant contact (id == 0) instead of
-                        # fabricating a new "Assistant" record.
+                        # fabricating an "Assistant" record.
                         receiver_c = 0
 
                 last_sender_contact = sender_c
@@ -2461,10 +2517,22 @@ class TranscriptGenerator:
         except Exception:
             existing = []  # graceful fallback
 
-        if existing:
+        # filter_contacts returns a packed dict shape {"contacts": [Contact, ...], ...}
+        # but older callers may return a raw list. Normalize to a list of contacts.
+        try:
+            if isinstance(existing, dict):
+                existing_list = existing.get("contacts", []) or []
+            else:
+                existing_list = existing or []
+        except Exception:
+            existing_list = []
+
+        if existing_list:
             lines = []
-            for c in existing:
-                full = " ".join(p for p in [c.first_name, c.surname] if p)
+            for c in existing_list:
+                first = getattr(c, "first_name", None)
+                sur = getattr(c, "surname", None)
+                full = " ".join(p for p in [first, sur] if p)
                 lines.append(f"• {full.strip()}")
 
             contact_block = (
@@ -3140,7 +3208,7 @@ def apply_per_task_simulation_patch(
                 instance_id: Optional[int] = None,
                 scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
             ):
-                # Snapshot current per-call state without holding the lock for long
+                # Snapshot per-call state without holding the lock for long
                 try:
                     per_call = _SANDBOX_SIM_PER_CALL  # type: ignore[name-defined]
                 except Exception:
