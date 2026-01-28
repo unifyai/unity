@@ -118,24 +118,7 @@ if [ "$MINIMAL" = false ]; then
         gnupg2 \
         ca-certificates
 
-    # X11 / Virtual desktop / VNC
-    apt-get install -y --no-install-recommends \
-        xvfb \
-        x11vnc \
-        fluxbox \
-        xdotool \
-        wmctrl \
-        xterm \
-        dbus \
-        dbus-x11 \
-        websockify
-
-    # XDG desktop portals
-    apt-get install -y --no-install-recommends \
-        xdg-desktop-portal \
-        xdg-desktop-portal-gtk
-
-    # Browser runtime dependencies
+    # Browser runtime dependencies (for Playwright headless browser)
     apt-get install -y --no-install-recommends \
         libnss3 \
         libatk-bridge2.0-0 \
@@ -152,15 +135,6 @@ if [ "$MINIMAL" = false ]; then
 
     # Media processing
     apt-get install -y --no-install-recommends ffmpeg
-
-    # Full audio stack (PipeWire)
-    apt-get install -y --no-install-recommends \
-        pipewire \
-        pipewire-pulse \
-        pipewire-alsa \
-        wireplumber \
-        pulseaudio-utils \
-        alsa-utils
 
     # Filesystem utilities (for AppImage support)
     apt-get install -y --no-install-recommends \
