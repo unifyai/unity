@@ -251,6 +251,8 @@ class ToolsData:
         sig_accepts_parent_ctx_cont = "_parent_chat_context_cont" in params or has_varkw
 
         # Determine whether to inject parent chat context based on propagation mode
+        # This decision is "sticky" for the tool's lifetime - if opted out initially,
+        # context continuations will also not be forwarded.
         should_inject_ctx = False
         if sig_accepts_parent_ctx or sig_accepts_parent_ctx_cont:
             if propagate_chat_context == ChatContextPropagation.ALWAYS:
@@ -278,6 +280,9 @@ class ToolsData:
             # Pass parent_chat_context_cont for incremental updates
             if parent_ctx_cont is not None and sig_accepts_parent_ctx_cont:
                 extra_kwargs["_parent_chat_context_cont"] = parent_ctx_cont
+
+        # Track context opt-in decision for later use (interjection forwarding, steering methods)
+        context_opted_in = should_inject_ctx
 
         sig_accepts_interject_q = "_interject_queue" in params or has_varkw
         sig_accepts_pause_event = "_pause_event" in params or has_varkw
@@ -354,6 +359,8 @@ class ToolsData:
             tool_schema=method_to_schema(fn, name),
             llm_arguments=allowed_call_args,
             raw_arguments_json=args_json,
+            # Track context opt-in for steering method context propagation
+            context_opted_in=context_opted_in,
         )
         self.save_task(t, metadata)
 

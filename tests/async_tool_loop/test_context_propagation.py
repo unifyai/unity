@@ -533,3 +533,171 @@ async def test_context_state_integration_symbolic() -> None:
     assert cont2 is not None, "Second call should get incremental cont"
     # Should include new local messages + the interjection
     assert len(cont2) == 3, f"Expected 3 incremental items, got {len(cont2)}"
+
+
+# =============================================================================
+# Tests for context opt-in/opt-out behavior with steering methods
+# =============================================================================
+
+
+def test_method_to_schema_exposes_context_cont_control():
+    """Verify that method_to_schema exposes include_parent_chat_context_cont when requested."""
+    from unity.common.llm_helpers import method_to_schema
+
+    def steering_method(
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
+        """A steering method that accepts context continuation."""
+        return "answer"
+
+    # Without expose_context_cont_control
+    schema_no_expose = method_to_schema(steering_method)
+    props = schema_no_expose["function"]["parameters"]["properties"]
+    assert "include_parent_chat_context_cont" not in props
+    # parent_chat_context_cont should be hidden
+    assert "parent_chat_context_cont" not in props
+
+    # With expose_context_cont_control
+    schema_exposed = method_to_schema(
+        steering_method,
+        expose_context_cont_control=True,
+    )
+    props_exposed = schema_exposed["function"]["parameters"]["properties"]
+    assert "include_parent_chat_context_cont" in props_exposed
+    assert props_exposed["include_parent_chat_context_cont"]["type"] == "boolean"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_tool_factory_marks_steering_methods():
+    """Verify that DynamicToolFactory marks steering methods with context opt-in status."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+
+    # Create mock tools_data
+    mock_client = MagicMock()
+    mock_client.messages = []
+    mock_logger = MagicMock()
+    mock_logger.log_steps = False
+    mock_logger.info = MagicMock()
+
+    tools_data = ToolsData({}, client=mock_client, logger=mock_logger)
+
+    # Create mock task with metadata indicating context opted in
+    mock_task_opted_in = asyncio.Future()
+    mock_handle = MagicMock()
+    mock_handle.ask = MagicMock(return_value="answer")
+    mock_handle.interject = MagicMock()
+    mock_handle.stop = MagicMock()
+
+    metadata_opted_in = ToolCallMetadata(
+        name="test_tool",
+        call_id="call_abc123",
+        call_dict={"function": {"arguments": "{}"}},
+        call_idx=0,
+        chat_context=None,
+        assistant_msg={},
+        is_interjectable=True,
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json="{}",
+        handle=mock_handle,
+        interject_queue=asyncio.Queue(),
+        context_opted_in=True,  # Tool opted in
+    )
+    tools_data.pending.add(mock_task_opted_in)
+    tools_data.info[mock_task_opted_in] = metadata_opted_in
+
+    # Generate dynamic tools
+    factory = DynamicToolFactory(tools_data)
+    factory.generate()
+
+    # Check that steering methods are marked
+    stop_key = "stop_test_tool_abc123"
+    interject_key = "interject_test_tool_abc123"
+    ask_key = "ask_test_tool_abc123"
+
+    assert stop_key in factory.dynamic_tools
+    assert getattr(
+        factory.dynamic_tools[stop_key],
+        "__supports_context_propagation__",
+        False,
+    )
+    assert getattr(factory.dynamic_tools[stop_key], "__context_opted_in__", False)
+
+    assert interject_key in factory.dynamic_tools
+    assert getattr(
+        factory.dynamic_tools[interject_key],
+        "__supports_context_propagation__",
+        False,
+    )
+    assert getattr(factory.dynamic_tools[interject_key], "__context_opted_in__", False)
+
+    assert ask_key in factory.dynamic_tools
+    assert getattr(
+        factory.dynamic_tools[ask_key],
+        "__supports_context_propagation__",
+        False,
+    )
+    assert getattr(factory.dynamic_tools[ask_key], "__context_opted_in__", False)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_tool_factory_marks_opted_out():
+    """Verify that steering methods for opted-out tools have context_opted_in=False."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+
+    # Create mock tools_data
+    mock_client = MagicMock()
+    mock_client.messages = []
+    mock_logger = MagicMock()
+    mock_logger.log_steps = False
+    mock_logger.info = MagicMock()
+
+    tools_data = ToolsData({}, client=mock_client, logger=mock_logger)
+
+    # Create mock task with metadata indicating context opted OUT
+    mock_task_opted_out = asyncio.Future()
+    mock_handle = MagicMock()
+    mock_handle.stop = MagicMock()
+
+    metadata_opted_out = ToolCallMetadata(
+        name="private_tool",
+        call_id="call_xyz789",
+        call_dict={"function": {"arguments": "{}"}},
+        call_idx=0,
+        chat_context=None,
+        assistant_msg={},
+        is_interjectable=False,  # Not interjectable
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json="{}",
+        handle=mock_handle,
+        context_opted_in=False,  # Tool opted OUT
+    )
+    tools_data.pending.add(mock_task_opted_out)
+    tools_data.info[mock_task_opted_out] = metadata_opted_out
+
+    # Generate dynamic tools
+    factory = DynamicToolFactory(tools_data)
+    factory.generate()
+
+    # Check that stop method is marked as opted out
+    stop_key = "stop_private_tool_xyz789"
+    assert stop_key in factory.dynamic_tools
+    assert getattr(
+        factory.dynamic_tools[stop_key],
+        "__supports_context_propagation__",
+        False,
+    )
+    assert not getattr(factory.dynamic_tools[stop_key], "__context_opted_in__", True)

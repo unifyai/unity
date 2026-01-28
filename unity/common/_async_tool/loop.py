@@ -1695,9 +1695,11 @@ async def async_tool_loop_inner(
                 # Record continued context in our state for incremental propagation
                 if _ctx_cont:
                     context_state.receive_context_continuation(_ctx_cont)
-                    # Forward to all active inner tool handles
+                    # Forward to active inner tool handles that opted into context
+                    # Tools that set include_parent_chat_context=False initially
+                    # should not receive context continuations either.
                     for task, info in tools_data.info.items():
-                        if info.interject_queue is not None:
+                        if info.interject_queue is not None and info.context_opted_in:
                             with suppress(Exception):
                                 # Forward the continued context to the inner handle
                                 info.interject_queue.put_nowait(
@@ -2143,10 +2145,24 @@ async def async_tool_loop_inner(
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
+            # For steering methods (ask/interject/stop) on tools that opted into context,
+            # expose include_parent_chat_context_cont in LLM_DECIDES mode
+            _expose_ctx_cont_control = (
+                propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+            )
             tmp_tools = visible_base_tools_schema + [
                 method_to_schema(
                     fn,
                     include_class_name=include_class_in_dynamic_tool_names,
+                    # Expose context continuation control for steering methods when:
+                    # 1. Propagation mode is LLM_DECIDES
+                    # 2. The function is a steering method (ask/interject/stop)
+                    # 3. The underlying tool opted into context initially
+                    expose_context_cont_control=(
+                        _expose_ctx_cont_control
+                        and getattr(fn, "__supports_context_propagation__", False)
+                        and getattr(fn, "__context_opted_in__", False)
+                    ),
                 )
                 for fn in dynamic_tools.values()
             ]
@@ -3124,17 +3140,53 @@ async def async_tool_loop_inner(
                             extra_kwargs: dict = {}
                             # For dynamic helpers (steering calls to running inner handles),
                             # pass incremental context only (they already have initial context)
-                            if propagate_chat_context != ChatContextPropagation.NEVER:
+                            #
+                            # Context propagation rules for steering methods:
+                            # 1. NEVER mode: never pass context
+                            # 2. ALWAYS mode: always pass context (if tool opted in initially)
+                            # 3. LLM_DECIDES mode: check include_parent_chat_context_cont arg
+                            #
+                            # In all cases, if the tool opted out initially (include_parent_chat_context=False),
+                            # we don't pass context continuations either.
+                            target_call_id = (
+                                name.split("_")[-1] if "_" in name else call["id"]
+                            )
+                            # Find the target tool's metadata to check context_opted_in
+                            target_info = None
+                            for _t, _inf in tools_data.info.items():
+                                if str(_inf.call_id).endswith(target_call_id):
+                                    target_info = _inf
+                                    break
+
+                            # Check if LLM wants to include context (for LLM_DECIDES mode)
+                            llm_include_ctx_cont = args.pop(
+                                "include_parent_chat_context_cont",
+                                True,
+                            )
+
+                            # Determine whether to compute/pass context
+                            should_pass_ctx_cont = False
+                            if target_info is not None and target_info.context_opted_in:
+                                # Tool opted in initially, now check propagation mode
+                                if (
+                                    propagate_chat_context
+                                    == ChatContextPropagation.ALWAYS
+                                ):
+                                    should_pass_ctx_cont = True
+                                elif (
+                                    propagate_chat_context
+                                    == ChatContextPropagation.LLM_DECIDES
+                                ):
+                                    should_pass_ctx_cont = llm_include_ctx_cont
+                                # NEVER mode: should_pass_ctx_cont stays False
+
+                            if should_pass_ctx_cont:
                                 cur_msgs = [
                                     m
                                     for m in client.messages
                                     if not m.get("_ctx_header")
                                 ]
                                 # Dynamic helpers get incremental context via parent_chat_context_cont
-                                # The target call_id is embedded in the helper name (e.g., ask_abc123)
-                                target_call_id = (
-                                    name.split("_")[-1] if "_" in name else call["id"]
-                                )
                                 _, ctx_cont = (
                                     context_state.compute_context_for_inner_tool(
                                         f"dynamic_{target_call_id}_{call['id']}",  # unique key per dynamic call

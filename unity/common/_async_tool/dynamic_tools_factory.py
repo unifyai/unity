@@ -242,6 +242,8 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_stop,
         )
+        # Mark as supporting context propagation so schema generation can expose include_parent_chat_context_cont
+        _stop.__supports_context_propagation__ = True  # type: ignore[attr-defined]
 
     def _create_interject_tool(
         self,
@@ -329,6 +331,8 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_interject,
         )
+        # Mark as supporting context propagation so schema generation can expose include_parent_chat_context_cont
+        _interject.__supports_context_propagation__ = True  # type: ignore[attr-defined]
 
     def _create_ask_tool(
         self,
@@ -371,6 +375,8 @@ class DynamicToolFactory:
             fallback_doc=_ask.__doc__,
             fn=_ask,
         )
+        # Mark as supporting context propagation so schema generation can expose include_parent_chat_context_cont
+        _ask.__supports_context_propagation__ = True  # type: ignore[attr-defined]
 
     def _create_clarify_tool(
         self,
@@ -653,11 +659,19 @@ class DynamicToolFactory:
             safe_call_id=_safe_call_id,
         )
 
+        # Track context opt-in for steering methods
+        # This determines whether include_parent_chat_context_cont is exposed in schema
+        _context_opted_in = getattr(info, "context_opted_in", True)
+
         self._create_stop_tool(
             create_tool_ctx,
             task,
             handle,
         )
+        # Mark with context opt-in status
+        stop_key = f"stop_{_fn_name}_{_safe_call_id}"
+        if stop_key in self.dynamic_tools:
+            self.dynamic_tools[stop_key].__context_opted_in__ = _context_opted_in  # type: ignore[attr-defined]
 
         if info.is_interjectable:
             self._create_interject_tool(
@@ -665,6 +679,10 @@ class DynamicToolFactory:
                 info,
                 handle,
             )
+            # Mark with context opt-in status
+            interject_key = f"interject_{_fn_name}_{_safe_call_id}"
+            if interject_key in self.dynamic_tools:
+                self.dynamic_tools[interject_key].__context_opted_in__ = _context_opted_in  # type: ignore[attr-defined]
 
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx, handle)
@@ -672,6 +690,10 @@ class DynamicToolFactory:
         # Synthetic `ask` helper for LLM-accessible inspection
         if handle_available:
             self._create_ask_tool(create_tool_ctx, handle)
+            # Mark with context opt-in status
+            ask_key = f"ask_{_fn_name}_{_safe_call_id}"
+            if ask_key in self.dynamic_tools:
+                self.dynamic_tools[ask_key].__context_opted_in__ = _context_opted_in  # type: ignore[attr-defined]
 
         # Determine capability and current pause state; expose only one helper at a time
         cap_pause = (handle_available and hasattr(handle, "pause")) or (
