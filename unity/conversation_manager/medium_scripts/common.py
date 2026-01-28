@@ -143,6 +143,8 @@ def create_end_call(
       - publishes the call ended event
       - cancels all other asyncio tasks
 
+    The process will be terminated by SIGTERM from the parent when cleanup is called.
+
     Args:
         contact: Contact dictionary for the call.
         channel: Channel type ("phone" or other).
