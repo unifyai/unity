@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel
 
 from unity.common.async_tool_loop import (
+    ChatContextPropagation,
     SteerableToolHandle,
     start_async_tool_loop,
 )
@@ -225,7 +226,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     message=current_task_description,
                     tools=internal_tools,
                     loop_id=f"{self.__class__.__name__}.{self._manage_execution.__name__}",
-                    propagate_chat_context=True,
+                    propagate_chat_context=ChatContextPropagation.ALWAYS,
                     interrupt_llm_with_interjections=True,
                     log_steps=True,
                     max_steps=self.MAX_STEPS,

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from ...constants import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
+from .propagation_mode import ChatContextPropagation
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
 from .messages import (
@@ -187,7 +188,7 @@ async def async_tool_loop_inner(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
-    propagate_chat_context: bool = True,
+    propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
     parent_chat_context: Optional[list[dict]] = None,
     caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
@@ -1926,7 +1927,14 @@ async def async_tool_loop_inner(
             # No-op: overview is now injected synthetically when images change
 
             visible_base_tools_schema = [
-                method_to_schema(spec.fn, name)
+                method_to_schema(
+                    spec.fn,
+                    name,
+                    expose_context_control=(
+                        propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+                    ),
+                    has_parent_context=bool(parent_chat_context),
+                )
                 for name, spec in policy_tools_norm.items()
                 if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
@@ -3087,7 +3095,8 @@ async def async_tool_loop_inner(
 
                             # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
                             extra_kwargs: dict = {}
-                            if propagate_chat_context:
+                            # For dynamic helpers, inject context unless NEVER mode
+                            if propagate_chat_context != ChatContextPropagation.NEVER:
                                 cur_msgs = [
                                     m
                                     for m in client.messages

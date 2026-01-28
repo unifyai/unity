@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 import inspect
 from .tools_utils import create_tool_call_message
 from ..llm_helpers import _dumps, short_id
+from .propagation_mode import ChatContextPropagation
 
 # New typed container for image references
 from unity.image_manager.types.image_refs import ImageRefs, AnnotatedImageRefs
@@ -230,7 +231,7 @@ def build_live_image_tools(
     append_user_messages,
     client: Any = None,
     parent_chat_context: Optional[list[dict]] = None,
-    propagate_chat_context: bool = True,
+    propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
 ) -> dict[str, Any]:
     """
     Construct helper tools for working with live images within a loop.
@@ -314,7 +315,8 @@ def build_live_image_tools(
             return {"error": f"image_id {iid} not found"}
         try:
             # Automatically include parent chat context, mirroring nested tool loops
-            if propagate_chat_context:
+            # (skip only in NEVER mode; for image tools we don't expose LLM choice)
+            if propagate_chat_context != ChatContextPropagation.NEVER:
                 try:
                     # Avoid duplicating the synthetic header; use current messages only
                     cur_msgs = [
