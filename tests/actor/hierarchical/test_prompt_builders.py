@@ -1244,7 +1244,7 @@ class _HistoryHandle(SteerableToolHandle):
     def interject(self, message: str, *, parent_chat_context_cont=None, images=None):
         return None
 
-    def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):
+    def stop(self, reason: str | None = None):
         self._stopped = True
         return None
 

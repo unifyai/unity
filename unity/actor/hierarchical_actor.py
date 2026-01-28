@@ -1274,13 +1274,8 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
     async def stop(
         self,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ):
-        return await self._real_handle.stop(
-            reason,
-            parent_chat_context_cont=parent_chat_context_cont,
-        )
+        return await self._real_handle.stop(reason)
 
     async def pause(self):
         return await self._real_handle.pause()
@@ -1304,11 +1299,11 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         return await self._real_handle.ask(
             question,
-            parent_chat_context_cont=parent_chat_context_cont,
+            _parent_chat_context=_parent_chat_context,
         )
 
     async def interject(

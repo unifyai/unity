@@ -299,7 +299,7 @@ class ImageHandle:
         self,
         question: str,
         *,
-        parent_chat_context_cont: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         Ask a high-level question about this image with a single LLM call.
@@ -314,11 +314,11 @@ class ImageHandle:
         ----------
         question : str
             The natural-language question to ask about the image.
-        parent_chat_context_cont : list[dict] | None, optional
-            Optional parent chat context continuation. When provided, a single
-            synthetic system message is inserted at the start of the chat that
-            summarises the broader context as JSON (read-only), mirroring the
-            async tool loop behavior. We do not prepend the full transcript.
+        parent_chat_context : list[dict] | None, optional
+            Optional parent chat context. When provided, a single synthetic system
+            message is inserted at the start of the chat that summarises the broader
+            context as JSON (read-only), helping the model understand why the question
+            is being asked.
         """
         # Single-call client
         client = new_llm_client()
@@ -406,17 +406,19 @@ class ImageHandle:
         messages = []
 
         # Optional: inject broader parent chat context as a system header
-        if parent_chat_context_cont:
+        if _parent_chat_context:
             messages.append(
                 {
                     "role": "system",
                     "_ctx_header": True,
                     "content": (
-                        "You are the `ask_image` tool being invoked from a parent conversation. "
-                        "The parent conversation below shows why this image question was asked:\n\n"
-                        f"{json.dumps(parent_chat_context_cont, indent=2)}\n\n"
+                        "You are handling an image analysis request.\n\n"
+                        "## Parent Chat Context\n"
+                        "This is the broader conversation context from which this image question "
+                        "originated. It may help explain why this question is being asked.\n\n"
+                        f"{json.dumps(_parent_chat_context, indent=2)}\n\n"
                         "Your task: Analyze the provided image and answer the question. "
-                        "You are a leaf tool - respond with plain text only, do not attempt to call other tools."
+                        "Respond with plain text only, do not attempt to call other tools."
                     ),
                 },
             )

@@ -29,7 +29,7 @@ class _StaticAnswerHandle(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: object | None = None,
     ) -> "SteerableToolHandle":
         return self
@@ -46,8 +46,6 @@ class _StaticAnswerHandle(SteerableToolHandle):
     def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> Optional[str]:
         return None
 
@@ -346,15 +344,11 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         """Stop the in-flight handle.
 
         Args:
             reason: Optional reason for stopping.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         if self._done_event.is_set():
             return (
@@ -617,14 +611,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: object | None = None,
     ) -> SteerableToolHandle:
         """Ask a question about the current state.
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
             images: Optional image references. Accepted for API parity with real handles
                 but not currently used.
