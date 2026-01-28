@@ -390,7 +390,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.

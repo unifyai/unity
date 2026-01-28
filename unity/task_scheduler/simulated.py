@@ -301,7 +301,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
@@ -751,7 +751,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 question: str,
                 *,
-                parent_chat_context: list[dict] | None = None,
+                _parent_chat_context: list[dict] | None = None,
                 images: object | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":

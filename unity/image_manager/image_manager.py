@@ -299,7 +299,7 @@ class ImageHandle:
         self,
         question: str,
         *,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         Ask a high-level question about this image with a single LLM call.

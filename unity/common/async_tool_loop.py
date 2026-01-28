@@ -60,7 +60,7 @@ class SteerableHandle(ABC):
         self,
         question: str,
         *,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> "SteerableHandle":
         """
@@ -326,7 +326,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         _return_reasoning_steps: bool = False,
         **kwargs,
