@@ -2180,6 +2180,11 @@ async def async_tool_loop_inner(
                 method_to_schema(
                     fn,
                     include_class_name=include_class_in_dynamic_tool_names,
+                    # Expose include_parent_chat_context for dynamic tools that accept
+                    # _parent_chat_context (currently only ask_* tools). This lets the
+                    # LLM opt out of context propagation for inspection loops.
+                    expose_context_control=_expose_ctx_cont_control,
+                    has_parent_context=bool(parent_chat_context),
                     # Expose context continuation control for steering methods when:
                     # 1. Propagation mode is LLM_DECIDES
                     # 2. The function is a steering method (ask/interject)
