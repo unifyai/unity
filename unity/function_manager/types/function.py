@@ -105,8 +105,8 @@ class Function(BaseModel):
         False,
         description=(
             "Whether this function requires execution on a Windows OS. "
-            "When True and the assistant has desktop_mode='windows' with "
-            "is_user_desktop=False, execution routes to the remote Windows VM. "
+            "When True and the assistant has desktop_mode='windows', "
+            "execution routes to the remote Windows VM. "
             "Typically used for functions that depend on Windows-only libraries "
             "like xlwings or other COM automation tools."
         ),

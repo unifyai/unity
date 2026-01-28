@@ -180,9 +180,14 @@ class CommsManager:
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
                     "voice_mode": event["voice_mode"],
-                    "is_user_desktop": event.get("is_user_desktop", False),
                     "desktop_mode": event.get("desktop_mode", "ubuntu"),
                     "desktop_url": event.get("desktop_url"),
+                    "user_desktop_mode": event.get("user_desktop_mode"),
+                    "user_desktop_filesys_sync": event.get(
+                        "user_desktop_filesys_sync",
+                        False,
+                    ),
+                    "user_desktop_url": event.get("user_desktop_url"),
                 }
                 self._publish_from_callback(
                     f"app:comms:{thread}",
