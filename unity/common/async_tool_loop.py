@@ -19,7 +19,9 @@ from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
+from ._async_tool.propagation_mode import ChatContextPropagation
 from typing import Iterable
+
 
 from ._async_tool.multi_handle import (
     MultiHandleCoordinator,
@@ -738,7 +740,7 @@ def start_async_tool_loop(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates=True,
     interrupt_llm_with_interjections: bool = True,
-    propagate_chat_context: bool = True,
+    propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
     parent_chat_context: Optional[list[dict]] = None,
     caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,

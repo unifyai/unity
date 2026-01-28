@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import List
 
 import pytest
-from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common.async_tool_loop import ChatContextPropagation, start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 
@@ -35,6 +35,7 @@ async def test_chat_context_propagation(model) -> None:
         message="Please call the function `record_context()` once, then reply 'done'.",
         tools={"record_context": record_context},
         parent_chat_context=root_ctx,
+        propagate_chat_context=ChatContextPropagation.ALWAYS,
     )
 
     final_ans = await handle.result()

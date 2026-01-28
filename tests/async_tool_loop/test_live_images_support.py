@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import pytest
 
-from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common.async_tool_loop import ChatContextPropagation, start_async_tool_loop
 from unity.common._async_tool.loop_config import LIVE_IMAGES_REGISTRY
 from unity.image_manager.types import (
     RawImageRef,
@@ -269,6 +269,7 @@ async def test_ask_image_uses_parent_chat_context(model, static_now) -> None:
         tools={},
         images=images,
         parent_chat_context=parent_ctx,
+        propagate_chat_context=ChatContextPropagation.ALWAYS,
     )
 
     final = await h.result()
