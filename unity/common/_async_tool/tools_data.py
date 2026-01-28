@@ -32,6 +32,106 @@ if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .message_dispatcher import LoopMessageDispatcher
 
 
+def compute_context_injection(
+    *,
+    args: dict,
+    propagate_chat_context: ChatContextPropagation,
+    context_state: LoopContextState,
+    client_messages: list,
+    call_id: str,
+    accepts_parent_ctx: bool,
+    accepts_parent_ctx_cont: bool,
+    target_context_opted_in: Optional[bool] = None,
+    is_continuation_only: bool = False,
+) -> Tuple[dict, bool]:
+    """
+    Shared helper for computing context injection kwargs.
+
+    This is used by both base tool dispatch and dynamic tool dispatch to ensure
+    consistent handling of include_parent_chat_context and include_parent_chat_context_cont.
+
+    Parameters
+    ----------
+    args : dict
+        The tool call arguments (will be mutated to pop context control params).
+    propagate_chat_context : ChatContextPropagation
+        The loop's propagation mode (ALWAYS, NEVER, or LLM_DECIDES).
+    context_state : LoopContextState
+        The loop's context tracking state.
+    client_messages : list
+        The current conversation messages (filtered for _ctx_header if needed).
+    call_id : str
+        Unique identifier for this tool call (used for context tracking).
+    accepts_parent_ctx : bool
+        Whether the target function accepts _parent_chat_context.
+    accepts_parent_ctx_cont : bool
+        Whether the target function accepts _parent_chat_context_cont.
+    target_context_opted_in : Optional[bool]
+        For steering tools: whether the target tool initially opted into context.
+        If None, this is treated as a new tool call (not steering).
+    is_continuation_only : bool
+        If True, only compute continuation context (for interject_*).
+        If False, compute full initial context (for base tools and ask_*).
+
+    Returns
+    -------
+    Tuple[dict, bool]
+        (extra_kwargs, context_opted_in) where extra_kwargs contains the context
+        params to inject and context_opted_in indicates the opt-in decision.
+    """
+    extra_kwargs: dict = {}
+
+    # Pop the LLM control parameters from args
+    llm_include_ctx = args.pop("include_parent_chat_context", True)
+    llm_include_ctx_cont = args.pop("include_parent_chat_context_cont", True)
+
+    # Determine whether to inject context based on propagation mode
+    should_inject_ctx = False
+
+    if is_continuation_only:
+        # For steering tools like interject_*, check if the target tool opted in
+        if target_context_opted_in:
+            if propagate_chat_context == ChatContextPropagation.ALWAYS:
+                should_inject_ctx = True
+            elif propagate_chat_context == ChatContextPropagation.LLM_DECIDES:
+                should_inject_ctx = llm_include_ctx_cont
+            # NEVER mode: should_inject_ctx stays False
+    else:
+        # For base tools and ask_*, use the standard logic
+        if accepts_parent_ctx or accepts_parent_ctx_cont:
+            if propagate_chat_context == ChatContextPropagation.ALWAYS:
+                should_inject_ctx = True
+            elif propagate_chat_context == ChatContextPropagation.NEVER:
+                should_inject_ctx = False
+            elif propagate_chat_context == ChatContextPropagation.LLM_DECIDES:
+                should_inject_ctx = llm_include_ctx
+
+    # Compute and inject context if needed
+    if should_inject_ctx:
+        cur_msgs = [m for m in client_messages if not m.get("_ctx_header")]
+
+        if is_continuation_only:
+            # For steering tools, only compute continuation
+            _, ctx_cont = context_state.compute_context_for_inner_tool(
+                call_id,
+                cur_msgs,
+            )
+            if ctx_cont and accepts_parent_ctx_cont:
+                extra_kwargs["_parent_chat_context_cont"] = ctx_cont
+        else:
+            # For base tools / ask_*, compute full context
+            parent_ctx, parent_ctx_cont = context_state.compute_context_for_inner_tool(
+                call_id,
+                cur_msgs,
+            )
+            if parent_ctx is not None and accepts_parent_ctx:
+                extra_kwargs["_parent_chat_context"] = parent_ctx
+            if parent_ctx_cont is not None and accepts_parent_ctx_cont:
+                extra_kwargs["_parent_chat_context_cont"] = parent_ctx_cont
+
+    return extra_kwargs, should_inject_ctx
+
+
 class ToolsData:
     def __init__(self, tools, *, client, logger: "LoopLogger"):
         self._client = client
@@ -245,44 +345,23 @@ class ToolsData:
         if "call_args" not in locals():
             call_args = {}
 
-        # Pop include_parent_chat_context from args (only relevant in LLM_DECIDES mode)
-        llm_include_ctx = call_args.pop("include_parent_chat_context", True)
         sig_accepts_parent_ctx = "_parent_chat_context" in params or has_varkw
         sig_accepts_parent_ctx_cont = "_parent_chat_context_cont" in params or has_varkw
 
-        # Determine whether to inject parent chat context based on propagation mode
-        # This decision is "sticky" for the tool's lifetime - if opted out initially,
-        # context continuations will also not be forwarded.
-        should_inject_ctx = False
-        if sig_accepts_parent_ctx or sig_accepts_parent_ctx_cont:
-            if propagate_chat_context == ChatContextPropagation.ALWAYS:
-                should_inject_ctx = True
-            elif propagate_chat_context == ChatContextPropagation.NEVER:
-                should_inject_ctx = False
-            elif propagate_chat_context == ChatContextPropagation.LLM_DECIDES:
-                should_inject_ctx = llm_include_ctx
+        # Use shared helper for context injection logic
+        ctx_extra_kwargs, context_opted_in = compute_context_injection(
+            args=call_args,
+            propagate_chat_context=propagate_chat_context,
+            context_state=context_state,
+            client_messages=self._client.messages,
+            call_id=call_id,
+            accepts_parent_ctx=sig_accepts_parent_ctx,
+            accepts_parent_ctx_cont=sig_accepts_parent_ctx_cont,
+            is_continuation_only=False,
+        )
 
         # Build extra kwargs (chat context, interject/clarification/pause)
-        extra_kwargs: dict = {}
-        if should_inject_ctx:
-            cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
-
-            # Use incremental context tracking
-            parent_ctx, parent_ctx_cont = context_state.compute_context_for_inner_tool(
-                call_id,
-                cur_msgs,
-            )
-
-            # Pass parent_chat_context only on first call (when it's non-None)
-            if parent_ctx is not None and sig_accepts_parent_ctx:
-                extra_kwargs["_parent_chat_context"] = parent_ctx
-
-            # Pass parent_chat_context_cont for incremental updates
-            if parent_ctx_cont is not None and sig_accepts_parent_ctx_cont:
-                extra_kwargs["_parent_chat_context_cont"] = parent_ctx_cont
-
-        # Track context opt-in decision for later use (interjection forwarding, steering methods)
-        context_opted_in = should_inject_ctx
+        extra_kwargs: dict = dict(ctx_extra_kwargs)
 
         sig_accepts_interject_q = "_interject_queue" in params or has_varkw
         sig_accepts_pause_event = "_pause_event" in params or has_varkw

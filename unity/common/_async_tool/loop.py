@@ -57,7 +57,7 @@ from .messages import (
     schedule_missing_for_message,
     build_helper_ack_content,
 )
-from .tools_data import ToolsData
+from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 
 if TYPE_CHECKING:
@@ -3168,17 +3168,14 @@ async def async_tool_loop_inner(
                             fn = dynamic_tools[name]
 
                             # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
-                            extra_kwargs: dict = {}
-                            # For dynamic helpers (steering calls to running inner handles),
-                            # pass incremental context only (they already have initial context)
                             #
-                            # Context propagation rules for steering methods:
-                            # 1. NEVER mode: never pass context
-                            # 2. ALWAYS mode: always pass context (if tool opted in initially)
-                            # 3. LLM_DECIDES mode: check include_parent_chat_context_cont arg
+                            # Context propagation for dynamic helpers:
+                            # - ask_* tools: Need FULL initial context (like base tools), since they
+                            #   spawn new inspection loops. Use is_continuation_only=False.
+                            # - interject_* tools: Need only continuation context (tool already has
+                            #   initial context). Use is_continuation_only=True.
+                            # - stop_*, pause_*, resume_*: No context needed.
                             #
-                            # In all cases, if the tool opted out initially (include_parent_chat_context=False),
-                            # we don't pass context continuations either.
                             target_call_id = (
                                 name.split("_")[-1] if "_" in name else call["id"]
                             )
@@ -3189,50 +3186,64 @@ async def async_tool_loop_inner(
                                     target_info = _inf
                                     break
 
-                            # Check if LLM wants to include context (for LLM_DECIDES mode)
-                            llm_include_ctx_cont = args.pop(
-                                "include_parent_chat_context_cont",
-                                True,
-                            )
-
-                            # Determine whether to compute/pass context
-                            should_pass_ctx_cont = False
-                            if target_info is not None and target_info.context_opted_in:
-                                # Tool opted in initially, now check propagation mode
-                                if (
-                                    propagate_chat_context
-                                    == ChatContextPropagation.ALWAYS
-                                ):
-                                    should_pass_ctx_cont = True
-                                elif (
-                                    propagate_chat_context
-                                    == ChatContextPropagation.LLM_DECIDES
-                                ):
-                                    should_pass_ctx_cont = llm_include_ctx_cont
-                                # NEVER mode: should_pass_ctx_cont stays False
-
-                            if should_pass_ctx_cont:
-                                cur_msgs = [
-                                    m
-                                    for m in client.messages
-                                    if not m.get("_ctx_header")
-                                ]
-                                # Dynamic helpers get incremental context via parent_chat_context_cont
-                                _, ctx_cont = (
-                                    context_state.compute_context_for_inner_tool(
-                                        f"dynamic_{target_call_id}_{call['id']}",  # unique key per dynamic call
-                                        cur_msgs,
-                                    )
-                                )
-                                if ctx_cont:
-                                    extra_kwargs["_parent_chat_context_cont"] = ctx_cont
-
                             sig = inspect.signature(fn)
                             params = sig.parameters
                             has_varkw = any(
                                 p.kind == inspect.Parameter.VAR_KEYWORD
                                 for p in params.values()
                             )
+
+                            # Determine if this is an ask_* tool (needs full context) vs
+                            # interject_* (needs continuation only) vs other (no context)
+                            is_ask_tool = name.startswith("ask_")
+                            is_interject_tool = name.startswith("interject_")
+                            accepts_parent_ctx = (
+                                "_parent_chat_context" in params or has_varkw
+                            )
+                            accepts_parent_ctx_cont = (
+                                "_parent_chat_context_cont" in params or has_varkw
+                            )
+
+                            # Use shared helper for context injection
+                            if is_ask_tool:
+                                # ask_* tools spawn new loops - need full initial context
+                                extra_kwargs, context_opted_in = (
+                                    compute_context_injection(
+                                        args=args,
+                                        propagate_chat_context=propagate_chat_context,
+                                        context_state=context_state,
+                                        client_messages=client.messages,
+                                        call_id=f"ask_{target_call_id}_{call['id']}",
+                                        accepts_parent_ctx=accepts_parent_ctx,
+                                        accepts_parent_ctx_cont=accepts_parent_ctx_cont,
+                                        is_continuation_only=False,
+                                    )
+                                )
+                            elif is_interject_tool:
+                                # interject_* tools add to existing loops - need continuation only
+                                extra_kwargs, _ = compute_context_injection(
+                                    args=args,
+                                    propagate_chat_context=propagate_chat_context,
+                                    context_state=context_state,
+                                    client_messages=client.messages,
+                                    call_id=f"interject_{target_call_id}_{call['id']}",
+                                    accepts_parent_ctx=False,  # Don't inject full context
+                                    accepts_parent_ctx_cont=accepts_parent_ctx_cont,
+                                    target_context_opted_in=(
+                                        target_info.context_opted_in
+                                        if target_info
+                                        else None
+                                    ),
+                                    is_continuation_only=True,
+                                )
+                            else:
+                                # Other steering tools (stop, pause, resume) - no context
+                                # Still pop the control params so they don't get forwarded
+                                args.pop("include_parent_chat_context", None)
+                                args.pop("include_parent_chat_context_cont", None)
+                                extra_kwargs = {}
+                                context_opted_in = False
+
                             filtered_extras = {
                                 k: v
                                 for k, v in extra_kwargs.items()
@@ -3298,6 +3309,8 @@ async def async_tool_loop_inner(
                                 ),
                                 llm_arguments=allowed_call_args,
                                 raw_arguments_json=call["function"]["arguments"],
+                                # Track context opt-in for adopted handles (important for ask_*)
+                                context_opted_in=context_opted_in,
                             )
                             tools_data.save_task(
                                 coro=t,

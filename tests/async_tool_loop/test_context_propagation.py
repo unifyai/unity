@@ -940,6 +940,130 @@ async def test_ask_dynamic_tool_context_control_not_exposed_for_other_steering_m
     ), "interject_* should NOT expose include_parent_chat_context"
 
 
+@pytest.mark.asyncio
+async def test_ask_dynamic_tool_respects_include_parent_chat_context_false():
+    """Verify that ask_* dynamic tools respect include_parent_chat_context=False.
+
+    When the LLM calls ask_* with include_parent_chat_context=False in LLM_DECIDES mode,
+    the underlying handle.ask() should be called WITHOUT _parent_chat_context.
+
+    This test would have FAILED before the fix because:
+    1. We exposed include_parent_chat_context in the ask_* schema
+    2. But we never processed it in the dynamic tool dispatch
+    3. So the LLM's choice was ignored and context was always passed
+    """
+    from unity.common._async_tool.tools_data import compute_context_injection
+    from unity.common._async_tool.context_tracker import LoopContextState
+
+    # Test case 1: include_parent_chat_context=False should NOT inject context
+    args_opt_out = {
+        "question": "what's the status?",
+        "include_parent_chat_context": False,
+    }
+    context_state = LoopContextState(
+        parent_chat_context=[{"role": "user", "content": "parent context"}],
+    )
+    client_messages = [{"role": "user", "content": "current message"}]
+
+    extra_kwargs, context_opted_in = compute_context_injection(
+        args=args_opt_out,
+        propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
+        context_state=context_state,
+        client_messages=client_messages,
+        call_id="ask_inner_tool_123",
+        accepts_parent_ctx=True,
+        accepts_parent_ctx_cont=False,
+        is_continuation_only=False,
+    )
+
+    # Should NOT have injected context
+    assert (
+        "_parent_chat_context" not in extra_kwargs
+    ), "When include_parent_chat_context=False, _parent_chat_context should NOT be injected"
+    assert (
+        context_opted_in is False
+    ), "context_opted_in should be False when LLM opts out"
+    # The control param should be popped from args
+    assert (
+        "include_parent_chat_context" not in args_opt_out
+    ), "include_parent_chat_context should be popped from args"
+
+    # Test case 2: include_parent_chat_context=True (or omitted) SHOULD inject context
+    args_opt_in = {
+        "question": "what's the status?",
+        "include_parent_chat_context": True,
+    }
+    context_state2 = LoopContextState(
+        parent_chat_context=[{"role": "user", "content": "parent context"}],
+    )
+
+    extra_kwargs2, context_opted_in2 = compute_context_injection(
+        args=args_opt_in,
+        propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
+        context_state=context_state2,
+        client_messages=client_messages,
+        call_id="ask_inner_tool_456",
+        accepts_parent_ctx=True,
+        accepts_parent_ctx_cont=False,
+        is_continuation_only=False,
+    )
+
+    # Should have injected context
+    assert (
+        "_parent_chat_context" in extra_kwargs2
+    ), "When include_parent_chat_context=True, _parent_chat_context SHOULD be injected"
+    assert context_opted_in2 is True, "context_opted_in should be True when LLM opts in"
+
+    # Test case 3: ALWAYS mode ignores LLM choice and always injects
+    args_always = {
+        "question": "what's the status?",
+        "include_parent_chat_context": False,
+    }
+    context_state3 = LoopContextState(
+        parent_chat_context=[{"role": "user", "content": "parent context"}],
+    )
+
+    extra_kwargs3, context_opted_in3 = compute_context_injection(
+        args=args_always,
+        propagate_chat_context=ChatContextPropagation.ALWAYS,
+        context_state=context_state3,
+        client_messages=client_messages,
+        call_id="ask_inner_tool_789",
+        accepts_parent_ctx=True,
+        accepts_parent_ctx_cont=False,
+        is_continuation_only=False,
+    )
+
+    # ALWAYS mode should inject context regardless of LLM choice
+    assert (
+        "_parent_chat_context" in extra_kwargs3
+    ), "In ALWAYS mode, context should be injected even if LLM opts out"
+    assert context_opted_in3 is True
+
+    # Test case 4: NEVER mode ignores LLM choice and never injects
+    args_never = {"question": "what's the status?", "include_parent_chat_context": True}
+    context_state4 = LoopContextState(
+        parent_chat_context=[{"role": "user", "content": "parent context"}],
+    )
+
+    extra_kwargs4, context_opted_in4 = compute_context_injection(
+        args=args_never,
+        propagate_chat_context=ChatContextPropagation.NEVER,
+        context_state=context_state4,
+        client_messages=client_messages,
+        call_id="ask_inner_tool_abc",
+        accepts_parent_ctx=True,
+        accepts_parent_ctx_cont=False,
+        is_continuation_only=False,
+    )
+
+    # NEVER mode should NOT inject context regardless of LLM choice
+    assert (
+        "_parent_chat_context" not in extra_kwargs4
+    ), "In NEVER mode, context should NOT be injected even if LLM opts in"
+    assert context_opted_in4 is False
+
+
 # =============================================================================
 # Tests for interjection context continuation message structure
 # =============================================================================
