@@ -939,19 +939,16 @@ class PythonExecutionSession:
             except Exception:
                 pass
 
-    async def execute(self, code: str) -> "ExecutionResult":
+    async def execute(self, code: str) -> dict:
         """
         Executes a string of Python code within the sandbox's stateful environment.
 
-        Returns an ExecutionResult (implements FormattedToolResult protocol) with:
+        Returns a dict with:
             stdout: list[OutputPart] - structured output parts (TextPart, ImagePart)
             stderr: list[OutputPart] - structured error output parts
             result: Any - return value of the last expression
             error: str | None - traceback if an exception occurred
             browser_used: bool - whether browser primitives were accessed
-
-        The ExecutionResult controls its own LLM formatting via to_llm_content(),
-        preserving the original interleaving of text and images.
         """
         # Reset per-execution usage flags.
         self._browser_used = False
@@ -1065,13 +1062,13 @@ class PythonExecutionSession:
                 if "__exec_wrapper" in self.global_state:
                     del self.global_state["__exec_wrapper"]
 
-        return ExecutionResult(
-            stdout=stdout_parts,
-            stderr=stderr_parts,
-            result=result,
-            error=error,
-            browser_used=self._browser_used,
-        )
+        return {
+            "stdout": stdout_parts,
+            "stderr": stderr_parts,
+            "result": result,
+            "error": error,
+            "browser_used": self._browser_used,
+        }
 
 
 class SessionExecutor:
@@ -1816,13 +1813,28 @@ class CodeActActor(BaseCodeActActor):
 
             Output
             ------
-            Returns a structured dict with at least:
-            - stdout, stderr, result, error
-            - language, state_mode, session_id, session_name, venv_id
-            - session_created, duration_ms, browser_used
+            Returns either a dict or an ExecutionResult object with the following fields:
 
-            If browser tools were used during Python execution and a browser environment
-            is available, the response may also include `browser_state` with URL/screenshot.
+            - **stdout**: For in-process Python, a List[TextPart | ImagePart] preserving
+              rich output (text and images from print()/display()). For shell or venv
+              execution, a plain string.
+            - **stderr**: Same format as stdout (list for in-process Python, string otherwise).
+            - **result**: The evaluated result of the last expression (Any), or None.
+            - **error**: Error message string if execution failed, otherwise None.
+            - **language**: The language used for execution.
+            - **state_mode**: The state mode used ("stateless", "stateful", or "read_only").
+            - **session_id**: The session ID (int) if stateful/read_only, otherwise None.
+            - **session_name**: The session name alias if one was assigned, otherwise None.
+            - **venv_id**: The virtual environment ID if applicable, otherwise None.
+            - **session_created**: True if a new session was created by this call.
+            - **duration_ms**: Execution duration in milliseconds.
+            - **browser_used**: True if browser tools were invoked during execution.
+            - **browser_state** (optional): Only present when browser_used is True and a
+              browser environment is available. Contains {"url": str, "screenshot": str}
+              or {"error": str} on failure.
+
+            For in-process Python execution with rich output, the result is wrapped in an
+            ExecutionResult object (a Pydantic model implementing FormattedToolResult).
             """
             _ = thought  # Thought is logged by the LLM; not used programmatically.
             if code is None or code.strip() == "":
@@ -2056,6 +2068,15 @@ class CodeActActor(BaseCodeActActor):
                         )
                     except Exception:
                         pass
+
+                # Wrap in-process Python results in ExecutionResult for proper LLM
+                # image formatting. In-process Python has stdout as List[OutputPart];
+                # venv/shell have strings.
+                if out.get("language") == "python" and isinstance(
+                    out.get("stdout"),
+                    list,
+                ):
+                    out = ExecutionResult(**out)
 
                 return out
             finally:
