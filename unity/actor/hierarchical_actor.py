@@ -1299,11 +1299,11 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         return await self._real_handle.ask(
             question,
-            parent_chat_context=parent_chat_context,
+            _parent_chat_context=_parent_chat_context,
         )
 
     async def interject(
