@@ -5640,7 +5640,9 @@ class HierarchicalActor(BaseActor):
             timeout: Default timeout for plan execution.
             computer_mode: The computer backend mode. Can be "magnitude" or "mock".
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
-            agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
+            agent_server_url: The URL of the agent server. For browser mode, defaults to
+                localhost:3000. For desktop mode, this should be the external VM's URL
+                (auto-resolved from SESSION_DETAILS.assistant.desktop_url if not provided).
             enable_course_correction: When True (default), the actor may spawn a recovery sub-agent
                 to restore computer/browser state after invalidation or verification recovery.
                 When False, the actor will skip course correction and rely on replay/re-execution.
@@ -5653,8 +5655,13 @@ class HierarchicalActor(BaseActor):
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
         """
-        # TODO: enable auto fetch desktop_url later
-        # agent_server_url = self._get_desktop_url(agent_server_url)
+        # For desktop mode, resolve agent_server_url from session details if using default
+        if agent_mode == "desktop" and agent_server_url == "http://localhost:3000":
+            from unity.session_details import SESSION_DETAILS
+
+            if SESSION_DETAILS.assistant.desktop_url:
+                agent_server_url = SESSION_DETAILS.assistant.desktop_url + "/api"
+
         self._session_connect_url = session_connect_url
         self._headless = headless
         self._computer_mode = computer_mode
