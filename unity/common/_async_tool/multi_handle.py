@@ -323,7 +323,7 @@ class MultiRequestHandle:
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> "MultiRequestHandle":
         """Ask about this request's status.

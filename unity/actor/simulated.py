@@ -29,7 +29,7 @@ class _StaticAnswerHandle(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context: list[dict] | None = None,
         images: object | None = None,
     ) -> "SteerableToolHandle":
         return self
@@ -611,14 +611,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context: list[dict] | None = None,
         images: object | None = None,
     ) -> SteerableToolHandle:
         """Ask a question about the current state.
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
             images: Optional image references. Accepted for API parity with real handles
                 but not currently used.
