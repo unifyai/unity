@@ -412,8 +412,13 @@ class ImageHandle:
                     "role": "system",
                     "_ctx_header": True,
                     "content": (
-                        "You are the `ask_image` tool being invoked from a parent conversation. "
-                        "The parent conversation below shows why this image question was asked:\n\n"
+                        "You are the `ask_image` tool being invoked from a parent conversation.\n\n"
+                        "## Parent Chat Context (continued)\n"
+                        "This is the next incremental chunk of the outer conversation since the "
+                        "last context update (either the initial Parent Chat Context in the system "
+                        "message, or the previous continued context chunk). These messages arrived "
+                        "after this tool started but may be relevant to understanding why this "
+                        "image question was asked.\n\n"
                         f"{json.dumps(parent_chat_context_cont, indent=2)}\n\n"
                         "Your task: Analyze the provided image and answer the question. "
                         "You are a leaf tool - respond with plain text only, do not attempt to call other tools."
