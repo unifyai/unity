@@ -82,7 +82,7 @@ async def test_natural_language_query():
 ./parallel_run.sh --no-cache tests
 
 # Statistical sampling for eval reliability
-./parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager
+./parallel_run.sh --no-cache --repeat 10 --eval-only tests/contact_manager
 ```
 
 ## When Debugging Failing Tests

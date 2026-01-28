@@ -79,7 +79,7 @@ async def _build_scenario(
 
     # Manually populate sample files for each filesystem
     sample_dir = (
-        Path(__file__).parent.parent.parent / "tests" / "test_file_manager" / "sample"
+        Path(__file__).parent.parent.parent / "tests" / "file_manager" / "sample"
     )
 
     total_imported = 0
@@ -149,7 +149,7 @@ async def _seed_sample_all(
     return_mode: str = "compact",
 ) -> None:
     sample_dir = (
-        Path(__file__).resolve().parents[2] / "tests" / "test_file_manager" / "sample"
+        Path(__file__).resolve().parents[2] / "tests" / "file_manager" / "sample"
     )
     if not sample_dir.exists():
         print(f"⚠️  Sample directory not found: {sample_dir}")

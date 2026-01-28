@@ -4,8 +4,8 @@ tests/conversation_manager/test_tool_docstrings.py
 
 Tests for brain tool docstring quality and schema stability.
 
-Follows the gold standard pattern from test_contact_manager/test_tool_docstrings.py
-and test_transcript_manager/test_tool_docstrings.py.
+Follows the gold standard pattern from contact_manager/test_tool_docstrings.py
+and transcript_manager/test_tool_docstrings.py.
 
 The ConversationManager uses two sets of brain tools:
 - ConversationManagerBrainTools: Read-only state inspection tools
