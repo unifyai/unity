@@ -44,44 +44,6 @@ from unity.conversation_manager.types import Medium
 load_dotenv()
 
 
-def _is_blacklisted(medium: Medium, contact_detail: str) -> bool:
-    """Check if a contact detail is blacklisted for the given medium.
-
-    Args:
-        medium: The communication medium (Medium.EMAIL, Medium.SMS_MESSAGE, Medium.PHONE_CALL).
-        contact_detail: The phone number or email address to check.
-
-    Returns:
-        True if the contact detail is blacklisted, False otherwise.
-        Returns False if the blacklist check fails for any reason (not initialized, etc.).
-    """
-    if not contact_detail:
-        return False
-
-    try:
-        from unity.blacklist_manager import BlackListManager
-
-        blm = BlackListManager()
-        # Query for exact match on medium and contact_detail
-        result = blm.filter_blacklist(
-            filter=f"medium == '{medium}' and contact_detail == '{contact_detail}'",
-            limit=1,
-        )
-        entries = result.get("entries", [])
-        if entries:
-            print(
-                f"Blacklist match: {medium} from {contact_detail} - "
-                f"reason: {entries[0].reason}",
-            )
-            return True
-        return False
-    except Exception as e:
-        # If blacklist check fails (not initialized, context not ready, etc.),
-        # allow the message through rather than blocking legitimate messages
-        print(f"Blacklist check failed (allowing message): {e}")
-        return False
-
-
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
@@ -269,32 +231,6 @@ class CommsManager:
                     )
                 message.ack()
             elif thread in events_map:
-                # Check blacklist BEFORE processing
-                # For email: check email address against blacklist
-                # For SMS (msg): check phone number against blacklist
-                # For unify_message: skip blacklist check (internal app messages)
-                contact_detail_to_check = None
-                blacklist_medium = None
-
-                if thread == "email":
-                    # Extract email from "Name <email@example.com>" format
-                    contact_detail_to_check = event["from"].split("<")[1][:-1]
-                    blacklist_medium = Medium.EMAIL
-                elif thread == "msg":
-                    contact_detail_to_check = event["from_number"].strip()
-                    blacklist_medium = Medium.SMS_MESSAGE
-
-                # If blacklisted, silently ignore the message
-                if blacklist_medium and _is_blacklisted(
-                    blacklist_medium,
-                    contact_detail_to_check,
-                ):
-                    print(
-                        f"Ignoring blacklisted {thread} from {contact_detail_to_check}",
-                    )
-                    message.ack()
-                    return
-
                 # Get contacts for message routing
                 contacts = [*event.get("contacts", []), _get_local_contact()]
 
@@ -436,20 +372,6 @@ class CommsManager:
                     message.nack()
             elif "call" in thread or "meet" in thread:
                 try:
-                    # Check blacklist for incoming calls (not unify_meet or call_answered)
-                    if thread == "call":
-                        caller_number = event.get(
-                            "caller_number",
-                            event.get("user_number"),
-                        )
-                        if caller_number and _is_blacklisted(
-                            Medium.PHONE_CALL,
-                            caller_number.strip(),
-                        ):
-                            print(f"Ignoring blacklisted call from {caller_number}")
-                            message.ack()
-                            return
-
                     # Get contacts for call routing
                     contacts = [*event.get("contacts", []), _get_local_contact()]
 
