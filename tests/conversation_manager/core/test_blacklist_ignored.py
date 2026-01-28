@@ -585,7 +585,11 @@ class TestFailOpenBehavior:
 
 
 class TestIsBlacklistedHelper:
-    """Test the _is_blacklisted helper function directly."""
+    """Test the _is_blacklisted helper function directly.
+
+    These tests patch SETTINGS to enable blacklist checks, since the feature
+    is gated by SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED (default False).
+    """
 
     def test_is_blacklisted_returns_true_for_match(self):
         """Test that _is_blacklisted returns True when entry exists."""
@@ -601,11 +605,17 @@ class TestIsBlacklistedHelper:
             ],
         )
 
-        # Patch at the source module (where it's imported FROM), not where it's used
-        with patch(
-            "unity.blacklist_manager.BlackListManager",
-            return_value=mock_blm,
+        # Patch SETTINGS to enable blacklist checks and mock BlackListManager
+        with (
+            patch(
+                "unity.conversation_manager.comms_manager.SETTINGS",
+            ) as mock_settings,
+            patch(
+                "unity.blacklist_manager.BlackListManager",
+                return_value=mock_blm,
+            ),
         ):
+            mock_settings.conversation.BLACKLIST_CHECKS_ENABLED = True
             result = _is_blacklisted("sms_message", "+15555559999")
             assert result is True
 
@@ -615,11 +625,17 @@ class TestIsBlacklistedHelper:
 
         mock_blm = MockBlackListManager(blacklisted_entries=[])
 
-        # Patch at the source module (where it's imported FROM), not where it's used
-        with patch(
-            "unity.blacklist_manager.BlackListManager",
-            return_value=mock_blm,
+        # Patch SETTINGS to enable blacklist checks and mock BlackListManager
+        with (
+            patch(
+                "unity.conversation_manager.comms_manager.SETTINGS",
+            ) as mock_settings,
+            patch(
+                "unity.blacklist_manager.BlackListManager",
+                return_value=mock_blm,
+            ),
         ):
+            mock_settings.conversation.BLACKLIST_CHECKS_ENABLED = True
             result = _is_blacklisted("sms_message", "+15555551111")
             assert result is False
 
@@ -627,11 +643,17 @@ class TestIsBlacklistedHelper:
         """Test that _is_blacklisted returns False when exception occurs."""
         from unity.conversation_manager.comms_manager import _is_blacklisted
 
-        # Patch at the source module (where it's imported FROM), not where it's used
-        with patch(
-            "unity.blacklist_manager.BlackListManager",
-            side_effect=Exception("Database unavailable"),
+        # Patch SETTINGS to enable blacklist checks and mock BlackListManager to raise
+        with (
+            patch(
+                "unity.conversation_manager.comms_manager.SETTINGS",
+            ) as mock_settings,
+            patch(
+                "unity.blacklist_manager.BlackListManager",
+                side_effect=Exception("Database unavailable"),
+            ),
         ):
+            mock_settings.conversation.BLACKLIST_CHECKS_ENABLED = True
             result = _is_blacklisted("sms_message", "+15555551111")
             assert result is False
 
@@ -639,9 +661,14 @@ class TestIsBlacklistedHelper:
         """Test that _is_blacklisted returns False for empty contact detail."""
         from unity.conversation_manager.comms_manager import _is_blacklisted
 
-        # Should not even try to query blacklist
-        result = _is_blacklisted("sms_message", "")
-        assert result is False
+        # Patch SETTINGS to enable blacklist checks
+        with patch(
+            "unity.conversation_manager.comms_manager.SETTINGS",
+        ) as mock_settings:
+            mock_settings.conversation.BLACKLIST_CHECKS_ENABLED = True
+            # Should not even try to query blacklist (empty contact detail)
+            result = _is_blacklisted("sms_message", "")
+            assert result is False
 
-        result = _is_blacklisted("sms_message", None)
-        assert result is False
+            result = _is_blacklisted("sms_message", None)
+            assert result is False
