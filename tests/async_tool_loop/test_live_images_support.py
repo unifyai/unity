@@ -219,7 +219,7 @@ async def test_ask_image_uses_parent_chat_context(model, static_now) -> None:
     from unity.image_manager.image_manager import ImageManager as _ImageManager
 
     raw = (
-        _Path(__file__).parent.parent / "test_image_manager" / "assets" / "google.jpeg"
+        _Path(__file__).parent.parent / "image_manager" / "assets" / "google.jpeg"
     ).read_bytes()
     import base64 as _b64
 

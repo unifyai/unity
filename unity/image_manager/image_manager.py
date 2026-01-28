@@ -406,7 +406,7 @@ class ImageHandle:
         messages = []
 
         # Optional: inject broader parent chat context as a system header
-        if parent_chat_context:
+        if _parent_chat_context:
             messages.append(
                 {
                     "role": "system",
@@ -416,7 +416,7 @@ class ImageHandle:
                         "## Parent Chat Context\n"
                         "This is the broader conversation context from which this image question "
                         "originated. It may help explain why this question is being asked.\n\n"
-                        f"{json.dumps(parent_chat_context, indent=2)}\n\n"
+                        f"{json.dumps(_parent_chat_context, indent=2)}\n\n"
                         "Your task: Analyze the provided image and answer the question. "
                         "Respond with plain text only, do not attempt to call other tools."
                     ),
