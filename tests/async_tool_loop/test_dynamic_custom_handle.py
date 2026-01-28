@@ -618,7 +618,7 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
         async def interject(self, message: str, *, images=None):  # type: ignore[override]
             return None
 
-        def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):  # type: ignore[override]
+        def stop(self, reason: str | None = None):  # type: ignore[override]
             return "stopped"
 
         async def pause(self):  # type: ignore[override]

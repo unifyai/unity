@@ -437,8 +437,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
     async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
@@ -462,13 +460,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            try:
-                self._loop_handle.stop(
-                    reason,
-                    parent_chat_context_cont=parent_chat_context_cont,
-                )
-            except Exception:
-                self._loop_handle.stop(reason)
+            self._loop_handle.stop(reason)
         elif (
             previous_state == _HandleState.IDLE and not self._completion_event.is_set()
         ):

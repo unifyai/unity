@@ -2171,7 +2171,7 @@ async def async_tool_loop_inner(
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
-            # For steering methods (ask/interject/stop) on tools that opted into context,
+            # For steering methods (ask/interject) on tools that opted into context,
             # expose include_parent_chat_context_cont in LLM_DECIDES mode
             _expose_ctx_cont_control = (
                 propagate_chat_context == ChatContextPropagation.LLM_DECIDES
@@ -2182,7 +2182,7 @@ async def async_tool_loop_inner(
                     include_class_name=include_class_in_dynamic_tool_names,
                     # Expose context continuation control for steering methods when:
                     # 1. Propagation mode is LLM_DECIDES
-                    # 2. The function is a steering method (ask/interject/stop)
+                    # 2. The function is a steering method (ask/interject)
                     # 3. The underlying tool opted into context initially
                     expose_context_cont_control=(
                         _expose_ctx_cont_control
