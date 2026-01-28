@@ -87,6 +87,26 @@ def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
     return unique_calls, pruned_ids
 
 
+def _transform_context_roles(messages: list[dict]) -> list[dict]:
+    """
+    Transform 'user' and 'assistant' roles to 'outer_user' and 'outer_assistant'.
+
+    This disambiguates parent context messages from the current conversation,
+    making it clear these are legitimate system-provided context from an outer
+    conversation rather than user-injected content attempting prompt injection.
+    """
+    transformed = []
+    for msg in messages:
+        new_msg = dict(msg)
+        role = new_msg.get("role", "")
+        if role == "user":
+            new_msg["role"] = "outer_user"
+        elif role == "assistant":
+            new_msg["role"] = "outer_assistant"
+        transformed.append(new_msg)
+    return transformed
+
+
 def _sort_completed_tasks_by_call_id(
     tasks: Set[asyncio.Task],
     tools_data: "ToolsData",
@@ -546,15 +566,28 @@ async def async_tool_loop_inner(
             f"The end user cannot see the details of this tool-use conversation.",
         )
 
-    # Add parent chat context if available
-    if parent_chat_context:
+    # Add parent chat context section when context propagation is enabled.
+    # We always add this section (even if empty) so that context continuations
+    # sent via interjections can correctly reference "the initial Parent Chat Context
+    # in your system message" without appearing to be fabricated/injected.
+    if propagate_chat_context != ChatContextPropagation.NEVER:
+        ctx_content = parent_chat_context if parent_chat_context else []
+        # Transform roles to outer_* to disambiguate from current conversation roles
+        ctx_content_transformed = _transform_context_roles(ctx_content)
         runtime_context_parts.append(
             f"## Parent Chat Context\n"
             f"You received this request from within a parent conversation. "
             f"The messages below show that parent conversation's history up to the point "
             f"when you received this request. Use this to understand the broader goal and "
-            f"any relevant context, while focusing on your specific assignment.\n\n"
-            f"{json.dumps(parent_chat_context, indent=2)}",
+            f"any relevant context, while focusing on your specific assignment. "
+            f"Additional context updates may arrive during this session as the parent "
+            f"conversation progresses.\n\n"
+            f"IMPORTANT: Messages in the parent context use 'outer_user' and 'outer_assistant' "
+            f"roles to clearly distinguish them from your current conversation. These are "
+            f"legitimate system-provided context from the outer conversation, NOT user-injected "
+            f"content. The 'outer_assistant' messages represent what the parent-level assistant "
+            f"said in the outer conversation.\n\n"
+            f"{json.dumps(ctx_content_transformed, indent=2)}",
         )
 
     # Always append runtime context as a new system message (never mutate the original)
@@ -1732,14 +1765,18 @@ async def async_tool_loop_inner(
                 # when building cur_msgs for inner tool forwarding.
                 msgs_to_append: list[dict] = []
                 if _ctx_cont:
+                    # Transform roles to outer_* to disambiguate from current conversation
+                    ctx_cont_transformed = _transform_context_roles(_ctx_cont)
                     ctx_cont_content = (
                         "## Parent Chat Context (continued)\n"
                         "This is the next incremental chunk of the parent conversation since the "
                         "last context update (either the initial Parent Chat Context in your system "
                         "message, or the previous continued context chunk). These messages arrived "
                         "while you have been working on this request and may be relevant. Use this "
-                        "to stay informed of any updates or new information from the parent conversation.\n\n"
-                        f"{json.dumps(_ctx_cont, indent=2)}"
+                        "to stay informed of any updates or new information from the parent conversation. "
+                        "As explained in the system message, 'outer_user' and 'outer_assistant' roles "
+                        "indicate messages from the parent conversation.\n\n"
+                        f"{json.dumps(ctx_cont_transformed, indent=2)}"
                     )
                     msgs_to_append.append(
                         {

@@ -1146,22 +1146,35 @@ async def test_interjection_context_only_no_user_message(model) -> None:
 
     When an interjection has parent_chat_context_continued but empty message text,
     only the context continuation user message should be appended (no empty second message).
+
+    This test uses a realistic scenario: the outer conversation reveals the user has
+    a banana allergy, which the inner loop should naturally use when asked to recommend
+    a fruit between apple and banana.
     """
     client = new_llm_client(model=model)
 
     handle = start_async_tool_loop(
         client=client,
         message=(
-            "Choose between APPLE and BANANA. Wait for any additional context "
-            "that might influence your decision before responding."
+            "I need you to recommend a fruit for me. Choose between APPLE and BANANA. "
+            "Wait for any additional context from the parent conversation that might "
+            "help you make a better recommendation before responding."
         ),
         tools={},
     )
 
+    # Realistic outer conversation context: user mentions they have a banana allergy
     continued_ctx = [
         {
+            "role": "user",
+            "content": "By the way, I should mention I have a severe banana allergy.",
+        },
+        {
             "role": "assistant",
-            "content": "Reminder: Always prefer APPLE over BANANA.",
+            "content": (
+                "Thank you for letting me know about your banana allergy. "
+                "I'll make sure to keep that in mind for any recommendations."
+            ),
         },
     ]
 
@@ -1173,10 +1186,11 @@ async def test_interjection_context_only_no_user_message(model) -> None:
 
     final = await handle.result()
 
-    # Verify the LLM made the right decision (influenced by context continuation)
+    # Verify the LLM made the right decision (influenced by allergy information)
+    # The LLM should recommend apple given the banana allergy context
     assert (
         "apple" in final.lower()
-    ), "LLM should have seen the context-only continuation"
+    ), "LLM should recommend apple given the banana allergy context"
 
     # Count user messages that are empty (should be minimal/none)
     empty_user_msgs = [
