@@ -104,11 +104,17 @@ def mock_session_details_windows(monkeypatch):
 
 @pytest.fixture
 def mock_session_details_ubuntu(monkeypatch):
-    """Configure SESSION_DETAILS for Ubuntu (non-Windows) mode."""
+    """Configure SESSION_DETAILS for Ubuntu VM execution (managed VM, not Windows)."""
     from unity.session_details import SESSION_DETAILS
 
     monkeypatch.setattr(SESSION_DETAILS.assistant, "desktop_mode", "ubuntu")
     monkeypatch.setattr(SESSION_DETAILS.assistant, "is_user_desktop", False)
+    monkeypatch.setattr(SESSION_DETAILS.assistant, "id", "test-assistant-ubuntu")
+    monkeypatch.setattr(
+        SESSION_DETAILS.assistant,
+        "desktop_url",
+        "https://test-ubuntu-vm.unify.ai",
+    )
 
     yield SESSION_DETAILS
 
@@ -347,7 +353,7 @@ class TestRemoteWindowsRoutingLogic:
         function_manager_factory,
         mock_session_details_ubuntu,
     ):
-        """Ubuntu desktop mode stays local."""
+        """Ubuntu VM mode stays local - windows_os_required functions execute on the Ubuntu VM."""
         fm = function_manager_factory()
         func_data = {"windows_os_required": True}
         assert fm._should_execute_python_function_on_remote_windows(func_data) is False

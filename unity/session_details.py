@@ -72,8 +72,10 @@ class AssistantDetails:
     number: str = ""
     email: str = ""
     contact_id: int = 0  # Contact ID in Contacts table
-    is_user_desktop: bool = False  # True if user-owned desktop (don't auto-stop)
-    desktop_mode: str = "ubuntu"  # "ubuntu" or "windows"
+    is_user_desktop: bool = False  # True if user-owned desktop (don't auto-stop VM)
+    desktop_mode: str = (
+        "ubuntu"  # "ubuntu" or "windows" - VM-based when is_user_desktop=False
+    )
     desktop_url: str | None = None  # URL for desktop access
 
 

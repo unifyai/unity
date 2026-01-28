@@ -5082,8 +5082,8 @@ class FunctionManager(BaseFunctionManager):
         """
         Wait for the remote Windows VM to be ready before execution.
 
-        Polls the /infra/vm/status/{assistant_id} endpoint until vm_ready=True.
-        Uses the same endpoint pattern as debug_logger._resolve_windows_vm_liveview().
+        Polls the /infra/vm/status/{assistant_id}?vm_type=windows endpoint until
+        vm_ready=True. Uses the same endpoint pattern as debug_logger._resolve_vm_liveview().
 
         Args:
             timeout: Maximum time to wait in seconds (default 5 minutes).
@@ -5125,6 +5125,7 @@ class FunctionManager(BaseFunctionManager):
                 try:
                     async with session.get(
                         f"{comms_url}/infra/vm/status/{assistant_id}",
+                        params={"vm_type": "windows"},
                         headers={"Authorization": f"Bearer {admin_key}"},
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
