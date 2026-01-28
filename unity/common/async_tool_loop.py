@@ -281,7 +281,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         parent_chat_context_cont: list[dict] | None,
     ) -> None:
-        # NOTE: key name 'parent_chat_context_continuted' is legacy and intentional
         with suppress(Exception):
             if parent_chat_context_cont is not None:
                 self._user_visible_history.append(
@@ -289,7 +288,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "role": "user",
                         "content": {
                             "message": message,
-                            "parent_chat_context_continuted": parent_chat_context_cont,
+                            "parent_chat_context_continued": parent_chat_context_cont,
                         },
                     },
                 )
@@ -337,10 +336,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         Answers *question* about this *pending* tool, associated with this handle.
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
-        When ``parent_chat_context_cont`` is provided, the user message will be
-        packaged as a dict with keys {"parent_chat_context_continuted", "message"}
-        to clearly signal the continuation of the parent conversation since the
-        start of this loop.
+        When ``parent_chat_context_cont`` is provided, the continued context is
+        included in the inspection loop's system message to provide additional
+        context from the outer conversation.
 
         If ``images`` are provided, the spawned inspection loop receives live
         images (helpers exposed, synthetic overview injected) and any nested asks
@@ -412,15 +410,38 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         from .llm_client import new_llm_client
 
         inspection_client = new_llm_client()
-        inspection_client.set_system_message(
-            "You are inspecting a running tool-use conversation. The entire "
-            "transcript so far is attached below (read-only):\n"
-            f"{json.dumps(parent_ctx, indent=2)}\n\n"
-            "Answer the user's follow-up question using ONLY this context.\n"
-            "Do not attempt to run new tools unless they are exposed to you.\n"
-            "Do not ask the user questions or request clarification. If information is missing,\n"
-            "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
+
+        # Build system message with transcript and any continued context
+        sys_msg_parts = [
+            "You are inspecting a running tool-use conversation.",
+            "",
+            "## Conversation Transcript (read-only)",
+            "The messages below show the conversation history up to this point:",
+            json.dumps(parent_ctx, indent=2),
+        ]
+
+        # If continued context is provided, add it as a separate section
+        if parent_chat_context_cont:
+            sys_msg_parts.extend(
+                [
+                    "",
+                    "## Parent Chat Context (continued)",
+                    "Additional context from the outer conversation that arrived after this tool started:",
+                    json.dumps(parent_chat_context_cont, indent=2),
+                ],
+            )
+
+        sys_msg_parts.extend(
+            [
+                "",
+                "Answer the user's follow-up question using ONLY this context.",
+                "Do not attempt to run new tools unless they are exposed to you.",
+                "Do not ask the user questions or request clarification. If information is missing,",
+                "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
+            ],
         )
+
+        inspection_client.set_system_message("\n".join(sys_msg_parts))
 
         # 3.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
@@ -437,18 +458,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         loop_id_label = f"Question({parent_label})"
 
-        # Build the message for the inspection loop – either a plain string or
-        # a single string that embeds the continued parent context.
-        if parent_chat_context_cont is not None:
-            _ctx_text = str(parent_chat_context_cont)
-            with suppress(Exception):
-                _ctx_text = json.dumps(parent_chat_context_cont, indent=2)
-            _ask_message = {
-                "role": "user",
-                "content": f"{question}\n\nparent_chat_context_continuted:\n{_ctx_text}",
-            }
-        else:
-            _ask_message = question
+        # The question is sent as a plain user message (context is in system message)
+        _ask_message = question
 
         helper_handle = start_async_tool_loop(
             inspection_client,
@@ -536,7 +547,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
         payload = {
             "message": message,
-            "parent_chat_context_continuted": parent_chat_context_cont,
+            "parent_chat_context_continued": parent_chat_context_cont,
             "images": images,
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
         }
