@@ -9,9 +9,8 @@ ARG BRANCH=main
 # Set working directory
 WORKDIR /app
 
-# Virtual devices and remote browser setup
+# Build environment setup
 ENV DEBIAN_FRONTEND=noninteractive
-ENV DISPLAY=:99
 
 # Install all system dependencies from shared script (full production set)
 COPY scripts/install-system-deps.sh /tmp/
@@ -21,37 +20,6 @@ RUN chmod +x /tmp/install-system-deps.sh && /tmp/install-system-deps.sh && rm /t
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
-# noVNC static files
-RUN mkdir -p /opt/novnc && \
-    wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
-    unzip master.zip && \
-    mv noVNC-master/* /opt/novnc && \
-    rm -rf master.zip noVNC-master
-COPY desktop/novnc/custom.html /opt/novnc/custom.html
-
-# Dependencies for virtual camera (currently disabled)
-# RUN apt-get update && apt-get install -y \
-#     gstreamer1.0-tools \
-#     gstreamer1.0-plugins-base \
-#     gstreamer1.0-plugins-good \
-#     gstreamer1.0-plugins-bad \
-#     gstreamer1.0-plugins-ugly \
-#     gstreamer1.0-libav \
-#     gstreamer1.0-pipewire \
-#     gstreamer1.0-libcamera \
-#     python3-gi \
-#     gir1.2-gtk-3.0 \
-#     libgirepository1.0-dev \
-#     libcairo2-dev \
-#     pkg-config \
-#     build-essential \
-#     cmake \
-#     v4l-utils \
-#     libspa-0.2-modules \
-#     libcamera-tools \
-#     gir1.2-gst-plugins-base-1.0 \
-#     gir1.2-gstreamer-1.0 \
-#     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js & npm for agent-service
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -85,8 +53,8 @@ RUN uv pip install --system --no-cache .
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
 
-# Ensure desktop scripts are executable
-RUN chmod +x /app/desktop/desktop.sh /app/desktop/display.sh /app/desktop/device.sh /app/desktop/update_vnc_password.sh /app/desktop/startup.sh /app/entrypoint.sh || true
+# Ensure entrypoint script is executable
+RUN chmod +x /app/entrypoint.sh || true
 
 # Build agent-service
 WORKDIR /app/agent-service
@@ -118,7 +86,8 @@ ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
 # Expose the ports that the applications use
-EXPOSE 8000 6379 6080
+# 8000: conversation manager, 6379: Redis, 3000: agent-service (Magnitude)
+EXPOSE 8000 6379 3000
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]
