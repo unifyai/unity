@@ -1266,6 +1266,8 @@ class CodeActActor(BaseCodeActActor):
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
+            agent_server_url: URL for the agent server. For desktop mode, pass the
+                external VM's URL.
         """
         super().__init__(
             environments=environments,
