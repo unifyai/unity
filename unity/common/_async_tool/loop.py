@@ -549,9 +549,12 @@ async def async_tool_loop_inner(
     # Add parent chat context if available
     if parent_chat_context:
         runtime_context_parts.append(
-            f"## Broader Context (read-only)\n"
-            f"{json.dumps(parent_chat_context, indent=2)}\n\n"
-            f"Resolve the *next* user request in light of this.",
+            f"## Parent Chat Context\n"
+            f"This tool loop was invoked from within another conversation. "
+            f"The messages below show that outer conversation's history up to the point "
+            f"where this tool was called. Use this to understand the broader goal and "
+            f"any relevant context, while focusing on your specific task.\n\n"
+            f"{json.dumps(parent_chat_context, indent=2)}",
         )
 
     # Always append runtime context as a new system message (never mutate the original)
