@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, List, Optional
 import httpx
 
 if TYPE_CHECKING:
-    from unillm.limit_hooks import LimitCheckRequest, LimitCheckResponse, LimitType
+    from unillm.limit_hooks import LimitCheckRequest, LimitCheckResponse
 
 logger = logging.getLogger(__name__)
 
@@ -294,8 +294,8 @@ async def check_spending_limits_callback(
     # Always check assistant limit
     checks.append(
         asyncio.create_task(
-            _check_assistant_limit(agent_id, month, base_url, api_key, timeout)
-        )
+            _check_assistant_limit(agent_id, month, base_url, api_key, timeout),
+        ),
     )
 
     is_org_context = org_id is not None
@@ -303,20 +303,20 @@ async def check_spending_limits_callback(
         # Org context: check member + org limits
         checks.append(
             asyncio.create_task(
-                _check_member_limit(user_id, org_id, month, base_url, api_key, timeout)
-            )
+                _check_member_limit(user_id, org_id, month, base_url, api_key, timeout),
+            ),
         )
         checks.append(
             asyncio.create_task(
-                _check_org_limit(org_id, month, base_url, api_key, timeout)
-            )
+                _check_org_limit(org_id, month, base_url, api_key, timeout),
+            ),
         )
     else:
         # Personal context: check user personal limit
         checks.append(
             asyncio.create_task(
-                _check_user_limit(user_id, month, base_url, api_key, timeout)
-            )
+                _check_user_limit(user_id, month, base_url, api_key, timeout),
+            ),
         )
 
     # Wait for all checks in parallel
