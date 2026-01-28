@@ -342,8 +342,9 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
 # --------------------------------------------------------------------------- #
 def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     """
-    Verify that ask, interject, and stop all have both parent_chat_context_cont
+    Verify that ask and interject have both parent_chat_context_cont
     (hidden plumbing via explicit list) and images (visible) parameters for full parity.
+    Stop only has images (no parent_chat_context_cont since stop is symbolic cancellation).
     """
     from unity.common.async_tool_loop import SteerableHandle, SteerableToolHandle
     import inspect
@@ -364,13 +365,13 @@ def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     ), "interject should have parent_chat_context_cont"
     assert "images" in interject_params, "interject should have images"
 
-    # Check SteerableToolHandle.stop
+    # Check SteerableToolHandle.stop - only has images (stop is symbolic, no context propagation)
     stop_sig = inspect.signature(SteerableToolHandle.stop)
     stop_params = set(stop_sig.parameters.keys()) - {"self"}
-    assert (
-        "parent_chat_context_cont" in stop_params
-    ), "stop should have parent_chat_context_cont"
     assert "images" in stop_params, "stop should have images"
+    assert (
+        "parent_chat_context_cont" not in stop_params
+    ), "stop should NOT have parent_chat_context_cont (stop is symbolic cancellation)"
 
 
 @pytest.mark.asyncio

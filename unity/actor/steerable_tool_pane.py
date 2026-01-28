@@ -896,8 +896,6 @@ class SteerableToolPane:
         self,
         handle_id: str,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> Optional[str]:
         """Stop a specific handle (safe no-op for terminal handles)."""
 
@@ -943,7 +941,7 @@ class SteerableToolPane:
 
         try:
             result = await maybe_await(
-                handle.stop(reason, parent_chat_context_cont=parent_chat_context_cont),
+                handle.stop(reason),
             )
             async with self._lock:
                 meta2 = self._registry.get(handle_id)

@@ -120,7 +120,6 @@ class SteerableToolHandle(SteerableHandle):
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Stop this task immediately, cancelling any pending work.
@@ -585,7 +584,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         **kwargs,
     ) -> None:

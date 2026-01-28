@@ -227,7 +227,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         reason: Optional[str] = None,
         *,
         cancel: bool = False,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         """Cancel further processing so `.result()` raises.
 
@@ -238,8 +237,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         Args:
             reason: Optional reason for stopping.
             cancel: Ignored; interaction is always cancelled.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
@@ -691,7 +688,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 *,
                 cancel: bool = False,
                 reason: Optional[str] = None,
-                parent_chat_context_cont: list[dict] | None = None,
             ) -> Optional[str]:  # type: ignore[override]
                 self._log_stop(reason)
                 # Prefer actor-style stop(reason) but tolerate both signatures

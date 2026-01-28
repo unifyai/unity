@@ -531,7 +531,7 @@ def method_to_schema(
     expose_context_cont_control : bool
         If True and the method accepts ``parent_chat_context_cont``, the schema
         will include an ``include_parent_chat_context_cont`` boolean parameter.
-        This is for steering methods (ask, interject, stop) on in-flight tools
+        This is for steering methods (ask, interject) on in-flight tools
         that originally opted into context. The LLM can control whether context
         continuations are forwarded on each steering call.
     """

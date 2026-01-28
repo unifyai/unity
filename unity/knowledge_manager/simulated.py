@@ -200,15 +200,11 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
     def stop(
         self,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         """Stop the in-flight handle.
 
         Args:
             reason: Optional reason for stopping.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
