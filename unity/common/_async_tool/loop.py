@@ -550,10 +550,10 @@ async def async_tool_loop_inner(
     if parent_chat_context:
         runtime_context_parts.append(
             f"## Parent Chat Context\n"
-            f"This tool loop was invoked from within another conversation. "
-            f"The messages below show that outer conversation's history up to the point "
-            f"where this tool was called. Use this to understand the broader goal and "
-            f"any relevant context, while focusing on your specific task.\n\n"
+            f"You received this request from within a parent conversation. "
+            f"The messages below show that parent conversation's history up to the point "
+            f"when you received this request. Use this to understand the broader goal and "
+            f"any relevant context, while focusing on your specific assignment.\n\n"
             f"{json.dumps(parent_chat_context, indent=2)}",
         )
 
@@ -1726,10 +1726,36 @@ async def async_tool_loop_inner(
                     )
                     _visibility_guidance_injected = True
 
-                # Send interjection as a simple user message
-                interjection_msg = {"role": "user", "content": _msg_text}
-                await _msg_dispatcher.append_msgs([interjection_msg])
-                last_valid_user_history = history_lines + [f"user: {_msg_text}"]
+                # Send interjection as user message(s).
+                # If context continuation is present, inject it as a separate user message
+                # tagged with _ctx_header so the current LLM sees it but it's filtered out
+                # when building cur_msgs for inner tool forwarding.
+                msgs_to_append: list[dict] = []
+                if _ctx_cont:
+                    ctx_cont_content = (
+                        "## Parent Chat Context (continued)\n"
+                        "This is the next incremental chunk of the parent conversation since the "
+                        "last context update (either the initial Parent Chat Context in your system "
+                        "message, or the previous continued context chunk). These messages arrived "
+                        "while you have been working on this request and may be relevant. Use this "
+                        "to stay informed of any updates or new information from the parent conversation.\n\n"
+                        f"{json.dumps(_ctx_cont, indent=2)}"
+                    )
+                    msgs_to_append.append(
+                        {
+                            "role": "user",
+                            "_ctx_header": True,
+                            "content": ctx_cont_content,
+                        },
+                    )
+                # Only append user message if there's actual content
+                if _msg_text:
+                    msgs_to_append.append({"role": "user", "content": _msg_text})
+                if msgs_to_append:
+                    await _msg_dispatcher.append_msgs(msgs_to_append)
+                # Update history only if there was user message content
+                if _msg_text:
+                    last_valid_user_history = history_lines + [f"user: {_msg_text}"]
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 if _append_and_log_images_safely(_incoming_images):

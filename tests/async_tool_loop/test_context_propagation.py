@@ -701,3 +701,126 @@ async def test_dynamic_tool_factory_marks_opted_out():
         False,
     )
     assert not getattr(factory.dynamic_tools[stop_key], "__context_opted_in__", True)
+
+
+# =============================================================================
+# Tests for interjection context continuation message structure
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_context_continuation_message_structure(model) -> None:
+    """Verify that interjections with parent_chat_context_continued create proper message structure.
+
+    When an interjection includes parent_chat_context_continued:
+    1. A user message with the context continuation (tagged _ctx_header=True) is appended
+    2. A second user message with the actual interjection content is appended (if non-empty)
+    3. The context continuation message is filtered out when building cur_msgs for inner tools
+    4. The current loop's LLM sees the context continuation
+    """
+    client = new_llm_client(model=model)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=(
+            "Wait for additional context before making a decision about fruits. "
+            "Do not decide until you receive more information."
+        ),
+        tools={},
+    )
+
+    continued_ctx = [
+        {
+            "role": "assistant",
+            "content": "Important: The correct fruit choice is APPLE, not BANANA.",
+        },
+    ]
+
+    # Inject an interjection with context continuation
+    await handle.interject(
+        "Now decide which fruit to choose.",
+        parent_chat_context_cont=continued_ctx,
+    )
+
+    final = await handle.result()
+
+    # Verify the LLM made the right decision (influenced by context continuation)
+    assert "apple" in final.lower(), "LLM should have seen the context continuation"
+
+    # Verify message structure: find user messages with _ctx_header=True
+    ctx_header_user_msgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "user" and m.get("_ctx_header") is True
+    ]
+    assert (
+        len(ctx_header_user_msgs) >= 1
+    ), "Expected at least one user message with _ctx_header=True for context continuation"
+
+    # The context continuation message should contain the context
+    ctx_msg = ctx_header_user_msgs[0]
+    assert "Parent Chat Context (continued)" in ctx_msg["content"]
+    assert (
+        "APPLE" in ctx_msg["content"]
+    ), "Context continuation should contain the APPLE hint"
+
+    # Verify that when filtering for cur_msgs, context header messages are excluded
+    cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
+    ctx_header_in_cur_msgs = [
+        m
+        for m in cur_msgs
+        if m.get("role") == "user"
+        and "Parent Chat Context (continued)" in str(m.get("content", ""))
+    ]
+    assert (
+        len(ctx_header_in_cur_msgs) == 0
+    ), "Context continuation messages should be filtered out of cur_msgs"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_context_only_no_user_message(model) -> None:
+    """Verify that context-only interjections (empty message) work correctly.
+
+    When an interjection has parent_chat_context_continued but empty message text,
+    only the context continuation user message should be appended (no empty second message).
+    """
+    client = new_llm_client(model=model)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=(
+            "Choose between APPLE and BANANA. Wait for any additional context "
+            "that might influence your decision before responding."
+        ),
+        tools={},
+    )
+
+    continued_ctx = [
+        {
+            "role": "assistant",
+            "content": "Reminder: Always prefer APPLE over BANANA.",
+        },
+    ]
+
+    # Inject context-only interjection (empty message)
+    await handle.interject(
+        "",  # Empty message
+        parent_chat_context_cont=continued_ctx,
+    )
+
+    final = await handle.result()
+
+    # Verify the LLM made the right decision (influenced by context continuation)
+    assert (
+        "apple" in final.lower()
+    ), "LLM should have seen the context-only continuation"
+
+    # Count user messages that are empty (should be minimal/none)
+    empty_user_msgs = [
+        m for m in client.messages if m.get("role") == "user" and m.get("content") == ""
+    ]
+    assert (
+        len(empty_user_msgs) == 0
+    ), "Empty user messages should not be appended for context-only interjections"
