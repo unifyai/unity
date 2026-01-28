@@ -426,7 +426,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 [
                     "",
                     "## Parent Chat Context (continued)",
-                    "Additional context from the outer conversation that arrived after this tool started:",
+                    (
+                        "This is the next incremental chunk of the outer conversation since the "
+                        "last context update (either the initial Parent Chat Context in the system "
+                        "message, or the previous continued context chunk). These messages arrived "
+                        "after this tool started but may be relevant to your current task. Use this "
+                        "to stay informed of any updates or new information from the outer conversation."
+                    ),
+                    "",
                     json.dumps(parent_chat_context_cont, indent=2),
                 ],
             )
