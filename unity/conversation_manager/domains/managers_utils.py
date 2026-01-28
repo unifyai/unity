@@ -347,8 +347,6 @@ async def queue_operation(async_func: callable, *args, **kwargs) -> None:
     The operation will be processed by listen_to_operations().
     """
     await _operations_queue.put((async_func, args, kwargs))
-    func_name = getattr(async_func, "__name__", str(async_func))
-    print(f"[ManagersWorker] Queued operation: {func_name}")
 
 
 async def wait_for_initialization(cm: "ConversationManager") -> None:
