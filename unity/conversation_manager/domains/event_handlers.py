@@ -449,6 +449,48 @@ async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwar
     cm.contact_index.set_fallback_contacts(event.contacts)
 
 
+@EventHandler.register(UnknownContactCreated)
+async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kwargs):
+    """
+    Handle new unknown contact creation from inbound messages.
+
+    When an inbound SMS, email, or call arrives from an unknown sender (not in
+    Contacts and not in BlackList), a minimal contact is automatically created
+    with should_respond=False. This event notifies the ConversationManager so
+    it can inform the boss and seek guidance on how to handle the contact.
+
+    The assistant should use its judgement to decide the best course of action:
+    - Inform the boss and ask for guidance
+    - If clearly spam, potentially blacklist the contact
+    - If legitimate, update contact details and enable responses
+    """
+    contact = event.contact
+    contact_name = (
+        contact.get("first_name")
+        or contact.get("phone_number")
+        or contact.get("email_address")
+        or "Unknown"
+    )
+
+    cm._session_logger.info(
+        "unknown_contact_created",
+        f"New unknown contact created: {contact_name} via {event.medium}",
+    )
+
+    # Push notification so the assistant is aware
+    notif_content = f"New unknown contact from {event.medium}: {contact_name}"
+    if event.message_preview:
+        notif_content += (
+            f" - '{event.message_preview[:50]}...'"
+            if len(event.message_preview) > 50
+            else f" - '{event.message_preview}'"
+        )
+    cm.notifications_bar.push_notif("contacts", notif_content, event.timestamp)
+
+    # Trigger LLM run so assistant can decide how to handle
+    await cm.request_llm_run(delay=2)
+
+
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("startup", "Received startup event")
