@@ -83,11 +83,11 @@ async def test_unify_message_three_turn_recall(initialized_cm):
     cm = initialized_cm
     contact = TEST_CONTACTS[0]
 
-    # Turn 1: First piece of info
+    # Turn 1: First piece of info (use non-identity info to avoid conflict with contact metadata)
     result1 = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=contact,
-            content="My name is Jordan. Please acknowledge.",
+            content="My favorite color is blue. Please acknowledge.",
         ),
     )
     get_exactly_one(result1.output_events, UnifyMessageSent)
@@ -105,15 +105,15 @@ async def test_unify_message_three_turn_recall(initialized_cm):
     result3 = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=contact,
-            content="What is my name and where do I live?",
+            content="What is my favorite color and where do I live?",
         ),
     )
     msg3 = get_exactly_one(result3.output_events, UnifyMessageSent)
 
     assert_content_contains(
         msg3.content,
-        "Jordan",
-        "Assistant should recall name from earlier turns",
+        "blue",
+        "Assistant should recall favorite color from earlier turns",
         cm=cm,
         result=result3,
     )
