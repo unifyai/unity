@@ -287,7 +287,8 @@ class SingleFunctionActor(BaseActor):
             headless: Whether to run in headless mode.
             computer_mode: Computer backend mode ("magnitude" or "mock").
             agent_mode: Agent mode for ComputerPrimitives ("browser" or "desktop").
-            agent_server_url: URL for the agent server.
+            agent_server_url: URL for the agent server. For desktop mode, pass the
+                external VM's URL.
         """
         if computer_primitives is not None:
             self._computer_primitives = computer_primitives
