@@ -153,7 +153,7 @@ async def entrypoint(ctx: JobContext) -> None:
             tags=[f"channel:{channel}"],
         )
 
-    # NEW: shared end_call + inactivity + participant disconnect handler
+    # Shared end_call + inactivity + participant disconnect handler
     # Pass usage logging callback to run before shutdown
     end_call = create_end_call(
         contact,
@@ -278,10 +278,12 @@ if __name__ == "__main__":
         dispatch_livekit_agent(livekit_agent_name, room_name)
         print(f"LiveKit agent {livekit_agent_name} dispatched")
 
+    # Run the agent using the standard CLI - this is the natural way to run LiveKit agents.
+    # The process will be terminated via SIGTERM when cleanup_call_proc() is called.
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=livekit_agent_name,  # LiveKit API expects 'agent_name'
+            agent_name=livekit_agent_name,
             initialize_process_timeout=60,
         ),
     )

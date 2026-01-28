@@ -106,7 +106,7 @@ class TestCallManagerConfiguration:
         assert manager.call_start_timestamp is None
         assert manager.unify_meet_start_timestamp is None
         assert manager.call_contact is None
-        assert manager._call_thread is None
+        assert manager._call_proc is None
         assert manager.conference_name == ""
 
     def test_call_manager_tts_mode_detection(self):
@@ -302,12 +302,12 @@ class TestCallEventSerialization:
 
 
 # =============================================================================
-# Unit Tests: Call Thread Lifecycle (Mocked)
+# Unit Tests: Call Subprocess Lifecycle (Mocked)
 # =============================================================================
 
 
-class TestCallThreadLifecycle:
-    """Tests for call thread management in LivekitCallManager."""
+class TestCallSubprocessLifecycle:
+    """Tests for call subprocess management in LivekitCallManager."""
 
     @pytest.fixture
     def call_manager(self):
@@ -344,23 +344,25 @@ class TestCallThreadLifecycle:
             "phone_number": "+15551111111",
         }
 
-    def test_start_call_creates_thread(
+    def test_start_call_creates_subprocess(
         self,
         call_manager,
         sample_contact,
         boss_contact,
     ):
-        """start_call() creates a daemon thread for the voice agent."""
-        with patch.object(
-            call_manager,
-            "_start_script_thread",
-        ) as mock_start:
+        """start_call() creates a subprocess for the voice agent."""
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run_script:
+            mock_proc = MagicMock()
+            mock_run_script.return_value = mock_proc
+
             call_manager.start_call(sample_contact, boss_contact)
 
-            mock_start.assert_called_once()
-            call_args = mock_start.call_args
-            assert "call.py" in str(call_args.kwargs["script_path"])
-            assert "dev" in call_args.kwargs["argv"]
+            mock_run_script.assert_called_once()
+            call_args = mock_run_script.call_args
+            assert "call.py" in str(call_args[0][0])  # script path
+            assert "dev" in call_args[0]  # args
 
     def test_start_call_outbound_flag(
         self,
@@ -369,15 +371,17 @@ class TestCallThreadLifecycle:
         boss_contact,
     ):
         """start_call() passes outbound flag correctly."""
-        with patch.object(
-            call_manager,
-            "_start_script_thread",
-        ) as mock_start:
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run_script:
+            mock_proc = MagicMock()
+            mock_run_script.return_value = mock_proc
+
             call_manager.start_call(sample_contact, boss_contact, outbound=True)
 
-            call_args = mock_start.call_args
-            # Outbound flag should be in the argv
-            assert "True" in call_args.kwargs["argv"]
+            call_args = mock_run_script.call_args
+            # Outbound flag should be in the args
+            assert "True" in call_args[0]
 
     def test_start_call_sts_mode_uses_sts_script(
         self,
@@ -401,23 +405,30 @@ class TestCallThreadLifecycle:
 
         manager = LivekitCallManager(sts_config)
 
-        with patch.object(manager, "_start_script_thread") as mock_start:
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run_script:
+            mock_proc = MagicMock()
+            mock_run_script.return_value = mock_proc
+
             manager.start_call(sample_contact, boss_contact)
 
-            call_args = mock_start.call_args
-            assert "sts_call.py" in str(call_args.kwargs["script_path"])
+            call_args = mock_run_script.call_args
+            assert "sts_call.py" in str(call_args[0][0])
 
-    def test_start_unify_meet_creates_thread(
+    def test_start_unify_meet_creates_subprocess(
         self,
         call_manager,
         sample_contact,
         boss_contact,
     ):
-        """start_unify_meet() creates a daemon thread for the voice agent."""
-        with patch.object(
-            call_manager,
-            "_start_script_thread",
-        ) as mock_start:
+        """start_unify_meet() creates a subprocess for the voice agent."""
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run_script:
+            mock_proc = MagicMock()
+            mock_run_script.return_value = mock_proc
+
             call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
@@ -425,13 +436,11 @@ class TestCallThreadLifecycle:
                 room_name="test_room",
             )
 
-            mock_start.assert_called_once()
-            call_args = mock_start.call_args
-            assert "call.py" in str(call_args.kwargs["script_path"])
-            # LiveKit agent name and room name should be combined in argv
-            assert any(
-                "test_agent:test_room" in arg for arg in call_args.kwargs["argv"]
-            )
+            mock_run_script.assert_called_once()
+            call_args = mock_run_script.call_args
+            assert "call.py" in str(call_args[0][0])  # script path
+            # LiveKit agent name and room name should be combined in args
+            assert any("test_agent:test_room" in str(arg) for arg in call_args[0])
 
     def test_start_unify_meet_default_names(
         self,
@@ -442,10 +451,12 @@ class TestCallThreadLifecycle:
         """start_unify_meet() generates default livekit_agent_name/room names from assistant_id."""
         call_manager.assistant_id = "my_assistant"
 
-        with patch.object(
-            call_manager,
-            "_start_script_thread",
-        ) as mock_start:
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run_script:
+            mock_proc = MagicMock()
+            mock_run_script.return_value = mock_proc
+
             call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
@@ -453,61 +464,48 @@ class TestCallThreadLifecycle:
                 room_name=None,
             )
 
-            call_args = mock_start.call_args
+            call_args = mock_run_script.call_args
             # Default names should use assistant_id
             assert any(
-                "unity_my_assistant_web" in arg for arg in call_args.kwargs["argv"]
+                "unity_my_assistant_web" in str(arg) for arg in call_args[0]
             )
 
     @pytest.mark.asyncio
-    async def test_cleanup_call_proc_no_thread(self, call_manager):
-        """cleanup_call_proc() handles case when no thread is running."""
-        assert call_manager._call_thread is None
+    async def test_cleanup_call_proc_no_process(self, call_manager):
+        """cleanup_call_proc() handles case when no process is running."""
+        assert call_manager._call_proc is None
 
         # Should not raise
         await call_manager.cleanup_call_proc()
 
     @pytest.mark.asyncio
-    async def test_cleanup_call_proc_publishes_stop(self, call_manager):
-        """cleanup_call_proc() publishes stop message to event broker."""
-        # Create a mock thread that's "alive"
-        mock_thread = MagicMock()
-        mock_thread.is_alive.return_value = True
-        call_manager._call_thread = mock_thread
+    async def test_cleanup_call_proc_terminates_subprocess(self, call_manager):
+        """cleanup_call_proc() terminates the subprocess."""
+        # Create a mock subprocess that's running
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # Process is running
+        mock_proc.pid = 12345
+        call_manager._call_proc = mock_proc
 
         with patch(
-            "unity.conversation_manager.domains.call_manager.get_event_broker",
-        ) as mock_get_broker:
-            mock_broker = AsyncMock()
-            mock_get_broker.return_value = mock_broker
-
-            # Make thread.join work in asyncio.to_thread
-            mock_thread.join = MagicMock()
-
+            "unity.conversation_manager.domains.call_manager.cleanup_dangling_call_processes",
+        ) as mock_cleanup:
             await call_manager.cleanup_call_proc(timeout=0.1)
 
-            # Should publish stop message
-            mock_broker.publish.assert_called_once()
-            call_args = mock_broker.publish.call_args
-            assert call_args[0][0] == "app:call:status"
-            assert '"type": "stop"' in call_args[0][1]
+            # Should call cleanup_dangling_call_processes on Unix
+            mock_cleanup.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_cleanup_call_proc_clears_thread_reference(self, call_manager):
-        """cleanup_call_proc() clears the thread reference."""
-        mock_thread = MagicMock()
-        mock_thread.is_alive.return_value = False
-        call_manager._call_thread = mock_thread
+    async def test_cleanup_call_proc_clears_process_reference(self, call_manager):
+        """cleanup_call_proc() clears the process reference."""
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0  # Process already exited
+        mock_proc.returncode = 0
+        call_manager._call_proc = mock_proc
 
-        with patch(
-            "unity.conversation_manager.domains.call_manager.get_event_broker",
-        ) as mock_get_broker:
-            mock_broker = AsyncMock()
-            mock_get_broker.return_value = mock_broker
+        await call_manager.cleanup_call_proc()
 
-            await call_manager.cleanup_call_proc()
-
-            assert call_manager._call_thread is None
+        assert call_manager._call_proc is None
 
 
 # =============================================================================
@@ -1249,23 +1247,54 @@ class TestCallErrorHandling:
 
         manager = LivekitCallManager(config)
 
-        # Create a mock thread that never finishes
-        mock_thread = MagicMock()
-        mock_thread.is_alive.return_value = True
-        mock_thread.join = MagicMock()  # Does nothing
-        manager._call_thread = mock_thread
+        # Create a mock subprocess that's running
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # Process is running
+        mock_proc.pid = 12345
+        manager._call_proc = mock_proc
 
         with patch(
-            "unity.conversation_manager.domains.call_manager.get_event_broker",
-        ) as mock_get_broker:
-            mock_broker = AsyncMock()
-            mock_get_broker.return_value = mock_broker
-
+            "unity.conversation_manager.domains.call_manager.cleanup_dangling_call_processes",
+        ) as mock_cleanup:
             # Should not hang - timeout should be respected
             await asyncio.wait_for(
                 manager.cleanup_call_proc(timeout=0.1),
                 timeout=1.0,
             )
+
+
+@pytest.mark.asyncio
+class TestConversationManagerInactivityCleanup:
+    """Tests for ConversationManager cleanup and shutdown flow."""
+
+    @pytest.fixture
+    def alice_contact(self):
+        return TEST_CONTACTS[2]
+
+    async def test_cleanup_call_proc_terminates_subprocess(
+        self,
+        initialized_cm,
+        alice_contact,
+    ):
+        """cleanup_call_proc() terminates the subprocess.
+
+        The subprocess should be terminated via SIGTERM when cleanup() is called.
+        """
+        cm = initialized_cm.cm
+
+        # Create a mock subprocess that's running
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # Process is running
+        mock_proc.pid = 12345
+        cm.call_manager._call_proc = mock_proc
+
+        with patch(
+            "unity.conversation_manager.domains.call_manager.cleanup_dangling_call_processes",
+        ) as mock_cleanup:
+            await cm.call_manager.cleanup_call_proc(timeout=0.1)
+
+            # Should call cleanup_dangling_call_processes
+            mock_cleanup.assert_called_once()
 
 
 # =============================================================================
