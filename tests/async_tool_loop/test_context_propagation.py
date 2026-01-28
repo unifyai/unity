@@ -187,11 +187,11 @@ async def test_chat_context_propagation_llm_decides_exclude(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_uses_continued_parent_context(model) -> None:
-    """Verify that ask() packages continued parent context and influences the answer.
+async def test_ask_uses_parent_context(model) -> None:
+    """Verify that ask() includes parent context in the inspection loop and influences the answer.
 
     The inner inspection loop should choose "apple" only because that signal
-    exists in the provided continued context, not in the current prompt.
+    exists in the provided parent context, not in the current prompt.
     """
 
     client = new_llm_client(model=model)
@@ -203,8 +203,8 @@ async def test_ask_uses_continued_parent_context(model) -> None:
         tools={},
     )
 
-    # Provide a contrived continued parent context that carries the deciding hint.
-    continued_ctx = [
+    # Provide a parent context that carries the deciding hint.
+    parent_ctx = [
         {
             "role": "assistant",
             "content": (
@@ -214,14 +214,14 @@ async def test_ask_uses_continued_parent_context(model) -> None:
         },
     ]
 
-    # Ask a question whose correct answer requires the continued parent context.
+    # Ask a question whose correct answer requires the parent context.
     helper = await handle.ask(
         ("Which fruit should we choose? Please answer in one short phrase."),
-        parent_chat_context_cont=continued_ctx,
+        parent_chat_context=parent_ctx,
     )
     ans = await helper.result()
 
-    assert "apple" in ans.lower(), "Answer did not reflect continued parent context."
+    assert "apple" in ans.lower(), "Answer did not reflect parent context."
 
 
 @pytest.mark.asyncio

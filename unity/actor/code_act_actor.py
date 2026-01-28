@@ -722,7 +722,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        parent_chat_context: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> SteerableToolHandle:
         status = "completed" if self.done() else "still running"
