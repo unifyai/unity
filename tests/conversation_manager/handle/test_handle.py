@@ -1315,7 +1315,7 @@ async def test_transcript_excludes_call_guidance(initialized_cm):
     This test verifies that:
     1. User utterances appear in the transcript
     2. CallGuidance messages are filtered out
-    3. Only "user" and "assistant" roles appear (not "Guidance")
+    3. Only "user" and "assistant" roles appear (not "guidance")
     """
     cm = initialized_cm
     contact = TEST_CONTACTS[1]
@@ -1342,7 +1342,7 @@ async def test_transcript_excludes_call_guidance(initialized_cm):
     # Should have at least the user message
     assert len(conversation_turns) >= 1, "Transcript should contain user message"
 
-    # All roles should be either "user" or "assistant" (not "Guidance")
+    # All roles should be either "user" or "assistant" (not "guidance")
     for turn in conversation_turns:
         assert turn["role"] in (
             "user",

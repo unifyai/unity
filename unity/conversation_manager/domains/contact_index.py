@@ -34,6 +34,7 @@ class Message(CommsMessage):
     name: str
     content: str
     timestamp: datetime
+    role: str  # "user" or "assistant"
 
 
 @dataclass
@@ -45,6 +46,7 @@ class EmailMessage(CommsMessage):
     body: str
     email_id: str | None
     timestamp: datetime
+    role: str  # "user" or "assistant"
     attachments: list[str] = field(default_factory=list)
 
 
@@ -55,6 +57,7 @@ class UnifyMessage(CommsMessage):
     name: str
     content: str
     timestamp: datetime
+    role: str  # "user" or "assistant"
     attachments: list[str] = field(default_factory=list)
 
 
@@ -264,10 +267,10 @@ class ContactIndex:
 
         conversation = self.get_or_create_conversation(contact_id)
 
-        # Determine display name
+        # Determine display name (for rendering to brain)
         name = sender_name if role == "user" else "You" if role == "assistant" else role
 
-        # Non-comms roles (e.g., "Guidance") get a GuidanceMessage
+        # Non-comms roles (e.g., "guidance") get a GuidanceMessage
         if role not in ("user", "assistant"):
             message = GuidanceMessage(
                 name=name,
@@ -282,6 +285,7 @@ class ContactIndex:
                 body=body or "",
                 email_id=email_id,
                 timestamp=timestamp,
+                role=role,
                 attachments=attachments or [],
             )
         elif thread_name == Medium.UNIFY_MESSAGE:
@@ -289,6 +293,7 @@ class ContactIndex:
                 name=name,
                 content=message_content or "",
                 timestamp=timestamp,
+                role=role,
                 attachments=attachments or [],
             )
         else:
@@ -296,6 +301,7 @@ class ContactIndex:
                 name=name,
                 content=message_content or "",
                 timestamp=timestamp,
+                role=role,
             )
 
         conversation.threads[thread_name].append(message)

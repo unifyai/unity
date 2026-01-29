@@ -298,7 +298,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if not isinstance(msg, CommsMessage):
                 continue
 
-            role = "assistant" if msg.name == "You" else "user"
             # Handle both Message and EmailMessage types
             if hasattr(msg, "content"):
                 content = (msg.content or "").strip()
@@ -311,7 +310,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if content.startswith("<") and content.endswith(">"):
                 continue
 
-            conversation_turns.append({"role": role, "content": content})
+            conversation_turns.append({"role": msg.role, "content": content})
 
             if hasattr(msg, "timestamp") and msg.timestamp:
                 last_message_timestamp = msg.timestamp
