@@ -20,6 +20,7 @@ from unity.conversation_manager.events import (
     ActorResult,
     ActorClarificationRequest,
     EmailSent,
+    Error,
     Event,
     OutboundPhoneUtterance,
     SMSSent,
@@ -33,17 +34,27 @@ DisplayCallback = Callable[[str], Awaitable[None]] | Callable[[str], None]
 def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[str]:
     if isinstance(event, SMSSent):
         try:
-            if bool(getattr(sandbox_state, "in_call", False)):
-                return f"[Phone → User] {event.content}"
+            c = getattr(event, "contact", None) or {}
+            first = (c.get("first_name") or "").strip()
+            last = (c.get("surname") or "").strip()
+            to_name = " ".join([p for p in (first, last) if p]).strip()
+            if not to_name:
+                to_name = c.get("phone_number") or c.get("email_address") or "recipient"
         except Exception:
-            pass
-        return f"[SMS → User] {event.content}"
+            to_name = "recipient"
+        return f"[SMS → {to_name}] {event.content}"
     if isinstance(event, EmailSent):
         return f"[Email → User] Subject: {event.subject}\n{event.body}"
     if isinstance(event, OutboundPhoneUtterance):
         return f"[Phone → User] {event.content}"
     if isinstance(event, CallGuidance):
-        # Debug-only; keep lightweight.
+        # In production this is consumed by the Voice Agent. In the sandbox, when
+        # we are in a simulated call, treat it like the assistant's spoken reply.
+        try:
+            if bool(getattr(sandbox_state, "in_call", False)):
+                return f"[Phone → User] {event.content}"
+        except Exception:
+            pass
         return f"[Call Guidance] {event.content}"
     if isinstance(event, ActorHandleStarted):
         return f"[Actor] started: {event.query}"
@@ -54,6 +65,8 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return f"[Actor] completed: {event.result}"
     if isinstance(event, ActorClarificationRequest):
         return f"[Actor] clarification requested: {event.query}"
+    if isinstance(event, Error):
+        return f"[Error] {event.message}"
     return None
 
 
@@ -221,7 +234,7 @@ async def subscribe_to_responses(
                         isinstance(event, OutboundPhoneUtterance)
                         or (
                             bool(getattr(sandbox_state, "in_call", False))
-                            and isinstance(event, SMSSent)
+                            and isinstance(event, CallGuidance)
                         )
                     ):
                         try:
@@ -250,6 +263,33 @@ async def subscribe_to_responses(
                         if to_email:
                             ack = f"✅ Sent that email to {to_email}."
                         await _maybe_call(display_callback, f"[Phone → User] {ack}")
+
+                    # UX: when an outbound SMS is emitted while we're in a call,
+                    # acknowledge it in the call channel. Do not "speak" the SMS body
+                    # as if it were phone speech; keep that as a separate SMS line.
+                    if isinstance(event, SMSSent) and bool(
+                        getattr(sandbox_state, "in_call", False),
+                    ):
+                        try:
+                            c = getattr(event, "contact", None) or {}
+                            first = (c.get("first_name") or "").strip()
+                            last = (c.get("surname") or "").strip()
+                            to_name = " ".join([p for p in (first, last) if p]).strip()
+                            if not to_name:
+                                to_name = c.get("phone_number") or "recipient"
+                        except Exception:
+                            to_name = "recipient"
+                        ack = "✅ Sent that SMS."
+                        if to_name:
+                            ack = f"✅ Sent that SMS to {to_name}."
+                        await _maybe_call(display_callback, f"[Phone → User] {ack}")
+                        if voice_enabled:
+                            try:
+                                from sandboxes.utils import speak
+
+                                speak(ack)
+                            except Exception:
+                                pass
 
                     await _maybe_call(display_callback, rendered)
         except Exception as exc:
