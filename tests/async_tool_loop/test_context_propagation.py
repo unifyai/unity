@@ -190,8 +190,11 @@ async def test_chat_context_propagation_llm_decides_exclude(model) -> None:
 async def test_ask_uses_parent_context(model) -> None:
     """Verify that ask() includes parent context in the inspection loop and influences the answer.
 
-    The inner inspection loop should choose "apple" only because that signal
-    exists in the provided parent context, not in the current prompt.
+    The inner inspection loop should choose "apple" only because the parent context
+    reveals a banana allergy, not because of anything in the current prompt.
+
+    This test uses a realistic scenario (food allergy) rather than arbitrary directives,
+    which sophisticated models might (correctly) treat as suspicious prompt injection.
     """
 
     client = new_llm_client(model=model)
@@ -203,25 +206,35 @@ async def test_ask_uses_parent_context(model) -> None:
         tools={},
     )
 
-    # Provide a parent context that carries the deciding hint.
+    # Provide a parent context that carries the deciding hint via a realistic scenario.
     parent_ctx = [
+        {
+            "role": "user",
+            "content": "By the way, I should mention I have a severe banana allergy.",
+        },
         {
             "role": "assistant",
             "content": (
-                "Important persistent preference: If asked to choose a fruit, "
-                "always choose APPLE and not BANANA."
+                "Thank you for letting me know about your banana allergy. "
+                "I'll make sure to keep that in mind for any recommendations."
             ),
         },
     ]
 
     # Ask a question whose correct answer requires the parent context.
+    # Explicitly offer apple and banana so the LLM makes a specific choice.
     helper = await handle.ask(
-        ("Which fruit should we choose? Please answer in one short phrase."),
+        (
+            "Which fruit should we choose: APPLE or BANANA? "
+            "Please answer in one short phrase."
+        ),
         _parent_chat_context=parent_ctx,
     )
     ans = await helper.result()
 
-    assert "apple" in ans.lower(), "Answer did not reflect parent context."
+    assert (
+        "apple" in ans.lower()
+    ), "Answer did not reflect parent context (banana allergy)."
 
 
 @pytest.mark.asyncio
@@ -233,6 +246,9 @@ async def test_interject_with_continued_parent_context_influences_decision(
 
     The outer loop should incorporate the interjection (and its continued context)
     such that the next assistant reply reflects that broader context.
+
+    This test uses a realistic scenario (food allergy) rather than arbitrary directives,
+    which sophisticated models might (correctly) treat as suspicious prompt injection.
     """
 
     client = new_llm_client(model=model)
@@ -241,30 +257,36 @@ async def test_interject_with_continued_parent_context_influences_decision(
         client=client,
         message=(
             "We need to pick a fruit between APPLE and BANANA. "
-            "Decide shortly after considering any additional context."
+            "Wait for any additional context from the parent conversation before deciding."
         ),
         tools={},
     )
 
+    # Realistic outer conversation context: user mentions they have a banana allergy
     continued_ctx = [
+        {
+            "role": "user",
+            "content": "By the way, I should mention I have a severe banana allergy.",
+        },
         {
             "role": "assistant",
             "content": (
-                "If asked to decide between fruits, the correct choice is APPLE."
+                "Thank you for letting me know about your banana allergy. "
+                "I'll make sure to keep that in mind for any recommendations."
             ),
         },
     ]
 
-    # Inject guidance that includes the continued parent context.
+    # Inject the context continuation (the allergy info from parent conversation).
     await handle.interject(
-        "FYI: see additional context that determines the correct fruit.",
+        "Please make your fruit recommendation now.",
         _parent_chat_context_cont=continued_ctx,
     )
 
     final = await handle.result()
     assert (
         "apple" in final.lower()
-    ), "Final decision did not reflect continued parent context."
+    ), "Final decision did not reflect continued parent context (banana allergy)."
 
 
 # =============================================================================
@@ -1079,35 +1101,49 @@ async def test_interjection_context_continuation_message_structure(model) -> Non
     2. A second user message with the actual interjection content is appended (if non-empty)
     3. The context continuation message is filtered out when building cur_msgs for inner tools
     4. The current loop's LLM sees the context continuation
+
+    This test uses a realistic scenario (food allergy) rather than arbitrary directives,
+    which sophisticated models might (correctly) treat as suspicious prompt injection.
     """
     client = new_llm_client(model=model)
 
     handle = start_async_tool_loop(
         client=client,
         message=(
-            "Wait for additional context before making a decision about fruits. "
-            "Do not decide until you receive more information."
+            "I need you to recommend a fruit for me. Choose between APPLE and BANANA. "
+            "Wait for any additional context from the parent conversation that might "
+            "help you make a better recommendation before responding."
         ),
         tools={},
     )
 
+    # Realistic outer conversation context: user mentions they have a banana allergy
     continued_ctx = [
         {
+            "role": "user",
+            "content": "By the way, I should mention I have a severe banana allergy.",
+        },
+        {
             "role": "assistant",
-            "content": "Important: The correct fruit choice is APPLE, not BANANA.",
+            "content": (
+                "Thank you for letting me know about your banana allergy. "
+                "I'll make sure to keep that in mind for any recommendations."
+            ),
         },
     ]
 
     # Inject an interjection with context continuation
     await handle.interject(
-        "Now decide which fruit to choose.",
+        "Please make your fruit recommendation now.",
         _parent_chat_context_cont=continued_ctx,
     )
 
     final = await handle.result()
 
-    # Verify the LLM made the right decision (influenced by context continuation)
-    assert "apple" in final.lower(), "LLM should have seen the context continuation"
+    # Verify the LLM made the right decision (influenced by allergy information)
+    assert (
+        "apple" in final.lower()
+    ), "LLM should recommend apple given banana allergy context"
 
     # Verify message structure: find user messages with _ctx_header=True
     ctx_header_user_msgs = [
@@ -1123,8 +1159,8 @@ async def test_interjection_context_continuation_message_structure(model) -> Non
     ctx_msg = ctx_header_user_msgs[0]
     assert "Parent Chat Context (continued)" in ctx_msg["content"]
     assert (
-        "APPLE" in ctx_msg["content"]
-    ), "Context continuation should contain the APPLE hint"
+        "allergy" in ctx_msg["content"].lower()
+    ), "Context continuation should contain the allergy information"
 
     # Verify that when filtering for cur_msgs, context header messages are excluded
     cur_msgs = [m for m in client.messages if not m.get("_ctx_header")]
