@@ -344,7 +344,8 @@ class TestCallSubprocessLifecycle:
             "phone_number": "+15551111111",
         }
 
-    def test_start_call_creates_subprocess(
+    @pytest.mark.asyncio
+    async def test_start_call_creates_subprocess(
         self,
         call_manager,
         sample_contact,
@@ -357,14 +358,15 @@ class TestCallSubprocessLifecycle:
             mock_proc = MagicMock()
             mock_run_script.return_value = mock_proc
 
-            call_manager.start_call(sample_contact, boss_contact)
+            await call_manager.start_call(sample_contact, boss_contact)
 
             mock_run_script.assert_called_once()
             call_args = mock_run_script.call_args
             assert "call.py" in str(call_args[0][0])  # script path
             assert "dev" in call_args[0]  # args
 
-    def test_start_call_outbound_flag(
+    @pytest.mark.asyncio
+    async def test_start_call_outbound_flag(
         self,
         call_manager,
         sample_contact,
@@ -377,13 +379,14 @@ class TestCallSubprocessLifecycle:
             mock_proc = MagicMock()
             mock_run_script.return_value = mock_proc
 
-            call_manager.start_call(sample_contact, boss_contact, outbound=True)
+            await call_manager.start_call(sample_contact, boss_contact, outbound=True)
 
             call_args = mock_run_script.call_args
             # Outbound flag should be in the args
             assert "True" in call_args[0]
 
-    def test_start_call_sts_mode_uses_sts_script(
+    @pytest.mark.asyncio
+    async def test_start_call_sts_mode_uses_sts_script(
         self,
         sample_contact,
         boss_contact,
@@ -411,12 +414,13 @@ class TestCallSubprocessLifecycle:
             mock_proc = MagicMock()
             mock_run_script.return_value = mock_proc
 
-            manager.start_call(sample_contact, boss_contact)
+            await manager.start_call(sample_contact, boss_contact)
 
             call_args = mock_run_script.call_args
             assert "sts_call.py" in str(call_args[0][0])
 
-    def test_start_unify_meet_creates_subprocess(
+    @pytest.mark.asyncio
+    async def test_start_unify_meet_creates_subprocess(
         self,
         call_manager,
         sample_contact,
@@ -429,7 +433,7 @@ class TestCallSubprocessLifecycle:
             mock_proc = MagicMock()
             mock_run_script.return_value = mock_proc
 
-            call_manager.start_unify_meet(
+            await call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
                 livekit_agent_name="test_agent",
@@ -442,7 +446,8 @@ class TestCallSubprocessLifecycle:
             # LiveKit agent name and room name should be combined in args
             assert any("test_agent:test_room" in str(arg) for arg in call_args[0])
 
-    def test_start_unify_meet_default_names(
+    @pytest.mark.asyncio
+    async def test_start_unify_meet_default_names(
         self,
         call_manager,
         sample_contact,
@@ -457,7 +462,7 @@ class TestCallSubprocessLifecycle:
             mock_proc = MagicMock()
             mock_run_script.return_value = mock_proc
 
-            call_manager.start_unify_meet(
+            await call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
                 livekit_agent_name=None,

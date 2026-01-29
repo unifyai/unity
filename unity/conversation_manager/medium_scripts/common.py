@@ -17,12 +17,50 @@ from unity.conversation_manager.events import (
     UnifyMeetEnded,
     UnifyMeetStarted,
 )
+from unity.conversation_manager.domains.ipc_socket import (
+    get_socket_client,
+    send_event_to_parent,
+)
 from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
 
-# Shared event broker instance
-event_broker = get_event_broker()
+
+class SocketAwareEventBroker:
+    """
+    Wrapper around event broker that uses Unix socket for cross-process events.
+
+    When running as a subprocess (detected via CM_EVENT_SOCKET env var), this
+    sends events through the socket to the parent process. Otherwise, it falls
+    back to the in-memory event broker.
+    """
+
+    def __init__(self):
+        self._socket_client = get_socket_client()
+        self._fallback_broker = get_event_broker()
+
+    async def publish(self, channel: str, message: str) -> int:
+        """Publish an event, using socket if available."""
+        if self._socket_client:
+            success = await send_event_to_parent(channel, message)
+            if success:
+                print(f"[SocketAwareEventBroker] Sent via socket: {channel}")
+                return 1
+            else:
+                print(
+                    f"[SocketAwareEventBroker] Socket send failed, using fallback: {channel}"
+                )
+
+        # Fall back to in-memory broker (won't work cross-process but useful for testing)
+        return await self._fallback_broker.publish(channel, message)
+
+    def pubsub(self):
+        """Return pubsub from fallback broker (for receiving events)."""
+        return self._fallback_broker.pubsub()
+
+
+# Shared event broker instance - socket-aware for cross-process communication
+event_broker = SocketAwareEventBroker()
 
 
 # ---------------------------------------------------------------------------
