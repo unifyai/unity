@@ -22,13 +22,6 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const UNITY_WORKSPACE_DIR = path.join(path.parse(process.cwd()).root, 'Unity');
 const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
 
-// Ensure the workspace directory exists with global access
-try {
-  fs.mkdirSync(UNITY_WORKSPACE_DIR, { recursive: true });
-  fs.chmodSync(UNITY_WORKSPACE_DIR, 0o777);
-} catch (_e) {
-  // ignore
-}
 
 // Multer configuration for multipart file uploads
 const uploadTempDir = path.join(os.tmpdir(), 'unity-uploads');
