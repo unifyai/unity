@@ -702,49 +702,8 @@ async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(SummarizeContext)
 async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
-    if cm.memory_manager is None:
-        cm._session_logger.debug(
-            "summarize",
-            "SummarizeContext skipped (MemoryManager disabled)",
-        )
-        cm.is_summarizing = False
-        cm.chat_history = []
-        return
-
-    async def summarize_task():
-        # Build render data for each active conversation
-        render_data = []
-        for contact_id, conv_state in cm.contact_index.active_conversations.items():
-            contact_info = cm.contact_index.get_contact(contact_id) or {}
-            rendered = cm.prompt_renderer.render_contact(
-                contact_info=contact_info,
-                conv_state=conv_state,
-                max_messages=25,
-                last_snapshot=cm.last_snapshot,
-            )
-            render_data.append((contact_id, rendered))
-
-        tasks = [
-            asyncio.create_task(
-                cm.memory_manager.update_contact_rolling_summary(
-                    rendered,
-                    contact_id=cid,
-                ),
-            )
-            for cid, rendered in render_data
-        ]
-        try:
-            await asyncio.gather(*tasks)
-            cm.is_summarizing = False
-            cm.chat_history = []
-            cm._session_logger.info("summarize", "Contact rolling summary updated")
-        except Exception as e:
-            cm._session_logger.error(
-                "summarize",
-                f"Error updating rolling summary: {e}",
-            )
-
-    asyncio.create_task(summarize_task())
+    # Use queue_operation to ensure managers are initialized before running
+    await managers_utils.queue_operation(managers_utils.update_rolling_summaries, cm)
 
 
 @EventHandler.register(DirectMessageEvent)
