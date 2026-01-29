@@ -50,9 +50,10 @@ class SteerableHandle(ABC):
       conversation since this loop started. Used to inject incremental updates into
       an ongoing conversation.
 
-    - ``parent_chat_context`` (for ``ask``): Full context snapshot for initializing
+    - ``_parent_chat_context`` (for ``ask``): Full context snapshot for initializing
       a fresh inspection loop. Since ``ask`` spawns a new loop, it needs initial
-      context, not a continuation.
+      context, not a continuation. Hidden from LLM schemas via underscore prefix;
+      orchestrating code injects this based on the LLM's ``include_parent_chat_context`` choice.
     """
 
     @abstractmethod
@@ -335,7 +336,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         Answers *question* about this *pending* tool, associated with this handle.
         The question is read-only (the tool state is not modified whatsoever).
         The calling parent loop is left completely untouched.
-        When ``parent_chat_context`` is provided, the context is included in the
+        When ``_parent_chat_context`` is provided, the context is included in the
         inspection loop's system message to provide additional context about the
         broader conversation that led to this question.
 
@@ -347,7 +348,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
 
         # Record the user-visible question immediately (even if delegated)
-        self._append_user_visible_user(question, parent_chat_context)
+        self._append_user_visible_user(question, _parent_chat_context)
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -424,7 +425,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         ]
 
         # If parent context is provided, add it as a separate section
-        if parent_chat_context:
+        if _parent_chat_context:
             sys_msg_parts.extend(
                 [
                     "",
@@ -436,7 +437,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "answering questions about."
                     ),
                     "",
-                    json.dumps(parent_chat_context, indent=2),
+                    json.dumps(_parent_chat_context, indent=2),
                 ],
             )
 

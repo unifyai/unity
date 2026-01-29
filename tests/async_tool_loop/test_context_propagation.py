@@ -217,7 +217,7 @@ async def test_ask_uses_parent_context(model) -> None:
     # Ask a question whose correct answer requires the parent context.
     helper = await handle.ask(
         ("Which fruit should we choose? Please answer in one short phrase."),
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
     )
     ans = await helper.result()
 
