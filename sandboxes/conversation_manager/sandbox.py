@@ -95,7 +95,7 @@ async def _main_async() -> None:
     # Logging via shared helper
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
-        log_file=".logs_conversation_sandbox.txt" if args.debug else None,
+        log_file=".logs_conversation_sandbox.txt",
         tcp_port=getattr(args, "log_tcp_port", 0) or 0,
         http_tcp_port=getattr(args, "http_log_tcp_port", 0) or 0,
         unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
@@ -130,7 +130,8 @@ async def _main_async() -> None:
             cm=cm,
             sandbox_state=state,
             display_callback=_display,
-            include_call_guidance=bool(args.debug),
+            include_call_guidance=bool(args.debug)
+            or bool(getattr(args, "voice", False)),
             voice_enabled=bool(getattr(args, "voice", False)),
             stop_event=stop_sub,
         ),
