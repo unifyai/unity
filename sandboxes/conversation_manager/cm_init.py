@@ -100,6 +100,31 @@ async def initialize_cm(*, args: Any):
         )
         await init_conv_manager(cm, actor=sim_actor)
 
+        # Ensure the system user contact (contact_id=1) has basic identity details
+        # populated in the Contacts table.
+        #
+        # In sandbox/simulated contexts, ContactManager provisions system contacts from
+        # `SESSION_DETAILS` / API. When those aren't initialized (common locally), the
+        # default user contact may be missing `phone_number` / `email_address`, which
+        # makes brain actions like `send_sms` / `send_email` fail with an Error event.
+        try:
+            from sandboxes.conversation_manager.event_publisher import (
+                get_simulated_user_contact,
+            )
+
+            u = get_simulated_user_contact()
+            if getattr(cm, "contact_manager", None) is not None:
+                cm.contact_manager.update_contact(  # type: ignore[union-attr]
+                    contact_id=1,
+                    first_name=u.get("first_name") or None,
+                    surname=u.get("surname") or None,
+                    phone_number=u.get("phone_number") or None,
+                    email_address=u.get("email_address") or None,
+                    should_respond=True,
+                )
+        except Exception:
+            pass
+
     LG.info(
         "ConversationManager initialized (%s, SimulatedActor injected)",
         "real-comms" if real_comms else "simulated",
