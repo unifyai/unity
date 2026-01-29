@@ -582,7 +582,7 @@ async def test_overview_injected_before_first_llm_step(model, monkeypatch) -> No
         message="Hello",
         tools={},
         images=images,
-        max_steps=5,
+        max_steps=10,  # account for runtime context system message + synthetic overview
         timeout=120,
     )
 
