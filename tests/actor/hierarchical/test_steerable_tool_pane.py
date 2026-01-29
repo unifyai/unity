@@ -74,7 +74,7 @@ class _MockHandle:
         self,
         reason: str | None = None,
         *,
-        parent_chat_context_cont=None,
+        _parent_chat_context_cont=None,
     ) -> str | None:  # noqa: ARG002
         self.stop_calls.append(reason)
         return "stopped"
@@ -83,7 +83,7 @@ class _MockHandle:
         self,
         message: str,
         *,
-        parent_chat_context_cont=None,
+        _parent_chat_context_cont=None,
         images=None,
     ):  # noqa: ARG002
         self.interject_calls.append({"message": message})

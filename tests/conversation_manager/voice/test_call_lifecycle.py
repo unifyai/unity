@@ -955,7 +955,7 @@ class TestCallGuidanceFlow:
         initialized_cm,
         alice_contact,
     ):
-        """CallGuidance adds message to contact_index with 'Guidance' role."""
+        """CallGuidance adds message to contact_index with 'guidance' role."""
         # Start a call first
         started_event = PhoneCallStarted(contact=alice_contact)
         await initialized_cm.step(started_event)
@@ -973,8 +973,8 @@ class TestCallGuidanceFlow:
         voice_thread = conv.threads.get(Medium.PHONE_CALL)
 
         # Voice thread is a deque of Message objects
-        # Guidance messages have name="Guidance" (the role becomes the name)
-        guidance_msgs = [msg for msg in voice_thread if msg.name == "Guidance"]
+        # Guidance messages have name="guidance" (the role becomes the name)
+        guidance_msgs = [msg for msg in voice_thread if msg.name == "guidance"]
         assert len(guidance_msgs) >= 1
         assert "Reminder: User prefers morning meetings" in [
             msg.content for msg in guidance_msgs

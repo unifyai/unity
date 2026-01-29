@@ -114,7 +114,7 @@ async def test_interject_midflight_constraints(initialized_cm_codeact):
 
     await handle.interject(
         "Only include items explicitly mentioning a dollar amount.",
-        parent_chat_context_cont=cm.cm.chat_history,
+        _parent_chat_context_cont=cm.cm.chat_history,
     )
 
     _final = await wait_for_actor_completion(cm, handle_id, timeout=90)

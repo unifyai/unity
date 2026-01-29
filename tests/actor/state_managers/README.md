@@ -192,7 +192,7 @@ for entry in handle.action_log:
 
 Use `handle.idempotency_cache` to see which primitives were called:
 ```python
-from tests.test_actor.test_state_managers.utils import get_state_manager_tools
+from tests.actor.state_managers.utils import get_state_manager_tools
 tools = get_state_manager_tools(handle)
 print(tools)
 ```

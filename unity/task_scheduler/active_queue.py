@@ -678,7 +678,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: object | None = None,
     ) -> None:  # type: ignore[override]
         """Route interjections to specific tasks in the queue using an LLM router.
@@ -700,12 +700,12 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             if images is None:
                 await self._current_handle.interject(
                     message,
-                    parent_chat_context_cont=parent_chat_context_cont,
+                    _parent_chat_context_cont=_parent_chat_context_cont,
                 )
             else:
                 await self._current_handle.interject(
                     message,
-                    parent_chat_context_cont=parent_chat_context_cont,
+                    _parent_chat_context_cont=_parent_chat_context_cont,
                     images=images,
                 )
             return

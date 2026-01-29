@@ -1298,6 +1298,65 @@ async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
 
 
 # =============================================================================
+# Integration Tests: Transcript Content (CallGuidance Exclusion)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_transcript_excludes_call_guidance(initialized_cm):
+    """
+    CallGuidance (internal orchestration) should NOT appear in the transcript.
+
+    The transcript passed to handle.ask() should only contain actual communications
+    between the assistant and contacts, not internal guidance from the Main CM Brain
+    to the Voice Agent.
+
+    This test verifies that:
+    1. User utterances appear in the transcript
+    2. CallGuidance messages are filtered out
+    3. Only "user" and "assistant" roles appear (not "guidance")
+    """
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
+
+    # Start a Unify Meet session - this will trigger CallGuidance from the CM brain
+    await cm.step(UnifyMeetReceived(contact=contact))
+    await cm.step(UnifyMeetStarted(contact=contact))
+
+    # User speaks - this should appear in transcript
+    user_message = "I'd like to schedule a meeting for tomorrow."
+    await cm.step(
+        InboundUnifyMeetUtterance(
+            contact=contact,
+            content=user_message,
+        ),
+    )
+
+    # Get the transcript that would be passed to handle.ask()
+    conversation_turns, _ = cm.cm.get_recent_transcript(
+        contact=contact,
+        max_messages=20,
+    )
+
+    # Should have at least the user message
+    assert len(conversation_turns) >= 1, "Transcript should contain user message"
+
+    # All roles should be either "user" or "assistant" (not "guidance")
+    for turn in conversation_turns:
+        assert turn["role"] in (
+            "user",
+            "assistant",
+        ), f"Unexpected role in transcript: {turn['role']}"
+
+    # User message should be in transcript
+    transcript_contents = [turn["content"] for turn in conversation_turns]
+    assert any(
+        user_message in content for content in transcript_contents
+    ), "User message should appear in transcript"
+
+
+# =============================================================================
 # Integration Tests: get_full_transcript
 # =============================================================================
 

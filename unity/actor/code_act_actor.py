@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import contextlib
 import contextvars
 import functools
 import inspect
@@ -7,13 +9,15 @@ import traceback
 import ast
 import copy
 import uuid
+import sys
 from datetime import datetime, timezone
 from secrets import token_hex as _token_hex
 import logging
-from contextlib import redirect_stdout, redirect_stderr
 from typing import (
+    Annotated,
     Any,
     Dict,
+    List,
     Optional,
     Callable,
     Awaitable,
@@ -21,8 +25,9 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
     Literal,
+    Union,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from unity.actor.base import BaseCodeActActor
 from unity.actor.handle import ActorHandle
@@ -56,6 +61,362 @@ _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Structured output types for sandbox execution (Pydantic discriminated union)
+# ---------------------------------------------------------------------------
+
+
+class TextPart(BaseModel):
+    """A text output part from sandbox execution."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+    def to_llm_content(self) -> dict:
+        """Convert to LLM content block format."""
+        return {"type": "text", "text": self.text}
+
+
+class ImagePart(BaseModel):
+    """An image output part from sandbox execution (e.g., from display())."""
+
+    type: Literal["image"] = "image"
+    mime: str = "image/png"
+    data: str  # base64 encoded
+
+    def to_llm_content(self) -> dict:
+        """Convert to LLM content block format."""
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{self.mime};base64,{self.data}"},
+        }
+
+
+# Discriminated union - Pydantic auto-parses based on `type` field
+OutputPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
+
+
+def parts_to_text(parts: List[Union[TextPart, ImagePart]]) -> str:
+    """Convert a list of OutputPart to a plain text string.
+
+    Useful for backward compatibility and simple text extraction.
+    Only TextPart parts are included; ImagePart parts are skipped.
+    """
+    return "".join(p.text for p in parts if isinstance(p, TextPart))
+
+
+def parts_to_llm_content(parts: List[Union[TextPart, ImagePart]]) -> List[dict]:
+    """Convert a list of OutputParts to LLM content blocks, preserving order.
+
+    This function maintains the original interleaving of text and images,
+    unlike the legacy approach which collected all images at the end.
+
+    Adjacent TextParts are merged into a single text block for cleaner output.
+    """
+    if not parts:
+        return []
+
+    blocks: List[dict] = []
+    pending_text = ""
+
+    for part in parts:
+        if isinstance(part, TextPart):
+            pending_text += part.text
+        elif isinstance(part, ImagePart):
+            # Flush any pending text before the image
+            if pending_text:
+                blocks.append({"type": "text", "text": pending_text})
+                pending_text = ""
+            blocks.append(part.to_llm_content())
+
+    # Flush any remaining text
+    if pending_text:
+        blocks.append({"type": "text", "text": pending_text})
+
+    return blocks
+
+
+class ExecutionResult(BaseModel):
+    """Result from sandbox code execution, implementing FormattedToolResult protocol.
+
+    This model gives the sandbox full control over how its output is formatted
+    for the LLM, preserving the original interleaving of text and images from
+    print() and display() calls.
+    """
+
+    stdout: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
+    stderr: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
+    result: Any = None
+    error: Optional[str] = None
+    browser_used: bool = False
+    language: Optional[str] = None
+    state_mode: Optional[str] = None
+    session_id: Optional[int] = None
+    session_name: Optional[str] = None
+    venv_id: Optional[int] = None
+    session_created: Optional[bool] = None
+    duration_ms: Optional[int] = None
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    def to_llm_content(self) -> List[dict]:
+        """Format this execution result for the LLM, preserving output order.
+
+        Implements the FormattedToolResult protocol, giving the sandbox full
+        control over how its output appears in the LLM transcript.
+        """
+        blocks: List[dict] = []
+
+        # Build metadata section (non-stdout/stderr fields)
+        meta: Dict[str, Any] = {}
+        if self.result is not None:
+            meta["result"] = self.result
+        if self.error is not None:
+            meta["error"] = self.error
+        if self.language is not None:
+            meta["language"] = self.language
+        if self.state_mode is not None:
+            meta["state_mode"] = self.state_mode
+        if self.session_id is not None:
+            meta["session_id"] = self.session_id
+        if self.session_name is not None:
+            meta["session_name"] = self.session_name
+        if self.venv_id is not None:
+            meta["venv_id"] = self.venv_id
+        if self.session_created is not None:
+            meta["session_created"] = self.session_created
+        if self.duration_ms is not None:
+            meta["duration_ms"] = self.duration_ms
+        if self.browser_used:
+            meta["browser_used"] = True
+
+        # Add metadata block if present
+        if meta:
+            import json
+
+            meta_text = json.dumps(meta, indent=2, default=str)
+            blocks.append({"type": "text", "text": meta_text})
+
+        # Add stdout with preserved ordering (interleaved text/images)
+        if self.stdout:
+            has_content = any(
+                (isinstance(p, TextPart) and p.text.strip()) or isinstance(p, ImagePart)
+                for p in self.stdout
+            )
+            if has_content:
+                if blocks:  # Add separator if we have metadata
+                    blocks.append({"type": "text", "text": "\n--- stdout ---\n"})
+                blocks.extend(parts_to_llm_content(self.stdout))
+
+        # Add stderr with preserved ordering (if non-empty)
+        if self.stderr:
+            has_content = any(
+                (isinstance(p, TextPart) and p.text.strip()) or isinstance(p, ImagePart)
+                for p in self.stderr
+            )
+            if has_content:
+                blocks.append({"type": "text", "text": "\n--- stderr ---\n"})
+                blocks.extend(parts_to_llm_content(self.stderr))
+
+        # Ensure we always return at least something
+        if not blocks:
+            blocks.append({"type": "text", "text": "(no output)"})
+
+        return blocks
+
+
+# ---------------------------------------------------------------------------
+# ContextVars for per-execution stream isolation
+# ---------------------------------------------------------------------------
+_stdout_parts: contextvars.ContextVar[List[Union[TextPart, ImagePart]]] = (
+    contextvars.ContextVar(
+        "sandbox_stdout_parts",
+    )
+)
+_stderr_parts: contextvars.ContextVar[List[Union[TextPart, ImagePart]]] = (
+    contextvars.ContextVar(
+        "sandbox_stderr_parts",
+    )
+)
+_current_stdout: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "sandbox_current_stdout",
+)
+_current_stderr: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "sandbox_current_stderr",
+)
+
+
+# ---------------------------------------------------------------------------
+# Stream capture classes
+# ---------------------------------------------------------------------------
+class StreamLike:
+    """Captures output to a parts list, supporting text and images."""
+
+    def __init__(
+        self,
+        parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
+    ):
+        self._parts_var = parts_var
+
+    def write(self, obj: str) -> int:
+        parts = self._parts_var.get()
+        # Merge consecutive text writes into a single TextPart
+        if parts and isinstance(parts[-1], TextPart):
+            # TextPart is immutable (Pydantic), so we need to replace it
+            last = parts[-1]
+            parts[-1] = TextPart(text=last.text + obj)
+        else:
+            parts.append(TextPart(text=obj))
+        return len(obj)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+
+class StreamRouter:
+    """Routes writes to the current context's stream, falls back to original stream.
+
+    Uses __getattr__ to forward ALL unknown attributes/methods to the current stream,
+    ensuring compatibility with Jupyter's introspection (e.g., _ipython_* methods),
+    and any future stream methods we haven't explicitly handled.
+    """
+
+    def __init__(
+        self,
+        context_var: contextvars.ContextVar[Any],
+        fallback: Any,
+    ):
+        # Use object.__setattr__ to avoid triggering our __getattr__
+        object.__setattr__(self, "_context_var", context_var)
+        object.__setattr__(self, "_fallback", fallback)
+
+    def _get_stream(self) -> Any:
+        try:
+            return self._context_var.get()
+        except LookupError:
+            return self._fallback
+
+    def write(self, s: str) -> int:
+        return self._get_stream().write(s)
+
+    def flush(self) -> None:
+        return self._get_stream().flush()
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward any unknown attribute to the current stream."""
+        return getattr(self._get_stream(), name)
+
+
+# ---------------------------------------------------------------------------
+# Lazy StreamRouter installation (installed on first sandbox use)
+# ---------------------------------------------------------------------------
+# We install the StreamRouter lazily (on first sandbox use) rather than at
+# module load to avoid conflicts with pytest and other test frameworks that
+# replace sys.stdout after imports. By installing on first use, we capture
+# whatever stdout is current at that moment (e.g., pytest's capture) as our
+# fallback, ensuring proper output routing.
+_stream_router_installed = False
+_original_stdout: Any = None
+_original_stderr: Any = None
+
+
+def _ensure_stream_router_installed() -> None:
+    """Install StreamRouters for sys.stdout/stderr if not already installed.
+
+    This is called at the start of each sandbox execution. We check if
+    sys.stdout is actually a StreamRouter (not just a flag) because pytest
+    and other frameworks may replace sys.stdout between tests.
+    """
+    global _stream_router_installed, _original_stdout, _original_stderr
+
+    # Check if sys.stdout is still our StreamRouter (pytest may have replaced it)
+    if isinstance(sys.stdout, StreamRouter):
+        return  # Already installed
+
+    # Install StreamRouter, capturing current stdout as fallback
+    _original_stdout = sys.stdout
+    _original_stderr = sys.stderr
+    sys.stdout = StreamRouter(_current_stdout, _original_stdout)  # type: ignore[assignment]
+    sys.stderr = StreamRouter(_current_stderr, _original_stderr)  # type: ignore[assignment]
+    _stream_router_installed = True
+
+
+# ---------------------------------------------------------------------------
+# Display function for rich output (images, etc.)
+# ---------------------------------------------------------------------------
+def _make_display(
+    parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
+) -> Callable[[Any], None]:
+    """Create a display function that adds images to output parts."""
+
+    def display(obj: Any) -> None:
+        try:
+            from PIL import Image
+        except ImportError:
+            Image = None  # type: ignore[misc, assignment]
+
+        parts = parts_var.get()
+
+        if Image is not None and isinstance(obj, Image.Image):
+            buf = io.BytesIO()
+            obj.save(buf, format="PNG")
+            b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+            parts.append(ImagePart(mime="image/png", data=b64_data))
+        elif isinstance(obj, str):
+            parts.append(TextPart(text=obj + "\n"))
+        else:
+            # Fallback: convert to string
+            parts.append(TextPart(text=str(obj) + "\n"))
+
+    return display
+
+
+# ---------------------------------------------------------------------------
+# Context manager for sandbox output capture
+# ---------------------------------------------------------------------------
+@contextlib.contextmanager
+def capture_sandbox_output():
+    """Context manager that sets up stream capture for a sandbox execution.
+
+    Yields (stdout_parts, stderr_parts, display_fn) tuple.
+    All ContextVars are properly reset on exit.
+
+    The StreamRouter is installed lazily on first use (not at module load)
+    to avoid conflicts with pytest and other test frameworks that replace
+    sys.stdout after imports.
+    """
+    # Ensure StreamRouter is installed (lazy, once per process)
+    _ensure_stream_router_installed()
+
+    stdout_parts: List[Union[TextPart, ImagePart]] = []
+    stderr_parts: List[Union[TextPart, ImagePart]] = []
+
+    # Set up ContextVars
+    stdout_token = _stdout_parts.set(stdout_parts)
+    stderr_token = _stderr_parts.set(stderr_parts)
+
+    # Create StreamLike instances for this execution
+    stdout_stream = StreamLike(_stdout_parts)
+    stderr_stream = StreamLike(_stderr_parts)
+
+    stdout_stream_token = _current_stdout.set(stdout_stream)
+    stderr_stream_token = _current_stderr.set(stderr_stream)
+
+    display_fn = _make_display(_stdout_parts)
+
+    try:
+        yield stdout_parts, stderr_parts, display_fn
+    finally:
+        _stdout_parts.reset(stdout_token)
+        _stderr_parts.reset(stderr_token)
+        _current_stdout.reset(stdout_stream_token)
+        _current_stderr.reset(stderr_stream_token)
+
 
 SupportedShellLanguage = Literal["bash", "zsh", "sh", "powershell"]
 SupportedLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
@@ -361,7 +722,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> SteerableToolHandle:
         status = "completed" if self.done() else "still running"
@@ -387,7 +748,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> Optional[str]:
         # No-op for non-LLM entrypoint execution.
@@ -396,8 +757,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
     async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> Optional[str]:
         if self._completion_event.is_set():
             return self._result_str
@@ -578,187 +937,132 @@ class PythonExecutionSession:
             except Exception:
                 pass
 
-    async def execute(self, code: str) -> Dict[str, Any]:
+    async def execute(self, code: str) -> dict:
         """
         Executes a string of Python code within the sandbox's stateful environment.
+
+        Returns a dict with:
+            stdout: list[OutputPart] - structured output parts (TextPart, ImagePart)
+            stderr: list[OutputPart] - structured error output parts
+            result: Any - return value of the last expression
+            error: str | None - traceback if an exception occurred
+            browser_used: bool - whether browser primitives were accessed
         """
         # Reset per-execution usage flags.
         self._browser_used = False
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
         result = None
         error = None
-        builtins_dict: Any = None
-        original_print: Any = None
-        print_patched = False
 
-        try:
-            # Guardrails: prevent agent code from accidentally shadowing critical
-            # injected environment globals (common failure mode in LLM-generated code).
-            #
-            # We do this via an AST rewrite (not brittle string heuristics):
-            # rewrite any assignment targets named `primitives` / `computer_primitives`
-            # to `_primitives_local` / `_computer_primitives_local`.
-            #
-            # This preserves the injected globals for the rest of the session.
+        with capture_sandbox_output() as (stdout_parts, stderr_parts, display_fn):
+            # Inject display function into globals
+            self.global_state["display"] = display_fn
+
             try:
+                # Guardrails: prevent agent code from accidentally shadowing critical
+                # injected environment globals (common failure mode in LLM-generated code).
+                #
+                # We do this via an AST rewrite (not brittle string heuristics):
+                # rewrite any assignment targets named `primitives` / `computer_primitives`
+                # to `_primitives_local` / `_computer_primitives_local`.
+                #
+                # This preserves the injected globals for the rest of the session.
+                try:
 
-                class _ShadowingGuard(ast.NodeTransformer):
-                    _REMAP = {
-                        "primitives": "_primitives_local",
-                        "computer_primitives": "_computer_primitives_local",
-                    }
+                    class _ShadowingGuard(ast.NodeTransformer):
+                        _REMAP = {
+                            "primitives": "_primitives_local",
+                            "computer_primitives": "_computer_primitives_local",
+                        }
 
-                    def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
-                        # Only rewrite *assignments* (Store context). Loads are preserved.
-                        if isinstance(node.ctx, ast.Store) and node.id in self._REMAP:
-                            return ast.copy_location(
-                                ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
-                                node,
-                            )
-                        return node
+                        def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
+                            # Only rewrite *assignments* (Store context). Loads are preserved.
+                            if (
+                                isinstance(node.ctx, ast.Store)
+                                and node.id in self._REMAP
+                            ):
+                                return ast.copy_location(
+                                    ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
+                                    node,
+                                )
+                            return node
 
-                    def visit_Global(self, node: ast.Global) -> ast.AST:  # noqa: N802
-                        node.names = [self._REMAP.get(n, n) for n in node.names]
-                        return node
+                        def visit_Global(
+                            self,
+                            node: ast.Global,
+                        ) -> ast.AST:  # noqa: N802
+                            node.names = [self._REMAP.get(n, n) for n in node.names]
+                            return node
 
-                    def visit_Nonlocal(
-                        self,
-                        node: ast.Nonlocal,
-                    ) -> ast.AST:  # noqa: N802
-                        node.names = [self._REMAP.get(n, n) for n in node.names]
-                        return node
+                        def visit_Nonlocal(
+                            self,
+                            node: ast.Nonlocal,
+                        ) -> ast.AST:  # noqa: N802
+                            node.names = [self._REMAP.get(n, n) for n in node.names]
+                            return node
+
+                    tree = ast.parse(code)
+                    tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
+                    ast.fix_missing_locations(tree)
+                    code = ast.unparse(tree)
+                except Exception:
+                    # Best-effort only; if rewriting fails, proceed with original code.
+                    pass
+
+                is_empty_or_comment_only = all(
+                    line.strip() == "" or line.strip().startswith("#")
+                    for line in code.splitlines()
+                )
+                if is_empty_or_comment_only:
+                    code += "\npass"
 
                 tree = ast.parse(code)
-                tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
-                ast.fix_missing_locations(tree)
-                code = ast.unparse(tree)
-            except Exception:
-                # Best-effort only; if rewriting fails, proceed with original code.
-                pass
+                top_level_assign_targets = set()
+                for node in tree.body:
+                    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                        targets = []
+                        if isinstance(node, ast.Assign):
+                            targets.extend(node.targets)
+                        else:
+                            targets.append(node.target)
 
-            is_empty_or_comment_only = all(
-                line.strip() == "" or line.strip().startswith("#")
-                for line in code.splitlines()
-            )
-            if is_empty_or_comment_only:
-                code += "\npass"
+                        for target in targets:
+                            if isinstance(target, ast.Name):
+                                top_level_assign_targets.add(target.id)
+                            elif isinstance(target, ast.Tuple):
+                                for elt in target.elts:
+                                    if isinstance(elt, ast.Name):
+                                        top_level_assign_targets.add(elt.id)
 
-            tree = ast.parse(code)
-            top_level_assign_targets = set()
-            for node in tree.body:
-                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                    targets = []
-                    if isinstance(node, ast.Assign):
-                        targets.extend(node.targets)
-                    else:
-                        targets.append(node.target)
+                    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                        for alias in node.names:
+                            top_level_assign_targets.add(
+                                alias.asname or alias.name.split(".")[0],
+                            )
 
-                    for target in targets:
-                        if isinstance(target, ast.Name):
-                            top_level_assign_targets.add(target.id)
-                        elif isinstance(target, ast.Tuple):
-                            for elt in target.elts:
-                                if isinstance(elt, ast.Name):
-                                    top_level_assign_targets.add(elt.id)
+                    elif isinstance(
+                        node,
+                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                    ):
+                        top_level_assign_targets.add(node.name)
 
-                elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                    for alias in node.names:
-                        top_level_assign_targets.add(
-                            alias.asname or alias.name.split(".")[0],
-                        )
+                async_code = "async def __exec_wrapper():\n"
+                if top_level_assign_targets:
+                    async_code += f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
 
-                elif isinstance(
-                    node,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                ):
-                    top_level_assign_targets.add(node.name)
+                async_code += "".join(f"    {line}\n" for line in code.splitlines())
 
-            async_code = "async def __exec_wrapper():\n"
-            if top_level_assign_targets:
-                async_code += (
-                    f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
-                )
-
-            async_code += "".join(f"    {line}\n" for line in code.splitlines())
-
-            exec(async_code, self.global_state)
-
-            # Robust stdout capture for agent code:
-            #
-            # In practice, some nested tool loops may temporarily replace `sys.stdout`
-            # (e.g. for their own logging/capture), which can bypass `redirect_stdout`
-            # and cause `print(...)` output to leak to the outer process instead of
-            # appearing in the tool result.
-            #
-            # To keep CodeAct reliable, we patch the sandbox built-in `print` so that
-            # it always writes to our per-execution `stdout_capture`, regardless of
-            # any temporary `sys.stdout` replacements inside awaited tool calls.
-            try:
-                builtins_dict = self.global_state.get("__builtins__")
-                if (
-                    isinstance(builtins_dict, dict)
-                    and builtins_dict.get("print") is not None
-                ):
-                    original_print = builtins_dict.get("print")
-
-                    def _captured_print(
-                        *args: Any,
-                        sep: str = " ",
-                        end: str = "\n",
-                        file: Any = None,
-                        flush: bool = False,
-                    ) -> None:
-                        text = sep.join(str(a) for a in args) + end
-                        if file is None:
-                            stdout_capture.write(text)
-                            if flush:
-                                try:
-                                    stdout_capture.flush()
-                                except Exception:
-                                    pass
-                            return
-
-                        # Respect explicit `file=` when possible, but fall back to
-                        # stdout_capture to avoid losing output.
-                        try:
-                            file.write(text)
-                            if flush:
-                                try:
-                                    file.flush()
-                                except Exception:
-                                    pass
-                        except Exception:
-                            stdout_capture.write(text)
-                            if flush:
-                                try:
-                                    stdout_capture.flush()
-                                except Exception:
-                                    pass
-
-                    builtins_dict["print"] = _captured_print
-                    print_patched = True
-            except Exception:
-                # Best-effort: if patching fails, keep executing.
-                print_patched = False
-
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                exec(async_code, self.global_state)
                 result = await self.global_state["__exec_wrapper"]()
 
-        except Exception:
-            error = traceback.format_exc()
-        finally:
-            if print_patched and isinstance(builtins_dict, dict):
-                try:
-                    builtins_dict["print"] = original_print
-                except Exception:
-                    pass
-            if "__exec_wrapper" in self.global_state:
-                del self.global_state["__exec_wrapper"]
+            except Exception:
+                error = traceback.format_exc()
+            finally:
+                if "__exec_wrapper" in self.global_state:
+                    del self.global_state["__exec_wrapper"]
 
         return {
-            "stdout": stdout_capture.getvalue(),
-            "stderr": stderr_capture.getvalue(),
+            "stdout": stdout_parts,
+            "stderr": stderr_parts,
             "result": result,
             "error": error,
             "browser_used": self._browser_used,
@@ -1509,13 +1813,28 @@ class CodeActActor(BaseCodeActActor):
 
             Output
             ------
-            Returns a structured dict with at least:
-            - stdout, stderr, result, error
-            - language, state_mode, session_id, session_name, venv_id
-            - session_created, duration_ms, browser_used
+            Returns either a dict or an ExecutionResult object with the following fields:
 
-            If browser tools were used during Python execution and a browser environment
-            is available, the response may also include `browser_state` with URL/screenshot.
+            - **stdout**: For in-process Python, a List[TextPart | ImagePart] preserving
+              rich output (text and images from print()/display()). For shell or venv
+              execution, a plain string.
+            - **stderr**: Same format as stdout (list for in-process Python, string otherwise).
+            - **result**: The evaluated result of the last expression (Any), or None.
+            - **error**: Error message string if execution failed, otherwise None.
+            - **language**: The language used for execution.
+            - **state_mode**: The state mode used ("stateless", "stateful", or "read_only").
+            - **session_id**: The session ID (int) if stateful/read_only, otherwise None.
+            - **session_name**: The session name alias if one was assigned, otherwise None.
+            - **venv_id**: The virtual environment ID if applicable, otherwise None.
+            - **session_created**: True if a new session was created by this call.
+            - **duration_ms**: Execution duration in milliseconds.
+            - **browser_used**: True if browser tools were invoked during execution.
+            - **browser_state** (optional): Only present when browser_used is True and a
+              browser environment is available. Contains {"url": str, "screenshot": str}
+              or {"error": str} on failure.
+
+            For in-process Python execution with rich output, the result is wrapped in an
+            ExecutionResult object (a Pydantic model implementing FormattedToolResult).
             """
             _ = thought  # Thought is logged by the LLM; not used programmatically.
             if code is None or code.strip() == "":
@@ -1749,6 +2068,15 @@ class CodeActActor(BaseCodeActActor):
                         )
                     except Exception:
                         pass
+
+                # Wrap in-process Python results in ExecutionResult for proper LLM
+                # image formatting. In-process Python has stdout as List[OutputPart];
+                # venv/shell have strings.
+                if out.get("language") == "python" and isinstance(
+                    out.get("stdout"),
+                    list,
+                ):
+                    out = ExecutionResult(**out)
 
                 return out
             finally:

@@ -1238,13 +1238,13 @@ class _HistoryHandle(SteerableToolHandle):
         self._final_result = final_result
         self._history = history or ["loop:step1", "loop:step2", "loop:step3"]
 
-    async def ask(self, question: str, *, parent_chat_context_cont=None, images=None):
+    async def ask(self, question: str, *, _parent_chat_context_cont=None, images=None):
         return self
 
-    def interject(self, message: str, *, parent_chat_context_cont=None, images=None):
+    def interject(self, message: str, *, _parent_chat_context_cont=None, images=None):
         return None
 
-    def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):
+    def stop(self, reason: str | None = None):
         self._stopped = True
         return None
 

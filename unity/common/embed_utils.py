@@ -2,13 +2,38 @@
 Utility functions for embedding-based vector search through the logs.
 """
 
-import fcntl
 import hashlib
 import os
+import sys
 import tempfile
 import unify
 import threading
 from contextlib import contextmanager
+
+# Cross-platform file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(file_obj):
+        """Acquire an exclusive lock on the file (Windows)."""
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Windows)."""
+        file_obj.seek(0)
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file(file_obj):
+        """Acquire an exclusive lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
+
 
 # Model to use for text embeddings
 EMBED_MODEL = "text-embedding-3-small"
@@ -67,9 +92,9 @@ def _cross_process_column_lock(context: str, key: str, timeout: float = 600.0):
         start = time.monotonic()
         while True:
             try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_file(lock_file)
                 break  # Successfully acquired lock
-            except BlockingIOError:
+            except (BlockingIOError, OSError):
                 elapsed = time.monotonic() - start
                 if elapsed >= timeout:
                     lock_file.close()
@@ -80,7 +105,7 @@ def _cross_process_column_lock(context: str, key: str, timeout: float = 600.0):
                 time.sleep(0.1)  # Brief sleep before retry
         yield
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(lock_file)
         lock_file.close()
 
 

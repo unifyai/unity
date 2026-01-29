@@ -12,6 +12,7 @@ from unity.conversation_manager.domains.contact_index import (
     Message,
     EmailMessage,
     UnifyMessage,
+    GuidanceMessage,
     ConversationState,
     ContactIndex,
 )
@@ -133,7 +134,11 @@ class Renderer:
         )
         return f"<{thread_name}>\n{messages}\n</{thread_name}>"
 
-    def render_message(self, message: Message, last_snapshot: datetime = None):
+    def render_message(
+        self,
+        message: Message | EmailMessage | UnifyMessage | GuidanceMessage,
+        last_snapshot: datetime = None,
+    ):
         # Mark all recent messages as NEW (both incoming and outbound)
         is_new = last_snapshot < message.timestamp
         new_marker = "**NEW** " if is_new else ""

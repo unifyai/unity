@@ -15,7 +15,7 @@ from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
 )
-from unity.conversation_manager.domains.contact_index import ContactIndex
+from unity.conversation_manager.domains.contact_index import ContactIndex, CommsMessage
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
@@ -168,12 +168,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     def snapshot(self):
         self._current_snapshot = prompt_now(as_string=False)
+        # Track how many notifications were present at snapshot time.
+        # Any notifications appended while the LLM is running (e.g., an action that
+        # completes very quickly) must remain visible for at least the NEXT LLM run.
+        # Otherwise, `commit()` would immediately drop them and the LLM would never
+        # see the result, which can cause repeated duplicate actions.
+        self._snapshot_notif_count = len(self.notifications_bar.notifications)
         return self._current_snapshot
 
     def commit(self):
         self.last_snapshot = self._current_snapshot
         notifs = self.notifications_bar.notifications
-        self.notifications_bar.notifications = [n for n in notifs if n.pinned]
+        snap_n = int(getattr(self, "_snapshot_notif_count", 0) or 0)
+        # Keep:
+        # - pinned notifications
+        # - notifications that were appended AFTER the last snapshot was taken
+        #   (these arrived during the LLM run and must be shown next turn)
+        self.notifications_bar.notifications = [
+            n for i, n in enumerate(notifs) if n.pinned or i >= snap_n
+        ]
 
     @property
     def session_logger(self) -> SessionLogger:
@@ -281,7 +294,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             global_thread = global_thread[-max_messages:]
 
         for msg in global_thread:
-            role = "assistant" if msg.name == "You" else "user"
+            # Skip non-communication messages (e.g., GuidanceMessage for internal orchestration)
+            if not isinstance(msg, CommsMessage):
+                continue
+
             # Handle both Message and EmailMessage types
             if hasattr(msg, "content"):
                 content = (msg.content or "").strip()
@@ -294,7 +310,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if content.startswith("<") and content.endswith(">"):
                 continue
 
-            conversation_turns.append({"role": role, "content": content})
+            conversation_turns.append({"role": msg.role, "content": content})
 
             if hasattr(msg, "timestamp") and msg.timestamp:
                 last_message_timestamp = msg.timestamp

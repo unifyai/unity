@@ -37,8 +37,8 @@ list_runs
 watch_tests --socket unity_dev_ttys042
 
 # Attach to a session in a specific socket (two equivalent syntaxes)
-attach --socket unity_dev_ttys042 'f ❌ test_actor-test_code_act'
-attach 'unity_dev_ttys042:f ❌ test_actor-test_code_act'  # shorthand
+attach --socket unity_dev_ttys042 'f ❌ actor-test_code_act'
+attach 'unity_dev_ttys042:f ❌ actor-test_code_act'  # shorthand
 
 # Kill failed sessions in a specific socket
 kill_failed --socket unity_dev_ttys042

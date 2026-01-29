@@ -4,8 +4,8 @@ tests/conversation_manager/test_tool_docstrings.py
 
 Tests for brain tool docstring quality and schema stability.
 
-Follows the gold standard pattern from test_contact_manager/test_tool_docstrings.py
-and test_transcript_manager/test_tool_docstrings.py.
+Follows the gold standard pattern from contact_manager/test_tool_docstrings.py
+and transcript_manager/test_tool_docstrings.py.
 
 The ConversationManager uses two sets of brain tools:
 - ConversationManagerBrainTools: Read-only state inspection tools
@@ -340,7 +340,7 @@ def test_steering_tools_have_proper_signatures(initialized_cm):
             self,
             message: str,
             *,
-            parent_chat_context_cont: list[dict] | None = None,
+            _parent_chat_context_cont: list[dict] | None = None,
             images: list | None = None,
         ) -> Optional[str]:
             """Provide additional information or instructions to the running task."""
@@ -355,7 +355,7 @@ def test_steering_tools_have_proper_signatures(initialized_cm):
             self,
             reason: Optional[str] = None,
             *,
-            parent_chat_context_cont: list[dict] | None = None,
+            _parent_chat_context_cont: list[dict] | None = None,
         ) -> Optional[str]:
             """Stop this task immediately, cancelling any pending work."""
 
@@ -363,7 +363,7 @@ def test_steering_tools_have_proper_signatures(initialized_cm):
             self,
             question: str,
             *,
-            parent_chat_context_cont: list[dict] | None = None,
+            _parent_chat_context_cont: list[dict] | None = None,
             images: list | dict | None = None,
         ):
             """Query the status or progress of this running task."""
