@@ -15,7 +15,7 @@ from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
 )
-from unity.conversation_manager.domains.contact_index import ContactIndex
+from unity.conversation_manager.domains.contact_index import ContactIndex, CommsMessage
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
@@ -294,6 +294,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             global_thread = global_thread[-max_messages:]
 
         for msg in global_thread:
+            # Skip non-communication messages (e.g., GuidanceMessage for internal orchestration)
+            if not isinstance(msg, CommsMessage):
+                continue
+
             role = "assistant" if msg.name == "You" else "user"
             # Handle both Message and EmailMessage types
             if hasattr(msg, "content"):
