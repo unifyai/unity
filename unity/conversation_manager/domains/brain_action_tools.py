@@ -349,7 +349,12 @@ class ConversationManagerBrainActionTools:
             contact_details: Target identity details when contact_id is unknown.
             subject: Email subject.
             body: Email body.
-            email_id_to_reply_to: Optional email id to reply to for threading.
+            email_id_to_reply_to: Email ID (RFC Message-ID) to reply to for threading.
+                If provided, the reply will be threaded to that specific email.
+                If not provided, the system will auto-infer by finding the most
+                recent inbound email with a matching subject. Provide this explicitly
+                to reply to an older message in a thread - useful for forking off a
+                separate conversation branch with specific participants or context.
             attachment_filepath: Optional filepath to attach.
         """
         import base64
@@ -440,7 +445,11 @@ class ConversationManagerBrainActionTools:
         except Exception:
             inferred_reply_id = None
 
-        if inferred_reply_id and inferred_reply_id != email_id_to_reply_to:
+        # Only use inference as a fallback when LLM didn't provide an explicit choice.
+        # If the LLM passed email_id_to_reply_to, respect it - the LLM may be
+        # intentionally targeting a specific thread (e.g., older thread when
+        # multiple threads have the same subject).
+        if not email_id_to_reply_to and inferred_reply_id:
             email_id_to_reply_to = inferred_reply_id
 
         response = await comms_utils.send_email_via_address(
