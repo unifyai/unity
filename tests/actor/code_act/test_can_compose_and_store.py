@@ -112,3 +112,114 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
             await actor.close()
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_code_act_can_compose_false_rejects_non_string_description():
+    """
+    When can_compose=False, the description must be a string.
+    Passing a dict or list should raise TypeError.
+    """
+    fm = MagicMock()
+    fm.search_functions = MagicMock(return_value=[])
+
+    actor = CodeActActor(
+        function_manager=fm,
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    try:
+        # Test with dict description
+        with pytest.raises(
+            TypeError,
+            match="can_compose=False requires description to be a string",
+        ):
+            await actor.act(
+                {"role": "user", "content": "Do something"},
+                can_compose=False,
+                persist=False,
+            )
+
+        # Test with list description
+        with pytest.raises(
+            TypeError,
+            match="can_compose=False requires description to be a string",
+        ):
+            await actor.act(
+                [{"role": "user", "content": "Do something"}],
+                can_compose=False,
+                persist=False,
+            )
+
+        # Semantic search should never be called since we fail before that
+        fm.search_functions.assert_not_called()
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_code_act_accepts_dict_description():
+    """
+    CodeActActor.act should accept a dict description (passed to async tool loop).
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    try:
+        # We just verify the call doesn't raise TypeError and creates a handle
+        # The handle will run an LLM loop, but we stop it immediately
+        handle = await actor.act(
+            {"role": "user", "content": "What is 2+2?"},
+            persist=False,
+            clarification_enabled=False,
+        )
+        # Verify we got a handle back (not testing the full loop completion)
+        assert handle is not None
+        # Stop the handle to avoid waiting for LLM
+        await handle.stop()
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_code_act_accepts_list_description():
+    """
+    CodeActActor.act should accept a list description (passed to async tool loop).
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    try:
+        # We just verify the call doesn't raise TypeError and creates a handle
+        handle = await actor.act(
+            [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {"role": "user", "content": "What is 2+2?"},
+            ],
+            persist=False,
+            clarification_enabled=False,
+        )
+        # Verify we got a handle back
+        assert handle is not None
+        # Stop the handle to avoid waiting for LLM
+        await handle.stop()
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
