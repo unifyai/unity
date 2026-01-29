@@ -50,7 +50,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     def __init__(
         self,
-        task_description: str,
+        task_description: str | dict | list[str | dict],
         tools: Dict[str, Callable[..., Awaitable[Any]]],
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -206,7 +206,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
                 self._state = _HandleState.RUNNING
                 logger.info(
-                    f"Handle {self._task_id}: Starting/Resuming with: '{current_task_description}'",
+                    f"Handle {self._task_id}: Starting/Resuming with: {current_task_description!r}",
                 )
 
                 self._client.reset_messages()
