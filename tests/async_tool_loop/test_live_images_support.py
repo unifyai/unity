@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import pytest
 
-from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common.async_tool_loop import ChatContextPropagation, start_async_tool_loop
 from unity.common._async_tool.loop_config import LIVE_IMAGES_REGISTRY
 from unity.image_manager.types import (
     RawImageRef,
@@ -219,7 +219,7 @@ async def test_ask_image_uses_parent_chat_context(model, static_now) -> None:
     from unity.image_manager.image_manager import ImageManager as _ImageManager
 
     raw = (
-        _Path(__file__).parent.parent / "test_image_manager" / "assets" / "google.jpeg"
+        _Path(__file__).parent.parent / "image_manager" / "assets" / "google.jpeg"
     ).read_bytes()
     import base64 as _b64
 
@@ -269,6 +269,7 @@ async def test_ask_image_uses_parent_chat_context(model, static_now) -> None:
         tools={},
         images=images,
         parent_chat_context=parent_ctx,
+        propagate_chat_context=ChatContextPropagation.ALWAYS,
     )
 
     final = await h.result()
@@ -581,7 +582,7 @@ async def test_overview_injected_before_first_llm_step(model, monkeypatch) -> No
         message="Hello",
         tools={},
         images=images,
-        max_steps=5,
+        max_steps=10,  # account for runtime context system message + synthetic overview
         timeout=120,
     )
 

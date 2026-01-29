@@ -22,7 +22,7 @@ For long-running test suites, you can run in the background and analyze failures
 
 ```bash
 # 1. Start tests in background (use is_background: true in tool call)
-tests/parallel_run.sh tests/test_some_module/
+tests/parallel_run.sh tests/some_module/
 
 # 2. Check what logs exist (tests write here as they complete)
 ls logs/pytest/<latest-run-dir>/

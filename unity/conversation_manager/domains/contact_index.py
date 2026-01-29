@@ -18,31 +18,61 @@ if TYPE_CHECKING:
     from unity.contact_manager.base import BaseContactManager
 
 
+class CommsMessage:
+    """Base class for actual communications with contacts.
+
+    All message types representing real user<->assistant communications inherit
+    from this class. Use isinstance(msg, CommsMessage) to distinguish actual
+    communications from internal orchestration messages (like GuidanceMessage).
+    """
+
+
 @dataclass
-class Message:
+class Message(CommsMessage):
+    """Simple text message (SMS, voice utterances)."""
+
     name: str
     content: str
     timestamp: datetime
+    role: str  # "user" or "assistant"
 
 
 @dataclass
-class EmailMessage:
+class EmailMessage(CommsMessage):
+    """Email message with subject, body, and optional attachments."""
+
     name: str
     subject: str
     body: str
     email_id: str | None
     timestamp: datetime
+    role: str  # "user" or "assistant"
     attachments: list[str] = field(default_factory=list)
 
 
 @dataclass
-class UnifyMessage:
+class UnifyMessage(CommsMessage):
     """A message from the Unify console chat interface, optionally with attachments."""
 
     name: str
     content: str
     timestamp: datetime
+    role: str  # "user" or "assistant"
     attachments: list[str] = field(default_factory=list)
+
+
+@dataclass
+class GuidanceMessage:
+    """Internal orchestration message (not an actual communication).
+
+    Used for internal guidance between components (e.g., CallGuidance from the
+    main ConversationManager brain to the voice agent). These should NOT appear
+    in transcripts shown to external systems or used for communication context.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
 
 
 @dataclass
@@ -237,17 +267,25 @@ class ContactIndex:
 
         conversation = self.get_or_create_conversation(contact_id)
 
-        # Determine display name
+        # Determine display name (for rendering to brain)
         name = sender_name if role == "user" else "You" if role == "assistant" else role
 
-        # Create appropriate message type
-        if thread_name == Medium.EMAIL:
+        # Non-comms roles (e.g., "guidance") get a GuidanceMessage
+        if role not in ("user", "assistant"):
+            message = GuidanceMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+            )
+        # Create appropriate comms message type based on medium
+        elif thread_name == Medium.EMAIL:
             message = EmailMessage(
                 name=name,
                 subject=subject or "",
                 body=body or "",
                 email_id=email_id,
                 timestamp=timestamp,
+                role=role,
                 attachments=attachments or [],
             )
         elif thread_name == Medium.UNIFY_MESSAGE:
@@ -255,6 +293,7 @@ class ContactIndex:
                 name=name,
                 content=message_content or "",
                 timestamp=timestamp,
+                role=role,
                 attachments=attachments or [],
             )
         else:
@@ -262,6 +301,7 @@ class ContactIndex:
                 name=name,
                 content=message_content or "",
                 timestamp=timestamp,
+                role=role,
             )
 
         conversation.threads[thread_name].append(message)

@@ -184,7 +184,7 @@ class LivekitCallManager:
         # Check if process is still running
         if proc.poll() is not None:
             print(
-                f"[LivekitCallManager] Process already exited with code {proc.returncode}"
+                f"[LivekitCallManager] Process already exited with code {proc.returncode}",
             )
             return
 

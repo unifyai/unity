@@ -105,7 +105,7 @@ async def _seed_sample(
     *,
     parse_return_mode: str = "compact",
 ) -> None:
-    sample_dir = ROOT / "tests" / "test_file_manager" / "sample"
+    sample_dir = ROOT / "tests" / "file_manager" / "sample"
     if not sample_dir.exists():
         print(f"⚠️  Sample directory not found: {sample_dir}")
         return

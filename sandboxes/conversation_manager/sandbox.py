@@ -1,234 +1,239 @@
 """
-Starts the conversation manager.
+ConversationManager sandbox entrypoint.
 
-This script can be run as a CLI with the following arguments:
-    --local         Enable local GUI mode (default).
-    --full          Disable local GUI mode (real comms and no GUI).
-    --enabled_tools Comma-separated list of enabled tools (choices: actor, contact, transcript, knowledge, scheduler, comms). Default: None
+This module wires together:
+- project activation + logging
+- in-process ConversationManager startup (simulated or real-comms)
+- outbound event subscription (prints CM responses)
+- either REPL mode (default) or Textual GUI mode (`--gui`)
 """
 
+from __future__ import annotations
+
 import asyncio
+import logging
+import os
 import signal
-import time
+from contextlib import suppress
+
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-import logging, unify
-import unity.conversation_manager
-from sandboxes.utils import build_cli_parser
-from datetime import datetime
+
+import unify
+
+from sandboxes.conversation_manager.cm_init import initialize_cm, shutdown_cm
+from sandboxes.conversation_manager.event_subscriber import subscribe_to_responses
+from sandboxes.conversation_manager.gui import run_gui_mode
+from sandboxes.conversation_manager.repl import SandboxState, run_repl
 from sandboxes.utils import (
-    record_until_enter as _record_until_enter,
-    transcribe_deepgram as _transcribe_deepgram,
-    speak as _speak,
-    _wait_for_tts_end,
-    TranscriptGenerator,
     activate_project,
+    build_cli_parser,
+    configure_sandbox_logging,
 )
 
-LG = logging.getLogger("conversation_sandbox")
+LG = logging.getLogger("conversation_manager_sandbox")
 
 
-# Graceful shutdown handler
-def signal_handler(signum, frame):
-    print("Shutting down convo manager...")
-    unity.conversation_manager.stop("signal_shutdown")
-    exit(0)
+def _suppress_litellm_noise() -> None:
+    """
+    LiteLLM prints a provider list to stdout when it cannot infer a provider from a
+    model string. This is helpful in isolation but very noisy in an interactive REPL.
+
+    Sandbox runs may intentionally use model strings that are normalized by unillm,
+    so we suppress these debug prints while preserving actual exceptions.
+    """
+    try:
+        import litellm  # type: ignore
+
+        litellm.suppress_debug_info = True
+    except Exception:
+        pass
 
 
-signal.signal(signal.SIGTERM, signal_handler)
-signal.signal(signal.SIGINT, signal_handler)
-
-
-async def interaction_loop(args):
-    # CLI interaction loop for sending events and scenario seeding
-    _COMMANDS_HELP = (
-        "\nConversationManager sandbox – type commands below ('r' to record voice with --voice). 'quit' to exit.\n\n"
-        "┌────────────────── accepted commands ─────────────────────┐\n"
-        "│ us <description>         – update scenario (text)        │\n"
-        "│ usv                      – update scenario vocally       │\n"
-        "│ save_project | sp        – save project snapshot         │\n"
-        "│ help | h                 – show this help                │\n"
-        "└──────────────────────────────────────────────────────────┘\n"
-    )
-
-    def _explain_commands():
-        print(_COMMANDS_HELP)
-
-    if args.voice:
-        _speak("Sandbox ready. Type commands or press enter on empty for voice input.")
-        _wait_for_tts_end()
-
-    while True:
-        print()
-        _explain_commands()
-        print()
-        try:
-            if args.voice:
-                _wait_for_tts_end()
-                raw = input("command ('r' to record)> ").strip()
-                if raw.lower() == "r":
-                    audio = _record_until_enter()
-                    raw = _transcribe_deepgram(audio).strip()
-                    if not raw:
-                        continue
-                    print(f"▶️  {raw}")
-            else:
-                raw = input("command> ").strip()
-            cmd_lower = raw.lower()
-            if cmd_lower in {"help", "h", "?"}:
-                _explain_commands()
-                continue
-            if cmd_lower in {"quit", "exit"}:
-                break
-            if not raw:
-                continue
-            if cmd_lower in {"save_project", "sp"}:
-                commit_hash = unify.commit_project(
-                    args.project_name,
-                    commit_message=f"Sandbox save {datetime.utcnow().isoformat()}",
-                ).get("commit_hash")
-                print(f"💾 Project saved at commit {commit_hash}")
-                if args.voice:
-                    _speak("Project saved")
-                continue
-            # Scenario seeding (text)
-            if cmd_lower.startswith("us "):
-                description = raw[3:].strip()
-                if not description:
-                    description = input("🧮 Describe scenario > ").strip()
-                    if not description:
-                        print("⚠️ No description provided – cancelled.")
-                        continue
-                print("[generate] Building scenario – please wait…")
-                if args.voice:
-                    _speak("Building scenario now.")
-                gen = TranscriptGenerator(in_conversation_manager=True)
-                try:
-                    messages = await gen.generate(description)
-                    print(f"✓ Transcript generated: {len(messages)} messages")
-                    if args.voice:
-                        _speak("Scenario generation complete.")
-                except Exception as exc:
-                    print(f"❌ Failed to generate scenario: {exc}")
-                continue
-            # Scenario seeding (voice)
-            if cmd_lower == "usv":
-                if not args.voice:
-                    print("⚠️ Voice mode not enabled – restart with --voice.")
-                    continue
-                audio = _record_until_enter()
-                description = _transcribe_deepgram(audio).strip()
-                if not description:
-                    print("⚠️ No transcript – please try again.")
-                    continue
-                print(f"▶️  {description}")
-                print("[generate] Building scenario – please wait…")
-                gen = TranscriptGenerator()
-                try:
-                    messages = await gen.generate(description)
-                    print(f"✓ Transcript generated: {len(messages)} messages")
-                except Exception as exc:
-                    print(f"❌ Failed to generate scenario: {exc}")
-                if args.voice:
-                    _speak("Scenario generation complete.")
-                continue
-            print(f"⚠️ Unknown command: {raw}")
-        except (EOFError, KeyboardInterrupt):
-            print("\nExiting…")
-            break
-        except Exception as exc:
-            LG.error("[error] %s", exc)
-            continue
-
-
-async def main():
-    # CLI flags (local/gui, tools) + unified project, tracing, debug
+async def _main_async() -> None:
     parser = build_cli_parser("ConversationManager sandbox")
     parser.add_argument(
-        "--local",
-        dest="start_local",
+        "--gui",
         action="store_true",
-        default=True,
-        help="Enable local GUI mode",
+        default=False,
+        help="Enable the Textual GUI (optional).",
     )
     parser.add_argument(
-        "--full",
-        dest="start_local",
-        action="store_false",
-        help="Disable local GUI mode (real comms and no GUI)",
+        "--real-comms",
+        dest="real_comms",
+        action="store_true",
+        default=False,
+        help="Use real comms (SMS/email/calls). Requires external infrastructure and prompts for confirmation.",
     )
     parser.add_argument(
-        "--enabled_tools",
-        dest="enabled_tools",
-        type=lambda s: [t.strip() for t in s.split(",")],
-        default=None,
-        help="Comma-separated list of enabled tools: actor, contact, transcript, knowledge, scheduler, comms",
+        "--auto-confirm",
+        dest="auto_confirm",
+        action="store_true",
+        default=False,
+        help="(real-comms) Auto-confirm all outbound actions (DANGEROUS).",
     )
     args = parser.parse_args()
 
-    if args.start_local:
-        activate_project(args.project_name, args.overwrite)
+    # Unify project activation
+    activate_project(args.project_name, args.overwrite)
 
-        # ─────────────────── project version handling ────────────────────
-        if args.project_version != -1:
-            commits = unify.get_project_commits(args.project_name)
-            if commits:
-                try:
-                    target = commits[args.project_version]
-                    unify.rollback_project(args.project_name, target["commit_hash"])
-                    LG.info("[version] Rolled back to commit %s", target["commit_hash"])
-                except IndexError:
-                    LG.warning(
-                        "[version] project_version index %s out of range, ignoring",
-                        args.project_version,
-                    )
+    # Optional project version rollback (0-indexed)
+    if args.project_version != -1:
+        commits = unify.get_project_commits(args.project_name)
+        if commits:
+            try:
+                target = commits[args.project_version]
+                unify.rollback_project(args.project_name, target["commit_hash"])
+                LG.info("[version] Rolled back to commit %s", target["commit_hash"])
+            except IndexError:
+                LG.warning(
+                    "[version] project_version index %s out of range, ignoring",
+                    args.project_version,
+                )
 
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
-        LG.setLevel(logging.INFO)
+    # Logging via shared helper
+    configure_sandbox_logging(
+        log_in_terminal=args.log_in_terminal,
+        log_file=".logs_conversation_sandbox.txt",
+        tcp_port=getattr(args, "log_tcp_port", 0) or 0,
+        http_tcp_port=getattr(args, "http_log_tcp_port", 0) or 0,
+        unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
+    )
+    LG.setLevel(logging.DEBUG if args.debug else logging.INFO)
 
-    # Start the convo manager
-    print("Starting convo manager...")
-    if unity.conversation_manager.start(
-        start_local=args.start_local,
-        enabled_tools=(
-            ",".join(args.enabled_tools)
-            if isinstance(args.enabled_tools, list)
-            else args.enabled_tools
+    # Keep sandbox logs readable by default. Full traces are still available via --debug.
+    if not args.debug:
+        for name in ("unify", "unify_requests", "unillm", "UnifyAsyncLogger"):
+            try:
+                logging.getLogger(name).setLevel(logging.WARNING)
+            except Exception:
+                pass
+
+    _suppress_litellm_noise()
+
+    cm = await initialize_cm(args=args)
+
+    # Attach cm onto args so downstream UI layers can access it without additional plumbing.
+    setattr(args, "_cm", cm)
+
+    state = SandboxState()
+
+    # Start outbound event subscription (prints responses as they arrive).
+    stop_sub = asyncio.Event()
+
+    async def _display(line: str) -> None:
+        print(line)
+
+    sub_task = asyncio.create_task(
+        subscribe_to_responses(
+            cm=cm,
+            sandbox_state=state,
+            display_callback=_display,
+            include_call_guidance=bool(args.debug)
+            or bool(getattr(args, "voice", False)),
+            voice_enabled=bool(getattr(args, "voice", False)),
+            stop_event=stop_sub,
         ),
-        project_name=args.project_name,
-    ):
-        print("Convo manager started successfully...")
+    )
 
-        from unity.helpers import run_script
+    # Exit triggers:
+    # - Ctrl+C / SIGTERM
+    # - CM inactivity timeout (cm.stop is set by ConversationManager.check_inactivity)
+    shutdown_requested = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
-        if args.start_local:
-            proc = run_script(
-                "sandboxes/conversation_manager/gui.py",
-                args.project_name,
-                terminal=True,
-            )
+    def _request_shutdown() -> None:
+        shutdown_requested.set()
 
-            await interaction_loop(args)
+    with suppress(NotImplementedError):
+        loop.add_signal_handler(signal.SIGINT, _request_shutdown)
+        loop.add_signal_handler(signal.SIGTERM, _request_shutdown)
 
-            proc.wait()
-            unity.conversation_manager.stop("signal_shutdown")
+    inactivity_shutdown = False
+    try:
+        if args.gui and args.real_comms:
+            print("⚠️ Real-comms mode requires REPL. Starting REPL instead.")
+            args.gui = False
+        if args.gui and getattr(args, "voice", False):
+            print("⚠️ Voice mode runs in REPL. Starting REPL instead.")
+            args.gui = False
 
-        # Keep running until the convo manager process is dead
-        while unity.conversation_manager.is_running():
-            time.sleep(1)  # Check every second
+        async def _run_ui() -> None:
+            if args.gui:
+                ran = False
+                try:
+                    ran = await run_gui_mode(cm=cm, args=args, state=state)
+                except Exception as exc:
+                    LG.warning(
+                        "GUI mode failed; falling back to REPL: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    ran = False
+                if not ran:
+                    print("⚠️ GUI mode unavailable/failed; falling back to REPL.")
+                    await run_repl(args=args, state=state)
+            else:
+                await run_repl(args=args, state=state)
 
-        # Final status
-        status = unity.conversation_manager.get_status()
-        print(
-            f"Convo manager has stopped. Reason: {status.get('shutdown_reason', 'unknown')}",
+        ui_task = asyncio.create_task(_run_ui())
+        cm_stop_task = None
+        try:
+            cm_stop = getattr(cm, "stop", None)
+            if cm_stop is not None and hasattr(cm_stop, "wait"):
+                cm_stop_task = asyncio.create_task(cm_stop.wait())
+        except Exception:
+            cm_stop_task = None
+
+        done, pending = await asyncio.wait(
+            {ui_task, asyncio.create_task(shutdown_requested.wait())}
+            | ({cm_stop_task} if cm_stop_task else set()),
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        if "message" in status:
-            print(f"Details: {status['message']}")
-    else:
-        print("Failed to start convo manager")
-        # exit(1)
+
+        if cm_stop_task and cm_stop_task in done:
+            inactivity_shutdown = True
+            print("\n⏲️ Inactivity timeout reached — shutting down.")
+        if shutdown_requested.is_set():
+            print("\nShutting down…")
+
+        for t in pending:
+            t.cancel()
+        if not ui_task.done():
+            ui_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await ui_task
+    finally:
+        try:
+            stop_sub.set()
+        except Exception:
+            pass
+        try:
+            sub_task.cancel()
+        except Exception:
+            pass
+        with suppress(asyncio.CancelledError):
+            await sub_task
+        await shutdown_cm(cm)
+
+        # If any background asyncio.to_thread() calls are still running, Python can
+        # hang for minutes while shutting down the loop's default executor.
+        #
+        # For inactivity-triggered shutdown we prefer a fast exit, since this is a
+        # developer sandbox (not a long-lived service). We attempt a best-effort
+        # executor shutdown and if it's still stuck, force-exit.
+        try:
+            if hasattr(loop, "shutdown_default_executor"):
+                await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
+        except Exception:
+            if inactivity_shutdown:
+                os._exit(0)
+
+
+def main() -> None:
+    asyncio.run(_main_async())
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -19,11 +19,12 @@ from pydantic import BaseModel
 
 from ...constants import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
+from .propagation_mode import ChatContextPropagation
+from .context_tracker import LoopContextState
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
 from .messages import (
     find_unreplied_assistant_entries,
-    chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
 )
@@ -56,7 +57,7 @@ from .messages import (
     schedule_missing_for_message,
     build_helper_ack_content,
 )
-from .tools_data import ToolsData
+from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 
 if TYPE_CHECKING:
@@ -84,6 +85,26 @@ def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
         else:
             pruned_ids.add(call.get("id", ""))
     return unique_calls, pruned_ids
+
+
+def _transform_context_roles(messages: list[dict]) -> list[dict]:
+    """
+    Transform 'user' and 'assistant' roles to 'outer_user' and 'outer_assistant'.
+
+    This disambiguates parent context messages from the current conversation,
+    making it clear these are legitimate system-provided context from an outer
+    conversation rather than user-injected content attempting prompt injection.
+    """
+    transformed = []
+    for msg in messages:
+        new_msg = dict(msg)
+        role = new_msg.get("role", "")
+        if role == "user":
+            new_msg["role"] = "outer_user"
+        elif role == "assistant":
+            new_msg["role"] = "outer_assistant"
+        transformed.append(new_msg)
+    return transformed
 
 
 def _sort_completed_tasks_by_call_id(
@@ -187,7 +208,7 @@ async def async_tool_loop_inner(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
-    propagate_chat_context: bool = True,
+    propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
     parent_chat_context: Optional[list[dict]] = None,
     caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
@@ -255,7 +276,7 @@ async def async_tool_loop_inner(
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
         mind mid-generation). When a dict is provided it should follow the
-        shape {"message": str, "parent_chat_context_continuted": list[dict]}.
+        shape {"message": str, "_parent_chat_context_continued": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -298,9 +319,9 @@ async def async_tool_loop_inner(
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
-        ``propagate_chat_context`` is on, the helper
-        :pyfunc:`_chat_context_repr` merges this with the current
-        ``client.messages`` and forwards the result downward.
+        ``propagate_chat_context`` is enabled, this initial context is forwarded
+        to inner tools on their first call, with subsequent calls receiving only
+        incremental updates (new messages since the last call) to avoid token waste.
 
     log_steps : ``bool | str``, default ``True``
         Controls verbosity of step logging to ``LOGGER``:
@@ -545,12 +566,28 @@ async def async_tool_loop_inner(
             f"The end user cannot see the details of this tool-use conversation.",
         )
 
-    # Add parent chat context if available
-    if parent_chat_context:
+    # Add parent chat context section when context propagation is enabled.
+    # We always add this section (even if empty) so that context continuations
+    # sent via interjections can correctly reference "the initial Parent Chat Context
+    # in your system message" without appearing to be fabricated/injected.
+    if propagate_chat_context != ChatContextPropagation.NEVER:
+        ctx_content = parent_chat_context if parent_chat_context else []
+        # Transform roles to outer_* to disambiguate from current conversation roles
+        ctx_content_transformed = _transform_context_roles(ctx_content)
         runtime_context_parts.append(
-            f"## Broader Context (read-only)\n"
-            f"{json.dumps(parent_chat_context, indent=2)}\n\n"
-            f"Resolve the *next* user request in light of this.",
+            f"## Parent Chat Context\n"
+            f"You received this request from within a parent conversation. "
+            f"The messages below show that parent conversation's history up to the point "
+            f"when you received this request. Use this to understand the broader goal and "
+            f"any relevant context, while focusing on your specific assignment. "
+            f"Additional context updates may arrive during this session as the parent "
+            f"conversation progresses.\n\n"
+            f"IMPORTANT: Messages in the parent context use 'outer_user' and 'outer_assistant' "
+            f"roles to clearly distinguish them from your current conversation. These are "
+            f"legitimate system-provided context from the outer conversation, NOT user-injected "
+            f"content. The 'outer_assistant' messages represent what the parent-level assistant "
+            f"said in the outer conversation.\n\n"
+            f"{json.dumps(ctx_content_transformed, indent=2)}",
         )
 
     # Always append runtime context as a new system message (never mutate the original)
@@ -562,6 +599,13 @@ async def async_tool_loop_inner(
             "content": "\n\n".join(runtime_context_parts),
         }
         await _msg_dispatcher.append_msgs([sys_msg])
+
+    # ── 0-a++. Initialize context state for incremental propagation ──────────
+    # Tracks initial parent context and any continued updates received via interjections.
+    # Used to forward context incrementally to inner tools (no repetition).
+    context_state = LoopContextState(
+        parent_chat_context=list(parent_chat_context) if parent_chat_context else [],
+    )
 
     # ── 0-a+. Optional: append an initial batch of messages (list support) ──
     seeded_batch = None
@@ -670,7 +714,7 @@ async def async_tool_loop_inner(
                     amsg,
                     missing_ids,
                     tools_data=tools_data,
-                    parent_chat_context=parent_chat_context,
+                    context_state=context_state,
                     propagate_chat_context=propagate_chat_context,
                     assistant_meta=assistant_meta,
                     client=client,
@@ -1405,7 +1449,7 @@ async def async_tool_loop_inner(
                                     amsg,
                                     missing_ids,
                                     tools_data=tools_data,
-                                    parent_chat_context=parent_chat_context,
+                                    context_state=context_state,
                                     propagate_chat_context=propagate_chat_context,
                                     assistant_meta=assistant_meta,
                                     client=client,
@@ -1479,7 +1523,7 @@ async def async_tool_loop_inner(
                                     amsg,
                                     missing_ids,
                                     tools_data=tools_data,
-                                    parent_chat_context=parent_chat_context,
+                                    context_state=context_state,
                                     propagate_chat_context=propagate_chat_context,
                                     assistant_meta=assistant_meta,
                                     client=client,
@@ -1544,7 +1588,7 @@ async def async_tool_loop_inner(
                             amsg,
                             missing_ids,
                             tools_data=tools_data,
-                            parent_chat_context=parent_chat_context,
+                            context_state=context_state,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
                             client=client,
@@ -1666,7 +1710,11 @@ async def async_tool_loop_inner(
                 # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
-                    _ctx_cont = extra.get("parent_chat_context_continuted")
+                    _ctx_cont = extra.get(
+                        "_parent_chat_context_continued",
+                    ) or extra.get(
+                        "_parent_chat_context_continuted",  # legacy typo support
+                    )
                     _incoming_images = extra.get("images")
                 else:
                     _msg_text = str(extra)
@@ -1678,6 +1726,25 @@ async def async_tool_loop_inner(
                     logger.info(f"Interjection received: {_msg_text}", prefix="💬")
                 except Exception:
                     pass
+
+                # Record continued context in our state for incremental propagation
+                if _ctx_cont:
+                    context_state.receive_context_continuation(_ctx_cont)
+                    # Forward to active inner tool handles that opted into context
+                    # Tools that set include_parent_chat_context=False initially
+                    # should not receive context continuations either.
+                    for task, info in tools_data.info.items():
+                        if info.interject_queue is not None and info.context_opted_in:
+                            with suppress(Exception):
+                                # Forward the continued context to the inner handle
+                                info.interject_queue.put_nowait(
+                                    {
+                                        "message": "",  # Empty message, just context update
+                                        "_parent_chat_context_continued": _ctx_cont,
+                                        "_context_only": True,  # Flag to indicate context-only update
+                                    },
+                                )
+                                context_state.mark_cont_forwarded_to_tool(info.call_id)
 
                 # On the FIRST interjection, inject user visibility guidance as a
                 # system message so the model understands why a user message is
@@ -1694,10 +1761,40 @@ async def async_tool_loop_inner(
                     )
                     _visibility_guidance_injected = True
 
-                # Send interjection as a simple user message
-                interjection_msg = {"role": "user", "content": _msg_text}
-                await _msg_dispatcher.append_msgs([interjection_msg])
-                last_valid_user_history = history_lines + [f"user: {_msg_text}"]
+                # Send interjection as user message(s).
+                # If context continuation is present, inject it as a separate user message
+                # tagged with _ctx_header so the current LLM sees it but it's filtered out
+                # when building cur_msgs for inner tool forwarding.
+                msgs_to_append: list[dict] = []
+                if _ctx_cont:
+                    # Transform roles to outer_* to disambiguate from current conversation
+                    ctx_cont_transformed = _transform_context_roles(_ctx_cont)
+                    ctx_cont_content = (
+                        "## Parent Chat Context (continued)\n"
+                        "This is the next incremental chunk of the parent conversation since the "
+                        "last context update (either the initial Parent Chat Context in your system "
+                        "message, or the previous continued context chunk). These messages arrived "
+                        "while you have been working on this request and may be relevant. Use this "
+                        "to stay informed of any updates or new information from the parent conversation. "
+                        "As explained in the system message, 'outer_user' and 'outer_assistant' roles "
+                        "indicate messages from the parent conversation.\n\n"
+                        f"{json.dumps(ctx_cont_transformed, indent=2)}"
+                    )
+                    msgs_to_append.append(
+                        {
+                            "role": "user",
+                            "_ctx_header": True,
+                            "content": ctx_cont_content,
+                        },
+                    )
+                # Only append user message if there's actual content
+                if _msg_text:
+                    msgs_to_append.append({"role": "user", "content": _msg_text})
+                if msgs_to_append:
+                    await _msg_dispatcher.append_msgs(msgs_to_append)
+                # Update history only if there was user message content
+                if _msg_text:
+                    last_valid_user_history = history_lines + [f"user: {_msg_text}"]
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 if _append_and_log_images_safely(_incoming_images):
@@ -1712,11 +1809,9 @@ async def async_tool_loop_inner(
                                 "content": (
                                     {
                                         "message": _msg_text,
-                                        "parent_chat_context_continuted": extra.get(
-                                            "parent_chat_context_continuted",
-                                        ),
+                                        "_parent_chat_context_continued": _ctx_cont,
                                     }
-                                    if isinstance(extra, dict)
+                                    if isinstance(extra, dict) and _ctx_cont
                                     else _msg_text
                                 ),
                             },
@@ -1926,7 +2021,14 @@ async def async_tool_loop_inner(
             # No-op: overview is now injected synthetically when images change
 
             visible_base_tools_schema = [
-                method_to_schema(spec.fn, name)
+                method_to_schema(
+                    spec.fn,
+                    name,
+                    expose_context_control=(
+                        propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+                    ),
+                    has_parent_context=bool(parent_chat_context),
+                )
                 for name, spec in policy_tools_norm.items()
                 if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
@@ -2108,10 +2210,29 @@ async def async_tool_loop_inner(
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
+            # For steering methods (ask/interject) on tools that opted into context,
+            # expose include_parent_chat_context_cont in LLM_DECIDES mode
+            _expose_ctx_cont_control = (
+                propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+            )
             tmp_tools = visible_base_tools_schema + [
                 method_to_schema(
                     fn,
                     include_class_name=include_class_in_dynamic_tool_names,
+                    # Expose include_parent_chat_context for dynamic tools that accept
+                    # _parent_chat_context (currently only ask_* tools). This lets the
+                    # LLM opt out of context propagation for inspection loops.
+                    expose_context_control=_expose_ctx_cont_control,
+                    has_parent_context=bool(parent_chat_context),
+                    # Expose context continuation control for steering methods when:
+                    # 1. Propagation mode is LLM_DECIDES
+                    # 2. The function is a steering method (ask/interject)
+                    # 3. The underlying tool opted into context initially
+                    expose_context_cont_control=(
+                        _expose_ctx_cont_control
+                        and getattr(fn, "__supports_context_propagation__", False)
+                        and getattr(fn, "__context_opted_in__", False)
+                    ),
                 )
                 for fn in dynamic_tools.values()
             ]
@@ -3086,18 +3207,23 @@ async def async_tool_loop_inner(
                             fn = dynamic_tools[name]
 
                             # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
-                            extra_kwargs: dict = {}
-                            if propagate_chat_context:
-                                cur_msgs = [
-                                    m
-                                    for m in client.messages
-                                    if not m.get("_ctx_header")
-                                ]
-                                ctx_repr = chat_context_repr(
-                                    parent_chat_context,
-                                    cur_msgs,
-                                )
-                                extra_kwargs["_parent_chat_context"] = ctx_repr
+                            #
+                            # Context propagation for dynamic helpers:
+                            # - ask_* tools: Need FULL initial context (like base tools), since they
+                            #   spawn new inspection loops. Use is_continuation_only=False.
+                            # - interject_* tools: Need only continuation context (tool already has
+                            #   initial context). Use is_continuation_only=True.
+                            # - stop_*, pause_*, resume_*: No context needed.
+                            #
+                            target_call_id = (
+                                name.split("_")[-1] if "_" in name else call["id"]
+                            )
+                            # Find the target tool's metadata to check context_opted_in
+                            target_info = None
+                            for _t, _inf in tools_data.info.items():
+                                if str(_inf.call_id).endswith(target_call_id):
+                                    target_info = _inf
+                                    break
 
                             sig = inspect.signature(fn)
                             params = sig.parameters
@@ -3105,6 +3231,58 @@ async def async_tool_loop_inner(
                                 p.kind == inspect.Parameter.VAR_KEYWORD
                                 for p in params.values()
                             )
+
+                            # Determine if this is an ask_* tool (needs full context) vs
+                            # interject_* (needs continuation only) vs other (no context)
+                            is_ask_tool = name.startswith("ask_")
+                            is_interject_tool = name.startswith("interject_")
+                            accepts_parent_ctx = (
+                                "_parent_chat_context" in params or has_varkw
+                            )
+                            accepts_parent_ctx_cont = (
+                                "_parent_chat_context_cont" in params or has_varkw
+                            )
+
+                            # Use shared helper for context injection
+                            if is_ask_tool:
+                                # ask_* tools spawn new loops - need full initial context
+                                extra_kwargs, context_opted_in = (
+                                    compute_context_injection(
+                                        args=args,
+                                        propagate_chat_context=propagate_chat_context,
+                                        context_state=context_state,
+                                        client_messages=client.messages,
+                                        call_id=f"ask_{target_call_id}_{call['id']}",
+                                        accepts_parent_ctx=accepts_parent_ctx,
+                                        accepts_parent_ctx_cont=accepts_parent_ctx_cont,
+                                        is_continuation_only=False,
+                                    )
+                                )
+                            elif is_interject_tool:
+                                # interject_* tools add to existing loops - need continuation only
+                                extra_kwargs, _ = compute_context_injection(
+                                    args=args,
+                                    propagate_chat_context=propagate_chat_context,
+                                    context_state=context_state,
+                                    client_messages=client.messages,
+                                    call_id=f"interject_{target_call_id}_{call['id']}",
+                                    accepts_parent_ctx=False,  # Don't inject full context
+                                    accepts_parent_ctx_cont=accepts_parent_ctx_cont,
+                                    target_context_opted_in=(
+                                        target_info.context_opted_in
+                                        if target_info
+                                        else None
+                                    ),
+                                    is_continuation_only=True,
+                                )
+                            else:
+                                # Other steering tools (stop, pause, resume) - no context
+                                # Still pop the control params so they don't get forwarded
+                                args.pop("include_parent_chat_context", None)
+                                args.pop("include_parent_chat_context_cont", None)
+                                extra_kwargs = {}
+                                context_opted_in = False
+
                             filtered_extras = {
                                 k: v
                                 for k, v in extra_kwargs.items()
@@ -3170,6 +3348,8 @@ async def async_tool_loop_inner(
                                 ),
                                 llm_arguments=allowed_call_args,
                                 raw_arguments_json=call["function"]["arguments"],
+                                # Track context opt-in for adopted handles (important for ask_*)
+                                context_opted_in=context_opted_in,
                             )
                             tools_data.save_task(
                                 coro=t,
@@ -3227,7 +3407,7 @@ async def async_tool_loop_inner(
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
-                            parent_chat_context=parent_chat_context,
+                            context_state=context_state,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
                             initial_paused=not pause_event.is_set(),

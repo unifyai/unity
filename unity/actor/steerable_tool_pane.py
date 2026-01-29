@@ -637,7 +637,7 @@ class SteerableToolPane:
         handle_id: str,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> Optional[str]:
         """Interject into a specific handle.
@@ -690,7 +690,7 @@ class SteerableToolPane:
             result = await maybe_await(
                 handle.interject(
                     message,
-                    parent_chat_context_cont=parent_chat_context_cont,
+                    _parent_chat_context_cont=_parent_chat_context_cont,
                     images=images,
                 ),
             )
@@ -896,8 +896,6 @@ class SteerableToolPane:
         self,
         handle_id: str,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> Optional[str]:
         """Stop a specific handle (safe no-op for terminal handles)."""
 
@@ -943,7 +941,7 @@ class SteerableToolPane:
 
         try:
             result = await maybe_await(
-                handle.stop(reason, parent_chat_context_cont=parent_chat_context_cont),
+                handle.stop(reason),
             )
             async with self._lock:
                 meta2 = self._registry.get(handle_id)
@@ -993,7 +991,7 @@ class SteerableToolPane:
         *,
         filter: BroadcastFilter | None = None,
         origin_tool_prefixes: list[str] | None = None,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> dict[str, Any]:
         """Broadcast an interjection to a filtered set of in-flight handles."""
@@ -1036,7 +1034,7 @@ class SteerableToolPane:
             results[hid] = await self.interject(
                 hid,
                 message,
-                parent_chat_context_cont=parent_chat_context_cont,
+                _parent_chat_context_cont=_parent_chat_context_cont,
                 images=images,
             )
 

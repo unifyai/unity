@@ -771,10 +771,33 @@ def is_scenario_seeded(
 # simpler idempotent check-before-create pattern works fine without a lock.
 # --------------------------------------------------------------------------
 
-import fcntl
 import tempfile
 import time
 from contextlib import contextmanager
+
+# Cross-platform file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file_nb(file_obj):
+        """Acquire an exclusive non-blocking lock on the file (Windows)."""
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Windows)."""
+        file_obj.seek(0)
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file_nb(file_obj):
+        """Acquire an exclusive non-blocking lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
 
 
 def _acquire_file_lock_with_timeout(
@@ -794,9 +817,9 @@ def _acquire_file_lock_with_timeout(
     start = time.monotonic()
     while True:
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_file_nb(lock_file)
             return  # Successfully acquired lock
-        except BlockingIOError:
+        except (BlockingIOError, OSError):
             elapsed = time.monotonic() - start
             if elapsed >= timeout:
                 raise TimeoutError(
@@ -842,7 +865,7 @@ def scenario_file_lock(lock_name: str, timeout: float | None = None):
         _acquire_file_lock_with_timeout(lock_file, timeout, lock_name)
         yield
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(lock_file)
         lock_file.close()
 
 
@@ -886,7 +909,7 @@ def mutation_test_lock(lock_name: str, timeout: float | None = None):
         _acquire_file_lock_with_timeout(lock_file, timeout, lock_name)
         yield
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(lock_file)
         lock_file.close()
 
 

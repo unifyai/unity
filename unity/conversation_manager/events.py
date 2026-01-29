@@ -296,6 +296,27 @@ class EmailSent(Event):
 
 
 @dataclass
+class UnknownContactCreated(Event):
+    """A new contact was automatically created from an unknown inbound message.
+
+    This event is published when an inbound SMS, email, or call arrives from
+    a sender that is not in the Contacts table and not in the BlackList.
+
+    The contact is created with:
+    - Only the medium field populated (phone_number or email_address)
+    - should_respond=False to prevent automatic responses
+    - A response_policy guiding the assistant to seek boss guidance
+
+    The ConversationManager should use this event to potentially notify the
+    boss and ask for guidance on how to handle this new contact.
+    """
+
+    contact: dict
+    medium: str  # The communication medium (e.g., "sms_message", "email", "phone_call")
+    message_preview: str = ""  # Optional preview of the initial message
+
+
+@dataclass
 class _SessionConfigBase(Event):
     """Base class for session configuration events (StartupEvent, AssistantUpdateEvent)."""
 

@@ -77,7 +77,7 @@ async def test_ask_uses_parent_chat_context(static_now):
             "Which letters in this search engine logo appear in our company slogan? "
             "Reply only with these letters and nothing else. Do not include any missing letters in your response."
         ),
-        parent_chat_context_cont=parent_ctx,
+        _parent_chat_context_cont=parent_ctx,
     )
 
     assert isinstance(answer, str) and answer.strip()

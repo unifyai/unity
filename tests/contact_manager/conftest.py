@@ -332,7 +332,7 @@ def contact_manager_mutation_scenario(contact_mutation_scenario):
     2. Mutation tests don't race with each other (serialized via lock)
     3. The full sequence (rollback → mutate → verify) is atomic
 
-    This allows running `parallel_run.sh test_contact_manager` safely:
+    This allows running `parallel_run.sh contact_manager` safely:
     - Read tests run fully in parallel (their own context)
     - Mutation tests run serially (shared context + lock)
     """
