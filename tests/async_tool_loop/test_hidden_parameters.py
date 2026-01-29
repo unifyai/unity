@@ -113,11 +113,11 @@ def test_hidden_parameters_are_removed_from_schema_and_docs(fn) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Test that parent_chat_context_cont is hidden from steering methods       #
+# 4. Test that _parent_chat_context_cont is hidden from steering methods       #
 # --------------------------------------------------------------------------- #
 def test_parent_chat_context_cont_hidden_from_steering_methods() -> None:
     """
-    The parent_chat_context_cont parameter (plumbing for context propagation)
+    The _parent_chat_context_cont parameter (plumbing for context propagation)
     must be hidden from LLM tool schemas because it's automatically injected
     by the orchestrating code layer, not supplied by the LLM.
 
@@ -127,11 +127,11 @@ def test_parent_chat_context_cont_hidden_from_steering_methods() -> None:
     from typing import Optional
     from unity.image_manager.types.image_refs import ImageRefs
 
-    # Simulate a steering method with parent_chat_context_cont
+    # Simulate a steering method with _parent_chat_context_cont
     async def interject(
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: Optional[ImageRefs] = None,
     ) -> str:
         """Provide additional information or instructions to the running task.
@@ -150,10 +150,10 @@ def test_parent_chat_context_cont_hidden_from_steering_methods() -> None:
     required = schema["function"]["parameters"]["required"]
     desc = schema["function"]["description"]
 
-    # parent_chat_context_cont MUST be hidden (via explicit list)
-    assert "parent_chat_context_cont" not in props
-    assert "parent_chat_context_cont" not in required
-    assert "parent_chat_context_cont" not in desc
+    # _parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "_parent_chat_context_cont" not in props
+    assert "_parent_chat_context_cont" not in required
+    assert "_parent_chat_context_cont" not in desc
 
     # message and images SHOULD be visible
     assert "message" in props
@@ -222,7 +222,7 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
             *,
             priority: int = 1,
             category: str = "general",
-            parent_chat_context_cont: list[dict] | None = None,
+            _parent_chat_context_cont: list[dict] | None = None,
             images: Optional[ImageRefs] = None,
         ) -> str:
             """Custom interject with priority and category.
@@ -326,8 +326,8 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
     # message SHOULD be visible (either from handle or content alias)
     assert "message" in props or "content" in props
 
-    # parent_chat_context_cont MUST be hidden (via explicit list)
-    assert "parent_chat_context_cont" not in props
+    # _parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "_parent_chat_context_cont" not in props
 
     # images SHOULD be visible
     assert "images" in props
@@ -346,7 +346,7 @@ def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     and images (visible) parameters for full parity.
 
     - ask() uses parent_chat_context (initial context for fresh inspection loop)
-    - interject() uses parent_chat_context_cont (continuation for ongoing loop)
+    - interject() uses _parent_chat_context_cont (continuation for ongoing loop)
     - stop() only has images (stop is symbolic cancellation, no context propagation)
     """
     from unity.common.async_tool_loop import SteerableHandle, SteerableToolHandle
@@ -360,13 +360,13 @@ def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     assert "_parent_chat_context" in ask_params, "ask should have _parent_chat_context"
     assert "images" in ask_params, "ask should have images"
 
-    # Check SteerableHandle.interject - uses parent_chat_context_cont since it
+    # Check SteerableHandle.interject - uses _parent_chat_context_cont since it
     # adds to an ongoing conversation
     interject_sig = inspect.signature(SteerableHandle.interject)
     interject_params = set(interject_sig.parameters.keys()) - {"self"}
     assert (
-        "parent_chat_context_cont" in interject_params
-    ), "interject should have parent_chat_context_cont"
+        "_parent_chat_context_cont" in interject_params
+    ), "interject should have _parent_chat_context_cont"
     assert "images" in interject_params, "interject should have images"
 
     # Check SteerableToolHandle.stop - only has images (stop is symbolic, no context propagation)
@@ -374,8 +374,8 @@ def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
     stop_params = set(stop_sig.parameters.keys()) - {"self"}
     assert "images" in stop_params, "stop should have images"
     assert (
-        "parent_chat_context_cont" not in stop_params
-    ), "stop should NOT have parent_chat_context_cont (stop is symbolic cancellation)"
+        "_parent_chat_context_cont" not in stop_params
+    ), "stop should NOT have _parent_chat_context_cont (stop is symbolic cancellation)"
 
 
 @pytest.mark.asyncio
@@ -403,7 +403,7 @@ async def test_dynamic_factory_stop_tool_has_images_from_handle() -> None:
             self,
             reason: Optional[str] = None,
             *,
-            parent_chat_context_cont: list[dict] | None = None,
+            _parent_chat_context_cont: list[dict] | None = None,
             images: Optional[ImageRefs] = None,
         ) -> str:
             """Stop with images.
@@ -501,8 +501,8 @@ async def test_dynamic_factory_stop_tool_has_images_from_handle() -> None:
         "reason" in props
     ), f"Expected 'reason' in stop schema, got: {list(props.keys())}"
 
-    # parent_chat_context_cont MUST be hidden (via explicit list)
-    assert "parent_chat_context_cont" not in props
+    # _parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "_parent_chat_context_cont" not in props
 
     with suppress(BaseException):
         pending_task.cancel()

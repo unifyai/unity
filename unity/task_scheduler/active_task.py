@@ -189,7 +189,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: object | None = None,
     ) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
@@ -216,14 +216,14 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             else:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=parent_chat_context_cont,
+                    parent_chat_context=_parent_chat_context_cont,
                 )
         except Exception as e:
             # Robust fallback: use built-in classifier to avoid losing the steering signal entirely
             try:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=parent_chat_context_cont,
+                    parent_chat_context=_parent_chat_context_cont,
                 )
             except Exception as _e:
                 intent, reason = None, None

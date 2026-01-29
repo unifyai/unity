@@ -337,7 +337,7 @@ class MultiRequestHandle:
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> None:
         """Inject additional context for this request."""
@@ -347,7 +347,7 @@ class MultiRequestHandle:
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> None:
         """Stop/cancel this specific request.

@@ -208,7 +208,7 @@ class SteeringController:
             await _maybe_await(
                 handle.interject(
                     arg,
-                    parent_chat_context_cont=list(self.chat_history),
+                    _parent_chat_context_cont=list(self.chat_history),
                 ),
             )
             return "✅ Interjection sent"
@@ -217,7 +217,7 @@ class SteeringController:
                 return "⚠️ Usage: /ask <question>"
             helper = await handle.ask(
                 arg,
-                parent_chat_context_cont=list(self.chat_history),
+                _parent_chat_context_cont=list(self.chat_history),
             )
             try:
                 answer = await helper.result()  # type: ignore[attr-defined]
@@ -238,7 +238,10 @@ class SteeringController:
             if not arg.strip():
                 return "⚠️ Usage: /freeform <text>"
             await _maybe_await(
-                handle.interject(arg, parent_chat_context_cont=list(self.chat_history)),
+                handle.interject(
+                    arg,
+                    _parent_chat_context_cont=list(self.chat_history),
+                ),
             )
             return "✅ Sent (freeform → interject)"
         return f"⚠️ Unknown steering command: /{cmd}. Try /help."

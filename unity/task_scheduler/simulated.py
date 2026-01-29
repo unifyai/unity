@@ -204,14 +204,14 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> str:
         """Append a follow-up message that will be folded into the prompt.
 
         Args:
             message: The interjection message to inject.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
             images: Optional image references. Accepted for API parity with real handles
                 but not currently used.
@@ -666,7 +666,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 message: str,
                 *,
-                parent_chat_context_cont: list[dict] | None = None,
+                _parent_chat_context_cont: list[dict] | None = None,
                 images: object | None = None,
             ) -> None:  # type: ignore[override]
                 self._log_interject(message)
@@ -675,7 +675,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                     try:
                         await self._inner.interject(  # type: ignore[arg-type]
                             message,
-                            parent_chat_context_cont=parent_chat_context_cont,
+                            _parent_chat_context_cont=_parent_chat_context_cont,
                             images=images,
                         )
                     except TypeError:

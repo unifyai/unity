@@ -529,7 +529,7 @@ def method_to_schema(
         conditional docstring for ``include_parent_chat_context`` (only relevant
         when ``expose_context_control=True``).
     expose_context_cont_control : bool
-        If True and the method accepts ``parent_chat_context_cont``, the schema
+        If True and the method accepts ``_parent_chat_context_cont``, the schema
         will include an ``include_parent_chat_context_cont`` boolean parameter.
         This is for steering methods (ask, interject) on in-flight tools
         that originally opted into context. The LLM can control whether context
@@ -554,7 +554,7 @@ def method_to_schema(
         p.kind == _inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
     )
 
-    # Track whether this tool accepts _parent_chat_context or parent_chat_context_cont
+    # Track whether this tool accepts _parent_chat_context or _parent_chat_context_cont
     accepts_parent_chat_context = False
     accepts_parent_chat_context_cont = False
 
@@ -566,23 +566,12 @@ def method_to_schema(
         ):
             continue
         # Determine whether *name* is **hidden** (never exposed to the LLM)
-        is_hidden = (
-            name.startswith("_") and param.default is not inspect._empty
-        ) or name in (
-            "_parent_chat_context",
-            "_clarification_up_q",
-            "_clarification_down_q",
-            "_notification_up_q",
-            "_pause_event",
-            "_interject_queue",
-            # Plumbing parameter for continued parent context in steering methods
-            # (ask, interject, stop). This matches parent_chat_context in start_async_tool_loop.
-            "parent_chat_context_cont",
-        )
+        # Convention: parameters starting with "_" and having a default are internal plumbing
+        is_hidden = name.startswith("_") and param.default is not inspect._empty
 
         if name == "_parent_chat_context":
             accepts_parent_chat_context = True
-        if name == "parent_chat_context_cont":
+        if name == "_parent_chat_context_cont":
             accepts_parent_chat_context_cont = True
 
         if is_hidden:
@@ -623,7 +612,7 @@ def method_to_schema(
         }
         # Not in required - defaults to True when omitted
 
-    # If this is a steering method that accepts parent_chat_context_cont and we want
+    # If this is a steering method that accepts _parent_chat_context_cont and we want
     # LLM control over context continuation propagation, inject the visible control param
     if accepts_parent_chat_context_cont and expose_context_cont_control:
         ctx_cont_desc = (

@@ -29,7 +29,7 @@ class CustomImagesHandle(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context_cont=None,
+        _parent_chat_context_cont=None,
         images=None,
     ) -> "SteerableToolHandle":
         return self
@@ -38,7 +38,7 @@ class CustomImagesHandle(SteerableToolHandle):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: Optional[ImageRefs] = None,
     ) -> Optional[str]:
         self.interject_calls.append(
