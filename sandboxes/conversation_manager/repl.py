@@ -79,7 +79,6 @@ async def run_repl(*, args: Any, state: SandboxState | None = None) -> None:
         publisher = EventPublisher(
             cm=cm,
             state=st,
-            simulate_calls_as_text=not bool(getattr(args, "real_comms", False)),
         )
 
     router: CommandRouter | None = None

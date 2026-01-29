@@ -244,7 +244,6 @@ async def run_gui_mode(*, cm: Any, args: Any, state: Any) -> bool:
     publisher = EventPublisher(
         cm=cm,
         state=state,
-        simulate_calls_as_text=not bool(getattr(args, "real_comms", False)),
     )
     runtime = GuiRuntime(cm=cm, args=args, state=state, publisher=publisher)
     app = ModernizedMessagingApp(runtime)
