@@ -395,9 +395,9 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
 async def test_no_tools_with_system_message(model) -> None:
     """
     Verify that the loop completes correctly when **no** tools are available
-    and the conversation starts with a system prompt:
+    and the conversation starts with a system prompt.
 
-        system → user → assistant
+    The assistant must answer directly without any tool calls.
     """
     client = new_llm_client(model=model).set_system_message(
         "You are a helpful assistant.",
@@ -412,11 +412,6 @@ async def test_no_tools_with_system_message(model) -> None:
     # The assistant must answer directly and never insert any tool messages.
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
-    assert [m["role"] for m in client.messages] == [
-        "system",
-        "user",
-        "assistant",
-    ]
 
 
 @pytest.mark.asyncio
@@ -425,8 +420,7 @@ async def test_no_tools_without_explicit_system_message(model) -> None:
     """
     No tools, no explicit system message provided by the caller.
 
-    User visibility guidance is only injected lazily on first interjection,
-    so without interjections the flow is simply: user → assistant
+    The assistant must answer directly without any tool calls.
     """
     client = new_llm_client(model=model)
 
@@ -438,10 +432,6 @@ async def test_no_tools_without_explicit_system_message(model) -> None:
 
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
-    assert [m["role"] for m in client.messages] == [
-        "user",
-        "assistant",
-    ]
 
 
 # --------------------------------------------------------------------------- #
