@@ -131,7 +131,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     print("publishing transcript", event_name)
     event_name = event_name.lower()
     if "unify" in event_name or "prehire" in event_name:
-        medium = Medium.UNIFY_MEET if "call" in event_name else Medium.UNIFY_MESSAGE
+        medium = Medium.UNIFY_MEET if "meet" in event_name else Medium.UNIFY_MESSAGE
     elif "phone" in event_name:
         medium = Medium.PHONE_CALL
     elif "sms" in event_name:
