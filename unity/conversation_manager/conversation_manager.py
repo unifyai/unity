@@ -124,8 +124,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
-        # call manager
-        self.call_manager = LivekitCallManager(self.get_call_config())
+        # call manager - pass event_broker for socket IPC with voice agent subprocess
+        self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
 
         # renderer
         self.prompt_renderer = Renderer()

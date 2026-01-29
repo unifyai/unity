@@ -86,8 +86,8 @@ def mock_event_broker():
 def mock_call_manager():
     """Create a mock call manager."""
     manager = MagicMock()
-    manager.start_call = MagicMock()
-    manager.start_unify_meet = MagicMock()
+    manager.start_call = AsyncMock()
+    manager.start_unify_meet = AsyncMock()
     manager.cleanup_call_proc = AsyncMock()
     manager.uses_realtime_api = False
     manager.conference_name = None

@@ -111,15 +111,15 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         match event:
             case PhoneCallReceived() as e:
                 cm.call_manager.conference_name = e.conference_name
-                cm.call_manager.start_call(contact, boss)
+                await cm.call_manager.start_call(contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {sender_name}"
             case PhoneCallSent() as e:
-                cm.call_manager.start_call(contact, boss, outbound=True)
+                await cm.call_manager.start_call(contact, boss, outbound=True)
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {sender_name}"
             case UnifyMeetReceived() as e:
-                cm.call_manager.start_unify_meet(
+                await cm.call_manager.start_unify_meet(
                     contact,
                     boss,
                     e.livekit_agent_name,

@@ -72,8 +72,8 @@ def _apply_test_mocks(cm: ConversationManager) -> None:
     comms_utils.send_unify_message = _async_mock_success
     comms_utils.send_email_via_address = _async_mock_success
     comms_utils.start_call = _async_mock_success
-    cm.call_manager.start_call = _sync_mock_success
-    cm.call_manager.start_unify_meet = _sync_mock_success
+    cm.call_manager.start_call = _async_mock_success
+    cm.call_manager.start_unify_meet = _async_mock_success
     cm.schedule_proactive_speech = _async_mock_success
     debug_logger.log_job_startup = _sync_mock_success
     debug_logger.mark_job_done = _sync_mock_success

@@ -67,7 +67,7 @@ class Assistant(Agent):
     Uses a lightweight LLM (gpt-5-nano via UnifyLLM adapter) for fast
     conversational responses. Routes through unillm.AsyncUnify for local
     caching (CI) and usage tracking.
-    Receives guidance from the Main CM Brain (slow brain) via Redis pub/sub.
+    Communicates with the Main CM Brain (slow brain) via Unix domain socket IPC.
     """
 
     def __init__(
@@ -99,15 +99,13 @@ class Assistant(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        """Forward user utterances to the Main CM Brain for orchestration."""
-        print("sending user message...")
-        await event_broker.publish(
-            f"app:comms:{self.channel}_utterance",
-            self.utterance_event(
-                contact=self.contact,
-                content=new_message.text_content,
-            ).to_json(),
-        )
+        """
+        Hook called when user finishes speaking.
+
+        Note: User utterance publishing is handled by _on_chat_item_added
+        to keep all transcript logging in one place alongside assistant utterances.
+        """
+        print(f"[on_user_turn_completed] {new_message.text_content}")
 
     async def llm_node(
         self,
@@ -214,6 +212,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
+        """Publish both user and assistant utterances from a single location."""
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""
         if role == "user":

@@ -69,8 +69,13 @@ class Assistant(Agent):
         self.call_received = True
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
-        print(turn_ctx)
-        print(new_message)
+        """
+        Hook called when user finishes speaking.
+
+        Note: User utterance publishing is handled by _on_chat_item_added
+        to keep all transcript logging in one place alongside assistant utterances.
+        """
+        print(f"[on_user_turn_completed] {new_message.text_content}")
 
     async def llm_node(
         self,
@@ -171,6 +176,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
+        """Publish both user and assistant utterances from a single location."""
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""  # reliably the final text
         if role == "user":
