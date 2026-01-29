@@ -604,6 +604,7 @@ class TestRenderer:
             name="John",
             content="Hello!",
             timestamp=datetime.now(),
+            role="user",
         )
         result = renderer.render_message(msg, old_snapshot)
         assert "**NEW**" in result
@@ -617,6 +618,7 @@ class TestRenderer:
             name="John",
             content="Hello!",
             timestamp=datetime.now(),
+            role="user",
         )
         result = renderer.render_message(msg, recent_snapshot)
         assert "**NEW**" not in result
@@ -630,6 +632,7 @@ class TestRenderer:
             body="Please review the attached document.",
             email_id="email_456",
             timestamp=datetime.now(),
+            role="user",
         )
         result = renderer.render_message(msg, old_snapshot)
         assert "Subject: Important Update" in result
@@ -663,7 +666,7 @@ class TestRenderer:
         conv_state = ConversationState(contact_id=1)
         # Add messages to both global and per-medium threads
         ts = datetime.now()
-        msg = Message(name="John", content="Hello!", timestamp=ts)
+        msg = Message(name="John", content="Hello!", timestamp=ts, role="user")
         conv_state.global_thread.append(msg)
         conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
@@ -698,7 +701,12 @@ class TestRenderer:
         base_time = datetime.now()
         for i in range(10):
             ts = base_time + timedelta(minutes=i)
-            msg = Message(name="John", content=f"Message {i}", timestamp=ts)
+            msg = Message(
+                name="John",
+                content=f"Message {i}",
+                timestamp=ts,
+                role="user",
+            )
             conv_state.global_thread.append(msg)
             conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
