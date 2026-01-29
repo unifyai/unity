@@ -46,7 +46,7 @@ class SteerableHandle(ABC):
     Steering methods accept context parameters that are plumbing parameters
     automatically hidden from LLM tool schemas (injected by orchestrating code):
 
-    - ``parent_chat_context_cont`` (for ``interject``): Continuation of the parent
+    - ``_parent_chat_context_cont`` (for ``interject``): Continuation of the parent
       conversation since this loop started. Used to inject incremental updates into
       an ongoing conversation.
 
@@ -90,7 +90,7 @@ class SteerableHandle(ABC):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Provide additional information or instructions to the running task.
@@ -279,16 +279,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def _append_user_visible_user(
         self,
         message: str,
-        parent_chat_context_cont: list[dict] | None,
+        _parent_chat_context_cont: list[dict] | None,
     ) -> None:
         with suppress(Exception):
-            if parent_chat_context_cont is not None:
+            if _parent_chat_context_cont is not None:
                 self._user_visible_history.append(
                     {
                         "role": "user",
                         "content": {
                             "message": message,
-                            "parent_chat_context_continued": parent_chat_context_cont,
+                            "_parent_chat_context_continued": _parent_chat_context_cont,
                         },
                     },
                 )
@@ -544,7 +544,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
         trigger_immediate_llm_turn: bool = True,
         **kwargs,
@@ -552,12 +552,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
         # Record user-visible immediately
-        self._append_user_visible_user(message, parent_chat_context_cont)
+        self._append_user_visible_user(message, _parent_chat_context_cont)
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
         payload = {
             "message": message,
-            "parent_chat_context_continued": parent_chat_context_cont,
+            "_parent_chat_context_continued": _parent_chat_context_cont,
             "images": images,
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
         }

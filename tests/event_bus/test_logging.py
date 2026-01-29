@@ -17,7 +17,7 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> "SteerableToolHandle":
         return self
 
@@ -25,7 +25,7 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ):
         return "ack"
 
@@ -34,7 +34,7 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         self,
         reason: str | None = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ):
         self._done = True
         return "Stopped"
@@ -73,10 +73,10 @@ class _PrivateAttrHandle(SteerableToolHandle):
         self._done = True
 
     # Minimal interface – inert stubs
-    async def ask(self, question: str, *, parent_chat_context_cont: list[dict] | None = None) -> "SteerableToolHandle":  # type: ignore[override]
+    async def ask(self, question: str, *, _parent_chat_context_cont: list[dict] | None = None) -> "SteerableToolHandle":  # type: ignore[override]
         return self
 
-    async def interject(self, message: str, *, parent_chat_context_cont: list[dict] | None = None) -> None:  # type: ignore[override]
+    async def interject(self, message: str, *, _parent_chat_context_cont: list[dict] | None = None) -> None:  # type: ignore[override]
         return None
 
     def stop(self, reason: str | None = None):  # type: ignore[override]

@@ -276,7 +276,7 @@ async def async_tool_loop_inner(
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
         mind mid-generation). When a dict is provided it should follow the
-        shape {"message": str, "parent_chat_context_continued": list[dict]}.
+        shape {"message": str, "_parent_chat_context_continued": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -1710,8 +1710,10 @@ async def async_tool_loop_inner(
                 # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
-                    _ctx_cont = extra.get("parent_chat_context_continued") or extra.get(
-                        "parent_chat_context_continuted",  # legacy typo support
+                    _ctx_cont = extra.get(
+                        "_parent_chat_context_continued",
+                    ) or extra.get(
+                        "_parent_chat_context_continuted",  # legacy typo support
                     )
                     _incoming_images = extra.get("images")
                 else:
@@ -1738,7 +1740,7 @@ async def async_tool_loop_inner(
                                 info.interject_queue.put_nowait(
                                     {
                                         "message": "",  # Empty message, just context update
-                                        "parent_chat_context_continued": _ctx_cont,
+                                        "_parent_chat_context_continued": _ctx_cont,
                                         "_context_only": True,  # Flag to indicate context-only update
                                     },
                                 )
@@ -1807,7 +1809,7 @@ async def async_tool_loop_inner(
                                 "content": (
                                     {
                                         "message": _msg_text,
-                                        "parent_chat_context_continued": _ctx_cont,
+                                        "_parent_chat_context_continued": _ctx_cont,
                                     }
                                     if isinstance(extra, dict) and _ctx_cont
                                     else _msg_text

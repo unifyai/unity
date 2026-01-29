@@ -258,7 +258,7 @@ async def test_interject_with_continued_parent_context_influences_decision(
     # Inject guidance that includes the continued parent context.
     await handle.interject(
         "FYI: see additional context that determines the correct fruit.",
-        parent_chat_context_cont=continued_ctx,
+        _parent_chat_context_cont=continued_ctx,
     )
 
     final = await handle.result()
@@ -279,7 +279,7 @@ class TestLoopContextState:
         """Verify initial state is empty."""
         state = LoopContextState()
         assert state.parent_chat_context == []
-        assert state.parent_chat_context_cont_received == []
+        assert state._parent_chat_context_cont_received == []
         assert state.inner_tool_forwarding == {}
 
     def test_receive_context_continuation(self):
@@ -287,14 +287,14 @@ class TestLoopContextState:
         state = LoopContextState()
 
         state.receive_context_continuation([{"role": "user", "content": "msg1"}])
-        assert len(state.parent_chat_context_cont_received) == 1
+        assert len(state._parent_chat_context_cont_received) == 1
 
         state.receive_context_continuation([{"role": "user", "content": "msg2"}])
-        assert len(state.parent_chat_context_cont_received) == 2
+        assert len(state._parent_chat_context_cont_received) == 2
 
         # Empty list should not add anything
         state.receive_context_continuation([])
-        assert len(state.parent_chat_context_cont_received) == 2
+        assert len(state._parent_chat_context_cont_received) == 2
 
     def test_first_call_receives_full_context(self):
         """First call to a tool should receive full parent context."""
@@ -547,7 +547,7 @@ def test_method_to_schema_exposes_context_cont_control():
     def steering_method(
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         """A steering method that accepts context continuation."""
         return "answer"
@@ -556,8 +556,8 @@ def test_method_to_schema_exposes_context_cont_control():
     schema_no_expose = method_to_schema(steering_method)
     props = schema_no_expose["function"]["parameters"]["properties"]
     assert "include_parent_chat_context_cont" not in props
-    # parent_chat_context_cont should be hidden
-    assert "parent_chat_context_cont" not in props
+    # _parent_chat_context_cont should be hidden
+    assert "_parent_chat_context_cont" not in props
 
     # With expose_context_cont_control
     schema_exposed = method_to_schema(
@@ -836,7 +836,7 @@ async def test_ask_dynamic_tool_context_control_not_exposed_for_other_steering_m
 
     Only ask_* should expose this control because:
     - stop_* no longer uses context at all
-    - interject_* uses parent_chat_context_cont (continuation), not initial context
+    - interject_* uses _parent_chat_context_cont (continuation), not initial context
     """
     import asyncio
     from unittest.mock import MagicMock
@@ -863,7 +863,7 @@ async def test_ask_dynamic_tool_context_control_not_exposed_for_other_steering_m
             self,
             message: str,
             *,
-            parent_chat_context_cont: list[dict] | None = None,
+            _parent_chat_context_cont: list[dict] | None = None,
         ):
             pass
 
@@ -1072,9 +1072,9 @@ async def test_ask_dynamic_tool_respects_include_parent_chat_context_false():
 @pytest.mark.asyncio
 @_handle_project
 async def test_interjection_context_continuation_message_structure(model) -> None:
-    """Verify that interjections with parent_chat_context_continued create proper message structure.
+    """Verify that interjections with _parent_chat_context_continued create proper message structure.
 
-    When an interjection includes parent_chat_context_continued:
+    When an interjection includes _parent_chat_context_continued:
     1. A user message with the context continuation (tagged _ctx_header=True) is appended
     2. A second user message with the actual interjection content is appended (if non-empty)
     3. The context continuation message is filtered out when building cur_msgs for inner tools
@@ -1101,7 +1101,7 @@ async def test_interjection_context_continuation_message_structure(model) -> Non
     # Inject an interjection with context continuation
     await handle.interject(
         "Now decide which fruit to choose.",
-        parent_chat_context_cont=continued_ctx,
+        _parent_chat_context_cont=continued_ctx,
     )
 
     final = await handle.result()
@@ -1144,7 +1144,7 @@ async def test_interjection_context_continuation_message_structure(model) -> Non
 async def test_interjection_context_only_no_user_message(model) -> None:
     """Verify that context-only interjections (empty message) work correctly.
 
-    When an interjection has parent_chat_context_continued but empty message text,
+    When an interjection has _parent_chat_context_continued but empty message text,
     only the context continuation user message should be appended (no empty second message).
 
     This test uses a realistic scenario: the outer conversation reveals the user has
@@ -1181,7 +1181,7 @@ async def test_interjection_context_only_no_user_message(model) -> None:
     # Inject context-only interjection (empty message)
     await handle.interject(
         "",  # Empty message
-        parent_chat_context_cont=continued_ctx,
+        _parent_chat_context_cont=continued_ctx,
     )
 
     final = await handle.result()

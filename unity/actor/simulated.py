@@ -38,7 +38,7 @@ class _StaticAnswerHandle(SteerableToolHandle):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: object | None = None,
     ) -> Optional[str]:
         return None
@@ -374,7 +374,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: object | None = None,
     ) -> None:
         if not self._description:

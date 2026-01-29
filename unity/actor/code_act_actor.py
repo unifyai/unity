@@ -748,7 +748,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> Optional[str]:
         # No-op for non-LLM entrypoint execution.

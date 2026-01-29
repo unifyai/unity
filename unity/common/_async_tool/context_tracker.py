@@ -25,7 +25,7 @@ class ContextForwardingState:
 
     # Whether the initial parent_chat_context has been sent
     initial_context_sent: bool = False
-    # Index into parent_chat_context_cont_received: items before this have been sent
+    # Index into _parent_chat_context_cont_received: items before this have been sent
     last_cont_idx_forwarded: int = 0
     # Index into local messages: messages before this have been sent as part of context
     last_local_msg_idx_forwarded: int = 0
@@ -46,7 +46,7 @@ class LoopContextState:
 
     # Incremental context updates received from above (via interjections)
     # These are appended as they arrive, never modified once added
-    parent_chat_context_cont_received: list[dict] = field(default_factory=list)
+    _parent_chat_context_cont_received: list[dict] = field(default_factory=list)
 
     # Per-inner-tool-call tracking: call_id -> ContextForwardingState
     # Tracks what has been forwarded to each inner tool instance
@@ -61,7 +61,7 @@ class LoopContextState:
             cont_items: List of new context messages to append.
         """
         if cont_items:
-            self.parent_chat_context_cont_received.extend(cont_items)
+            self._parent_chat_context_cont_received.extend(cont_items)
 
     def get_forwarding_state(self, call_id: str) -> ContextForwardingState:
         """Get or create forwarding state for an inner tool call.
@@ -91,9 +91,9 @@ class LoopContextState:
             current_local_msgs: Current messages in this loop (excluding ctx header).
 
         Returns:
-            Tuple of (parent_chat_context, parent_chat_context_cont):
+            Tuple of (parent_chat_context, _parent_chat_context_cont):
             - parent_chat_context: Full initial context (only on first call) or None
-            - parent_chat_context_cont: Incremental updates since last call, or None
+            - _parent_chat_context_cont: Incremental updates since last call, or None
         """
         state = self.get_forwarding_state(call_id)
 
@@ -122,12 +122,12 @@ class LoopContextState:
                 ]
 
             # Also include any accumulated cont items received so far
-            if self.parent_chat_context_cont_received:
-                result_cont = list(self.parent_chat_context_cont_received)
+            if self._parent_chat_context_cont_received:
+                result_cont = list(self._parent_chat_context_cont_received)
 
             # Mark as sent
             state.initial_context_sent = True
-            state.last_cont_idx_forwarded = len(self.parent_chat_context_cont_received)
+            state.last_cont_idx_forwarded = len(self._parent_chat_context_cont_received)
             state.last_local_msg_idx_forwarded = len(current_local_msgs)
 
         else:
@@ -136,14 +136,14 @@ class LoopContextState:
 
             # New cont items received from above
             if state.last_cont_idx_forwarded < len(
-                self.parent_chat_context_cont_received,
+                self._parent_chat_context_cont_received,
             ):
-                new_cont = self.parent_chat_context_cont_received[
+                new_cont = self._parent_chat_context_cont_received[
                     state.last_cont_idx_forwarded :
                 ]
                 incremental_cont.extend(new_cont)
                 state.last_cont_idx_forwarded = len(
-                    self.parent_chat_context_cont_received,
+                    self._parent_chat_context_cont_received,
                 )
 
             # New local messages since last forward
@@ -185,9 +185,9 @@ class LoopContextState:
                 continue
 
             if state.last_cont_idx_forwarded < len(
-                self.parent_chat_context_cont_received,
+                self._parent_chat_context_cont_received,
             ):
-                pending = self.parent_chat_context_cont_received[
+                pending = self._parent_chat_context_cont_received[
                     state.last_cont_idx_forwarded :
                 ]
                 if pending:
@@ -206,4 +206,4 @@ class LoopContextState:
             call_id: The tool call identifier.
         """
         state = self.get_forwarding_state(call_id)
-        state.last_cont_idx_forwarded = len(self.parent_chat_context_cont_received)
+        state.last_cont_idx_forwarded = len(self._parent_chat_context_cont_received)
