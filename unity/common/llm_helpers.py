@@ -566,8 +566,8 @@ def method_to_schema(
         ):
             continue
         # Determine whether *name* is **hidden** (never exposed to the LLM)
-        # Convention: parameters starting with "_" and having a default are internal plumbing
-        is_hidden = name.startswith("_") and param.default is not inspect._empty
+        # Convention: parameters starting with "_" are internal plumbing
+        is_hidden = name.startswith("_")
 
         if name == "_parent_chat_context":
             accepts_parent_chat_context = True
