@@ -251,7 +251,7 @@ async def _(
         sender_name=sender_name,
         thread_name=medium,
         message_content=event.content,
-        role="Guidance",
+        role="guidance",
     )
 
 

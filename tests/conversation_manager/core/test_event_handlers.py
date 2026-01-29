@@ -863,7 +863,7 @@ class TestVoiceUtteranceHandlers:
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
         assert len(contact.threads[Medium.PHONE_CALL]) == 1
-        # Guidance messages have role="Guidance"
+        # Guidance messages have role="guidance"
 
 
 # =============================================================================
