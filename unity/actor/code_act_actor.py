@@ -2683,7 +2683,7 @@ class CodeActActor(BaseCodeActActor):
     @log_manager_call("CodeActActor", "act", payload_key="description")
     async def act(
         self,
-        description: str,
+        description: str | dict | list[str | dict],
         *,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
@@ -2711,6 +2711,14 @@ class CodeActActor(BaseCodeActActor):
         # can_compose=False mode: do not run an LLM tool loop or allow arbitrary code execution.
         # Instead, semantic-search for a stored function and execute it directly.
         if entrypoint is None and not effective_can_compose:
+            # Validate description is a string for can_compose=False mode
+            # (semantic search and SingleFunctionActorHandle require string input)
+            if not isinstance(description, str):
+                raise TypeError(
+                    "can_compose=False requires description to be a string, "
+                    f"got {type(description).__name__}",
+                )
+
             from unity.actor.single_function_actor import SingleFunctionActorHandle
 
             fm = self.function_manager
