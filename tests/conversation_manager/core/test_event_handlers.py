@@ -55,6 +55,7 @@ from unity.conversation_manager.events import (
     DirectMessageEvent,
     AssistantUpdateEvent,
 )
+from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.types import Medium, Mode
@@ -138,40 +139,24 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.is_summarizing = False
     cm.memory_manager = None
 
-    # Create a mock ContactManager that returns sample contacts
-    contacts_by_id = {c["contact_id"]: c for c in sample_contacts}
-    contacts_by_phone = {
-        c["phone_number"]: c for c in sample_contacts if c.get("phone_number")
-    }
-    contacts_by_email = {
-        c["email_address"]: c for c in sample_contacts if c.get("email_address")
-    }
+    # Create a SimulatedContactManager and populate with sample contacts
+    contact_manager = SimulatedContactManager()
 
-    def mock_get_contact_info(cid):
-        if cid in contacts_by_id:
-            return {cid: contacts_by_id[cid]}
-        return {}
+    # Update system contacts (0 and 1) with sample data
+    for contact_data in sample_contacts:
+        contact_id = contact_data["contact_id"]
+        contact_manager.update_contact(
+            contact_id=contact_id,
+            first_name=contact_data.get("first_name"),
+            surname=contact_data.get("surname"),
+            email_address=contact_data.get("email_address"),
+            phone_number=contact_data.get("phone_number"),
+        )
 
-    def mock_filter_contacts(filter=None, limit=None):
-        if filter and "phone_number" in filter:
-            for phone, contact in contacts_by_phone.items():
-                if phone in filter:
-                    return {"contacts": [contact]}
-        if filter and "email_address" in filter:
-            for email, contact in contacts_by_email.items():
-                if email in filter:
-                    return {"contacts": [contact]}
-        return {"contacts": []}
-
-    mock_contact_manager = MagicMock()
-    mock_contact_manager.get_contact_info = MagicMock(side_effect=mock_get_contact_info)
-    mock_contact_manager.filter_contacts = MagicMock(side_effect=mock_filter_contacts)
-    mock_contact_manager._sync_required_contacts = MagicMock()
-
-    # Set up contact index with mock ContactManager
+    # Set up contact index with SimulatedContactManager
     cm.contact_index = ContactIndex()
-    cm.contact_index.set_contact_manager(mock_contact_manager)
-    cm.contact_manager = mock_contact_manager
+    cm.contact_index.set_contact_manager(contact_manager)
+    cm.contact_manager = contact_manager
 
     # Set up notifications bar
     cm.notifications_bar = NotificationBar()
