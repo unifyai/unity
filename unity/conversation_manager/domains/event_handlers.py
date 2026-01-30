@@ -363,15 +363,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     email_bcc = None
 
     # Get contact info from ContactManager, fallback to event.contact
-    contact = cm.contact_index.get_contact(event.contact["contact_id"])
+    # Note: event.contact may be empty dict for emails to external addresses
+    contact_id = event.contact.get("contact_id") if event.contact else None
+    contact = cm.contact_index.get_contact(contact_id) if contact_id else None
     if contact is None:
-        contact = event.contact
+        contact = event.contact or {}
 
-    contact_id = (
-        contact.get("contact_id")
-        if isinstance(contact, dict)
-        else event.contact["contact_id"]
-    )
+    # contact_id may be None for external recipients not in contacts
+    contact_id = contact.get("contact_id") if isinstance(contact, dict) else None
     sender_name = _get_sender_name(contact)
 
     match event:
@@ -420,21 +419,24 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Unify message from {sender_name}"
             role = "user"
 
-    cm.contact_index.push_message(
-        contact_id=contact_id,
-        sender_name=sender_name,
-        thread_name=medium,
-        message_content=message_content,
-        subject=subject,
-        body=body,
-        email_id=email_id,
-        attachments=attachments,
-        timestamp=event.timestamp,
-        role=role,
-        to=email_to,
-        cc=email_cc,
-        bcc=email_bcc,
-    )
+    # Only push to contact index if we have a known contact
+    # (external email recipients not in contacts are not tracked in conversation index)
+    if contact_id is not None:
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=medium,
+            message_content=message_content,
+            subject=subject,
+            body=body,
+            email_id=email_id,
+            attachments=attachments,
+            timestamp=event.timestamp,
+            role=role,
+            to=email_to,
+            cc=email_cc,
+            bcc=email_bcc,
+        )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
     if role == "user":
