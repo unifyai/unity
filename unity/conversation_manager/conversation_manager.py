@@ -145,6 +145,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = prompt_now(as_string=False)
         self._current_snapshot = None
+        self._current_state_snapshot = (
+            None  # Fresh rendered state for tools during _run_llm
+        )
         self.is_summarizing = None
         self.max_messages = 30
 
@@ -416,6 +419,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         input_message = brain_spec.state_message()
         system_prompt = brain_spec.system_prompt
 
+        # Store current state snapshot for tools to access during execution.
+        # Tools (act, steering) need the fresh rendered state, not the stale chat_history.
+        self._current_state_snapshot = input_message
+
         # Log LLM thinking start
         self._session_logger.log_llm_thinking(f"mode={self.mode}")
 
@@ -476,6 +483,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         self.commit()
         self._session_logger.debug("state_update", "Committing state")
+
+        # Clear the temporary state snapshot now that tools have executed
+        self._current_state_snapshot = None
 
         # Build assistant message for chat history
         assistant_content = (

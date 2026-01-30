@@ -422,11 +422,29 @@ async def queue_operation(async_func: callable, *args, **kwargs) -> None:
     await _operations_queue.put((async_func, args, kwargs))
 
 
-async def wait_for_initialization(cm: "ConversationManager") -> None:
+async def wait_for_initialization(
+    cm: "ConversationManager",
+    timeout: float = 30.0,
+) -> None:
     """
     Wait for initialization to complete.
+
+    Args:
+        cm: The ConversationManager instance to wait for.
+        timeout: Maximum seconds to wait before raising an error. Default 30s.
+
+    Raises:
+        RuntimeError: If initialization does not complete within the timeout.
     """
+    import time
+
+    start = time.monotonic()
     while not cm.initialized:
+        if time.monotonic() - start > timeout:
+            raise RuntimeError(
+                f"ConversationManager initialization did not complete within {timeout}s. "
+                "Check for initialization errors above.",
+            )
         await asyncio.sleep(0.1)
 
 
@@ -687,3 +705,4 @@ async def init_conv_manager(
 
         except Exception as e:
             print(f"[ManagersWorker] Error during initialization: {e}")
+            raise
