@@ -1103,6 +1103,56 @@ class PythonExecutionSession:
 
                 async_code += "".join(f"    {line}\n" for line in code.splitlines())
 
+                # Inject a custom print function that writes directly to our capture
+                # list via ContextVar, bypassing sys.stdout entirely. This is
+                # necessary because pytest's live logging feature can replace
+                # sys.stdout during LOGGER.info() calls, breaking our StreamRouter.
+                _gs_builtins = self.global_state.get("__builtins__", {})
+                if isinstance(_gs_builtins, dict):
+                    _original_print = _gs_builtins.get("print")
+
+                    def _sandbox_print(
+                        *args,
+                        sep=" ",
+                        end="\n",
+                        file=None,
+                        flush=False,
+                    ):
+                        # If file is explicitly specified, use the original print
+                        if file is not None:
+                            if _original_print:
+                                return _original_print(
+                                    *args,
+                                    sep=sep,
+                                    end=end,
+                                    file=file,
+                                    flush=flush,
+                                )
+                            return
+                        # Otherwise, write directly to our capture list via ContextVar
+                        try:
+                            parts = _stdout_parts.get()
+                        except LookupError:
+                            # No capture context - fall back to original print
+                            if _original_print:
+                                return _original_print(
+                                    *args,
+                                    sep=sep,
+                                    end=end,
+                                    flush=flush,
+                                )
+                            return
+                        # Format the output like standard print
+                        output = sep.join(str(arg) for arg in args) + end
+                        # Merge consecutive text writes into a single TextPart
+                        if parts and isinstance(parts[-1], TextPart):
+                            last = parts[-1]
+                            parts[-1] = TextPart(text=last.text + output)
+                        else:
+                            parts.append(TextPart(text=output))
+
+                    self.global_state["__builtins__"]["print"] = _sandbox_print
+
                 exec(async_code, self.global_state)
                 result = await self.global_state["__exec_wrapper"]()
 
