@@ -165,8 +165,20 @@ class Renderer:
                 recipients_lines += f"Cc: {', '.join(message.cc)}\n"
             if message.bcc:
                 recipients_lines += f"Bcc: {', '.join(message.bcc)}\n"
+            # Show contact's role in this email for clarity in contact-specific threads
+            # This helps the LLM understand the contact's relationship to the email
+            contact_role_line = ""
+            if message.contact_role:
+                role_descriptions = {
+                    "sender": "This contact SENT this email",
+                    "to": "This contact was a DIRECT RECIPIENT (To)",
+                    "cc": "This contact was CC'd on this email",
+                    "bcc": "This contact was BCC'd on this email",
+                }
+                contact_role_line = f"[Context: {role_descriptions.get(message.contact_role, message.contact_role)}]\n"
             return (
                 f"{new_marker}[{message.name} @ {timestamp_str}]:\n"
+                f"{contact_role_line}"
                 f"Subject: {message.subject}\n"
                 f"Email ID: {message.email_id}\n"
                 f"{recipients_lines}"

@@ -337,6 +337,93 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         ...
 
 
+def _push_email_to_all_contacts(
+    cm: "ConversationManager",
+    event,
+    sender_contact: dict | None,
+    sender_name: str,
+    subject: str,
+    body: str,
+    email_id: str | None,
+    attachments: list[str] | None,
+    email_to: list[str],
+    email_cc: list[str],
+    email_bcc: list[str],
+    role: str,
+):
+    """
+    Push an email to ALL contacts involved (sender, to, cc, bcc).
+
+    Emails are pushed to every known contact's thread to ensure no context is
+    missing when viewing any contact-specific thread. Each message is tagged
+    with `contact_role` to clarify the contact's relationship to the email.
+
+    Args:
+        cm: ConversationManager instance
+        event: The email event (EmailSent or EmailReceived)
+        sender_contact: The sender's contact dict (may be None for external senders)
+        sender_name: Display name for the email sender
+        subject: Email subject
+        body: Email body
+        email_id: Email ID for threading
+        attachments: List of attachment filenames
+        email_to: List of TO recipient email addresses
+        email_cc: List of CC recipient email addresses
+        email_bcc: List of BCC recipient email addresses
+        role: "user" (received) or "assistant" (sent)
+    """
+    # Track which contact_ids we've already pushed to (avoid duplicates)
+    pushed_contact_ids: set[int] = set()
+
+    def _push_to_contact(contact_id: int, contact_role: str):
+        """Helper to push email to a contact's thread."""
+        if contact_id in pushed_contact_ids:
+            return
+        pushed_contact_ids.add(contact_id)
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.EMAIL,
+            subject=subject,
+            body=body,
+            email_id=email_id,
+            attachments=attachments,
+            timestamp=event.timestamp,
+            role=role,
+            to=email_to,
+            cc=email_cc,
+            bcc=email_bcc,
+            contact_role=contact_role,
+        )
+
+    def _resolve_contact_by_email(email_addr: str) -> dict | None:
+        """Look up contact by email address."""
+        return cm.contact_index.get_contact(email=email_addr)
+
+    # 1. Push to sender's contact (if known)
+    sender_contact_id = sender_contact.get("contact_id") if sender_contact else None
+    if sender_contact_id is not None:
+        _push_to_contact(sender_contact_id, "sender")
+
+    # 2. Push to all TO recipients
+    for email_addr in email_to or []:
+        contact = _resolve_contact_by_email(email_addr)
+        if contact and contact.get("contact_id"):
+            _push_to_contact(contact["contact_id"], "to")
+
+    # 3. Push to all CC recipients
+    for email_addr in email_cc or []:
+        contact = _resolve_contact_by_email(email_addr)
+        if contact and contact.get("contact_id"):
+            _push_to_contact(contact["contact_id"], "cc")
+
+    # 4. Push to all BCC recipients
+    for email_addr in email_bcc or []:
+        contact = _resolve_contact_by_email(email_addr)
+        if contact and contact.get("contact_id"):
+            _push_to_contact(contact["contact_id"], "bcc")
+
+
 @EventHandler.register(
     (
         SMSSent,
@@ -350,17 +437,9 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
-    thread = None
     message_content = None
-    subject = None
-    body = None
-    email_id = None
     attachments = None
     notif_content = None
-    # Email-specific fields for reply-all
-    email_to = None
-    email_cc = None
-    email_bcc = None
 
     # Get contact info from ContactManager, fallback to event.contact
     # Note: event.contact may be empty dict for emails to external addresses
@@ -385,27 +464,55 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"SMS Received from {sender_name}"
             role = "user"
         case EmailSent():
-            medium = Medium.EMAIL
-            subject = event.subject
-            body = event.body
-            email_id = event.email_id_replied_to
-            attachments = event.attachments
-            email_to = event.to
-            email_cc = event.cc
-            email_bcc = event.bcc
-            notif_content = f"Email sent to {sender_name}"
-            role = "assistant"
+            # Email handling is special: push to ALL contacts involved
+            email_to = event.to or []
+            email_cc = event.cc or []
+            email_bcc = event.bcc or []
+            # For sent emails, the assistant is the sender
+            _push_email_to_all_contacts(
+                cm=cm,
+                event=event,
+                sender_contact=None,  # Assistant is sender, not a contact
+                sender_name="You",
+                subject=event.subject,
+                body=event.body,
+                email_id=event.email_id_replied_to,
+                attachments=event.attachments,
+                email_to=email_to,
+                email_cc=email_cc,
+                email_bcc=email_bcc,
+                role="assistant",
+            )
+            notif_content = f"Email sent to {', '.join(email_to[:2])}{'...' if len(email_to) > 2 else ''}"
+            cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
+            await cm.request_llm_run(delay=2)
+            return  # Early return - email handling is complete
+
         case EmailReceived():
-            medium = Medium.EMAIL
-            subject = event.subject
-            body = event.body
-            email_id = event.email_id
-            attachments = event.attachments
-            email_to = event.to
-            email_cc = event.cc
-            email_bcc = event.bcc
+            # Email handling is special: push to ALL contacts involved
+            email_to = event.to or []
+            email_cc = event.cc or []
+            email_bcc = event.bcc or []
+            _push_email_to_all_contacts(
+                cm=cm,
+                event=event,
+                sender_contact=contact,  # The contact who sent the email
+                sender_name=sender_name,
+                subject=event.subject,
+                body=event.body,
+                email_id=event.email_id,
+                attachments=event.attachments,
+                email_to=email_to,
+                email_cc=email_cc,
+                email_bcc=email_bcc,
+                role="user",
+            )
             notif_content = f"Email Received from {sender_name}"
-            role = "user"
+            cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
+            await cm.cancel_proactive_speech()
+            await cm.request_llm_run(delay=2)
+            return  # Early return - email handling is complete
+
         case UnifyMessageSent():
             medium = Medium.UNIFY_MESSAGE
             message_content = event.content
@@ -419,23 +526,16 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Unify message from {sender_name}"
             role = "user"
 
-    # Only push to contact index if we have a known contact
-    # (external email recipients not in contacts are not tracked in conversation index)
+    # Non-email messages: push to single contact only
     if contact_id is not None:
         cm.contact_index.push_message(
             contact_id=contact_id,
             sender_name=sender_name,
             thread_name=medium,
             message_content=message_content,
-            subject=subject,
-            body=body,
-            email_id=email_id,
             attachments=attachments,
             timestamp=event.timestamp,
             role=role,
-            to=email_to,
-            cc=email_cc,
-            bcc=email_bcc,
         )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 

@@ -52,6 +52,11 @@ class EmailMessage(CommsMessage):
     to: list[str] = field(default_factory=list)
     cc: list[str] = field(default_factory=list)
     bcc: list[str] = field(default_factory=list)
+    # Contact's role in this email: "sender", "to", "cc", or "bcc"
+    # Used to clarify the contact's relationship to the email when rendered
+    # in their contact-specific thread (emails appear in threads for ALL
+    # contacts involved, not just the primary contact)
+    contact_role: str | None = None
 
 
 @dataclass
@@ -253,6 +258,7 @@ class ContactIndex:
         to: list[str] | None = None,
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        contact_role: str | None = None,
     ):
         """
         Push a message to a contact's conversation thread.
@@ -271,6 +277,7 @@ class ContactIndex:
             to: List of recipient email addresses (for email).
             cc: List of CC email addresses (for email).
             bcc: List of BCC email addresses (for email).
+            contact_role: Contact's role in this email ("sender", "to", "cc", "bcc").
         """
         if not timestamp:
             timestamp = prompt_now(as_string=False)
@@ -300,6 +307,7 @@ class ContactIndex:
                 to=to or [],
                 cc=cc or [],
                 bcc=bcc or [],
+                contact_role=contact_role,
             )
         elif thread_name == Medium.UNIFY_MESSAGE:
             message = UnifyMessage(
