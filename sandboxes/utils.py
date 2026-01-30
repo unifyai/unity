@@ -2745,6 +2745,118 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     by EventBus) belong to that project.  Call this immediately after handling
     CLI arguments and before any manager instances are constructed.
     """
+
+    def _maybe_autostart_local_orchestra() -> None:
+        """Best-effort local Orchestra autostart for sandbox runs.
+
+        Sandboxes call `unify.activate()` during startup, which requires a reachable
+        Unify API backend. In tests, `tests/parallel_run.sh` auto-starts local
+        Orchestra when `UNIFY_BASE_URL` targets localhost. Sandbox entrypoints are
+        typically run directly, so we replicate that behavior here (sandbox-only).
+
+        This helper is intentionally:
+        - **best effort**: failures are logged and ignored (the subsequent call
+          will fail with a clearer HTTP error if a backend is still unavailable).
+        - **opt-in by URL**: only triggers when `UNIFY_BASE_URL` explicitly points
+          at localhost/127.0.0.1.
+        """
+        import re
+        import subprocess
+        from pathlib import Path
+        from urllib.parse import urlparse
+
+        lg = logging.getLogger(__name__)
+
+        base_url = os.environ.get("UNIFY_BASE_URL")
+        if not base_url:
+            # Respect the user's environment: only autostart when explicitly configured
+            # to use localhost (mirrors the user request).
+            return
+
+        try:
+            parsed = urlparse(base_url)
+            host = parsed.hostname or ""
+        except Exception:
+            host = ""
+
+        if host not in {"localhost", "127.0.0.1"} and "localhost" not in base_url:
+            return
+
+        # Resolve orchestra repo path (default: sibling repo ../orchestra).
+        # Repo root is .../unity/ (parent of sandboxes/).
+        repo_root = Path(__file__).resolve().parents[1]
+        orchestra_repo = Path(
+            os.environ.get("ORCHESTRA_REPO_PATH", str(repo_root.parent / "orchestra")),
+        )
+        local_sh = orchestra_repo / "scripts" / "local.sh"
+
+        if not local_sh.exists():
+            lg.warning(
+                "UNIFY_BASE_URL targets localhost (%s) but local orchestra script not found at %s. "
+                "Set ORCHESTRA_REPO_PATH to your orchestra repo.",
+                base_url,
+                local_sh,
+            )
+            return
+        if not os.access(local_sh, os.X_OK):
+            lg.warning(
+                "Local orchestra script exists but is not executable: %s",
+                local_sh,
+            )
+            return
+
+        def _extract_url(text: str) -> str | None:
+            # `local.sh check` usually prints the base URL; be resilient to extra logging.
+            m = re.findall(r"https?://\\S+", text or "")
+            return m[-1].rstrip("/") if m else None
+
+        def _run(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [str(local_sh), *args],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        # First, see if it's already running.
+        check = _run("check")
+        if check.returncode == 0:
+            url = _extract_url((check.stdout or "") + "\n" + (check.stderr or ""))
+            if url:
+                # Ensure Unify client points at the discovered local URL (port may differ).
+                os.environ["UNIFY_BASE_URL"] = url
+                lg.info("Using local orchestra: %s", url)
+            return
+
+        lg.info(
+            "UNIFY_BASE_URL targets localhost (%s); attempting to start local orchestra...",
+            base_url,
+        )
+        start = _run("start")
+        if start.returncode != 0:
+            lg.warning(
+                "Failed to start local orchestra (exit=%s). stdout=%s stderr=%s",
+                start.returncode,
+                (start.stdout or "").strip(),
+                (start.stderr or "").strip(),
+            )
+            return
+
+        check2 = _run("check")
+        if check2.returncode != 0:
+            lg.warning(
+                "Local orchestra start completed, but 'check' still fails (exit=%s). stdout=%s stderr=%s",
+                check2.returncode,
+                (check2.stdout or "").strip(),
+                (check2.stderr or "").strip(),
+            )
+            return
+
+        url2 = _extract_url((check2.stdout or "") + "\n" + (check2.stderr or ""))
+        if url2:
+            os.environ["UNIFY_BASE_URL"] = url2
+            lg.info("Using local orchestra: %s", url2)
+
     import unity
     from unity.events.event_bus import EVENT_BUS
 
@@ -2753,6 +2865,8 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
         os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
     except Exception:
         pass
+
+    _maybe_autostart_local_orchestra()
 
     unity.init(
         project_name,
