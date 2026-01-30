@@ -75,8 +75,24 @@ class ValidationResult:
     failed_component: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class StateSnapshot:
+    """Rollback handle for sandbox config switching."""
+
+    project_name: str
+    commit_hash: str
+    created_at: float
+
+
 class ConfigurationManager:
-    """Load/save/validate sandbox configuration."""
+    """
+    Load/save/validate sandbox configuration and snapshot/restore state.
+
+    Notes
+    -----
+    - Snapshot/restore uses Unify project commits as the durable rollback surface.
+    - This module does not depend on any UI; callers decide how to render prompts.
+    """
 
     def __init__(
         self,
@@ -167,6 +183,31 @@ class ConfigurationManager:
                 )
 
         return ValidationResult(ok=True)
+
+    def snapshot_state(self) -> StateSnapshot:
+        """Create a project snapshot (commit) for rollback during config switching."""
+        created_at = time.time()
+        commit = unify.commit_project(
+            self._project_name,
+            commit_message=(
+                "ConversationManager sandbox auto-snapshot "
+                f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(created_at))}"
+            ),
+        )
+        commit_hash = str(commit.get("commit_hash") or "")
+        if not commit_hash:
+            raise RuntimeError("commit_project returned no commit_hash")
+        return StateSnapshot(
+            project_name=self._project_name,
+            commit_hash=commit_hash,
+            created_at=created_at,
+        )
+
+    def restore_snapshot(self, snapshot: StateSnapshot) -> None:
+        """Rollback the project to a prior snapshot (commit hash)."""
+        if snapshot.project_name != self._project_name:
+            raise ValueError("snapshot project_name does not match current project")
+        unify.rollback_project(self._project_name, snapshot.commit_hash)
 
     def _validate_agent_service(self, agent_server_url: str) -> bool:
         # Avoid introducing a hard dependency on `requests`; prefer httpx if available.
