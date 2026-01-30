@@ -25,6 +25,13 @@ from sandboxes.conversation_manager.event_publisher import EventPublisher
 from sandboxes.conversation_manager.io_gate import gated_input
 from sandboxes.conversation_manager.scenario_generator import ScenarioGenerator
 from sandboxes.conversation_manager.steering import SteeringController, is_active
+from sandboxes.conversation_manager.config_manager import (
+    ConfigurationManager,
+    ActorConfig,
+)
+from sandboxes.conversation_manager.trace_display import TraceDisplay
+from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
+from sandboxes.conversation_manager.log_aggregator import LogAggregator
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -53,6 +60,10 @@ class CommandRouter:
     chat_history: list[dict]
     allow_voice: bool = True
     allow_save_project: bool = True
+    config_manager: ConfigurationManager | None = None
+    trace_display: TraceDisplay | None = None
+    event_tree_display: EventTreeDisplay | None = None
+    log_aggregator: LogAggregator | None = None
 
     async def execute_raw(
         self,
@@ -98,9 +109,25 @@ class CommandRouter:
         if cmd.kind == "help":
             return RouterResult(lines=["\n" + HELP_TEXT + "\n"])
         if cmd.kind == "quit":
-            return RouterResult(lines=["Exiting…"], should_exit=True)
+            return RouterResult(lines=["Exiting..."], should_exit=True)
         if cmd.kind == "reset":
             await self._reset_best_effort()
+            # Reset display state.
+            try:
+                if self.trace_display is not None:
+                    self.trace_display.reset_history()
+            except Exception:
+                pass
+            try:
+                if self.event_tree_display is not None:
+                    self.event_tree_display.reset_tree()
+            except Exception:
+                pass
+            try:
+                if self.log_aggregator is not None:
+                    self.log_aggregator.reset_expansion()
+            except Exception:
+                pass
             return RouterResult(lines=["✅ Reset complete."])
         if cmd.kind == "save_project":
             if not self.allow_save_project:
@@ -116,6 +143,20 @@ class CommandRouter:
             except Exception as exc:
                 LG.error("save_project failed: %s", exc, exc_info=True)
                 return RouterResult(lines=[f"❌ Failed to save project: {exc}"])
+
+        # Configuration
+        if cmd.kind == "config":
+            return await self._handle_config_switch(prompt_text=prompt_text)
+
+        # Display
+        if cmd.kind == "trace":
+            return await self._handle_trace_display(cmd.args)
+        if cmd.kind == "tree":
+            return await self._handle_tree_display()
+        if cmd.kind == "show_logs":
+            return await self._handle_log_expansion(cmd.args, expand=True)
+        if cmd.kind == "collapse_logs":
+            return await self._handle_log_expansion(cmd.args, expand=False)
 
         # Scenario seeding
         if cmd.kind in {"scenario_seed", "scenario_seed_voice"}:
@@ -138,6 +179,158 @@ class CommandRouter:
             return RouterResult(lines=[out] if out else [])
 
         return RouterResult(lines=[f"⚠️ Unhandled command kind: {cmd.kind}"])
+
+    async def _handle_trace_display(self, args: str) -> RouterResult:
+        td = self.trace_display
+        cfg = getattr(self.args, "_actor_config", None)
+        if td is None:
+            return RouterResult(lines=["⚠️ Trace display is not initialized."])
+        if getattr(cfg, "actor_type", "simulated") == "simulated":
+            return RouterResult(
+                lines=[
+                    "⚠️ Trace display only available for CodeActActor configurations.",
+                ],
+            )
+        n = 3
+        try:
+            if (args or "").strip():
+                n = int((args or "").strip())
+        except Exception:
+            n = 3
+        return RouterResult(lines=[td.render_recent(n)])
+
+    async def _handle_tree_display(self) -> RouterResult:
+        tree = self.event_tree_display
+        if tree is None:
+            return RouterResult(lines=["⚠️ Event tree display is not initialized."])
+        return RouterResult(lines=[tree.render_tree()])
+
+    async def _handle_log_expansion(self, args: str, *, expand: bool) -> RouterResult:
+        lg = self.log_aggregator
+        if lg is None:
+            return RouterResult(lines=["⚠️ Log aggregator is not initialized."])
+
+        raw = (args or "").strip().lower()
+        cats = []
+        if raw in {"cm", "actor", "manager"}:
+            cats = [raw]
+        elif raw == "all":
+            cats = ["cm", "actor", "manager"]
+        else:
+            return RouterResult(
+                lines=[
+                    "⚠️ Usage: show_logs <cm|actor|manager|all>  or  collapse_logs <cm|actor|manager|all>",
+                ],
+            )
+
+        if expand:
+            for c in cats:
+                lg.expand(c)  # type: ignore[arg-type]
+            blocks = []
+            for c in cats:
+                blocks.append(lg.render_expanded(c))  # type: ignore[arg-type]
+            return RouterResult(lines=[("\n\n".join(blocks)).rstrip()])
+
+        for c in cats:
+            lg.collapse(c)  # type: ignore[arg-type]
+        return RouterResult(lines=[lg.render_summary()])
+
+    async def _handle_config_switch(
+        self,
+        *,
+        prompt_text: Optional[PromptFn],
+    ) -> RouterResult:
+        if prompt_text is None:
+            return RouterResult(
+                lines=["⚠️ Config switching is only available in REPL mode."],
+            )
+        cfg_mgr = self.config_manager
+        if cfg_mgr is None:
+            return RouterResult(lines=["⚠️ Configuration manager is not initialized."])
+
+        warn = "\n".join(
+            [
+                "⚠️  Switching configuration will:",
+                "- Restart ConversationManager",
+                "- Clear all conversation state (threads, notifications, in-flight actions)",
+                "- Auto-snapshot the project before switching (rollback is possible)",
+                "",
+            ],
+        )
+        ans = (await prompt_text(warn + "Continue? (y/N): ")).strip().lower()
+        if ans not in {"y", "yes"}:
+            return RouterResult(lines=["(cancelled)"])
+
+        # Snapshot first (best-effort, can take a moment).
+        try:
+            snap = await asyncio.to_thread(cfg_mgr.snapshot_state)
+            setattr(self.args, "_last_config_snapshot", snap)
+        except Exception as exc:
+            return RouterResult(lines=[f"❌ Failed to snapshot project: {exc}"])
+
+        # Prompt for config choice (reuse same menu as startup, but inline).
+        last_used = cfg_mgr.load_config()
+
+        def _prompt_choice() -> ActorConfig:
+            print("Select Actor Configuration:")
+            print(
+                "1. SandboxSimulatedActor (simulated managers, no computer interface)",
+            )
+            print("2. CodeActActor + Simulated Managers (mock computer backend)")
+            print("3. CodeActActor + Real Managers + Real Computer Interface")
+            raw = input("Enter choice (1-3) or press Enter for last used: ").strip()
+            if not raw:
+                return last_used
+            m = {"1": "simulated", "2": "codeact_simulated", "3": "codeact_real"}
+            if raw in m:
+                return ActorConfig(actor_type=m[raw])  # type: ignore[arg-type]
+            return last_used
+
+        new_cfg = await asyncio.to_thread(_prompt_choice)
+
+        # Validate with retry/switch/exit (switch returns to prompt).
+        while True:
+            vr = await asyncio.to_thread(
+                cfg_mgr.validate_config,
+                new_cfg,
+                agent_server_url=getattr(
+                    self.args,
+                    "agent_server_url",
+                    "http://localhost:3000",
+                ),
+            )
+            if vr.ok:
+                break
+            msg = "\n".join(
+                [
+                    "❌ Configuration Error",
+                    "",
+                    f"Failed to initialize: {vr.failed_component or 'Unknown'}",
+                    f"Reason: {vr.error or 'Unknown'}",
+                    "",
+                    "Options:",
+                    "1. Retry (after fixing infrastructure)",
+                    "2. Switch to different configuration",
+                    "3. Exit sandbox",
+                    "",
+                ],
+            )
+            choice = (await prompt_text(msg + "Enter choice (1-3): ")).strip()
+            if choice == "1":
+                continue
+            if choice == "2":
+                new_cfg = await asyncio.to_thread(_prompt_choice)
+                continue
+            return RouterResult(lines=["Exiting..."], should_exit=True)
+
+        cfg_mgr.save_config(new_cfg)
+        # Signal to outer sandbox loop that a restart is requested.
+        setattr(self.args, "_restart_requested", True)
+        setattr(self.args, "_restart_actor_config", new_cfg)
+        return RouterResult(
+            lines=["🔄 Restarting sandbox with selected configuration..."],
+            should_exit=True,
+        )
 
     async def _reset_best_effort(self) -> None:
         st = self.state
@@ -216,7 +409,9 @@ class CommandRouter:
             if not getattr(st, "in_call", False):
                 return RouterResult(lines=["⚠️ No active call. Use `call` first."])
             if not self.allow_voice:
-                return RouterResult(lines=["⚠️ Voice input is available in REPL mode."])
+                return RouterResult(
+                    lines=["⚠️ Voice input is not enabled in this mode."],
+                )
             if not getattr(self.args, "voice", False):
                 return RouterResult(
                     lines=["⚠️ Restart with `--voice` to enable recording."],
@@ -226,17 +421,32 @@ class CommandRouter:
             text = (cmd.args or "").strip()
             if not text:
                 try:
-                    from sandboxes.utils import record_until_enter, transcribe_deepgram
+                    from sandboxes.utils import (
+                        record_for_seconds,
+                        record_until_enter,
+                        transcribe_deepgram,
+                        transcribe_deepgram_no_input,
+                    )
                 except Exception as exc:
                     return RouterResult(lines=[f"⚠️ Voice mode unavailable ({exc})."])
                 try:
-                    audio = record_until_enter()
-                    text = (transcribe_deepgram(audio) or "").strip()
+                    # GUI callers pass prompt_text=None; avoid stdin-driven recording there.
+                    if bool(getattr(self.args, "gui", False)):
+                        audio = await asyncio.to_thread(record_for_seconds, 6.0)
+                        text = (
+                            await asyncio.to_thread(transcribe_deepgram_no_input, audio)
+                            or ""
+                        ).strip()
+                    else:
+                        audio = await asyncio.to_thread(record_until_enter)
+                        text = (
+                            await asyncio.to_thread(transcribe_deepgram, audio) or ""
+                        ).strip()
                 except Exception as exc:
                     return RouterResult(lines=[f"❌ Voice transcription failed: {exc}"])
                 if not text:
                     return RouterResult(
-                        lines=["⚠️ Transcription was empty – please try again."],
+                        lines=["⚠️ Transcription was empty. Please try again."],
                     )
 
             await self.publisher.publish_phone_utterance(text)
