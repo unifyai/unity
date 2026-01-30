@@ -3,7 +3,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
-from unity.actor.code_act_actor import CodeActActor
+from unity.actor.code_act_actor import CodeActActor, parts_to_text
 
 
 @pytest.mark.asyncio
@@ -26,9 +26,14 @@ async def test_execute_code_can_run_without_bound_sandbox():
         session_id=0,
         venv_id=None,
     )
-    assert isinstance(out, dict)
-    assert out.get("error") is None
-    assert "x" in str(out.get("stdout") or "")
+    # execute_code returns a dict for non-rich outputs, and an ExecutionResult
+    # (FormattedToolResult) for in-process Python rich outputs.
+    err = out.get("error") if isinstance(out, dict) else getattr(out, "error", None)
+    stdout = out.get("stdout") if isinstance(out, dict) else getattr(out, "stdout", "")
+    stdout_text = parts_to_text(stdout) if isinstance(stdout, list) else str(stdout or "")
+
+    assert err is None
+    assert "x" in stdout_text
 
     await actor.close()
 
