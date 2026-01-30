@@ -1108,6 +1108,15 @@ class SimulatedContactManager(BaseContactManager):
             "details": {"contact_id": contact_id},
         }
 
+    def _sync_required_contacts(self) -> None:
+        """Ensure system contacts (assistant=0, user=1) exist.
+
+        For SimulatedContactManager, this is a no-op since system contacts
+        are pre-populated in __init__. This method exists for API compatibility
+        with the real ContactManager.
+        """
+        # System contacts are already pre-populated in __init__, nothing to do
+
     def _merge_contacts(
         self,
         *,
