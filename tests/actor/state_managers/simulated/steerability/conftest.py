@@ -199,7 +199,7 @@ def create_primitives_with_clarification_forcing() -> Callable[..., Primitives]:
 def create_actor_with_primitives():
     """Async factory to create a `HierarchicalActor` wired to a given `Primitives`.
 
-    This keeps test setup consistent, applies browser mocks immediately, and ensures
+    This keeps test setup consistent, applies computer mocks immediately, and ensures
     the actor is always closed.
     """
 
@@ -218,7 +218,7 @@ def create_actor_with_primitives():
             computer_mode="mock",
             connect_now=False,
         )
-        # Mock specific browser primitives for test control.
+        # Mock specific computer primitives for test control.
         cp = getattr(actor, "computer_primitives", None)
         if cp is not None:
             cp.navigate = AsyncMock(return_value=None)

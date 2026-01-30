@@ -1,6 +1,6 @@
 """Pluggable execution environments for Actors.
 
-Environments expose domain-specific tool providers (e.g. browser control,
+Environments expose domain-specific tool providers (e.g. computer/web control,
 state managers) in a consistent way so an Actor can inject multiple namespaces
 into its execution sandbox.
 

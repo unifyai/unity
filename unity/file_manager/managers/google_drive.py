@@ -63,7 +63,7 @@ class GoogleDriveFileManager(FileManager, metaclass=SingletonABCMeta):
         2. Enable the Google Drive API
         3. Create OAuth 2.0 credentials (Desktop app)
         4. Download credentials.json
-        5. On first run, authenticate via browser to generate token.json
+        5. On first run, authenticate via web login to generate token.json
         """
         adapter = GoogleDriveAdapter(
             credentials=credentials,

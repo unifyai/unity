@@ -87,7 +87,7 @@ clone_repo() {
 clone_repo "unify"
 clone_repo "unillm"
 
-# Clone magnitude for browser automation (optional - only needed for agent-service)
+# Clone magnitude for web automation (optional - only needed for agent-service)
 # This is a Node.js dependency, not Python, so it's cloned but not installed via uv
 if [[ "${CLONE_MAGNITUDE:-false}" == "true" ]]; then
     clone_repo "magnitude"

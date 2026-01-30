@@ -575,7 +575,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
         system_message = f"""
         You are an AI assistant in the middle of performing a task. The user has just asked a question.
-        Based on the provided context (the task history and a screenshot of your browser), give a brief, natural, first-person response.
+        Based on the provided context (the task history and a screenshot of your current computer view), give a brief, natural, first-person response.
         Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
         **Task History:**
         The task's history up to this point has been shared with you.
@@ -598,8 +598,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
 
                 system_message += (
-                    "\n**Current Browser View (Screenshot):**\n"
-                    "An image of the current browser page has also been provided."
+                    "\n**Current Computer View (Screenshot):**\n"
+                    "An image of the current computer view has also been provided."
                 )
                 messages_to_send.append(
                     {

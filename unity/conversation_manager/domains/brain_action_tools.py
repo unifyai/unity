@@ -702,7 +702,7 @@ class ConversationManagerBrainActionTools:
 
         - **Retrieval**: Search contact records, query knowledge bases, look up past
           conversations, find calendar events, search the web, retrieve files
-        - **Action**: Update records, modify spreadsheets, control the desktop/browser,
+        - **Action**: Update records, modify spreadsheets, control the desktop/web interface,
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
 

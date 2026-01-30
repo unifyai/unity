@@ -354,7 +354,7 @@ async def wait_for_tool_call(handle: Any, tool_name: str, timeout: int = 60) -> 
 
 
 async def _mock_observe(*args: Any, **kwargs: Any) -> Any:
-    """Return a reasonable observation for browser plans without invoking real backends."""
+    """Return a reasonable observation for computer plans without invoking real backends."""
     import inspect
     from typing import get_origin, get_args
 
@@ -495,7 +495,7 @@ async def make_hierarchical_actor(
     can_store: bool = False,
 ) -> AsyncIterator[HierarchicalActor]:
     """
-    Create a HierarchicalActor with immediate browser mocks, for use inside tests.
+    Create a HierarchicalActor with immediate computer mocks, for use inside tests.
 
     NOTE: IMPL selection ("real" vs "simulated") is controlled by the autouse fixtures
     in `tests/actor/state_managers/conftest.py`, keyed off test path.
@@ -509,7 +509,7 @@ async def make_hierarchical_actor(
         can_store=can_store,
     )
 
-    # Mock specific browser primitives for test control.
+    # Mock specific computer primitives for test control.
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="acted")
     actor.computer_primitives.observe = AsyncMock(side_effect=_mock_observe)

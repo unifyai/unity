@@ -228,13 +228,13 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
         raising=True,
     )
 
-    # ── Build a HierarchicalActor and mock browser immediately ────────────────
+    # ── Build a HierarchicalActor and mock computer immediately ────────────────
     actor = HierarchicalActor(
         headless=True,
         computer_mode="mock",
         connect_now=False,
     )
-    # Mock specific browser primitives for test control.
+    # Mock specific computer primitives for test control.
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
     actor.computer_primitives.observe = AsyncMock(return_value="Mock observation.")

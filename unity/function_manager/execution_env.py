@@ -162,7 +162,7 @@ def create_execution_globals() -> Dict[str, Any]:
 
     All primitive imports and instantiations are lazy - only the primitives
     actually used by a function are loaded. This means functions that don't
-    need computer use won't import browser/desktop infrastructure.
+    need computer use won't import web/desktop infrastructure.
 
     Returns:
         A dictionary of globals for function execution, including `primitives`.

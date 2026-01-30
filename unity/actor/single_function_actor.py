@@ -273,7 +273,7 @@ class SingleFunctionActor(BaseActor):
         function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
         computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
     ):
         """
@@ -286,7 +286,7 @@ class SingleFunctionActor(BaseActor):
                             uses the singleton.
             headless: Whether to run in headless mode.
             computer_mode: Computer backend mode ("magnitude" or "mock").
-            agent_mode: Agent mode for ComputerPrimitives ("browser" or "desktop").
+            agent_mode: Agent mode for ComputerPrimitives ("web" or "desktop").
             agent_server_url: URL for the agent server. For desktop mode, pass the
                 external VM's URL.
         """

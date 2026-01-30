@@ -4773,7 +4773,7 @@ class FunctionManager(BaseFunctionManager):
             venv_pool: VenvPool for stateful/read_only modes with Python venv functions.
             shell_pool: ShellPool for stateful/read_only modes with shell functions.
             primitives: Primitives instance for RPC access to state managers.
-            computer_primitives: ComputerPrimitives instance for browser/desktop RPC.
+            computer_primitives: ComputerPrimitives instance for web/desktop RPC.
 
         Returns:
             Dict with keys: result, error, stdout, stderr

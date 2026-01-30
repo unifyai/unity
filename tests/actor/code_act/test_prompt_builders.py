@@ -5,7 +5,7 @@ These tests are intentionally "high-signal string assertions" rather than
 snapshot tests. They verify that:
 - The prompt exposes the correct primary tools (`execute_code` + session tools)
   using introspected signatures/docstrings (not hardcoded copies).
-- The prompt contains diverse examples: sessions, browser, primitives, mixed.
+- The prompt contains diverse examples: sessions, computer, primitives, mixed.
 - The prompt contains no legacy `execute_python_code` references.
 """
 
@@ -90,7 +90,7 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
 
 
 @pytest.mark.timeout(30)
-def test_code_act_prompt_includes_diverse_examples_sessions_browser_primitives_and_mixed():
+def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_and_mixed():
     actor = CodeActActor(headless=True, computer_mode="mock")
     try:
         prompt = build_code_act_prompt(
@@ -106,8 +106,8 @@ def test_code_act_prompt_includes_diverse_examples_sessions_browser_primitives_a
     assert '"language": "python"' in prompt
     assert '"name": "list_sessions"' in prompt or "list_sessions" in prompt
 
-    # Browser guidance (legacy CodeAct browser rules/examples block)
-    assert "Browser State Feedback" in prompt
+    # Computer guidance (legacy CodeAct computer rules/examples block)
+    assert "Computer State Feedback" in prompt
     assert (
         "Within your code execution, you have access to a global `computer_primitives` object"
         in prompt
