@@ -31,6 +31,36 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+def with_infer_untyped_fields(
+    rows: List[Dict[str, Any]],
+    enabled: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Conditionally add infer_untyped_fields=True to each row dict.
+
+    Used for both content and table rows to instruct the backend to infer
+    types for untyped fields during insertion. When disabled, returns the
+    rows unchanged.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        Rows to augment.
+    enabled : bool
+        Whether to add the flag. When False, returns rows unchanged.
+        Defaults to True for backwards compatibility.
+
+    Returns
+    -------
+    list[dict]
+        Rows with infer_untyped_fields=True added to each (if enabled),
+        or the original rows unchanged (if disabled).
+    """
+    if not enabled:
+        return rows
+    return [{**row, "infer_untyped_fields": True} for row in rows]
+
+
 def ingest_content_batch(
     *,
     data_manager: "DataManager",
@@ -38,6 +68,7 @@ def ingest_content_batch(
     rows: List[FileContentRow],
     file_id: int,
     add_to_all_context: bool = False,
+    infer_untyped_fields: bool = False,
 ) -> List[int]:
     """
     Ingest a batch of content rows into a context via DataManager.
@@ -54,6 +85,9 @@ def ingest_content_batch(
         The file ID to associate with these rows.
     add_to_all_context : bool
         Whether to add to multi-assistant aggregation contexts.
+    infer_untyped_fields : bool
+        Whether to add infer_untyped_fields=True to each row, instructing
+        the backend to infer types for untyped fields.
 
     Returns
     -------
@@ -69,11 +103,14 @@ def ingest_content_batch(
         r.model_dump(mode="json", exclude_none=True) for r in file_content_rows
     ]
 
-    # Batch insert via DataManager
+    # Batch insert via DataManager (conditionally with infer_untyped_fields flag)
     try:
         return data_manager.insert_rows(
             context=context,
-            rows=file_content_entries,
+            rows=with_infer_untyped_fields(
+                file_content_entries,
+                enabled=infer_untyped_fields,
+            ),
             add_to_all_context=add_to_all_context,
         )
     except Exception as e:

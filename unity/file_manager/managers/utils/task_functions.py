@@ -367,6 +367,7 @@ def execute_ingest_content_chunk(
         rows=chunk_records,
         file_id=file_id,
         add_to_all_context=file_manager.include_in_multi_assistant_table,
+        infer_untyped_fields=config.ingest.infer_untyped_fields,
     )
 
     logger.debug(
@@ -572,7 +573,11 @@ def execute_ingest_table_chunk(
     """
     from .storage import ensure_file_table_context as _storage_ensure_file_table_context
     from .ops import batch_insert_file_table_rows as _batch_insert_file_table_rows
-    from .ingest_ops import get_file_id_from_path, get_storage_id_from_path
+    from .ingest_ops import (
+        get_file_id_from_path,
+        get_storage_id_from_path,
+        with_infer_untyped_fields,
+    )
 
     dm = file_manager._data_manager
     logger.debug(
@@ -628,7 +633,10 @@ def execute_ingest_table_chunk(
         file_manager,
         storage_id=storage_id,
         table=table_label,
-        rows=chunk_rows,
+        rows=with_infer_untyped_fields(
+            chunk_rows,
+            enabled=config.ingest.infer_untyped_fields,
+        ),
     )
 
     logger.debug(
