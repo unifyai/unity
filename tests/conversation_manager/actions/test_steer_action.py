@@ -166,7 +166,7 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
     # Efficiency: Step 2 is a question that could trigger act to check time/timezone
     # Step 3 uses async ask_* which may take extra turns (interim ack + result relay)
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 5, "Step 2: unrelated question (may trigger act)")
+    assert_efficient(result2, 3, "Step 2: unrelated question (may trigger act)")
     assert_efficient(result3, 5, "Step 3: ask progress (async)")
 
 
@@ -286,7 +286,7 @@ async def test_stop_task_change_of_mind(initialized_cm):
 
     # Efficiency: Step 2 mentions a task ("buy groceries") - LLM may offer to help
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 5, "Step 2: mentions task (may offer to help)")
+    assert_efficient(result2, 3, "Step 2: mentions task (may offer to help)")
     assert_efficient(result3, 3, "Step 3: cancel request")
 
 
@@ -348,7 +348,7 @@ async def test_pause_task_for_meeting(initialized_cm):
 
     # Efficiency: Step 2 implies time constraint - LLM may interject deadline, expedite, etc.
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 5, "Step 2: time constraint (may adapt task)")
+    assert_efficient(result2, 3, "Step 2: time constraint (may adapt task)")
     assert_efficient(result3, 3, "Step 3: pause request")
 
 
@@ -586,7 +586,7 @@ async def test_interject_additional_constraint(initialized_cm):
 
     # Efficiency: Step 2 mentions "team event" which could be context for the contact search
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 5, "Step 2: context (may interject to task)")
+    assert_efficient(result2, 3, "Step 2: context (may interject to task)")
     assert_efficient(result3, 3, "Step 3: interject constraint")
 
 
