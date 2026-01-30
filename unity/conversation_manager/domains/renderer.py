@@ -23,6 +23,37 @@ from unity.conversation_manager.task_actions import (
     build_action_name,
     safe_call_id_suffix,
 )
+from unity.session_details import SESSION_DETAILS
+
+
+def _get_assistant_email_role(message: EmailMessage) -> str | None:
+    """
+    Determine the assistant's role in an email (To, Cc, Bcc, or sender).
+
+    Returns a human-readable description of the assistant's role, or None
+    if the assistant's email is not found in any field.
+    """
+    assistant_email = SESSION_DETAILS.assistant.email
+    if not assistant_email:
+        return None
+
+    # Normalize for comparison (lowercase)
+    assistant_email_lower = assistant_email.lower()
+
+    # Check if assistant sent this email
+    if message.role == "assistant":
+        return "You sent this email"
+
+    # Check recipient fields for incoming emails
+    if any(email.lower() == assistant_email_lower for email in (message.to or [])):
+        return "You were a direct recipient (To)"
+    if any(email.lower() == assistant_email_lower for email in (message.cc or [])):
+        return "You were CC'd"
+    if any(email.lower() == assistant_email_lower for email in (message.bcc or [])):
+        return "You were BCC'd"
+
+    # Assistant not found in any field (possible for forwarded emails, etc.)
+    return None
 
 
 class Renderer:
@@ -176,9 +207,18 @@ class Renderer:
                     "bcc": "This contact was BCC'd on this email",
                 }
                 contact_role_line = f"[Context: {role_descriptions.get(message.contact_role, message.contact_role)}]\n"
+
+            # Show assistant's role in this email (To, Cc, Bcc, or sender)
+            # This helps the LLM understand its own relationship to the email
+            assistant_role_line = ""
+            assistant_role = _get_assistant_email_role(message)
+            if assistant_role:
+                assistant_role_line = f"[Your role: {assistant_role}]\n"
+
             return (
                 f"{new_marker}[{message.name} @ {timestamp_str}]:\n"
                 f"{contact_role_line}"
+                f"{assistant_role_line}"
                 f"Subject: {message.subject}\n"
                 f"Email ID: {message.email_id}\n"
                 f"{recipients_lines}"
