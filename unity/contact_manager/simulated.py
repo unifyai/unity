@@ -474,12 +474,27 @@ class SimulatedContactManager(BaseContactManager):
     """
     Drop-in replacement for ContactManager with imaginary data and
     stateful LLM memory.
+
+    Maintains an internal contact store for deterministic state tracking.
+    All programmatic methods (`get_contact_info`, `filter_contacts`, `_create_contact`,
+    etc.) operate on the internal store deterministically.
+
+    The `ask` and `update` methods use LLM for natural language responses:
+    - In **deterministic mode** (default): LLM sees the actual store contents,
+      producing responses grounded in real data.
+    - In **freeform mode**: LLM uses the description to imagine contacts,
+      with no awareness of the internal store (original behavior).
     """
+
+    # System contact IDs (cannot be deleted)
+    ASSISTANT_CONTACT_ID = 0
+    USER_CONTACT_ID = 1
 
     def __init__(
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
+        deterministic: bool = True,
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
@@ -487,8 +502,39 @@ class SimulatedContactManager(BaseContactManager):
         **kwargs: Any,
     ) -> None:
         self._description = description
+        self._deterministic = deterministic
         self._log_events = log_events
         self._simulation_guidance = simulation_guidance
+        self._rolling_summary_in_prompts = rolling_summary_in_prompts
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Internal contact store for deterministic state tracking
+        # ─────────────────────────────────────────────────────────────────────
+        # Pre-populate system contacts (assistant=0, user=1)
+        self._contacts: Dict[int, Dict[str, Any]] = {
+            self.ASSISTANT_CONTACT_ID: {
+                "contact_id": self.ASSISTANT_CONTACT_ID,
+                "first_name": "Default",
+                "surname": "Assistant",
+                "email_address": "assistant@example.com",
+                "phone_number": "+15555550000",
+                "bio": "The AI assistant",
+                "should_respond": True,
+                "is_system": True,
+            },
+            self.USER_CONTACT_ID: {
+                "contact_id": self.USER_CONTACT_ID,
+                "first_name": "Default",
+                "surname": "User",
+                "email_address": "user@example.com",
+                "phone_number": "+15555550001",
+                "bio": "The primary user/boss",
+                "should_respond": True,
+                "is_system": True,
+            },
+        }
+        # Counter for assigning new contact_ids (starts at 2, 0 and 1 are system)
+        self._next_contact_id: int = 2
 
         # Shared, *stateful* **asynchronous** LLM
         from ..common.llm_client import (
@@ -500,7 +546,6 @@ class SimulatedContactManager(BaseContactManager):
         # and build the *exact* same prompts via the shared builders.
         ask_tools = mirror_contact_manager_tools("ask")
         upd_tools = mirror_contact_manager_tools("update")
-        self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         ask_msg = build_ask_prompt(
             ask_tools,
@@ -515,16 +560,57 @@ class SimulatedContactManager(BaseContactManager):
             include_activity=self._rolling_summary_in_prompts,
         )
 
-        self._llm.set_system_message(
-            "You are a *simulated* contact-manager assistant. "
-            "There is no real database; invent plausible contact records and "
-            "keep your story consistent across turns.\n\n"
-            "As a reference, the system messages for the *real* contact-manager 'ask' and 'update' methods are as follows."
-            "You do not have access to any real tools, so you should just create a final answer to the question/request . "
-            f"\n\n'ask' system message:\n{ask_msg}\n\n"
-            f"\n\n'update' system message:\n{upd_msg}\n\n"
-            f"Back-story: {self._description}",
-        )
+        # Set system message based on mode
+        if self._deterministic:
+            # Deterministic mode: LLM will see actual store contents in each query
+            self._llm.set_system_message(
+                "You are a contact-manager assistant with access to a real contact store. "
+                "When answering questions or processing updates, base your responses on the "
+                "actual contact data provided in each query. Do not invent contacts.\n\n"
+                "As a reference, the system messages for the *real* contact-manager 'ask' and 'update' methods are as follows.\n"
+                "You do not have access to any real tools, so you should just create a final answer to the question/request.\n\n"
+                f"'ask' system message:\n{ask_msg}\n\n"
+                f"'update' system message:\n{upd_msg}\n\n",
+            )
+        else:
+            # Freeform mode: LLM imagines contacts based on description
+            self._llm.set_system_message(
+                "You are a *simulated* contact-manager assistant. "
+                "There is no real database; invent plausible contact records and "
+                "keep your story consistent across turns.\n\n"
+                "As a reference, the system messages for the *real* contact-manager 'ask' and 'update' methods are as follows."
+                "You do not have access to any real tools, so you should just create a final answer to the question/request.\n\n"
+                f"'ask' system message:\n{ask_msg}\n\n"
+                f"'update' system message:\n{upd_msg}\n\n"
+                f"Back-story: {self._description}",
+            )
+
+    def _get_store_summary(self) -> str:
+        """Generate a summary of the current contact store for LLM context."""
+        if not self._contacts:
+            return "The contact store is currently empty."
+
+        lines = [f"Current contact store ({len(self._contacts)} contacts):"]
+        for cid, contact in sorted(self._contacts.items()):
+            name_parts = []
+            if contact.get("first_name"):
+                name_parts.append(contact["first_name"])
+            if contact.get("surname"):
+                name_parts.append(contact["surname"])
+            name = " ".join(name_parts) or "(unnamed)"
+
+            details = []
+            if contact.get("email_address"):
+                details.append(f"email: {contact['email_address']}")
+            if contact.get("phone_number"):
+                details.append(f"phone: {contact['phone_number']}")
+            if contact.get("is_system"):
+                details.append("(system)")
+
+            detail_str = f" [{', '.join(details)}]" if details else ""
+            lines.append(f"  - contact_id={cid}: {name}{detail_str}")
+
+        return "\n".join(lines)
 
     def reduce(
         self,
@@ -567,6 +653,58 @@ class SimulatedContactManager(BaseContactManager):
         return {g: {k: _scalar(k) for k in key_list} for g in groups}
 
     # --------------------------------------------------------------------- #
+    # get_contact_info - deterministic lookup from internal store           #
+    # --------------------------------------------------------------------- #
+    def get_contact_info(
+        self,
+        contact_id: int | List[int],
+        fields: Optional[str | List[str]] = None,
+        search_local_storage: bool = True,  # ignored, kept for API compat
+    ) -> Dict[int, Dict[str, Any]]:
+        """
+        Return a mapping of requested fields for one or many contacts.
+
+        This method queries the internal contact store deterministically.
+        Unlike the LLM-backed methods, this returns actual stored state.
+
+        Parameters
+        ----------
+        contact_id : int | list[int]
+            Single contact ID or list of contact IDs to retrieve.
+        fields : str | list[str] | None
+            Specific fields to include. If None or "all", returns all fields.
+        search_local_storage : bool
+            Ignored (kept for API compatibility with ContactManager).
+
+        Returns
+        -------
+        dict[int, dict]
+            Mapping of contact_id → field→value. Missing IDs are omitted.
+        """
+        # Normalise to list
+        ids = [contact_id] if isinstance(contact_id, int) else list(contact_id)
+
+        # Normalise fields
+        if fields is None or (isinstance(fields, str) and fields.lower() == "all"):
+            requested_fields: Optional[List[str]] = None  # all fields
+        elif isinstance(fields, str):
+            requested_fields = [fields]
+        else:
+            requested_fields = list(fields)
+
+        result: Dict[int, Dict[str, Any]] = {}
+        for cid in ids:
+            contact = self._contacts.get(cid)
+            if contact is not None:
+                if requested_fields is None:
+                    result[cid] = dict(contact)
+                else:
+                    result[cid] = {
+                        k: v for k, v in contact.items() if k in requested_fields
+                    }
+        return result
+
+    # --------------------------------------------------------------------- #
     # ask                                                                   #
     # --------------------------------------------------------------------- #
     @functools.wraps(BaseContactManager.ask, updated=())
@@ -586,11 +724,20 @@ class SimulatedContactManager(BaseContactManager):
         should_log = self._log_events or log_events
         call_id = None
 
-        instruction = build_simulated_method_prompt(
-            "ask",
-            text,
-            parent_chat_context=_parent_chat_context,
-        )
+        # Build instruction with store data in deterministic mode
+        if self._deterministic:
+            store_summary = self._get_store_summary()
+            instruction = (
+                f"{store_summary}\n\n"
+                f"User question: {text}\n\n"
+                "Please answer the question based on the contact data above."
+            )
+        else:
+            instruction = build_simulated_method_prompt(
+                "ask",
+                text,
+                parent_chat_context=_parent_chat_context,
+            )
         handle = _SimulatedContactHandle(
             self._llm,
             instruction,
@@ -630,6 +777,15 @@ class SimulatedContactManager(BaseContactManager):
         images: object | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
+        # In deterministic mode, update() would be misleading - the LLM would
+        # describe changes but the store wouldn't actually be modified.
+        # Use update_contact() or _create_contact() instead.
+        if self._deterministic:
+            raise RuntimeError(
+                "SimulatedContactManager.update() is not available in deterministic mode. "
+                "Use update_contact() or _create_contact() to modify the contact store directly.",
+            )
+
         should_log = self._log_events or log_events
         call_id = None
 
@@ -666,96 +822,83 @@ class SimulatedContactManager(BaseContactManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Contact]:
+    ) -> Dict[str, Any]:
         """
-        Simulated variant of :pyfunc:`ContactManager.filter_contacts`.
+        Filter contacts from the internal store using a Python boolean expression.
 
-        The same stateful LLM used by the public methods generates a JSON
-        payload that strictly conforms to ``_ContactsListResponse`` via
-        ``response_format`` enforcement, ensuring scenario consistency.
+        This method searches the internal contact store deterministically.
+        Unlike the original LLM-backed implementation, this evaluates the
+        filter expression against actual stored contacts.
+
+        Parameters
+        ----------
+        filter : str | None
+            A Python boolean expression evaluated per contact. Column names
+            are available in scope. Examples:
+            - ``"first_name == 'John'"``
+            - ``"email_address.endswith('@company.com')"``
+            - ``"contact_id > 5"``
+            When None or "True", returns all contacts.
+        offset : int
+            Zero-based index of the first result.
+        limit : int
+            Maximum number of records to return.
+
+        Returns
+        -------
+        dict
+            ``{"contacts": [Contact, ...]}`` matching the filter.
         """
-
         sched = maybe_tool_log_scheduled(
             "SimulatedContactManager.filter_contacts",
             "filter_contacts",
             {"filter": filter, "offset": offset, "limit": limit},
         )
 
-        schema_json = json.dumps(Contact.model_json_schema(), indent=2)
-        filter_clause = (
-            f"Filter expression: `{filter}`."
-            if filter
-            else "No filter (return any plausible contacts)."
-        )
+        # Collect matching contacts
+        matching: List[Contact] = []
+        for contact_dict in self._contacts.values():
+            # If no filter or filter is "True", include all
+            if filter is None or filter.strip().lower() == "true":
+                # Convert dict to Contact - validation should always succeed
+                # since we control the data we store
+                matching.append(Contact.model_validate(contact_dict))
+            else:
+                # Evaluate the filter expression with contact fields in scope
+                try:
+                    # Create a safe evaluation context with contact fields
+                    eval_context = dict(contact_dict)
+                    # Handle None values gracefully in string operations
+                    for key, val in eval_context.items():
+                        if val is None:
+                            eval_context[key] = ""
+                    if eval(filter, {"__builtins__": {}}, eval_context):
+                        matching.append(Contact.model_validate(contact_dict))
+                except Exception:
+                    # If eval fails (e.g., filter references non-existent field),
+                    # skip this contact
+                    pass
 
-        prompt = (
-            "You are simulating the private helper `filter_contacts` of a CRM. "
-            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
-            f"{filter_clause} Offset: {offset}. Limit: {limit}.\n\n"
-            "Respond ONLY with a JSON object that conforms to the provided response schema.\n\n"
-            f"Contact JSON schema (for each item in `contacts`):\n{schema_json}"
-        )
+        # Sort by contact_id for deterministic ordering
+        matching.sort(key=lambda c: c.contact_id)
 
-        # Use unified simulated roundtrip so standard logs ("LLM simulating…") are emitted
-        try:
-            sys_msg = getattr(self._llm, "system_message", None)
-        except Exception:
-            sys_msg = None
-        # Prefer the scheduled label when available so logs correlate
-        label = (
-            sched[0]
-            if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
-            else SimulatedLineage.make_label("SimulatedContactManager.filter_contacts")
-        )
+        # Apply offset and limit
+        result = matching[offset : offset + limit] if limit else matching[offset:]
 
-        async def _call_llm() -> str:
-            self._llm.set_response_format(_ContactsListResponse)
-            return await simulated_llm_roundtrip(
-                self._llm,
-                label=label,
-                prompt=prompt,
-            )
-
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                raise RuntimeError(
-                    "SimulatedContactManager.filter_contacts cannot be invoked from within an active event loop.",
-                )
-            raw = asyncio.run(_call_llm())
-        finally:
-            # Best-effort reset; ignore if unsupported on the client
-            try:
-                self._llm.reset_response_format()
-            except Exception:
-                pass
-
-        # Validate using the Pydantic model (enforced shape)
-        model = _ContactsListResponse.model_validate_json(raw)
-        # _ContactRecord is a subclass of Contact, so callers can treat these
-        # as Contact instances. Apply slicing locally as a safety net.
-        contacts = (
-            model.contacts[offset : offset + limit]
-            if limit is not None
-            else model.contacts[offset:]
-        )
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(
                 label,
                 cid,
                 "filter_contacts",
-                {"count": len(contacts), "offset": offset, "limit": limit},
+                {"count": len(result), "offset": offset, "limit": limit},
                 t0,
             )
-        return contacts
+
+        return {"contacts": result}
 
     # ------------------------------------------------------------------ #
-    #  Simulated _create_contact                                         #
+    #  Simulated _create_contact - deterministic with internal store     #
     # ------------------------------------------------------------------ #
     def _create_contact(
         self,
@@ -765,84 +908,58 @@ class SimulatedContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         bio: Optional[str] = None,
+        timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         should_respond: bool = True,
         response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> "ToolOutcome":
         """
-        Simulated variant of :pyfunc:`ContactManager._create_contact` with strict
-        structured output enforced via ``response_format``. The shared stateful
-        LLM generates a JSON payload that we validate against ``_CreateOutcome``.
-        """
+        Create a new contact in the internal store with a deterministic contact_id.
 
-        # Only include fields that are actually being provided
-        payload_fields: Dict[str, Any] = {
-            k: v
-            for k, v in {
-                "first_name": first_name,
-                "surname": surname,
-                "email_address": email_address,
-                "phone_number": phone_number,
-                "bio": bio,
-                "rolling_summary": rolling_summary,
-                "should_respond": should_respond,
-                "response_policy": response_policy,
-                **(custom_fields or {}),
-            }.items()
-            if v is not None and v != {}
+        This method does NOT use the LLM - it directly creates the contact
+        in the internal store and returns immediately. The contact_id is
+        assigned using a simple incrementing counter.
+
+        Parameters match the real ContactManager._create_contact for compatibility.
+        """
+        # Assign a new contact_id using the counter
+        contact_id = self._next_contact_id
+        self._next_contact_id += 1
+
+        # Build the contact dict
+        contact: Dict[str, Any] = {
+            "contact_id": contact_id,
+            "first_name": first_name,
+            "surname": surname,
+            "email_address": email_address,
+            "phone_number": phone_number,
+            "bio": bio,
+            "timezone": timezone,
+            "rolling_summary": rolling_summary,
+            "should_respond": should_respond,
+            "response_policy": response_policy,
         }
 
-        # Always include should_respond explicitly (boolean) for clarity
-        if "should_respond" not in payload_fields:
-            payload_fields["should_respond"] = should_respond
+        # Add any custom fields
+        if custom_fields:
+            contact.update(custom_fields)
 
-        instruction = (
-            "You are simulating the private helper `_create_contact` of a CRM. "
-            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
-            "Create a new contact using the provided fields. "
-            "Respond ONLY with a JSON object that conforms to the provided response schema."
-        )
+        # Add any extra kwargs
+        if kwargs:
+            contact.update(kwargs)
 
-        user_payload = json.dumps({"contact": payload_fields}, indent=2)
+        # Store in internal contacts dict
+        self._contacts[contact_id] = contact
 
-        async def _call_llm() -> str:
-            self._llm.set_response_format(_CreateOutcome)
-            try:
-                sys_msg = getattr(self._llm, "system_message", None)
-            except Exception:
-                sys_msg = None
-            label = SimulatedLineage.make_label(
-                "SimulatedContactManager._create_contact",
-            )
-            return await simulated_llm_roundtrip(
-                self._llm,
-                label=label,
-                prompt=f"{instruction}\n\n{user_payload}",
-            )
-
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                raise RuntimeError(
-                    "SimulatedContactManager._create_contact cannot be invoked from within an active event loop.",
-                )
-            raw = asyncio.run(_call_llm())
-        finally:
-            try:
-                self._llm.reset_response_format()
-            except Exception:
-                pass
-
-        model = _CreateOutcome.model_validate_json(raw)
-        return model.model_dump()
+        return {
+            "outcome": "contact created",
+            "details": {"contact_id": contact_id},
+        }
 
     # ------------------------------------------------------------------ #
-    #  Simulated update_contact                                          #
+    #  Simulated update_contact - deterministic with internal store      #
     # ------------------------------------------------------------------ #
     def update_contact(
         self,
@@ -854,15 +971,22 @@ class SimulatedContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         description: Optional[str] = None,
         bio: Optional[str] = None,
+        timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
+        should_respond: Optional[bool] = None,
+        response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> "ToolOutcome":
         """
-        Simulated variant of :pyfunc:`ContactManager.update_contact` with strict
-        structured output enforced via ``response_format``. The shared stateful
-        LLM generates a JSON payload that we validate against ``_UpdateOutcome``.
-        """
+        Update one or more fields of an existing contact in the internal store.
 
+        This method does NOT use the LLM - it directly updates the contact
+        in the internal store and returns immediately. If the contact doesn't
+        exist, it will be created with the given contact_id.
+
+        Parameters match the real ContactManager.update_contact for compatibility.
+        """
         sched = maybe_tool_log_scheduled(
             "SimulatedContactManager.update_contact",
             "update_contact",
@@ -878,8 +1002,12 @@ class SimulatedContactManager(BaseContactManager):
                             "phone_number": phone_number,
                             "description": description,
                             "bio": bio,
+                            "timezone": timezone,
                             "rolling_summary": rolling_summary,
+                            "should_respond": should_respond,
+                            "response_policy": response_policy,
                             **(custom_fields or {}),
+                            **kwargs,
                         }.items()
                         if v is not None
                     ],
@@ -887,7 +1015,17 @@ class SimulatedContactManager(BaseContactManager):
             },
         )
 
-        # Only include fields that are actually being modified
+        # Get existing contact or create new one
+        if contact_id not in self._contacts:
+            # Create a new contact entry for this ID
+            self._contacts[contact_id] = {"contact_id": contact_id}
+            # Update counter if needed to avoid future collisions
+            if contact_id >= self._next_contact_id:
+                self._next_contact_id = contact_id + 1
+
+        contact = self._contacts[contact_id]
+
+        # Apply updates (only non-None values)
         updates = {
             k: v
             for k, v in {
@@ -897,72 +1035,31 @@ class SimulatedContactManager(BaseContactManager):
                 "phone_number": phone_number,
                 "description": description,
                 "bio": bio,
+                "timezone": timezone,
                 "rolling_summary": rolling_summary,
+                "should_respond": should_respond,
+                "response_policy": response_policy,
                 **(custom_fields or {}),
+                **kwargs,
             }.items()
             if v is not None
         }
 
-        if not updates:
-            updates = {"note": "no-op update requested – acknowledge anyway"}
+        contact.update(updates)
 
-        instruction = (
-            "You are simulating the private helper `update_contact` of a CRM. "
-            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
-            f"Update the contact with id {contact_id} using the following fields (treat them as the diff to apply).\n"
-            "Respond ONLY with a JSON object that conforms to the provided response schema."
-        )
+        out = {
+            "outcome": "contact updated",
+            "details": {"contact_id": contact_id},
+        }
 
-        user_payload = json.dumps(
-            {"contact_id": contact_id, "updates": updates},
-            indent=2,
-        )
-
-        # Use unified simulated roundtrip so standard logs ("LLM simulating…") are emitted
-        try:
-            sys_msg = getattr(self._llm, "system_message", None)
-        except Exception:
-            sys_msg = None
-        label = (
-            sched[0]
-            if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
-            else SimulatedLineage.make_label("SimulatedContactManager.update_contact")
-        )
-
-        async def _call_llm() -> str:
-            self._llm.set_response_format(_UpdateOutcome)
-            return await simulated_llm_roundtrip(
-                self._llm,
-                label=label,
-                prompt=f"{instruction}\n\n{user_payload}",
-            )
-
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                raise RuntimeError(
-                    "SimulatedContactManager.update_contact cannot be invoked from within an active event loop.",
-                )
-            raw = asyncio.run(_call_llm())
-        finally:
-            try:
-                self._llm.reset_response_format()
-            except Exception:
-                pass
-
-        model = _UpdateOutcome.model_validate_json(raw)
-        out = model.model_dump()
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(label, cid, "update_contact", out, t0)
+
         return out
 
     # ------------------------------------------------------------------ #
-    #  Simulated _delete_contact                                          #
+    #  Simulated _delete_contact - deterministic with internal store     #
     # ------------------------------------------------------------------ #
     def _delete_contact(
         self,
@@ -970,51 +1067,46 @@ class SimulatedContactManager(BaseContactManager):
         contact_id: int,
     ) -> "ToolOutcome":
         """
-        Simulate deletion through the shared stateful LLM and enforce a structured
-        confirmation via ``response_format``.
+        Delete a contact from the internal store.
+
+        This method does NOT use the LLM - it directly removes the contact
+        from the internal store and returns immediately.
+
+        Parameters
+        ----------
+        contact_id : int
+            The identifier of the contact to remove. Must not be a system contact.
+
+        Returns
+        -------
+        ToolOutcome
+            ``{"outcome": "contact deleted", "details": {"contact_id": <int>}}``.
+
+        Raises
+        ------
+        RuntimeError
+            If attempting to delete system contacts (0=assistant, 1=user).
+        ValueError
+            If the contact does not exist.
         """
-
-        instruction = (
-            "You are simulating the private helper `_delete_contact` of a CRM. "
-            "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
-            f"Delete the contact with id {contact_id}. "
-            "Respond ONLY with a JSON object that conforms to the provided response schema."
-        )
-
-        async def _call_llm() -> str:
-            self._llm.set_response_format(_DeleteOutcome)
-            try:
-                sys_msg = getattr(self._llm, "system_message", None)
-            except Exception:
-                sys_msg = None
-            label = SimulatedLineage.make_label(
-                "SimulatedContactManager._delete_contact",
-            )
-            return await simulated_llm_roundtrip(
-                self._llm,
-                label=label,
-                prompt=instruction,
+        # Reject deletion of system contacts
+        if contact_id in (self.ASSISTANT_CONTACT_ID, self.USER_CONTACT_ID):
+            raise RuntimeError(
+                f"Cannot delete system contact (contact_id={contact_id}). "
+                f"System contacts (0=assistant, 1=user) are protected.",
             )
 
-        try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
+        # Check if contact exists
+        if contact_id not in self._contacts:
+            raise ValueError(f"Contact with id {contact_id} does not exist.")
 
-            if loop and loop.is_running():
-                raise RuntimeError(
-                    "SimulatedContactManager._delete_contact cannot be invoked from within an active event loop.",
-                )
-            raw = asyncio.run(_call_llm())
-        finally:
-            try:
-                self._llm.reset_response_format()
-            except Exception:
-                pass
+        # Remove from internal store
+        del self._contacts[contact_id]
 
-        model = _DeleteOutcome.model_validate_json(raw)
-        return model.model_dump()
+        return {
+            "outcome": "contact deleted",
+            "details": {"contact_id": contact_id},
+        }
 
     def _merge_contacts(
         self,
