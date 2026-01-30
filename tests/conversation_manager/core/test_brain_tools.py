@@ -535,10 +535,26 @@ class TestSendEmailTool:
     """Tests for send_email tool."""
 
     @pytest.mark.asyncio
-    async def test_requires_contact_id_or_details(self, brain_action_tools):
-        """Raises error if neither contact_id nor contact_details provided."""
-        with pytest.raises(ValueError, match="Either contact_id or details"):
-            await brain_action_tools.send_email(subject="Test", body="Body")
+    async def test_requires_at_least_one_recipient(self, brain_action_tools):
+        """Returns error if no recipients provided."""
+        result = await brain_action_tools.send_email(subject="Test", body="Body")
+        assert result["status"] == "error"
+        assert "at least one recipient" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_reply_all_mutually_exclusive_with_recipients(
+        self,
+        brain_action_tools,
+    ):
+        """Returns error if reply_all=True and to/cc/bcc are also provided."""
+        result = await brain_action_tools.send_email(
+            to=[1],
+            reply_all=True,
+            subject="Test",
+            body="Body",
+        )
+        assert result["status"] == "error"
+        assert "mutually exclusive" in result["error"].lower()
 
     def test_has_docstring(self, brain_action_tools):
         """Send email tool has descriptive docstring."""
@@ -550,33 +566,62 @@ class TestSendEmailTool:
         doc = brain_action_tools.send_email.__doc__
         assert "attachment" in doc.lower()
 
+    def test_docstring_mentions_recipients(self, brain_action_tools):
+        """Send email docstring mentions to/cc/bcc parameters."""
+        doc = brain_action_tools.send_email.__doc__
+        assert "to" in doc.lower()
+        assert "cc" in doc.lower()
+        assert "bcc" in doc.lower()
+
     @pytest.mark.asyncio
-    async def test_returns_error_for_contact_without_email(
+    async def test_resolves_contact_id_to_email(
         self,
         brain_action_tools,
         mock_cm,
+        sample_contacts,
     ):
-        """Returns error when contact has no email address."""
-        # Set up contact without email address
-        contact_without_email = {
-            "contact_id": 4,
-            "first_name": "NoEmail",
-            "surname": "Person",
-            "phone_number": "+15555554444",
-            "should_respond": True,
-            # No email_address field
-        }
-        _setup_mock_contacts(mock_cm.contact_index, [contact_without_email])
+        """Resolves contact_id in to list to email address."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
-        result = await brain_action_tools.send_email(
-            contact_id=4,
-            subject="Test",
-            body="Hello",
-        )
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
-        assert result["status"] == "error"
-        assert "does not have" in result["error"]
-        assert "email" in result["error"].lower()
+            result = await brain_action_tools.send_email(
+                to=[1],  # contact_id
+                subject="Test",
+                body="Hello",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            # Should resolve contact_id 1 to alice@example.com
+            assert mock_send.call_args.kwargs["to"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_accepts_email_address_directly(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Accepts email address strings directly in to list."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                to=["external@example.com"],
+                subject="Test",
+                body="Hello",
+            )
+
+            assert result["status"] == "ok"
+            assert mock_send.call_args.kwargs["to"] == ["external@example.com"]
 
     @pytest.mark.asyncio
     async def test_returns_error_for_file_not_found(
@@ -589,7 +634,7 @@ class TestSendEmailTool:
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         result = await brain_action_tools.send_email(
-            contact_id=1,
+            to=[1],
             subject="Test",
             body="Hello",
             attachment_filepath="/nonexistent/file.pdf",
@@ -615,7 +660,7 @@ class TestSendEmailTool:
         large_file.write_bytes(b"x" * (26 * 1024 * 1024))
 
         result = await brain_action_tools.send_email(
-            contact_id=1,
+            to=[1],
             subject="Test",
             body="Hello",
             attachment_filepath=str(large_file),
@@ -647,7 +692,7 @@ class TestSendEmailTool:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
             result = await brain_action_tools.send_email(
-                contact_id=1,
+                to=[1],
                 subject="Quarterly Report",
                 body="Please find the report attached.",
                 attachment_filepath=str(test_file),
@@ -1281,8 +1326,10 @@ class TestToolDocstrings:
         assert "contact_details" in doc.lower() or "details" in doc.lower()
 
     def test_send_email_docstring_mentions_parameters(self, brain_action_tools):
-        """send_email docstring mentions subject and body."""
+        """send_email docstring mentions recipients, subject and body."""
         doc = brain_action_tools.send_email.__doc__
+        assert "to" in doc.lower()
+        assert "cc" in doc.lower()
         assert "subject" in doc.lower()
         assert "body" in doc.lower()
 

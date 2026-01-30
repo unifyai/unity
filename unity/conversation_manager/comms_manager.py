@@ -407,6 +407,14 @@ class CommsManager:
                         for att in attachments
                     ]
 
+                    # Extract to/cc/bcc - normalize to lists
+                    def _normalize_recipients(val):
+                        if not val:
+                            return []
+                        if isinstance(val, str):
+                            return [val] if val else []
+                        return list(val)
+
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
@@ -415,6 +423,9 @@ class CommsManager:
                             contact=contact,
                             email_id=event["email_id"],
                             attachments=attachment_filenames,
+                            to=_normalize_recipients(event.get("to")),
+                            cc=_normalize_recipients(event.get("cc")),
+                            bcc=_normalize_recipients(event.get("bcc")),
                         ).to_json(),
                     )
 

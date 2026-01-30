@@ -48,6 +48,10 @@ class EmailMessage(CommsMessage):
     timestamp: datetime
     role: str  # "user" or "assistant"
     attachments: list[str] = field(default_factory=list)
+    # Recipients (for reply-all functionality)
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -246,6 +250,9 @@ class ContactIndex:
         attachments: list[str] | None = None,
         timestamp: datetime | None = None,
         role: str = "user",
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
     ):
         """
         Push a message to a contact's conversation thread.
@@ -261,6 +268,9 @@ class ContactIndex:
             attachments: List of attachment filenames.
             timestamp: Message timestamp (defaults to now).
             role: "user" or "assistant".
+            to: List of recipient email addresses (for email).
+            cc: List of CC email addresses (for email).
+            bcc: List of BCC email addresses (for email).
         """
         if not timestamp:
             timestamp = prompt_now(as_string=False)
@@ -287,6 +297,9 @@ class ContactIndex:
                 timestamp=timestamp,
                 role=role,
                 attachments=attachments or [],
+                to=to or [],
+                cc=cc or [],
+                bcc=bcc or [],
             )
         elif thread_name == Medium.UNIFY_MESSAGE:
             message = UnifyMessage(
