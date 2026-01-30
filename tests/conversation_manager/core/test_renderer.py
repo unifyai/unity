@@ -12,7 +12,11 @@ from unittest.mock import patch
 
 import pytest
 
-from unity.conversation_manager.domains.contact_index import EmailMessage
+from unity.conversation_manager.domains.contact_index import (
+    EmailMessage,
+    Message,
+    UnifyMessage,
+)
 from unity.conversation_manager.domains.renderer import (
     Renderer,
     _get_assistant_email_role,
@@ -298,3 +302,131 @@ class TestRendererEmailAssistantRole:
             assert "[Your role:" not in result
             # But should still contain contact role line
             assert "[Context: This contact SENT this email]" in result
+
+
+# =============================================================================
+# Tests for SMS/Simple Message Rendering
+# =============================================================================
+
+
+class TestRendererSimpleMessage:
+    """Tests for simple Message rendering (SMS, phone call utterances)."""
+
+    def test_render_incoming_sms_shows_contact_name(self, renderer):
+        """Incoming SMS shows contact's name."""
+        message = Message(
+            name="Alice Smith",
+            content="Hey, can you call me back?",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "[Alice Smith @" in result
+        assert "Hey, can you call me back?" in result
+        assert "**NEW**" in result  # Message is newer than last_snapshot
+
+    def test_render_outgoing_sms_shows_you(self, renderer):
+        """Outgoing SMS shows 'You' as the sender."""
+        message = Message(
+            name="You",
+            content="Sure, I'll call you in 5 minutes.",
+            timestamp=datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc),
+            role="assistant",
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "[You @" in result
+        assert "Sure, I'll call you in 5 minutes." in result
+
+    def test_render_old_message_no_new_marker(self, renderer):
+        """Messages older than last_snapshot don't have **NEW** marker."""
+        message = Message(
+            name="Alice Smith",
+            content="Old message",
+            timestamp=datetime(2025, 6, 13, 10, 0, 0, tzinfo=timezone.utc),
+            role="user",
+        )
+        # last_snapshot is AFTER the message timestamp
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "**NEW**" not in result
+        assert "[Alice Smith @" in result
+
+
+# =============================================================================
+# Tests for UnifyMessage Rendering
+# =============================================================================
+
+
+class TestRendererUnifyMessage:
+    """Tests for UnifyMessage rendering (Unify console chat)."""
+
+    def test_render_incoming_unify_message_shows_contact_name(self, renderer):
+        """Incoming UnifyMessage shows contact's name."""
+        message = UnifyMessage(
+            name="Boss",
+            content="Please send the report to Alice.",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+            attachments=[],
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "[Boss @" in result
+        assert "Please send the report to Alice." in result
+        assert "**NEW**" in result
+
+    def test_render_outgoing_unify_message_shows_you(self, renderer):
+        """Outgoing UnifyMessage shows 'You' as the sender."""
+        message = UnifyMessage(
+            name="You",
+            content="Done, I've sent the report.",
+            timestamp=datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc),
+            role="assistant",
+            attachments=[],
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "[You @" in result
+        assert "Done, I've sent the report." in result
+
+    def test_render_incoming_unify_message_with_attachments(self, renderer):
+        """Incoming UnifyMessage attachments show as auto-downloaded."""
+        message = UnifyMessage(
+            name="Boss",
+            content="Here's the document.",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+            attachments=["report.pdf", "data.xlsx"],
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "Here's the document." in result
+        assert "[Attachments:" in result
+        assert "report.pdf (auto-downloaded to Downloads/report.pdf)" in result
+        assert "data.xlsx (auto-downloaded to Downloads/data.xlsx)" in result
+
+    def test_render_outgoing_unify_message_with_attachments(self, renderer):
+        """Outgoing UnifyMessage attachments show as 'attached'."""
+        message = UnifyMessage(
+            name="You",
+            content="Here's the analysis.",
+            timestamp=datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc),
+            role="assistant",
+            attachments=["analysis.pdf"],
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "Here's the analysis." in result
+        assert "[Attachments:" in result
+        assert "analysis.pdf (attached)" in result
+        # Should NOT say "auto-downloaded"
+        assert "auto-downloaded" not in result
