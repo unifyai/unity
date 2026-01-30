@@ -378,32 +378,41 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:email_sent", event.to_json())
             return {"status": "error", "error": error_msg}
 
-        # --- Helper: resolve a contact_id or email to an email address ---
-        def _resolve_to_email(recipient: int | str) -> str | None:
-            if isinstance(recipient, str):
-                return recipient
-            # It's a contact_id - look up the email
-            contact = self._cm.contact_index.get_contact(recipient)
-            if contact:
-                return contact.get("email_address")
-            return None
+        # --- Helper: resolve a recipient to a contact dict ---
+        async def _resolve_recipient(recipient: int | str) -> dict | None:
+            """Resolve a contact_id or email to a contact dict, creating if needed."""
+            if isinstance(recipient, int):
+                # It's a contact_id - look up the contact
+                return self._cm.contact_index.get_contact(recipient)
+            else:
+                # It's an email address - get or create contact
+                return await _get_or_create_contact(
+                    self._cm,
+                    details=ContactDetailsEmail(email_address=recipient),
+                )
 
-        # --- Helper: resolve a list of recipients to unique email addresses ---
-        def _resolve_recipients(recipients: list[int | str] | None) -> list[str]:
+        # --- Helper: resolve a list of recipients to unique (email, contact) pairs ---
+        async def _resolve_recipients(
+            recipients: list[int | str] | None,
+        ) -> list[tuple[str, dict]]:
+            """Resolve recipients to list of (email_address, contact_dict) pairs."""
             if not recipients:
                 return []
-            emails = set()
+            results: dict[str, dict] = {}  # email -> contact, for deduplication
             for r in recipients:
-                email = _resolve_to_email(r)
-                if email:
-                    emails.add(email)
-            return list(emails)
+                contact = await _resolve_recipient(r)
+                if contact:
+                    email = contact.get("email_address")
+                    if email and email not in results:
+                        results[email] = contact
+            return [(email, contact) for email, contact in results.items()]
 
         # --- Handle reply_all: populate to/cc from the email being replied to ---
         final_to: list[str] = []
         final_cc: list[str] = []
         final_bcc: list[str] = []
         reply_email_id = email_id_to_reply_to
+        primary_contact: dict | None = None  # For EmailSent event
 
         if reply_all:
             # Find the email to reply to
@@ -474,6 +483,7 @@ class ConversationManagerBrainActionTools:
                     contact = self._cm.contact_index.get_contact(cid)
                     if contact:
                         sender_email = contact.get("email_address")
+                        primary_contact = contact
                     break
 
             if sender_email:
@@ -488,10 +498,24 @@ class ConversationManagerBrainActionTools:
             final_cc = list(all_original_recipients)
 
         else:
-            # --- Resolve explicit recipients ---
-            final_to = _resolve_recipients(to)
-            final_cc = _resolve_recipients(cc)
-            final_bcc = _resolve_recipients(bcc)
+            # --- Resolve explicit recipients (creates contacts if needed) ---
+            to_resolved = await _resolve_recipients(to)
+            cc_resolved = await _resolve_recipients(cc)
+            bcc_resolved = await _resolve_recipients(bcc)
+
+            # Extract just the email addresses for sending
+            final_to = [email for email, _ in to_resolved]
+            final_cc = [email for email, _ in cc_resolved]
+            final_bcc = [email for email, _ in bcc_resolved]
+
+            # Keep track of primary contact for the event
+            primary_contact = None
+            if to_resolved:
+                primary_contact = to_resolved[0][1]
+            elif cc_resolved:
+                primary_contact = cc_resolved[0][1]
+            elif bcc_resolved:
+                primary_contact = bcc_resolved[0][1]
 
             # --- Validation: at least one recipient required ---
             if not final_to and not final_cc and not final_bcc:
@@ -593,17 +617,9 @@ class ConversationManagerBrainActionTools:
         )
 
         if response["success"]:
-            # Get contact for the first "to" recipient for the event
-            primary_email = (
-                final_to[0] if final_to else (final_cc[0] if final_cc else None)
-            )
-            contact = (
-                self._cm.contact_index.get_contact(email=primary_email)
-                if primary_email
-                else {}
-            ) or {}
+            # Use the primary contact we resolved earlier (or empty dict for reply_all fallback)
             event = EmailSent(
-                contact=contact,
+                contact=primary_contact or {},
                 body=body,
                 subject=final_subject,
                 email_id_replied_to=reply_email_id,
