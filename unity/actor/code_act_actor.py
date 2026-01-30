@@ -151,6 +151,7 @@ class ExecutionResult(BaseModel):
     result: Any = None
     error: Optional[str] = None
     browser_used: bool = False
+    browser_state: Optional[Dict[str, Any]] = None
     language: Optional[str] = None
     state_mode: Optional[str] = None
     session_id: Optional[int] = None
@@ -191,6 +192,8 @@ class ExecutionResult(BaseModel):
             meta["duration_ms"] = self.duration_ms
         if self.browser_used:
             meta["browser_used"] = True
+        if self.browser_state is not None:
+            meta["browser_state"] = self.browser_state
 
         # Add metadata block if present
         if meta:
