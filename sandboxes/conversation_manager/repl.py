@@ -55,11 +55,15 @@ def _print_welcome(*, args: Any) -> None:
     mode = "REAL-COMMS" if getattr(args, "real_comms", False) else "SIMULATED"
     gui = "on" if getattr(args, "gui", False) else "off"
     voice = "on" if getattr(args, "voice", False) else "off"
+    cfg = getattr(args, "_actor_config", None)
+    actor_type = getattr(cfg, "actor_type", None) if cfg is not None else None
 
     print("\n" + "═" * 72)
-    print("🧠 ConversationManager Sandbox")
+    print("ConversationManager Sandbox")
     print("═" * 72)
     print(f"Mode: {mode}")
+    if actor_type:
+        print(f"ActorConfig: {actor_type}")
     print(f"GUI:  {gui}")
     print(f"Voice:{voice}")
     print("\n" + HELP_TEXT + "\n")
@@ -91,6 +95,10 @@ async def run_repl(*, args: Any, state: SandboxState | None = None) -> None:
             chat_history=st.chat_history,
             allow_voice=True,
             allow_save_project=True,
+            config_manager=getattr(args, "_config_manager", None),
+            trace_display=getattr(args, "_trace_display", None),
+            event_tree_display=getattr(args, "_event_tree_display", None),
+            log_aggregator=getattr(args, "_log_aggregator", None),
         )
 
     while True:
@@ -124,7 +132,7 @@ async def run_repl(*, args: Any, state: SandboxState | None = None) -> None:
             if res.should_exit:
                 return
         except (EOFError, KeyboardInterrupt):
-            print("\nExiting…")
+            print("\nExiting...")
             return
         except Exception as exc:
             LG.error("REPL error: %s", exc, exc_info=True)
