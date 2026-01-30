@@ -180,12 +180,18 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
             OutboundUnifyMeetUtterance,
         ),
     ):
-        # Use contact from event, fall back to default if not in index
+        # Use contact from event - contact_id must be valid, no silent fallback
         evt_contact_id = event.contact.get("contact_id")
         if cm.contact_index.get_contact(contact_id=evt_contact_id):
             contact_id = evt_contact_id
         else:
-            contact_id = 1
+            # Log error but use the provided contact_id anyway since the event
+            # already contains the full contact dict from the source
+            print(
+                f"Warning: contact_id {evt_contact_id} not in contact_index, "
+                f"using contact from event",
+            )
+            contact_id = evt_contact_id
     elif cm.contact_index.get_contact(contact_id=event.contact["contact_id"]):
         contact_id = event.contact["contact_id"]
     if role == "Assistant":

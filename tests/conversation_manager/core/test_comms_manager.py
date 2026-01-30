@@ -539,13 +539,13 @@ class TestUnifyMessageHandling:
             assert event.contact["contact_id"] == 1
 
     @pytest.mark.asyncio
-    async def test_handle_unify_message_default_contact_id(
+    async def test_handle_unify_message_missing_contact_id_rejected(
         self,
         broker,
         mock_session_details,
         mock_settings,
     ):
-        """Test that UnifyMessage defaults to boss contact (id=1) if not specified."""
+        """Test that UnifyMessage without contact_id is rejected (no silent default)."""
         from unity.conversation_manager.comms_manager import CommsManager
 
         cm = CommsManager(broker)
@@ -563,7 +563,7 @@ class TestUnifyMessageHandling:
                     "email_address": "boss@test.com",
                 },
             ]
-            # No contact_id specified - should default to 1
+            # No contact_id specified - should be rejected, not defaulted to boss
             message = create_pubsub_message(
                 "unify_message",
                 {
@@ -575,22 +575,22 @@ class TestUnifyMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
+            # No event should be published - message was rejected
             msg = await get_message_on_channel(
                 pubsub,
                 "app:comms:unify_message_message",
+                timeout=0.2,
             )
-            assert msg is not None
-            event = Event.from_json(msg["data"])
-            assert event.contact["contact_id"] == 1
+            assert msg is None, "Message without contact_id should be rejected"
 
     @pytest.mark.asyncio
-    async def test_handle_unify_message_unknown_contact_fallback(
+    async def test_handle_unify_message_unknown_contact_rejected(
         self,
         broker,
         mock_session_details,
         mock_settings,
     ):
-        """Test fallback to boss contact when specified contact_id not found."""
+        """Test that UnifyMessage with unknown contact_id is rejected (no silent fallback)."""
         from unity.conversation_manager.comms_manager import CommsManager
 
         cm = CommsManager(broker)
@@ -608,7 +608,7 @@ class TestUnifyMessageHandling:
                     "email_address": "boss@test.com",
                 },
             ]
-            # contact_id 999 doesn't exist - should fall back to 1
+            # contact_id 999 doesn't exist - should be rejected, not fallback to boss
             message = create_pubsub_message(
                 "unify_message",
                 {
@@ -621,13 +621,13 @@ class TestUnifyMessageHandling:
             cm.handle_message(message)
             await asyncio.sleep(0.1)
 
+            # No event should be published - message was rejected
             msg = await get_message_on_channel(
                 pubsub,
                 "app:comms:unify_message_message",
+                timeout=0.2,
             )
-            assert msg is not None
-            event = Event.from_json(msg["data"])
-            assert event.contact["contact_id"] == 1
+            assert msg is None, "Message with unknown contact_id should be rejected"
 
 
 # =============================================================================
