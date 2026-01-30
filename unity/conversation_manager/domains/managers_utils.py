@@ -85,8 +85,29 @@ async def actor_watch_notifications(
         except asyncio.TimeoutError:
             continue
 
-        # get message
-        msg = notif.get("message") if isinstance(notif, dict) else str(notif)
+        # Extract a human-friendly message.
+        #
+        # Contract:
+        # - Notifications may be plain strings (already display-ready), OR
+        # - Structured dict payloads (recommended: include both "type" and "message").
+        #
+        # We keep this adapter strict and predictable: prefer "message"; otherwise
+        # fall back to "type"; otherwise JSON-dump the payload.
+        msg: str
+        if isinstance(notif, dict):
+            if notif.get("message") is not None:
+                msg = str(notif.get("message"))
+            elif notif.get("type") is not None:
+                msg = str(notif.get("type"))
+            else:
+                try:
+                    import json as _json
+
+                    msg = _json.dumps(notif, ensure_ascii=False, default=str)
+                except Exception:
+                    msg = str(notif)
+        else:
+            msg = str(notif)
 
         # publish response
         await event_broker.publish(
