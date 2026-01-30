@@ -6,7 +6,7 @@ This is a specialized sandbox pre-configured with:
 - Business context from FilePipelineConfig (column definitions, business rules)
 - FunctionManager access for pre-built metric functions
 - FileManager primitives via `primitives.files`
-- No browser environment (data analysis only)
+- No computer environment (data analysis only)
 
 Usage:
     python -m sandboxes.actor.repairs_agent_sandbox -p RepairsAgent5M
@@ -108,7 +108,7 @@ def _create_repairs_actor(config_path: Optional[Path] = None) -> CodeActActor:
     except Exception as e:
         LG.warning(f"FunctionManager not available: {e}")
 
-    # Create actor with only StateManagerEnvironment (no browser)
+    # Create actor with only StateManagerEnvironment (no computer)
     # Only expose 'files' primitives - this is a data analysis sandbox,
     # so we don't need contacts, tasks, knowledge, etc.
     actor = CodeActActor(

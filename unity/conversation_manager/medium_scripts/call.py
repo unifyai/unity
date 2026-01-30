@@ -282,9 +282,11 @@ async def entrypoint(ctx: agents.JobContext):
         payload = data.get("payload") or data
         content = payload.get("content", "")
         print(
-            f"[Guidance] {content[:50]}..."
-            if len(content) > 50
-            else f"[Guidance] {content}"
+            (
+                f"[Guidance] {content[:50]}..."
+                if len(content) > 50
+                else f"[Guidance] {content}"
+            ),
         )
         touch_activity()
 

@@ -287,7 +287,7 @@ class CallEventSocketServer:
                 await pubsub.psubscribe(*self._forward_channels)
                 print(
                     f"[CallEventSocketServer] Subscribed to forward channels: "
-                    f"{self._forward_channels}"
+                    f"{self._forward_channels}",
                 )
 
                 while self._running:
@@ -323,7 +323,7 @@ class CallEventSocketServer:
                 {
                     "channel": channel,
                     "event": event_json,
-                }
+                },
             )
             + "\n"
         )
@@ -352,7 +352,7 @@ class CallEventSocketServer:
         if self._connected_clients:
             print(
                 f"[CallEventSocketServer] Forwarded {channel} to "
-                f"{len(self._connected_clients)} client(s)"
+                f"{len(self._connected_clients)} client(s)",
             )
 
 
@@ -458,13 +458,13 @@ class CallEventSocketClient:
                     if reconnect_attempts >= max_reconnect_attempts:
                         print(
                             f"[CallEventSocketClient] Max reconnect attempts "
-                            f"({max_reconnect_attempts}) reached, stopping"
+                            f"({max_reconnect_attempts}) reached, stopping",
                         )
                         break
                     reconnect_attempts += 1
                     print(
                         f"[CallEventSocketClient] Attempting reconnect "
-                        f"({reconnect_attempts}/{max_reconnect_attempts})..."
+                        f"({reconnect_attempts}/{max_reconnect_attempts})...",
                     )
                     await asyncio.sleep(0.5)  # Brief delay before reconnect
                     if not await self.connect():
@@ -523,7 +523,7 @@ class CallEventSocketClient:
 
             if not channel or not event_json:
                 print(
-                    f"[CallEventSocketClient] Invalid message format: {message[:100]}"
+                    f"[CallEventSocketClient] Invalid message format: {message[:100]}",
                 )
                 return
 
@@ -552,7 +552,10 @@ class CallEventSocketClient:
             return await self._send_event_impl(channel, event_json, retry=True)
 
     async def _send_event_impl(
-        self, channel: str, event_json: str, retry: bool = True
+        self,
+        channel: str,
+        event_json: str,
+        retry: bool = True,
     ) -> bool:
         """Internal send implementation with optional retry."""
         if not self._connected:
@@ -565,7 +568,7 @@ class CallEventSocketClient:
                     {
                         "channel": channel,
                         "event": event_json,
-                    }
+                    },
                 )
                 + "\n"
             )

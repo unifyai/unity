@@ -2110,7 +2110,7 @@ class CodeActActor(BaseCodeActActor):
 
                 if notification_q is not None and str(language) == "python":
                     try:
-                        _status = ("ok" if not out.get("error") else "error")
+                        _status = "ok" if not out.get("error") else "error"
                         await notification_q.put(
                             {
                                 "type": "execution_finished",

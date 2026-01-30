@@ -373,7 +373,7 @@ app.use(auth);
 // Session registry: maps sessionId to BrowserAgent
 interface SessionInfo {
   agent: BrowserAgent;
-  mode: 'browser' | 'desktop';
+  mode: 'web' | 'desktop';
   createdAt: Date;
   lastAccessed: Date;
 }
@@ -550,8 +550,12 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
   const { headless, mode } = req.body;
-  if (!mode || (mode !== "desktop" && mode !== "browser")) {
-    return res.status(400).json({ error: 'bad_request', message: 'Mode is required and must be either "desktop" or "browser".' });
+  if (!mode || (mode !== "desktop" && mode !== "web")) {
+    return res.status(400).json({
+      error: 'bad_request',
+      message:
+        'Mode is required and must be either "desktop" or "web".',
+    });
   }
 
   const sessionId = randomUUID();

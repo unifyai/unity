@@ -92,7 +92,7 @@ class BrainRunController:
             self.state.queued_events.clear()
         except Exception:
             pass
-        return "🛑 Stopped (best-effort) — returning to idle."
+        return "🛑 Stopped (best-effort) — returning to idle"
 
     async def interject(self, message: str) -> str:
         # Best-effort: publish an inbound event that contains the interjection.
@@ -101,14 +101,14 @@ class BrainRunController:
             await self.publisher.publish_phone_utterance(message)
         else:
             await self.publisher.publish_sms(message)
-        return "✅ Interjection sent (triggered a fresh brain run)."
+        return "✅ Interjection sent (triggered a fresh brain run)"
 
     async def ask(self, question: str) -> str:
         # Limited: no nested handle; just expose state snapshot.
         qn = question.strip()
         qn_display = qn[:120] + ("..." if len(qn) > 120 else "")
         return (
-            "🧾 Brain-run status (best-effort).\n"
+            "🧾 Brain-run status (best-effort)\n"
             f"- question: {qn_display}\n"
             f"- in_call: {bool(getattr(self.state, 'in_call', False))}\n"
             f"- paused: {bool(getattr(self.state, 'paused', False))}\n"
@@ -232,7 +232,7 @@ class SteeringController:
             await _maybe_await(handle.stop(reason))
             self.state.paused = False
             self.state.brain_run_in_flight = False
-            return "🛑 Stopped."
+            return "🛑 Stopped"
         if cmd == "freeform":
             # Minimal: treat freeform as interjection for now (better routing exists in await_with_interrupt).
             if not arg.strip():

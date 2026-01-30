@@ -6,7 +6,7 @@ This folder contains an **interactive "flight simulator"** for the various `Acto
 ## 🎥 Demo Videos
 - **In Flight Modifications (#TODO: record a loom)** - How to pause, interject, and redirect running tasks
 - **Generalizing A Process [Part 1](https://www.loom.com/share/d341bbe882a648baa19b759511e306f2) [Part 2](https://www.loom.com/share/9aa1d179b5d34eafa7954775a553f1e8) [Part 3](https://www.loom.com/share/e850593b76d1494caa8aa4698c0d4c61)** - How to teach a repeatable process/workflow.
-- **Desktop Control (#TODO: integrate  and test desktop with the actor)** - Control a desktop terminal + a browser session to complete a task
+- **Desktop Control (#TODO: integrate and test desktop with the actor)** - Control a desktop terminal + a web session to complete a task
 
 [What are Actors?](https://github.com/unifyai/unity/blob/main/unity/actor/README.md)
 ----------------
@@ -20,7 +20,7 @@ When an actor starts a task, it returns a `SteerableToolHandle`, which the sandb
 ## Prerequisites
 
 ### Magnitude Agent Service Setup
-Some actors (particularly `HierarchicalActor` and `CodeActActor`) require the Magnitude BrowserAgent service to be running for web automation tasks.
+Some actors (particularly `HierarchicalActor` and `CodeActActor`) require the Magnitude agent service to be running for web automation tasks.
 
 The repo uses Unity's modified `magnitude-core` for the agent service (see `agent-service/package.json` dependency: `"magnitude-core": "file:../magnitude/packages/magnitude-core"`). The `magnitude/` directory contains our fork with Unity-specific enhancements.
 
@@ -129,8 +129,8 @@ The sandbox uses the common helper in `sandboxes/utils.py`, so it shares a stand
 
 **Actor-Specific Options:**
 ```
---actor / -a        [hierarchical|tooloop|code_act|browser_use] Select which actor to run (default: code_act)
---headless          Run the actor's browser in headless mode (no visible UI)
+--actor / -a        [hierarchical|tooloop|code_act] Select which actor to run (default: code_act)
+--headless          Run the web view in headless mode (no visible UI)
 --agent-url         URL of the agent service (default: http://localhost:3000)
 --persist           Enable persistent, long-running sessions that wait for interjections
 ```
@@ -268,13 +268,13 @@ The actor sandbox supports full project lifecycle management through Unify's ver
 
 **Actor-Specific:**
 * **Actor selection** – Make sure to specify a valid actor name with `--actor`. If unsure, use the default `code_act`.
-* **Browser automation** – For actors that use browser control, ensure Playwright is properly installed with `playwright install`.
+* **Web automation** – For actors that use web control, ensure Playwright is properly installed with `playwright install`.
 * **Agent service connection** – If using `--agent-url`, verify the service is running and accessible at `http://localhost:3000/health`.
 * **Agent service not running** – Many actors require the Magnitude service. Start it with `cd agent-service && npx ts-node src/index.ts`.
 * **Agent service environment** – Ensure `.env` file in `agent-service/` has valid `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL`, and `UNIFY_KEY`.
 * **Magnitude branch** – Ensure you're on the `unity-modifications` branch in the `magnitude/` directory for Unity-specific enhancements.
 * **Magnitude clone fails** – The magnitude repo is private; ensure `CLONE_TOKEN` is set or use `gh repo clone unifyai/magnitude` with authenticated gh CLI.
-* **Headless mode issues** – Try running without `--headless` first to see if browser automation is working.
+* **Headless mode issues** – Try running without `--headless` first to see if web automation is working.
 
 **Performance & Logging:**
 * **Slow responses** – Check your network connection to Unify services and LLM providers.

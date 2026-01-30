@@ -578,7 +578,8 @@ class TestBidirectionalCommunication:
 
     @pytest.mark.asyncio
     async def test_server_does_not_forward_non_matching_channels(
-        self, real_event_broker
+        self,
+        real_event_broker,
     ):
         """Server only forwards events matching forward_channels patterns."""
         received_events = []
