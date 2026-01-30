@@ -47,7 +47,7 @@ class ScenarioGenerator:
         if not desc:
             raise ValueError("Scenario description was empty.")
 
-        print("[generate] Building synthetic conversations – this can take a moment…")
+        print("[generate] Building scenario — this can take a moment…")
         gen = TranscriptGenerator(in_conversation_manager=False)
         transcript = await gen.generate(desc, min_messages=10, max_messages=18)
 
