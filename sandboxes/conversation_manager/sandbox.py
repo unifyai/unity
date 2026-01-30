@@ -22,10 +22,19 @@ load_dotenv(override=True)
 
 import unify
 
+from pathlib import Path
+
 from sandboxes.conversation_manager.cm_init import initialize_cm, shutdown_cm
+from sandboxes.conversation_manager.config_manager import (
+    ActorConfig,
+    ConfigurationManager,
+)
 from sandboxes.conversation_manager.event_subscriber import subscribe_to_responses
+from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
 from sandboxes.conversation_manager.gui import run_gui_mode
+from sandboxes.conversation_manager.log_aggregator import LogAggregator
 from sandboxes.conversation_manager.repl import SandboxState, run_repl
+from sandboxes.conversation_manager.trace_display import TraceDisplay
 from sandboxes.utils import (
     activate_project,
     build_cli_parser,
@@ -60,6 +69,34 @@ async def _main_async() -> None:
         help="Enable the Textual GUI (optional).",
     )
     parser.add_argument(
+        "--agent-server-url",
+        dest="agent_server_url",
+        default="http://localhost:3000",
+        metavar="URL",
+        help="agent-service base URL (default: http://localhost:3000)",
+    )
+    parser.add_argument(
+        "--agent-mode",
+        dest="agent_mode",
+        default="web",
+        choices=["web", "desktop"],
+        help="agent-service mode (default: web)",
+    )
+    parser.add_argument(
+        "--headless",
+        dest="headless",
+        action="store_true",
+        default=False,
+        help="(real web mode) launch Chromium in headless mode",
+    )
+    parser.add_argument(
+        "--show-trace",
+        dest="show_trace",
+        action="store_true",
+        default=False,
+        help="(CodeAct) auto-print execution trace after each code turn (REPL only)",
+    )
+    parser.add_argument(
         "--real-comms",
         dest="real_comms",
         action="store_true",
@@ -71,9 +108,22 @@ async def _main_async() -> None:
         dest="auto_confirm",
         action="store_true",
         default=False,
-        help="(real-comms) Auto-confirm all outbound actions (DANGEROUS).",
+        help="(real-comms) Auto-confirm all outbound actions (use with care).",
     )
     args = parser.parse_args()
+
+    # Best-effort sink for computer activity lines (used by sandbox-only wrappers).
+    def _computer_log_sink(line: str) -> None:
+        sink = getattr(args, "_gui_line_sink", None)
+        try:
+            if callable(sink):
+                sink(line)
+                return
+        except Exception:
+            pass
+        print(line)
+
+    setattr(args, "_computer_log_sink", _computer_log_sink)
 
     # Unify project activation
     activate_project(args.project_name, args.overwrite)
@@ -112,123 +162,305 @@ async def _main_async() -> None:
 
     _suppress_litellm_noise()
 
-    cm = await initialize_cm(args=args)
-
-    # Attach cm onto args so downstream UI layers can access it without additional plumbing.
-    setattr(args, "_cm", cm)
-
-    state = SandboxState()
-
-    # Start outbound event subscription (prints responses as they arrive).
-    stop_sub = asyncio.Event()
-
-    async def _display(line: str) -> None:
-        print(line)
-
-    sub_task = asyncio.create_task(
-        subscribe_to_responses(
-            cm=cm,
-            sandbox_state=state,
-            display_callback=_display,
-            include_call_guidance=bool(args.debug)
-            or bool(getattr(args, "voice", False)),
-            voice_enabled=bool(getattr(args, "voice", False)),
-            stop_event=stop_sub,
-        ),
+    # Project-local config manager (also reused by `config` command).
+    project_root = Path(__file__).resolve().parents[2]
+    cfg_mgr = ConfigurationManager(
+        project_name=args.project_name,
+        project_root=project_root,
     )
+    setattr(args, "_config_manager", cfg_mgr)
 
-    # Exit triggers:
-    # - Ctrl+C / SIGTERM
-    # - CM inactivity timeout (cm.stop is set by ConversationManager.check_inactivity)
-    shutdown_requested = asyncio.Event()
-    loop = asyncio.get_running_loop()
+    selected: ActorConfig | None = None
 
-    def _request_shutdown() -> None:
-        shutdown_requested.set()
+    def _prompt() -> ActorConfig:
+        last_used = cfg_mgr.load_config()
+        print("ConversationManager Sandbox")
+        print("═══════════════════════════════════════════════════════════")
+        print("")
+        print("Select Actor Configuration:")
+        print("")
+        print("1. SandboxSimulatedActor (simulated managers, no computer interface)")
+        print("2. CodeActActor + Simulated Managers (mock computer backend)")
+        print("3. CodeActActor + Real Managers + Real Computer Interface")
+        print("")
+        print(
+            f"Last used: [{_to_choice(last_used.actor_type)}] {_label(last_used.actor_type)}",
+        )
+        print("")
+        raw = input("Enter choice (1-3) or press Enter for last used: ").strip()
+        if not raw:
+            return last_used
+        if raw in {"1", "2", "3"}:
+            return ActorConfig(actor_type=_from_choice(raw))
+        print("⚠️ Invalid choice, using last used.")
+        return last_used
 
-    with suppress(NotImplementedError):
-        loop.add_signal_handler(signal.SIGINT, _request_shutdown)
-        loop.add_signal_handler(signal.SIGTERM, _request_shutdown)
-
-    inactivity_shutdown = False
-    try:
-        if args.gui and args.real_comms:
-            print("⚠️ Real-comms mode requires REPL. Starting REPL instead.")
-            args.gui = False
-        if args.gui and getattr(args, "voice", False):
-            print("⚠️ Voice mode runs in REPL. Starting REPL instead.")
-            args.gui = False
-
-        async def _run_ui() -> None:
-            if args.gui:
-                ran = False
-                try:
-                    ran = await run_gui_mode(cm=cm, args=args, state=state)
-                except Exception as exc:
-                    LG.warning(
-                        "GUI mode failed; falling back to REPL: %s",
-                        exc,
-                        exc_info=True,
-                    )
-                    ran = False
-                if not ran:
-                    print("⚠️ GUI mode unavailable/failed; falling back to REPL.")
-                    await run_repl(args=args, state=state)
-            else:
-                await run_repl(args=args, state=state)
-
-        ui_task = asyncio.create_task(_run_ui())
-        cm_stop_task = None
-        try:
-            cm_stop = getattr(cm, "stop", None)
-            if cm_stop is not None and hasattr(cm_stop, "wait"):
-                cm_stop_task = asyncio.create_task(cm_stop.wait())
-        except Exception:
-            cm_stop_task = None
-
-        done, pending = await asyncio.wait(
-            {ui_task, asyncio.create_task(shutdown_requested.wait())}
-            | ({cm_stop_task} if cm_stop_task else set()),
-            return_when=asyncio.FIRST_COMPLETED,
+    def _to_choice(actor_type: str) -> str:
+        return {"simulated": "1", "codeact_simulated": "2", "codeact_real": "3"}.get(
+            actor_type,
+            "1",
         )
 
-        if cm_stop_task and cm_stop_task in done:
-            inactivity_shutdown = True
-            print("\n⏲️ Inactivity timeout reached — shutting down.")
-        if shutdown_requested.is_set():
-            print("\nShutting down…")
+    def _from_choice(choice: str) -> str:
+        return {"1": "simulated", "2": "codeact_simulated", "3": "codeact_real"}[choice]
 
-        for t in pending:
-            t.cancel()
-        if not ui_task.done():
-            ui_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await ui_task
-    finally:
+    def _label(actor_type: str) -> str:
+        return {
+            "simulated": "SandboxSimulatedActor (simulated managers, no computer interface)",
+            "codeact_simulated": "CodeActActor + Simulated Managers (mock computer backend)",
+            "codeact_real": "CodeActActor + Real Managers + Real Computer Interface",
+        }.get(
+            actor_type,
+            "SandboxSimulatedActor (simulated managers, no computer interface)",
+        )
+
+    # Outer loop supports runtime config switching (REPL command `config`).
+    while True:
+        if selected is None:
+            selected = await asyncio.to_thread(_prompt)
+        # Validate infra with retry/switch/exit loop.
+        while True:
+            vr = await asyncio.to_thread(
+                cfg_mgr.validate_config,
+                selected,
+                agent_server_url=getattr(
+                    args,
+                    "agent_server_url",
+                    "http://localhost:3000",
+                ),
+            )
+            if vr.ok:
+                break
+
+            print("❌ Configuration Error")
+            print("═══════════════════════════════════════════════════════════")
+            print("")
+            if vr.failed_component:
+                print(f"Failed to initialize: {vr.failed_component}")
+            if vr.error:
+                print(f"Reason: {vr.error}")
+            print("")
+            print("Options:")
+            print("1. Retry (after fixing infrastructure)")
+            print("2. Switch to different configuration")
+            print("3. Exit sandbox")
+            print("")
+            choice = (await asyncio.to_thread(input, "Enter choice (1-3): ")).strip()
+            if choice == "1":
+                continue
+            if choice == "2":
+                selected = await asyncio.to_thread(_prompt)
+                continue
+            raise SystemExit(1)
+
+        cfg_mgr.save_config(selected)
+        setattr(args, "_actor_config", selected)
+
+        cm = await initialize_cm(args=args)
+        setattr(args, "_cm", cm)
+
+        # Display components (trace/tree/logs) are instantiated here and wired into
+        # the event subscriber and command router.
+        trace_display = TraceDisplay()
+        event_tree_display = EventTreeDisplay()
+        log_aggregator = LogAggregator()
+        setattr(args, "_trace_display", trace_display)
+        setattr(args, "_event_tree_display", event_tree_display)
+        setattr(args, "_log_aggregator", log_aggregator)
+
+        # Wire trace capture into CodeActActor execution boundary (SessionExecutor).
+        # This keeps trace capture local to the sandbox UI surface.
         try:
-            stop_sub.set()
+            actor = getattr(cm, "actor", None)
+            executor = getattr(actor, "_session_executor", None)
+            if executor is not None and trace_display is not None:
+                auto_print = bool(getattr(args, "show_trace", False)) and (
+                    not bool(args.gui)
+                )
+
+                def _after_capture(_entry: object) -> None:
+                    if not auto_print:
+                        # In GUI mode, refresh the trace panel when a new entry arrives.
+                        try:
+                            if bool(getattr(args, "gui", False)):
+                                req = getattr(args, "_gui_refresh_request", None)
+                                if callable(req):
+                                    req(trace=True)
+                        except Exception:
+                            pass
+                        return
+                    try:
+                        print(trace_display.render_recent(1))
+                    except Exception:
+                        pass
+
+                # IMPORTANT: the sandbox can "restart" within the same Python process.
+                # If we only wrap once, the wrapper will keep capturing into the old
+                # TraceDisplay instance, and the new UI will show "(no trace entries yet)".
+                # Store the original execute once and re-wrap against the current display
+                # every time we (re)initialize the sandbox.
+                orig = getattr(executor, "_cm_sandbox_execute_orig", None)
+                if not callable(orig):
+                    cand = getattr(executor, "execute", None)
+                    if callable(cand):
+                        setattr(executor, "_cm_sandbox_execute_orig", cand)
+                        orig = cand
+                if callable(orig):
+                    setattr(
+                        executor,
+                        "execute",
+                        trace_display.install_executor_wrapper(
+                            execute_fn=orig,
+                            after_capture=_after_capture,
+                        ),
+                    )
+                    setattr(executor, "_cm_sandbox_trace_wrapped", True)
         except Exception:
             pass
-        try:
-            sub_task.cancel()
-        except Exception:
-            pass
-        with suppress(asyncio.CancelledError):
-            await sub_task
-        await shutdown_cm(cm)
 
-        # If any background asyncio.to_thread() calls are still running, Python can
-        # hang for minutes while shutting down the loop's default executor.
-        #
-        # For inactivity-triggered shutdown we prefer a fast exit, since this is a
-        # developer sandbox (not a long-lived service). We attempt a best-effort
-        # executor shutdown and if it's still stuck, force-exit.
+        state = SandboxState()
+
+        # Start outbound event subscription (prints responses as they arrive).
+        stop_sub = asyncio.Event()
+
+        async def _display(line: str) -> None:
+            # In GUI mode, the Textual app installs a line sink so the subscriber
+            # can append to the conversation/log panes instead of printing.
+            sink = getattr(args, "_gui_line_sink", None)
+            try:
+                if callable(sink):
+                    sink(line)
+                    return
+            except Exception:
+                pass
+            print(line)
+
+        sub_task = asyncio.create_task(
+            subscribe_to_responses(
+                cm=cm,
+                sandbox_state=state,
+                display_callback=_display,
+                include_call_guidance=bool(args.debug)
+                or bool(getattr(args, "voice", False)),
+                voice_enabled=bool(getattr(args, "voice", False)),
+                stop_event=stop_sub,
+                trace_display=trace_display,
+                event_tree_display=event_tree_display,
+                log_aggregator=log_aggregator,
+                ui_refresh_callback=(
+                    (
+                        lambda: (
+                            getattr(args, "_gui_refresh_request", None)
+                            or (lambda **_kw: None)
+                        )(tree=True, logs=True)
+                    )
+                    if bool(getattr(args, "gui", False))
+                    else None
+                ),
+            ),
+        )
+        # Exit triggers:
+        # - Ctrl+C / SIGTERM
+        # - CM inactivity timeout (cm.stop is set by ConversationManager.check_inactivity)
+        shutdown_requested = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def _request_shutdown() -> None:
+            shutdown_requested.set()
+
+        with suppress(NotImplementedError):
+            loop.add_signal_handler(signal.SIGINT, _request_shutdown)
+            loop.add_signal_handler(signal.SIGTERM, _request_shutdown)
+
+        inactivity_shutdown = False
+        # Clear any prior restart flags.
+        setattr(args, "_restart_requested", False)
+        setattr(args, "_restart_actor_config", None)
+
         try:
-            if hasattr(loop, "shutdown_default_executor"):
-                await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
-        except Exception:
-            if inactivity_shutdown:
-                os._exit(0)
+            if args.gui and args.real_comms:
+                print("⚠️ Real-comms mode requires REPL. Starting REPL instead.")
+                args.gui = False
+
+            async def _run_ui() -> None:
+                if args.gui:
+                    ran = False
+                    try:
+                        ran = await run_gui_mode(cm=cm, args=args, state=state)
+                    except Exception as exc:
+                        LG.warning(
+                            "GUI mode failed; falling back to REPL: %s",
+                            exc,
+                            exc_info=True,
+                        )
+                        ran = False
+                    if not ran:
+                        print("⚠️ GUI mode unavailable/failed; falling back to REPL.")
+                        await run_repl(args=args, state=state)
+                else:
+                    await run_repl(args=args, state=state)
+
+            ui_task = asyncio.create_task(_run_ui())
+            cm_stop_task = None
+            try:
+                cm_stop = getattr(cm, "stop", None)
+                if cm_stop is not None and hasattr(cm_stop, "wait"):
+                    cm_stop_task = asyncio.create_task(cm_stop.wait())
+            except Exception:
+                cm_stop_task = None
+
+            done, pending = await asyncio.wait(
+                {ui_task, asyncio.create_task(shutdown_requested.wait())}
+                | ({cm_stop_task} if cm_stop_task else set()),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if cm_stop_task and cm_stop_task in done:
+                inactivity_shutdown = True
+                print("\n⏲️ Inactivity timeout reached — shutting down.")
+            if shutdown_requested.is_set():
+                print("\nShutting down...")
+
+            for t in pending:
+                t.cancel()
+            if not ui_task.done():
+                ui_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await ui_task
+        finally:
+            try:
+                stop_sub.set()
+            except Exception:
+                pass
+            try:
+                sub_task.cancel()
+            except Exception:
+                pass
+            with suppress(asyncio.CancelledError):
+                await sub_task
+            await shutdown_cm(cm)
+
+        # Restart requested by REPL `config`.
+        if bool(getattr(args, "_restart_requested", False)):
+            nxt = getattr(args, "_restart_actor_config", None)
+            selected = nxt if isinstance(nxt, ActorConfig) else None
+            continue
+
+        # Normal exit (no restart)
+        break
+
+    # If any background asyncio.to_thread() calls are still running, Python can
+    # hang for minutes while shutting down the loop's default executor.
+    #
+    # For inactivity-triggered shutdown we prefer a fast exit, since this is a
+    # developer sandbox (not a long-lived service). We attempt a best-effort
+    # executor shutdown and if it's still stuck, force-exit.
+    try:
+        if hasattr(loop, "shutdown_default_executor"):
+            await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
+    except Exception:
+        if inactivity_shutdown:
+            os._exit(0)
 
 
 def main() -> None:
