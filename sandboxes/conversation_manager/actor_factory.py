@@ -18,6 +18,10 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Optional
 
+from sandboxes.conversation_manager.computer_activity import (
+    ComputerActivity,
+    install_computer_activity_hooks,
+)
 from sandboxes.conversation_manager.config_manager import ActorConfig
 from sandboxes.conversation_manager.sandbox_simulated_actor import SandboxSimulatedActor
 from unity.actor.code_act_actor import CodeActActor
@@ -168,10 +172,18 @@ class ActorFactory:
         if mode == "mock":
             progress("[computer] Using mock backend")
             # No external dependencies; connect lazily.
-            return ComputerPrimitives(
+            cp = ComputerPrimitives(
                 computer_mode="mock",
                 connect_now=False,
             )
+            activity = ComputerActivity()
+            setattr(args, "_computer_activity", activity)
+            install_computer_activity_hooks(
+                computer_primitives=cp,
+                activity=activity,
+                emit_line=getattr(args, "_computer_log_sink", None),
+            )
+            return cp
 
         # real
         agent_server_url = getattr(args, "agent_server_url", "http://localhost:3000")
@@ -182,6 +194,15 @@ class ActorFactory:
             agent_mode=getattr(args, "agent_mode", "web"),
             agent_server_url=str(agent_server_url),
             connect_now=True,
+        )
+        activity = ComputerActivity()
+        setattr(args, "_computer_activity", activity)
+        # We only know "connected" if `connect_now` succeeded.
+        activity.mark_connected_sync(True)
+        install_computer_activity_hooks(
+            computer_primitives=cp,
+            activity=activity,
+            emit_line=getattr(args, "_computer_log_sink", None),
         )
         progress("✓ Computer ready (agent-service connected)")
         return cp
