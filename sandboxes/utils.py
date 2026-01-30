@@ -288,6 +288,179 @@ def record_until_enter() -> bytes:
             return f.read()
 
 
+def record_for_seconds(seconds: float = 6.0) -> bytes:
+    """Record microphone audio for a fixed duration and return WAV bytes.
+
+    This helper is designed for GUI usage where stdin-driven start/stop prompts
+    are not appropriate. It records immediately for `seconds` and returns a WAV
+    file payload that can be passed to transcription.
+    """
+    secs = float(seconds)
+    if secs <= 0:
+        secs = 1.0
+
+    # Ensure any prior TTS playback has finished
+    _wait_for_tts_end()
+
+    with noalsaerr(), suppress_stderr_fd():
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        sample_size = pa.get_sample_size(FORMAT)
+
+    frames: List[bytes] = []
+    target_chunks = int((SAMPLE_RATE * secs) / CHUNK)
+    _beep(1000)
+    try:
+        for _ in range(max(1, target_chunks)):
+            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+    finally:
+        with suppress_stderr_fd():
+            try:
+                stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
+            try:
+                pa.terminate()
+            except Exception:
+                pass
+        _beep(500)
+
+    wav_path = "/tmp/voice_input.wav"
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(sample_size)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(b"".join(frames))
+
+    with open(wav_path, "rb") as f:
+        return f.read()
+
+
+class VoiceRecordingHandle:
+    """A simple start/stop microphone recording handle.
+
+    This is designed for GUI usage where stdin-driven prompts are not appropriate.
+    The handle starts recording immediately when created and stops when `stop()` is called.
+    """
+
+    def __init__(self) -> None:
+        # Ensure any prior TTS playback has finished before recording
+        _wait_for_tts_end()
+
+        with noalsaerr(), suppress_stderr_fd():
+            self._pa = pyaudio.PyAudio()
+            self._stream = self._pa.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK,
+            )
+            self._sample_size = self._pa.get_sample_size(FORMAT)
+
+        self._frames: List[bytes] = []
+        self._stop = threading.Event()
+
+        def _capture() -> None:
+            while not self._stop.is_set():
+                try:
+                    self._frames.append(
+                        self._stream.read(CHUNK, exception_on_overflow=False),
+                    )
+                except Exception:
+                    # If the device errors mid-stream, stop recording.
+                    self._stop.set()
+                    break
+
+        _beep(1000)
+        self._thr = threading.Thread(target=_capture, daemon=True)
+        self._thr.start()
+
+    def stop(self) -> bytes:
+        """Stop recording and return WAV bytes."""
+        self._stop.set()
+        try:
+            self._thr.join(timeout=2.0)
+        except Exception:
+            pass
+
+        with suppress_stderr_fd():
+            try:
+                self._stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+
+        _beep(500)
+
+        wav_path = "/tmp/voice_input.wav"
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(self._sample_size)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(b"".join(self._frames))
+
+        with open(wav_path, "rb") as f:
+            return f.read()
+
+
+def start_voice_recording() -> "VoiceRecordingHandle":
+    """Start recording immediately and return a stop handle."""
+    return VoiceRecordingHandle()
+
+
+def transcribe_deepgram_no_input(audio_bytes: bytes) -> str:
+    """Transcribe with Deepgram, returning '' on failure (no CLI fallback).
+
+    This is intended for GUI usage: falling back to `input()` would block the UI.
+    """
+    key = os.getenv("DEEPGRAM_API_KEY")
+    if not key:
+        return ""
+
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+
+        req = _urlreq.Request(
+            url="https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true",
+            data=audio_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Token {key}",
+                "Content-Type": "audio/wav",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+        transcript = (
+            payload.get("results", {})
+            .get("channels", [{}])[0]
+            .get("alternatives", [{}])[0]
+            .get("transcript", "")
+        )
+        return (transcript or "").strip()
+    except Exception:
+        return ""
+
+
 # New: interruptible variant used for in-flight steering
 def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
     """
