@@ -37,6 +37,8 @@ intranet/logs/
 assets/
 discord_messages.md
 .cursor/debug.log
+# ConversationManager sandbox persistent config (project-local)
+.cm_sandbox_config
 # Ignore log contents but keep the README and utility scripts
 logs/*
 !logs/README.md
