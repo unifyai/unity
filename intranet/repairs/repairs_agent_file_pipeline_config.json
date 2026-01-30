@@ -5,6 +5,7 @@
 	"ingest": {
 		"table_rows_batch_size": 1000,
 		"content_rows_batch_size": 1000,
+		"infer_untyped_fields": false,
 		"business_contexts": {
 			"global_rules": [
 				"Telematics data: Vehicle field contains registration + operative full name; use to match with OperativeWhoCompletedJob in repairs data.",
