@@ -91,20 +91,19 @@ class ActorFactory:
 
         primitives = cls.build_primitives(mode=config.managers_mode, progress_callback=progress)
 
-        computer_primitives: Optional[ComputerPrimitives] = None
-        if config.computer_backend_mode == "mock":
-            progress("[computer] Using mock backend")
-            computer_primitives = ComputerPrimitives(computer_mode="mock", connect_now=False)
-        elif config.computer_backend_mode == "real":
-            progress("[computer] Starting agent-service...")
-            computer_primitives = ComputerPrimitives(
-                headless=bool(getattr(args, "headless", False)),
-                computer_mode="magnitude",
-                agent_mode=getattr(args, "agent_mode", "web"),
-                agent_server_url=str(getattr(args, "agent_server_url", "http://localhost:3000")),
-                connect_now=True,
-            )
-            progress("✓ Computer ready (agent-service connected)")
+        computer_primitives = cls.create_computer_backend(
+            mode=config.computer_backend_mode,
+            args=args,
+            progress_callback=progress,
+        )
+
+        # Keep `primitives.computer` consistent with the dedicated `computer_primitives`
+        # environment. This avoids accidentally creating two separate computer backends.
+        if computer_primitives is not None:
+            try:
+                primitives._computer = computer_primitives  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
         envs = [StateManagerEnvironment(primitives)]
         if computer_primitives is not None:
@@ -145,6 +144,47 @@ class ActorFactory:
         progress = progress_callback or (lambda _m: None)
         progress(f"[init] Managers mode: {mode}")
         return Primitives()
+
+    @staticmethod
+    def create_computer_backend(
+        *,
+        mode: Literal["none", "mock", "real"],
+        args: Any,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> Optional[ComputerPrimitives]:
+        """
+        Create the computer backend for the selected mode.
+
+        - none: no computer tools
+        - mock: MockComputerBackend (no external deps)
+        - real: Magnitude backend via agent-service (connect now for startup feedback)
+        """
+        progress = progress_callback or (lambda _m: None)
+
+        if mode == "none":
+            progress("[computer] Disabled")
+            return None
+
+        if mode == "mock":
+            progress("[computer] Using mock backend")
+            # No external dependencies; connect lazily.
+            return ComputerPrimitives(
+                computer_mode="mock",
+                connect_now=False,
+            )
+
+        # real
+        agent_server_url = getattr(args, "agent_server_url", "http://localhost:3000")
+        progress("[computer] Starting agent-service...")
+        cp = ComputerPrimitives(
+            headless=bool(getattr(args, "headless", False)),
+            computer_mode="magnitude",
+            agent_mode=getattr(args, "agent_mode", "web"),
+            agent_server_url=str(agent_server_url),
+            connect_now=True,
+        )
+        progress("✓ Computer ready (agent-service connected)")
+        return cp
 
     @staticmethod
     def _apply_manager_impl_env(mode: Literal["simulated", "real"]) -> None:
