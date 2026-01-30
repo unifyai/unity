@@ -362,7 +362,7 @@ async def update_rolling_summaries(cm: "ConversationManager") -> None:
 
     print(
         f"[ManagersWorker] Updating rolling summary for {len(render_data)} contacts: "
-        f"{[cid for cid, _ in render_data]}"
+        f"{[cid for cid, _ in render_data]}",
     )
 
     tasks = [

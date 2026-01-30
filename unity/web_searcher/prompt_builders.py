@@ -109,7 +109,7 @@ def _build_ask_tools_documentation(tools: Dict[str, Callable]) -> str:
         lines += [
             "- gated_website_search: search a specific website via the Actor (handles login if gated).",
             "  • Parameters: queries (str or list[str]), website",
-            "  • **IMPORTANT**: Spawns an expensive browser session. Call exactly ONCE per site — never retry the same site.",
+            "  • **IMPORTANT**: Spawns an expensive web session. Call exactly ONCE per site — never retry the same site.",
             "  • **Multi-query support**: Pass multiple queries for DIFFERENT purposes (not variations of the same search).",
             "    Good: queries=['latest news', 'recent deals'] — different content types.",
             "    Bad: queries=['AI trends', 'AI news', 'AI updates'] — redundant variations of same topic.",

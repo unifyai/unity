@@ -1,4 +1,4 @@
-# Set up for live viewing browser
+# Set up for live viewing the desktop
 Xvfb :99 -screen 0 1920x1080x16 &
 sleep 2
 

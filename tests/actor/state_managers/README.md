@@ -122,7 +122,7 @@ assert "primitives.contacts.ask" in tools
 
 ### `make_hierarchical_actor(impl, can_compose, can_store)`
 
-Context manager for creating `HierarchicalActor` with browser mocks. Automatically mocks browser primitives to prevent Keychain prompts and network access.
+Context manager for creating `HierarchicalActor` with computer mocks. Automatically mocks computer primitives to prevent Keychain prompts and network access.
 
 **Example**:
 ```python

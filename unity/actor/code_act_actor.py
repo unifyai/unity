@@ -240,7 +240,9 @@ class ExecutionResult(BaseModel):
         # Add computer screenshot (if present) as an image block rather than JSON text.
         if computer_screenshot_b64 is not None:
             if blocks:
-                blocks.append({"type": "text", "text": "\n--- computer screenshot ---\n"})
+                blocks.append(
+                    {"type": "text", "text": "\n--- computer screenshot ---\n"},
+                )
             mime = _detect_image_mime_from_b64(computer_screenshot_b64)
             blocks.append(
                 ImagePart(
@@ -871,7 +873,7 @@ class PythonExecutionSession:
 
         Args:
             computer_primitives: An instance of ComputerPrimitives to be injected into the
-                             global state, making browser tools available.
+                             global state, making computer tools available.
             environments: Optional mapping of environment namespaces to environments. If
                 provided, each environment instance is injected into globals.
             venv_pool: Optional VenvPool for persistent Python venv connections.
@@ -1601,7 +1603,7 @@ class CodeActActor(BaseCodeActActor):
         headless: bool = False,
         computer_mode: str = "magnitude",
         timeout: float = 1000,
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
         computer_primitives: Optional["ComputerPrimitives"] = None,
         environments: Optional[list["BaseEnvironment"]] = None,
@@ -1614,7 +1616,7 @@ class CodeActActor(BaseCodeActActor):
 
         Args:
             computer_primitives: Optional existing ComputerPrimitives instance to reuse.
-                           If provided, other browser-related params are ignored.
+                           If provided, other computer-related params are ignored.
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
             function_manager: Manages a library of reusable functions. Exposes read-only tools
@@ -1660,7 +1662,7 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
-        self._browser_tools = self._get_browser_tools()
+        self._computer_tools = self._get_computer_tools()
         # Register stable tools once; per-call sandboxes are bound via _CURRENT_SANDBOX.
         self.add_tools("act", self._build_tools())
 
@@ -1806,8 +1808,8 @@ class CodeActActor(BaseCodeActActor):
             active_session_count=self._count_active_sessions_total(),
         )
 
-    def _get_browser_tools(self) -> Dict[str, Callable]:
-        """Extracts browser-related methods from the ComputerPrimitives."""
+    def _get_computer_tools(self) -> Dict[str, Callable]:
+        """Extracts computer-related methods from the ComputerPrimitives."""
         if not self._computer_primitives:
             return {}
         return {
@@ -2113,7 +2115,7 @@ class CodeActActor(BaseCodeActActor):
                                 "status": ("ok" if not out.get("error") else "error"),
                                 "stdout_len": len(out.get("stdout") or ""),
                                 "stderr_len": len(out.get("stderr") or ""),
-                                    "computer_used": bool(out.get("computer_used")),
+                                "computer_used": bool(out.get("computer_used")),
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )

@@ -28,7 +28,7 @@ from tests.actor.hierarchical.helpers import (
 CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
     """
     async def main_plan():
-        '''Main plan for testing action caching with browser primitives.'''
+        '''Main plan for testing action caching with computer primitives.'''
         from pydantic import BaseModel, Field
         import asyncio
         print("--- Caching Test: Starting ---")
@@ -58,7 +58,7 @@ CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
-async def test_cache_hits_after_interjection_for_browser_primitives():
+async def test_cache_hits_after_interjection_for_computer_primitives():
     """Moved out of the monolith: validates cache hits after modify_task interjection."""
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
     active_task = None

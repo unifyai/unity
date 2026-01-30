@@ -36,6 +36,7 @@ pytestmark = pytest.mark.enable_eventbus
 # execute_code boundary unit tests
 # ---------------------------------------------------------------------------
 
+
 def _result_error(res: Any) -> Any:
     """Return the error field from an execute_code result (dict or ExecutionResult)."""
     if isinstance(res, dict):
@@ -56,7 +57,7 @@ def _result_stdout_text(res: Any) -> str:
 @_handle_project
 async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeypatch):
     actor = CodeActActor(
-        environments=[],  # avoid default browser/state-manager envs in unit test
+        environments=[],  # avoid default computer/state-manager envs in unit test
         headless=True,
         computer_mode="mock",
     )
@@ -73,7 +74,7 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
             "venv_id": None,
             "session_created": False,
             "duration_ms": 1,
-            "browser_used": False,
+            "computer_used": False,
         }
 
     monkeypatch.setattr(actor._session_executor, "execute", _fake_execute, raising=True)

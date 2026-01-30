@@ -16,7 +16,7 @@ class Computer:
     a strategy pattern to delegate to a specific backend implementation
     based on the selected mode.
 
-    Supports both browser automation and general desktop/computer control
+    Supports both web automation and general desktop/computer control
     via vision-based agents (Magnitude).
 
     Modes:

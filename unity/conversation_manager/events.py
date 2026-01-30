@@ -138,7 +138,7 @@ class PhoneCallStarted(Event):
 
 @dataclass
 class UnifyMeetStarted(Event):
-    """A browser-based voice/video meeting session has started (no phone number).
+    """A web-based voice/video meeting session has started (no phone number).
 
     "contact" should reference the boss/user contact id (typically 1).
     """
@@ -156,7 +156,7 @@ class InboundPhoneUtterance(Event):
 
 @dataclass
 class InboundUnifyMeetUtterance(Event):
-    """Utterance received from the other party during a browser-based voice/video meeting."""
+    """Utterance received from the other party during a web-based voice/video meeting."""
 
     contact: dict
     content: str
@@ -176,7 +176,7 @@ class PhoneCallEnded(Event):
 
 @dataclass
 class UnifyMeetEnded(Event):
-    """The browser-based voice/video meeting session has ended."""
+    """The web-based voice/video meeting session has ended."""
 
     contact: dict
 
@@ -217,7 +217,7 @@ class OutboundPhoneUtterance(Event):
 
 @dataclass
 class OutboundUnifyMeetUtterance(Event):
-    """Utterance sent by the assistant during a browser-based voice/video meeting."""
+    """Utterance sent by the assistant during a web-based voice/video meeting."""
 
     contact: dict
     content: str

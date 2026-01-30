@@ -209,7 +209,7 @@ class ComputerPrimitivesProxy:
     """
     Proxy for the computer_primitives object.
 
-    Provides access to browser/desktop control methods via RPC.
+    Provides access to web/desktop control methods via RPC.
     Usage: await computer_primitives.click(selector="...")
     """
 

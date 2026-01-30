@@ -153,7 +153,7 @@ def _build_brain_tools_schema_in_subprocess(tool_class: str) -> str:
         import os, sys, json
         sys.path.insert(0, os.getcwd())
 
-        # Only Actor is simulated - avoids browser/computer environment dependencies
+        # Only Actor is simulated - avoids computer environment dependencies
         os.environ["UNITY_ACTOR_IMPL"] = "simulated"
 
         from unity.common.llm_helpers import method_to_schema
