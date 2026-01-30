@@ -157,10 +157,19 @@ class Renderer:
                         for fname in message.attachments
                     ]
                 attachments_line = f"Attachments: {', '.join(attachment_details)}\n"
+            # Render recipients (for reply-all context)
+            recipients_lines = ""
+            if message.to:
+                recipients_lines += f"To: {', '.join(message.to)}\n"
+            if message.cc:
+                recipients_lines += f"Cc: {', '.join(message.cc)}\n"
+            if message.bcc:
+                recipients_lines += f"Bcc: {', '.join(message.bcc)}\n"
             return (
                 f"{new_marker}[{message.name} @ {timestamp_str}]:\n"
                 f"Subject: {message.subject}\n"
                 f"Email ID: {message.email_id}\n"
+                f"{recipients_lines}"
                 f"{attachments_line}"
                 f"Body:\n"
                 f"{message.body}"

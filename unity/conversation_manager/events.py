@@ -254,6 +254,10 @@ class EmailReceived(Event):
     email_id: Optional[str] = None
     # List of attachment filenames (actual files are saved to Downloads/).
     attachments: list[str] = field(default_factory=list)
+    # Recipients from the original email (for reply-all functionality)
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
 
 
 # assistant events
@@ -293,6 +297,10 @@ class EmailSent(Event):
     email_id_replied_to: str | None = None
     # List of attachment filenames that were sent with the email.
     attachments: list[str] = field(default_factory=list)
+    # Recipients the email was sent to
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
 
 
 @dataclass

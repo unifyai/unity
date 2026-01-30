@@ -334,49 +334,206 @@ class ConversationManagerBrainActionTools:
     async def send_email(
         self,
         *,
-        contact_id: int | None = None,
-        contact_details: ContactDetailsEmail | None = None,
+        to: list[int | str] | None = None,
+        cc: list[int | str] | None = None,
+        bcc: list[int | str] | None = None,
         subject: str,
         body: str,
+        reply_all: bool = False,
         email_id_to_reply_to: str | None = None,
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         """
-        Send an email to a contact, optionally with a file attachment.
+        Send an email with flexible recipient specification.
+
+        Recipients can be specified as contact_ids (int) or email addresses (str).
+        Duplicates are automatically collapsed (e.g., if you provide both a contact_id
+        and the same contact's email address, only one recipient is sent).
 
         Args:
-            contact_id: Target contact_id when known (preferred).
-            contact_details: Target identity details when contact_id is unknown.
+            to: List of recipients (contact_ids or email addresses).
+            cc: List of CC recipients (contact_ids or email addresses).
+            bcc: List of BCC recipients (contact_ids or email addresses).
             subject: Email subject.
             body: Email body.
+            reply_all: If True, automatically populate to/cc from the email being
+                replied to. Mutually exclusive with to/cc/bcc - fails if both are set.
             email_id_to_reply_to: Email ID (RFC Message-ID) to reply to for threading.
-                If provided, the reply will be threaded to that specific email.
-                If not provided, the system will auto-infer by finding the most
-                recent inbound email with a matching subject. Provide this explicitly
-                to reply to an older message in a thread - useful for forking off a
-                separate conversation branch with specific participants or context.
+                Required for reply_all, or auto-inferred from most recent inbound email.
             attachment_filepath: Optional filepath to attach.
         """
         import base64
         import os
 
-        contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+        from unity.session_details import SESSION_DETAILS
 
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            event = Error(outbound_error)
+        # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
+        if reply_all and (to or cc or bcc):
+            error_msg = (
+                "reply_all=True is mutually exclusive with to/cc/bcc. "
+                "Either use reply_all to auto-populate recipients from the thread, "
+                "or specify recipients explicitly."
+            )
+            event = Error(error_msg)
             await self._event_broker.publish("app:comms:email_sent", event.to_json())
-            return {"status": "error", "error": outbound_error}
+            return {"status": "error", "error": error_msg}
 
-        address_error = _check_contact_has_address(contact, "email_address", "email")
-        if address_error:
-            event = Error(address_error)
-            await self._event_broker.publish("app:comms:email_sent", event.to_json())
-            return {"status": "error", "error": address_error}
+        # --- Helper: resolve a contact_id or email to an email address ---
+        def _resolve_to_email(recipient: int | str) -> str | None:
+            if isinstance(recipient, str):
+                return recipient
+            # It's a contact_id - look up the email
+            contact = self._cm.contact_index.get_contact(recipient)
+            if contact:
+                return contact.get("email_address")
+            return None
 
-        to_email = contact.get("email_address")
+        # --- Helper: resolve a list of recipients to unique email addresses ---
+        def _resolve_recipients(recipients: list[int | str] | None) -> list[str]:
+            if not recipients:
+                return []
+            emails = set()
+            for r in recipients:
+                email = _resolve_to_email(r)
+                if email:
+                    emails.add(email)
+            return list(emails)
 
-        # Handle attachment
+        # --- Handle reply_all: populate to/cc from the email being replied to ---
+        final_to: list[str] = []
+        final_cc: list[str] = []
+        final_bcc: list[str] = []
+        reply_email_id = email_id_to_reply_to
+
+        if reply_all:
+            # Find the email to reply to
+            original_email = None
+            # Search all conversations for the email with this ID
+            if reply_email_id:
+                for conv_state in self._cm.contact_index.active_conversations.values():
+                    thread = conv_state.threads.get(Medium.EMAIL)
+                    if thread:
+                        for m in thread:
+                            if getattr(m, "email_id", None) == reply_email_id:
+                                original_email = m
+                                break
+                    if original_email:
+                        break
+            else:
+                # Auto-infer: find the most recent inbound email with matching subject
+                for conv_state in self._cm.contact_index.active_conversations.values():
+                    thread = conv_state.threads.get(Medium.EMAIL)
+                    if thread:
+                        for m in reversed(list(thread)):
+                            if getattr(m, "name", None) != "You" and getattr(
+                                m,
+                                "email_id",
+                                None,
+                            ):
+                                # Check subject match (strip "Re: " prefix for comparison)
+                                m_subject = getattr(m, "subject", "") or ""
+                                clean_subject = subject.removeprefix("Re: ").strip()
+                                clean_m_subject = m_subject.removeprefix("Re: ").strip()
+                                if (
+                                    clean_subject == clean_m_subject
+                                    or not clean_subject
+                                ):
+                                    original_email = m
+                                    reply_email_id = m.email_id
+                                    break
+                    if original_email:
+                        break
+
+            if not original_email:
+                error_msg = (
+                    "reply_all=True but no email found to reply to. "
+                    "Either provide email_id_to_reply_to or ensure there's a matching "
+                    "inbound email in the thread."
+                )
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+
+            # Standard reply-all behavior:
+            # - Original sender -> to
+            # - Original to + cc (minus self) -> cc
+            assistant_email = SESSION_DETAILS.assistant.email
+            original_to = getattr(original_email, "to", []) or []
+            original_cc = getattr(original_email, "cc", []) or []
+
+            # The sender goes to "to" - we need to find the sender email
+            # For inbound emails, the sender is in the contact associated with the email
+            # We can find it from the conversation state's contact
+            sender_email = None
+            for cid, conv_state in self._cm.contact_index.active_conversations.items():
+                thread = conv_state.threads.get(Medium.EMAIL)
+                if thread and original_email in thread:
+                    contact = self._cm.contact_index.get_contact(cid)
+                    if contact:
+                        sender_email = contact.get("email_address")
+                    break
+
+            if sender_email:
+                final_to = [sender_email]
+
+            # Original to + cc (minus self) go to cc
+            all_original_recipients = set(original_to) | set(original_cc)
+            if assistant_email:
+                all_original_recipients.discard(assistant_email)
+            if sender_email:
+                all_original_recipients.discard(sender_email)
+            final_cc = list(all_original_recipients)
+
+        else:
+            # --- Resolve explicit recipients ---
+            final_to = _resolve_recipients(to)
+            final_cc = _resolve_recipients(cc)
+            final_bcc = _resolve_recipients(bcc)
+
+            # --- Validation: at least one recipient required ---
+            if not final_to and not final_cc and not final_bcc:
+                error_msg = (
+                    "At least one recipient is required. "
+                    "Provide to, cc, or bcc, or use reply_all=True."
+                )
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+
+            # --- Infer reply ID from email thread if not provided ---
+            if not reply_email_id:
+                try:
+                    # Look for a matching inbound email in any conversation
+                    for (
+                        conv_state
+                    ) in self._cm.contact_index.active_conversations.values():
+                        thread = conv_state.threads.get(Medium.EMAIL)
+                        if thread:
+                            for m in reversed(list(thread)):
+                                if (
+                                    getattr(m, "name", None) != "You"
+                                    and getattr(m, "subject", None) == subject
+                                    and getattr(m, "email_id", None)
+                                ):
+                                    reply_email_id = m.email_id
+                                    break
+                        if reply_email_id:
+                            break
+                except Exception:
+                    pass
+
+        # --- Handle subject prefix for replies ---
+        final_subject = subject
+        if reply_email_id and not subject.startswith("Re: "):
+            final_subject = f"Re: {subject}"
+
+        # --- Handle attachment ---
         attachment = None
         attachment_filename = None
         if attachment_filepath:
@@ -424,57 +581,46 @@ class ConversationManagerBrainActionTools:
                 )
                 return {"status": "error", "error": error_msg}
 
-        # Infer reply ID from email thread if available
-        inferred_reply_id: str | None = None
-        try:
-            cid = contact.get("contact_id") if contact else contact_id
-            conv_state = (
-                self._cm.contact_index.get_conversation_state(cid) if cid else None
-            )
-            if conv_state:
-                thread = conv_state.threads.get(Medium.EMAIL)
-                if thread:
-                    for m in reversed(thread):
-                        if (
-                            getattr(m, "name", None) != "You"
-                            and getattr(m, "subject", None) == subject
-                            and getattr(m, "email_id", None)
-                        ):
-                            inferred_reply_id = m.email_id
-                            break
-        except Exception:
-            inferred_reply_id = None
-
-        # Only use inference as a fallback when LLM didn't provide an explicit choice.
-        # If the LLM passed email_id_to_reply_to, respect it - the LLM may be
-        # intentionally targeting a specific thread (e.g., older thread when
-        # multiple threads have the same subject).
-        if not email_id_to_reply_to and inferred_reply_id:
-            email_id_to_reply_to = inferred_reply_id
-
+        # --- Send the email ---
         response = await comms_utils.send_email_via_address(
-            to_email=to_email,
-            subject=subject,
+            to=final_to,
+            subject=final_subject,
             body=body,
-            email_id=email_id_to_reply_to,
+            cc=final_cc if final_cc else None,
+            bcc=final_bcc if final_bcc else None,
+            email_id=reply_email_id,
             attachment=attachment,
         )
+
         if response["success"]:
-            fresh_contact = (
-                self._cm.contact_index.get_contact(email=to_email) or contact or {}
+            # Get contact for the first "to" recipient for the event
+            primary_email = (
+                final_to[0] if final_to else (final_cc[0] if final_cc else None)
             )
+            contact = (
+                self._cm.contact_index.get_contact(email=primary_email)
+                if primary_email
+                else {}
+            ) or {}
             event = EmailSent(
-                contact=fresh_contact,
+                contact=contact,
                 body=body,
-                subject=subject,
-                email_id_replied_to=email_id_to_reply_to,
+                subject=final_subject,
+                email_id_replied_to=reply_email_id,
                 attachments=[attachment_filename] if attachment_filename else [],
+                to=final_to,
+                cc=final_cc,
+                bcc=final_bcc,
             )
         else:
             if not self._cm.assistant_email:
                 error_msg = "You don't have an email address, please provision one."
             else:
-                error_msg = response.get("error", f"Failed to send email to {to_email}")
+                recipients = final_to + final_cc + final_bcc
+                error_msg = response.get(
+                    "error",
+                    f"Failed to send email to {recipients}",
+                )
             event = Error(error_msg)
         await self._event_broker.publish("app:comms:email_sent", event.to_json())
         return {"status": "ok"}

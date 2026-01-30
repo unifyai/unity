@@ -357,6 +357,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     email_id = None
     attachments = None
     notif_content = None
+    # Email-specific fields for reply-all
+    email_to = None
+    email_cc = None
+    email_bcc = None
 
     # Get contact info from ContactManager, fallback to event.contact
     contact = cm.contact_index.get_contact(event.contact["contact_id"])
@@ -387,6 +391,9 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             body = event.body
             email_id = event.email_id_replied_to
             attachments = event.attachments
+            email_to = event.to
+            email_cc = event.cc
+            email_bcc = event.bcc
             notif_content = f"Email sent to {sender_name}"
             role = "assistant"
         case EmailReceived():
@@ -395,6 +402,9 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             body = event.body
             email_id = event.email_id
             attachments = event.attachments
+            email_to = event.to
+            email_cc = event.cc
+            email_bcc = event.bcc
             notif_content = f"Email Received from {sender_name}"
             role = "user"
         case UnifyMessageSent():
@@ -421,6 +431,9 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         attachments=attachments,
         timestamp=event.timestamp,
         role=role,
+        to=email_to,
+        cc=email_cc,
+        bcc=email_bcc,
     )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
