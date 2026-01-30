@@ -98,6 +98,22 @@ class ImagePart(BaseModel):
 OutputPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
 
 
+def _detect_image_mime_from_b64(b64_str: str) -> str:
+    """Detect an image MIME type by inspecting decoded header bytes.
+
+    Returns "image/jpeg" for JPEG, "image/png" for PNG, or "image/png" as fallback.
+    """
+    try:
+        raw = base64.b64decode(b64_str[:32])
+        if raw[:2] == b"\xff\xd8":
+            return "image/jpeg"
+        if raw[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+    except Exception:
+        pass
+    return "image/png"
+
+
 def parts_to_text(parts: List[Union[TextPart, ImagePart]]) -> str:
     """Convert a list of OutputPart to a plain text string.
 
@@ -150,7 +166,8 @@ class ExecutionResult(BaseModel):
     stderr: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
     result: Any = None
     error: Optional[str] = None
-    browser_used: bool = False
+    computer_used: bool = False
+    computer_state: Optional[Dict[str, Any]] = None
     language: Optional[str] = None
     state_mode: Optional[str] = None
     session_id: Optional[int] = None
@@ -171,6 +188,7 @@ class ExecutionResult(BaseModel):
 
         # Build metadata section (non-stdout/stderr fields)
         meta: Dict[str, Any] = {}
+        computer_screenshot_b64: Optional[str] = None
         if self.result is not None:
             meta["result"] = self.result
         if self.error is not None:
@@ -189,8 +207,28 @@ class ExecutionResult(BaseModel):
             meta["session_created"] = self.session_created
         if self.duration_ms is not None:
             meta["duration_ms"] = self.duration_ms
-        if self.browser_used:
-            meta["browser_used"] = True
+        if self.computer_used:
+            meta["computer_used"] = True
+        if self.computer_state is not None:
+            # Keep computer state lightweight in the JSON text block.
+            # Large binary payloads (e.g., screenshots) are represented as image blocks
+            # rather than embedded directly into JSON.
+            if isinstance(self.computer_state, dict):
+                cs_url = self.computer_state.get("url")
+                cs_error = self.computer_state.get("error")
+                cs_screenshot = self.computer_state.get("screenshot")
+                if isinstance(cs_screenshot, str) and cs_screenshot.strip():
+                    computer_screenshot_b64 = cs_screenshot
+
+                cs_meta: Dict[str, Any] = {}
+                if cs_url is not None:
+                    cs_meta["url"] = cs_url
+                if cs_error is not None:
+                    cs_meta["error"] = cs_error
+                if cs_meta:
+                    meta["computer_state"] = cs_meta
+            else:
+                meta["computer_state"] = self.computer_state
 
         # Add metadata block if present
         if meta:
@@ -198,6 +236,18 @@ class ExecutionResult(BaseModel):
 
             meta_text = json.dumps(meta, indent=2, default=str)
             blocks.append({"type": "text", "text": meta_text})
+
+        # Add computer screenshot (if present) as an image block rather than JSON text.
+        if computer_screenshot_b64 is not None:
+            if blocks:
+                blocks.append({"type": "text", "text": "\n--- computer screenshot ---\n"})
+            mime = _detect_image_mime_from_b64(computer_screenshot_b64)
+            blocks.append(
+                ImagePart(
+                    data=computer_screenshot_b64,
+                    mime=mime,
+                ).to_llm_content(),
+            )
 
         # Add stdout with preserved ordering (interleaved text/images)
         if self.stdout:
@@ -834,7 +884,7 @@ class PythonExecutionSession:
 
         self.id: str = str(uuid.uuid4())
         self.global_state: Dict[str, Any] = create_execution_globals()
-        self._browser_used: bool = False
+        self._computer_used: bool = False
 
         # Expose sandbox metadata to user code (best-effort; callers may ignore).
         self.global_state["__sandbox_id__"] = self.id
@@ -891,8 +941,8 @@ class PythonExecutionSession:
                     return _sync_wrapper
                 return attr
 
-        def _mark_browser_used() -> None:
-            self._browser_used = True
+        def _mark_computer_used() -> None:
+            self._computer_used = True
 
         if environments:
             for namespace, env in environments.items():
@@ -904,7 +954,7 @@ class PythonExecutionSession:
                     else:
                         instance = env.get_instance()
                     if namespace == "computer_primitives":
-                        instance = _UsageTrackingProxy(instance, _mark_browser_used)
+                        instance = _UsageTrackingProxy(instance, _mark_computer_used)
                     self.global_state[namespace] = instance
                 except Exception:
                     # Keep sandbox usable even if a non-critical environment fails to inject.
@@ -914,7 +964,7 @@ class PythonExecutionSession:
         if computer_primitives and "computer_primitives" not in self.global_state:
             self.global_state["computer_primitives"] = _UsageTrackingProxy(
                 computer_primitives,
-                _mark_browser_used,
+                _mark_computer_used,
             )
 
     async def close(self) -> None:
@@ -946,10 +996,10 @@ class PythonExecutionSession:
             stderr: list[OutputPart] - structured error output parts
             result: Any - return value of the last expression
             error: str | None - traceback if an exception occurred
-            browser_used: bool - whether browser primitives were accessed
+            computer_used: bool - whether computer primitives were accessed
         """
         # Reset per-execution usage flags.
-        self._browser_used = False
+        self._computer_used = False
         result = None
         error = None
 
@@ -1065,7 +1115,7 @@ class PythonExecutionSession:
             "stderr": stderr_parts,
             "result": result,
             "error": error,
-            "browser_used": self._browser_used,
+            "computer_used": self._computer_used,
         }
 
 
@@ -1411,7 +1461,7 @@ class SessionExecutor:
                 "stderr": res.stderr,
                 "result": res.exit_code,
                 "error": res.error,
-                "browser_used": False,
+                "computer_used": False,
                 "language": language,
                 "state_mode": state_mode,
                 "session_id": session_id,
@@ -1441,7 +1491,7 @@ class SessionExecutor:
                         "stderr": restore_res.stderr,
                         "result": restore_res.exit_code,
                         "error": restore_res.error,
-                        "browser_used": False,
+                        "computer_used": False,
                         "language": language,
                         "state_mode": state_mode,
                         "session_id": session_id,
@@ -1457,7 +1507,7 @@ class SessionExecutor:
                     "stderr": res.stderr,
                     "result": res.exit_code,
                     "error": res.error,
-                    "browser_used": False,
+                    "computer_used": False,
                     "language": language,
                     "state_mode": state_mode,
                     "session_id": session_id,
@@ -1527,7 +1577,7 @@ async def _execute_shell_stateless(
             "stderr": (stderr_b or b"").decode(errors="replace"),
             "result": int(proc.returncode or 0),
             "error": None,
-            "browser_used": False,
+            "computer_used": False,
         }
     except Exception as e:
         return {
@@ -1535,7 +1585,7 @@ async def _execute_shell_stateless(
             "stderr": "",
             "result": None,
             "error": f"{type(e).__name__}: {e}",
-            "browser_used": False,
+            "computer_used": False,
         }
 
 
@@ -1828,10 +1878,11 @@ class CodeActActor(BaseCodeActActor):
             - **venv_id**: The virtual environment ID if applicable, otherwise None.
             - **session_created**: True if a new session was created by this call.
             - **duration_ms**: Execution duration in milliseconds.
-            - **browser_used**: True if browser tools were invoked during execution.
-            - **browser_state** (optional): Only present when browser_used is True and a
-              browser environment is available. Contains {"url": str, "screenshot": str}
-              or {"error": str} on failure.
+            - **computer_used**: True if computer primitives were invoked during execution.
+            - **computer_state** (optional): Only present when computer_used is True and a
+              computer environment is available. The textual metadata includes the URL
+              and any error details. A screenshot, when available, is returned as an
+              image block in the formatted tool output rather than embedded into JSON.
 
             For in-process Python execution with rich output, the result is wrapped in an
             ExecutionResult object (a Pydantic model implementing FormattedToolResult).
@@ -1850,7 +1901,7 @@ class CodeActActor(BaseCodeActActor):
                     "venv_id": venv_id,
                     "session_created": False,
                     "duration_ms": 0,
-                    "browser_used": False,
+                    "computer_used": False,
                 }
 
             # ──────────────────────────────────────────────────────────────
@@ -2022,7 +2073,7 @@ class CodeActActor(BaseCodeActActor):
                         "venv_id": venv_id,
                         "session_created": False,
                         "duration_ms": 0,
-                        "browser_used": False,
+                        "computer_used": False,
                     }
 
                 # Enrich with session name.
@@ -2035,10 +2086,10 @@ class CodeActActor(BaseCodeActActor):
                 else:
                     out["session_name"] = None
 
-                # Attach browser state for Python runs when browser tools were used.
+                # Attach computer state for Python runs when computer primitives were used.
                 if (
                     str(out.get("language")) == "python"
-                    and out.get("browser_used")
+                    and out.get("computer_used")
                     and self._computer_primitives is not None
                 ):
                     try:
@@ -2046,12 +2097,12 @@ class CodeActActor(BaseCodeActActor):
                         screenshot_b64 = (
                             await self._computer_primitives.computer.get_screenshot()
                         )
-                        out["browser_state"] = {
+                        out["computer_state"] = {
                             "url": url,
                             "screenshot": screenshot_b64,
                         }
                     except Exception as e:
-                        out["browser_state"] = {"error": str(e)}
+                        out["computer_state"] = {"error": str(e)}
 
                 if notification_q is not None and str(language) == "python":
                     try:
@@ -2062,7 +2113,7 @@ class CodeActActor(BaseCodeActActor):
                                 "status": ("ok" if not out.get("error") else "error"),
                                 "stdout_len": len(out.get("stdout") or ""),
                                 "stderr_len": len(out.get("stderr") or ""),
-                                "browser_used": bool(out.get("browser_used")),
+                                    "computer_used": bool(out.get("computer_used")),
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )

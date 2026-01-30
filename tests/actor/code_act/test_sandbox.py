@@ -2,6 +2,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from unity.actor.code_act_actor import (
+    CodeActActor,
     PythonExecutionSession,
     ExecutionResult,
     parts_to_text,
@@ -338,3 +339,60 @@ print("text after image")
         "This indicates images are being collected at the end instead of "
         "preserving their original interleaved positions."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_execute_code_surfaces_computer_state_when_computer_used():
+    """
+    When sandbox execution invokes computer primitives, the tool result should
+    include the current computer state so the model can reason about the page
+    without requiring an additional perception step.
+    """
+    actor = CodeActActor(headless=True, computer_mode="mock", timeout=30)
+    try:
+        tools = actor._build_tools()
+        execute_code = tools["execute_code"]
+
+        res = await execute_code(
+            thought="Navigate so browser tools are exercised",
+            language="python",
+            state_mode="stateful",
+            code="await computer_primitives.navigate('https://example.com')",
+        )
+
+        assert isinstance(res, ExecutionResult)
+        assert res.computer_used is True
+
+        llm_content = serialize_tool_content(
+            tool_name="execute_code",
+            payload=res,
+            is_final=True,
+        )
+        assert isinstance(llm_content, list)
+
+        text_blocks = [b for b in llm_content if isinstance(b, dict) and b.get("type") == "text"]
+        image_blocks = [
+            b
+            for b in llm_content
+            if isinstance(b, dict) and b.get("type") == "image_url"
+        ]
+
+        assert text_blocks, "Expected at least one text block with metadata"
+        meta_text = str(text_blocks[0].get("text") or "")
+        assert "computer_state" in meta_text
+        assert "url" in meta_text
+        assert '"screenshot"' not in meta_text
+        assert "data:image" not in meta_text
+        assert ";base64," not in meta_text
+
+        assert image_blocks, "Expected a computer screenshot image_url block"
+        assert all(
+            isinstance(b.get("image_url"), dict) and isinstance(b["image_url"].get("url"), str)
+            for b in image_blocks
+        )
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
