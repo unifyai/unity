@@ -911,7 +911,7 @@ class ConversationManagerBrainActionTools:
                                 # Start the ask operation (does the LLM roundtrip)
                                 ask_handle = await _handle.ask(
                                     _param_value,
-                                    _parent_chat_context_cont=_cm_chat_history,
+                                    _parent_chat_context=_cm_chat_history,
                                 )
                                 # Await the result
                                 ask_result = await ask_handle.result()
