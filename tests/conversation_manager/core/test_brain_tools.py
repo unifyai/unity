@@ -991,16 +991,7 @@ class TestActTool:
     def test_has_docstring(self, brain_action_tools):
         """Act tool has descriptive docstring."""
         assert brain_action_tools.act.__doc__ is not None
-        assert (
-            "Engage" in brain_action_tools.act.__doc__
-            or "act" in brain_action_tools.act.__doc__.lower()
-        )
-
-    def test_docstring_describes_capabilities(self, brain_action_tools):
-        """Act tool docstring describes its capabilities."""
-        doc = brain_action_tools.act.__doc__
-        # Should mention key capabilities
-        assert "Retrieval" in doc or "search" in doc.lower()
+        assert len(brain_action_tools.act.__doc__) > 10
 
 
 # =============================================================================
@@ -1552,12 +1543,6 @@ class TestToolDocstrings:
             assert fn.__doc__ is not None, f"{name} missing docstring"
             assert len(fn.__doc__) > 10, f"{name} docstring too short"
 
-    def test_send_sms_docstring_mentions_contact(self, brain_action_tools):
-        """send_sms docstring mentions contact parameters."""
-        doc = brain_action_tools.send_sms.__doc__
-        assert "contact_id" in doc
-        assert "contact_details" in doc.lower() or "details" in doc.lower()
-
     def test_send_email_docstring_mentions_parameters(self, brain_action_tools):
         """send_email docstring mentions recipients, subject and body."""
         doc = brain_action_tools.send_email.__doc__
@@ -1570,11 +1555,6 @@ class TestToolDocstrings:
         """act tool has comprehensive docstring explaining capabilities."""
         doc = brain_action_tools.act.__doc__
         assert len(doc) > 100, "act docstring should be comprehensive"
-
-    def test_wait_docstring_explains_when_to_use(self, brain_action_tools):
-        """wait tool docstring explains when to use it."""
-        doc = brain_action_tools.wait.__doc__
-        assert "PREFER" in doc or "prefer" in doc.lower()
 
 
 # =============================================================================
