@@ -918,3 +918,86 @@ async def test_email_to_multiple_recipients(initialized_cm):
     assert (
         "partner2@acme.com" in all_recipients
     ), f"Expected partner2@acme.com in recipients, got to={email.to}, cc={email.cc}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_email_with_multiple_bcc(initialized_cm):
+    """Boss sends email with multiple BCC recipients."""
+    cm = initialized_cm
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content=(
+                "Could you email Alice at alice@example.com and tell her the contract "
+                "is ready for signature. BCC legal@acme.com and compliance@acme.com "
+                "for their records."
+            ),
+        ),
+    )
+
+    # Should have exactly one email sent
+    assert_has_one(result.output_events, EmailSent)
+    email = filter_events_by_type(result.output_events, EmailSent)[0]
+
+    # Verify TO recipient
+    assert (
+        "alice@example.com" in email.to
+    ), f"Expected alice@example.com in 'to', got to={email.to}"
+
+    # Verify both BCC recipients
+    assert (
+        "legal@acme.com" in email.bcc
+    ), f"Expected legal@acme.com in 'bcc', got bcc={email.bcc}"
+    assert (
+        "compliance@acme.com" in email.bcc
+    ), f"Expected compliance@acme.com in 'bcc', got bcc={email.bcc}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_email_with_all_plural_recipients(initialized_cm):
+    """Boss sends email with multiple TO, CC, and BCC recipients."""
+    cm = initialized_cm
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content=(
+                "Send an email to alice@example.com and bob@example.com "
+                "telling them the board meeting is scheduled for Monday at 10am. "
+                "CC charlie@example.com and diana@example.com for visibility, "
+                "and BCC legal@acme.com and exec@acme.com for records."
+            ),
+        ),
+    )
+
+    # Should have exactly one email sent
+    assert_has_one(result.output_events, EmailSent)
+    email = filter_events_by_type(result.output_events, EmailSent)[0]
+
+    # Verify multiple TO recipients
+    all_to_cc = email.to + email.cc
+    assert (
+        "alice@example.com" in all_to_cc
+    ), f"Expected alice@example.com in to/cc, got to={email.to}, cc={email.cc}"
+    assert (
+        "bob@example.com" in all_to_cc
+    ), f"Expected bob@example.com in to/cc, got to={email.to}, cc={email.cc}"
+
+    # Verify CC recipients (may be in to or cc depending on LLM interpretation)
+    assert (
+        "charlie@example.com" in all_to_cc
+    ), f"Expected charlie@example.com in to/cc, got to={email.to}, cc={email.cc}"
+    assert (
+        "diana@example.com" in all_to_cc
+    ), f"Expected diana@example.com in to/cc, got to={email.to}, cc={email.cc}"
+
+    # Verify BCC recipients
+    assert (
+        "legal@acme.com" in email.bcc
+    ), f"Expected legal@acme.com in 'bcc', got bcc={email.bcc}"
+    assert (
+        "exec@acme.com" in email.bcc
+    ), f"Expected exec@acme.com in 'bcc', got bcc={email.bcc}"

@@ -762,6 +762,145 @@ class TestSendEmailTool:
             decoded = base64.b64decode(call_args.kwargs["attachment"]["content_base64"])
             assert decoded == b"PDF report content"
 
+    @pytest.mark.asyncio
+    async def test_cc_only_email_valid(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Accepts email with only CC recipients (empty TO is valid)."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                cc=[1],  # Only CC, no TO
+                subject="FYI",
+                body="Just keeping you in the loop.",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            assert mock_send.call_args.kwargs["to"] == []
+            assert mock_send.call_args.kwargs["cc"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_bcc_only_email_valid(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Accepts email with only BCC recipients."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                bcc=[1],  # Only BCC
+                subject="Private",
+                body="Confidential message.",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            assert mock_send.call_args.kwargs["to"] == []
+            assert mock_send.call_args.kwargs["bcc"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_recipients(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Deduplicates when same recipient appears in multiple fields or formats."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            # Provide same recipient as both contact_id and email string
+            result = await brain_action_tools.send_email(
+                to=[1, "alice@example.com"],  # Both resolve to alice@example.com
+                subject="Test",
+                body="Hello",
+            )
+
+            assert result["status"] == "ok"
+            # Should deduplicate to single recipient
+            assert len(mock_send.call_args.kwargs["to"]) == 1
+            assert mock_send.call_args.kwargs["to"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_recipients_all_fields(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Handles multiple recipients in to, cc, and bcc simultaneously."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # Mock contact creation for external email addresses
+        created_contact_counter = [100]  # Use list to allow mutation in closure
+
+        def mock_create_contact(**kwargs):
+            contact_id = created_contact_counter[0]
+            created_contact_counter[0] += 1
+            return {"details": {"contact_id": contact_id}}
+
+        def mock_get_contact_info(contact_id):
+            # Return a minimal contact for created contacts
+            email = f"external{contact_id - 99}@example.com"
+            return {
+                contact_id: {
+                    "contact_id": contact_id,
+                    "email_address": email,
+                    "should_respond": True,
+                },
+            }
+
+        mock_cm.contact_manager = MagicMock()
+        mock_cm.contact_manager._create_contact = MagicMock(
+            side_effect=mock_create_contact,
+        )
+        mock_cm.contact_manager.get_contact_info = MagicMock(
+            side_effect=mock_get_contact_info,
+        )
+        mock_cm.contact_manager.filter_contacts = MagicMock(
+            return_value={"contacts": []},
+        )
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                to=[1, "external1@example.com"],
+                cc=[2, "external2@example.com"],
+                bcc=["external3@example.com", "external4@example.com"],
+                subject="Team Update",
+                body="Update for everyone.",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            # Verify all fields populated
+            assert len(mock_send.call_args.kwargs["to"]) == 2
+            assert len(mock_send.call_args.kwargs["cc"]) == 2
+            assert len(mock_send.call_args.kwargs["bcc"]) == 2
+
 
 class TestMakeCallTool:
     """Tests for make_call tool."""
