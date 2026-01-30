@@ -1,4 +1,4 @@
-import assert from "assert";
+import { strict as assert } from "node:assert";
 import { jsonSchemaToZod } from "../src/jsonSchemaToZod";
 
 function run(name: string, fn: () => void) {
