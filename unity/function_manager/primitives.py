@@ -146,6 +146,11 @@ class ComputerPrimitives:
 
         def _make_lazy_wrapper(method_name: str, backend_class):
             async def wrapper(*args, **kwargs):
+                # Internal-only kwargs may be injected by environment wrappers (e.g.
+                # clarification queue propagation). Backend implementations (notably
+                # MagnitudeBackend) do not accept these, so strip them here.
+                kwargs.pop("_clarification_up_q", None)
+                kwargs.pop("_clarification_down_q", None)
                 backend_method = getattr(self.computer.backend, method_name)
                 return await backend_method(*args, **kwargs)
 
