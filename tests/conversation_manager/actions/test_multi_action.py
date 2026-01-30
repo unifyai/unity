@@ -88,8 +88,8 @@ async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
     ), "Expected second act call for unrelated request"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first task")
-    assert_efficient(result2, "Step 2: second task")
+    assert_efficient(result1, 3, "Step 1: first task")
+    assert_efficient(result2, 3, "Step 2: second task")
 
 
 @pytest.mark.asyncio
@@ -128,8 +128,8 @@ async def test_parallel_searches_different_topics(initialized_cm):
     ), "Expected two separate act calls for explicitly different requests"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first search")
-    assert_efficient(result2, "Step 2: second task")
+    assert_efficient(result1, 3, "Step 1: first search")
+    assert_efficient(result2, 3, "Step 2: second task")
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +178,8 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
     ), "Expected new act call for different request type"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first task")
-    assert_efficient(result2, "Step 2: different task type")
+    assert_efficient(result1, 3, "Step 1: first task")
+    assert_efficient(result2, 3, "Step 2: different task type")
 
 
 @pytest.mark.asyncio
@@ -223,8 +223,8 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
     ), "Expected interject for adding constraint to same topic, not new act"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: initial search")
-    assert_efficient(result2, "Step 2: add constraint")
+    assert_efficient(result1, 3, "Step 1: initial search")
+    assert_efficient(result2, 3, "Step 2: add constraint")
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +278,9 @@ async def test_two_tasks_stop_one_specifically(initialized_cm):
     ), "Expected stop_* steering tool for canceling specific action"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first task")
-    assert_efficient(result2, "Step 2: second task")
-    assert_efficient(result3, "Step 3: cancel specific task")
+    assert_efficient(result1, 3, "Step 1: first task")
+    assert_efficient(result2, 3, "Step 2: second task")
+    assert_efficient(result3, 3, "Step 3: cancel specific task")
 
 
 @pytest.mark.asyncio
@@ -329,8 +329,8 @@ async def test_two_tasks_ask_about_one_specifically(initialized_cm):
     ), "Expected ask_* steering tool for querying specific action"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first task")
-    assert_efficient(result2, "Step 2: second task")
+    assert_efficient(result1, 3, "Step 1: first task")
+    assert_efficient(result2, 3, "Step 2: second task")
 
 
 # ---------------------------------------------------------------------------
@@ -385,9 +385,9 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
     ), "Expected new act call after canceling previous task"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first task")
-    assert_efficient(result2, "Step 2: cancel task")
-    assert_efficient(result3, "Step 3: new unrelated task")
+    assert_efficient(result1, 3, "Step 1: first task")
+    assert_efficient(result2, 3, "Step 2: cancel task")
+    assert_efficient(result3, 3, "Step 3: new unrelated task")
 
 
 @pytest.mark.asyncio
@@ -436,9 +436,9 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
     ), "Expected new act call for different location query, not just using old results"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: NYC contacts")
-    assert_efficient(result2, "Step 2: small talk")
-    assert_efficient(result3, "Step 3: LA contacts")
+    assert_efficient(result1, 3, "Step 1: NYC contacts")
+    assert_efficient(result2, 3, "Step 2: small talk")
+    assert_efficient(result3, 3, "Step 3: LA contacts")
 
 
 # ---------------------------------------------------------------------------
@@ -494,9 +494,9 @@ async def test_interject_first_then_start_second(initialized_cm):
     ), "Expected interject for narrowing search AND new act for contact lookup"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: restaurant search")
-    assert_efficient(result2, "Step 2: narrow search")
-    assert_efficient(result3, "Step 3: unrelated task")
+    assert_efficient(result1, 3, "Step 1: restaurant search")
+    assert_efficient(result2, 3, "Step 2: narrow search")
+    assert_efficient(result3, 3, "Step 3: unrelated task")
 
 
 @pytest.mark.asyncio
@@ -544,9 +544,9 @@ async def test_three_tasks_rapid_succession(initialized_cm):
     ), "Expected at least 3 act calls for 3 independent requests"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Task 1: weather")
-    assert_efficient(result2, "Task 2: contacts")
-    assert_efficient(result3, "Task 3: transcript")
+    assert_efficient(result1, 3, "Task 1: weather")
+    assert_efficient(result2, 3, "Task 2: contacts")
+    assert_efficient(result3, 3, "Task 3: transcript")
 
 
 @pytest.mark.asyncio
@@ -607,7 +607,7 @@ async def test_pause_first_start_second_resume_first(initialized_cm):
     ), "Expected pause and/or resume steering for the first task"
 
     # Efficiency assertions at end
-    assert_efficient(result1, "Step 1: first task")
-    assert_efficient(result2, "Step 2: pause request")
-    assert_efficient(result3, "Step 3: new task while paused")
-    assert_efficient(result4, "Step 4: resume first task")
+    assert_efficient(result1, 3, "Step 1: first task")
+    assert_efficient(result2, 3, "Step 2: pause request")
+    assert_efficient(result3, 3, "Step 3: new task while paused")
+    assert_efficient(result4, 3, "Step 4: resume first task")
