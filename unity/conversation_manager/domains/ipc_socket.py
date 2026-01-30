@@ -263,7 +263,7 @@ class CallEventSocketServer:
 
             if not channel or not event_json:
                 print(
-                    f"[CallEventSocketServer] Invalid message format: {message[:100]}"
+                    f"[CallEventSocketServer] Invalid message format: {message[:100]}",
                 )
                 return
 

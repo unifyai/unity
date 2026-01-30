@@ -5,7 +5,7 @@ ENV DISPLAY=:99
 
 WORKDIR /app
 
-# System dependencies for virtual desktop/devices, browser runtime, and native modules
+# System dependencies for virtual desktop/devices, web runtime, and native modules
 RUN apt-get update && apt-get install -y \
     curl wget unzip git gnupg2 \
     xvfb x11vnc fluxbox xdotool wmctrl xterm dbus dbus-x11 websockify \
@@ -38,7 +38,7 @@ WORKDIR /app/agent-service
 COPY agent-service/ ./
 RUN npm ci
 
-# Install Playwright browsers and rebuild native modules (sharp)
+# Install Playwright web runtimes and rebuild native modules (sharp)
 RUN npx playwright@1.52.0 install --with-deps chromium
 
 WORKDIR /app

@@ -35,7 +35,9 @@ class CallConfig:
 
 class LivekitCallManager:
     def __init__(
-        self, config: CallConfig, event_broker: "InMemoryEventBroker | None" = None
+        self,
+        config: CallConfig,
+        event_broker: "InMemoryEventBroker | None" = None,
     ):
         self.set_config(config=config)
         self.call_exchange_id = UNASSIGNED
@@ -64,7 +66,7 @@ class LivekitCallManager:
         """Start the socket server if not running, return socket path."""
         if self._event_broker is None:
             print(
-                "[LivekitCallManager] Warning: No event broker set, socket IPC disabled"
+                "[LivekitCallManager] Warning: No event broker set, socket IPC disabled",
             )
             return None
 

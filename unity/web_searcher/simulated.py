@@ -310,7 +310,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         # Reference the real prompt as context (no real tools here)
         ask_msg = build_ask_prompt(tools=self._ask_tools)
         self._llm.set_system_message(
-            "You are a simulated web-search assistant. There is no real browser or API – "
+            "You are a simulated web-search assistant. There is no real web client or API – "
             "invent plausible sources and keep your narrative consistent.\n\n"
             "For reference, here is the real system message outline used by the production WebSearcher.ask:"
             f"\n\n{ask_msg}\n\nBack-story: {self._description}",
@@ -360,7 +360,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
                 # Fallback: rebuild a fresh prompt equivalent
                 ask_msg = build_ask_prompt(tools=self._ask_tools)
                 schema_llm.set_system_message(
-                    "You are a simulated web-search assistant. There is no real browser or API – "
+                    "You are a simulated web-search assistant. There is no real web client or API – "
                     "invent plausible sources and keep your narrative consistent.\n\n"
                     "For reference, here is the real system message outline used by the production WebSearcher.ask:"
                     f"\n\n{ask_msg}\n\nBack-story: {self._description}",

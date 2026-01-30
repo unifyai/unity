@@ -734,7 +734,7 @@ class TestPhoneCallHandling:
 
 
 class TestUnifyMeetHandling:
-    """Test handling of Unify Meet (browser-based) voice calls."""
+    """Test handling of Unify Meet (web-based) voice calls."""
 
     @pytest.mark.asyncio
     async def test_handle_unify_meet_received(

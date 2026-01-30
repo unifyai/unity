@@ -7,7 +7,7 @@
 #   RUN /tmp/install-system-deps.sh [--minimal]
 #
 # Flags:
-#   --minimal   Only install deps needed for testing (skips X11, browsers, VNC, etc.)
+#   --minimal   Only install deps needed for testing (skips X11, GUI automation, VNC, etc.)
 
 set -euo pipefail
 
@@ -118,7 +118,7 @@ if [ "$MINIMAL" = false ]; then
         gnupg2 \
         ca-certificates
 
-    # Browser runtime dependencies (for Playwright headless browser)
+    # Web runtime dependencies (for Playwright headless mode)
     apt-get install -y --no-install-recommends \
         libnss3 \
         libatk-bridge2.0-0 \
@@ -145,7 +145,7 @@ if [ "$MINIMAL" = false ]; then
     # Image processing
     apt-get install -y --no-install-recommends libvips
 
-    # GTK4 and additional browser dependencies
+    # GTK4 and additional web automation dependencies
     apt-get install -y --no-install-recommends \
         libgtk-4-1 \
         libharfbuzz-icu0 \

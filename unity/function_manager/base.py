@@ -470,7 +470,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         primitives : Any | None, default ``None``
             The Primitives instance for RPC access to state managers.
         computer_primitives : Any | None, default ``None``
-            The ComputerPrimitives instance for browser/desktop RPC access.
+            The ComputerPrimitives instance for web/desktop RPC access.
 
         Returns
         -------

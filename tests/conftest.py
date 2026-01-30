@@ -6,7 +6,7 @@ Global pytest configuration for Unity test suite.
 
 Sections:
   1. Imports and logging guard
-  2. Test stubs (Redis, BrowserWorker, DateTime)
+  2. Test stubs (Redis, ComputerWorker, DateTime)
   3. Singleton isolation
   4. Command-line options
   5. Custom logging helpers
@@ -157,7 +157,7 @@ def pytest_report_header(config):
 
 
 # --------------------------------------------------------------------------- #
-# 2. Test stubs (Redis, BrowserWorker, DateTime)                              #
+# 2. Test stubs (Redis, ComputerWorker, DateTime)                              #
 # --------------------------------------------------------------------------- #
 
 _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)

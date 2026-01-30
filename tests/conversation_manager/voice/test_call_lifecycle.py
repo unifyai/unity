@@ -736,7 +736,7 @@ class TestCallEventHandlers:
 
 @pytest.mark.asyncio
 class TestUnifyMeetEventHandlers:
-    """Integration tests for UnifyMeet (browser-based voice) event handlers."""
+    """Integration tests for UnifyMeet (web-based voice) event handlers."""
 
     @pytest.fixture
     def boss_contact(self):
@@ -1092,7 +1092,7 @@ class TestFullCallLifecycle:
         assert initialized_cm.cm.mode == "text"
 
     async def test_unify_meet_lifecycle(self, initialized_cm, boss_contact):
-        """Test complete lifecycle of a UnifyMeet (browser) call."""
+        """Test complete lifecycle of a UnifyMeet (web) call."""
         # 1. Meeting received
         with patch.object(
             initialized_cm.cm.call_manager,

@@ -379,6 +379,44 @@ def test_describe_column_info_properties(file_manager, tmp_path: Path) -> None:
         assert hasattr(col, "data_type")
         assert hasattr(col, "is_searchable")
         assert hasattr(col, "embedding_column")
+        assert hasattr(col, "description")
+
+
+def test_describe_table_has_description_field(file_manager, tmp_path: Path) -> None:
+    """TableInfo includes description field from backend."""
+    test_file = tmp_path / "table_desc.csv"
+    test_file.write_text("product,price\nWidget,9.99\nGadget,19.99\n")
+
+    file_manager.ingest_files(str(test_file))
+
+    storage = file_manager.describe(file_path=str(test_file))
+
+    assert storage.has_tables
+    table = storage.tables[0]
+
+    # TableInfo should have description attribute (may be None if backend doesn't provide one)
+    assert hasattr(table, "description")
+    # Description should be None or a string
+    assert table.description is None or isinstance(table.description, str)
+
+
+def test_describe_document_has_description_field(file_manager, tmp_path: Path) -> None:
+    """DocumentInfo includes description field from backend."""
+    test_file = tmp_path / "doc_desc.txt"
+    test_file.write_text("This is a document to test description field.")
+
+    file_manager.ingest_files(str(test_file))
+
+    storage = file_manager.describe(file_path=str(test_file))
+
+    if storage.has_document and storage.document:
+        # DocumentInfo should have description attribute
+        assert hasattr(storage.document, "description")
+        # Description should be None or a string
+        assert storage.document.description is None or isinstance(
+            storage.document.description,
+            str,
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────────

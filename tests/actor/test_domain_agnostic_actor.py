@@ -2,16 +2,16 @@
 Integration tests for domain-agnostic Actor capabilities.
 
 Tests validate that HierarchicalActor and CodeActActor can execute plans across multiple
-tool domains (browser, state managers, pure logic) without hardcoded
+tool domains (computer, state managers, pure logic) without hardcoded
 assumptions about tool availability.
 
 Test Coverage:
-- Pure state manager workflows (no browser)
-- Mixed modality workflows (browser + state managers)
+- Pure state manager workflows (no computer)
+- Mixed modality workflows (computer + state managers)
 - Pure logic tasks (no external tools)
 - Live handle management (steerable primitives)
 - CodeActActor in primitives-only mode can call state manager methods
-- CodeActActor in mixed mode can call browser and state manager methods
+- CodeActActor in mixed mode can call computer and state manager methods
 """
 
 import asyncio
@@ -252,7 +252,7 @@ def validate_verification_evidence(
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SECTION 1: Pure State Manager Tests (No Browser)
+# SECTION 1: Pure State Manager Tests (No Computer)
 # ════════════════════════════════════════════════════════════════════════════
 
 
@@ -276,8 +276,8 @@ CANNED_PLAN_PURE_STATE_MANAGER = textwrap.dedent(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
-async def test_pure_state_manager_task_schedules_reminder_without_browser():
-    """Test that Actor can execute pure state-manager workflows without browser."""
+async def test_pure_state_manager_task_schedules_reminder_without_computer():
+    """Test that Actor can execute pure state-manager workflows without computer."""
     # Setup: Create primitives with mocked state managers
     primitives = Primitives()
 
@@ -289,7 +289,7 @@ async def test_pure_state_manager_task_schedules_reminder_without_browser():
     _ = primitives.tasks  # Initialize the task scheduler
     primitives.tasks.update = AsyncMock(side_effect=mock_tasks_update)
 
-    # Create Actor with ONLY StateManagerEnvironment (no browser)
+    # Create Actor with ONLY StateManagerEnvironment (no computer)
     actor = HierarchicalActor(
         headless=True,
         computer_mode="mock",
@@ -358,11 +358,11 @@ async def test_pure_state_manager_task_schedules_reminder_without_browser():
         state_calls = find_tool_calls(active_task, "primitives.tasks")
         assert len(state_calls) > 0, "Expected at least one primitives.tasks call"
 
-        # Verify NO browser calls were made
-        browser_calls = find_tool_calls(active_task, "computer_primitives")
+        # Verify NO computer calls were made
+        computer_calls = find_tool_calls(active_task, "computer_primitives")
         assert (
-            len(browser_calls) == 0
-        ), "No browser calls should occur in pure state manager test"
+            len(computer_calls) == 0
+        ), "No computer calls should occur in pure state manager test"
 
         # Validate verification evidence
         validate_verification_evidence(
@@ -389,7 +389,7 @@ async def test_pure_state_manager_task_schedules_reminder_without_browser():
 @pytest.mark.asyncio
 async def test_plan_sanitizer_instruments_primitives_tool_calls_with_checkpoints_and_around_cp():
     """
-    Test that PlanSanitizer instruments *non-browser* tool calls based on active environment namespaces.
+    Test that PlanSanitizer instruments *non-computer* tool calls based on active environment namespaces.
 
     Specifically, when a plan is configured with only the `primitives` environment, awaited calls like
     `await primitives.tasks.update(...)` must still be treated as tool calls and receive:
@@ -454,19 +454,19 @@ async def test_plan_sanitizer_instruments_primitives_tool_calls_with_checkpoints
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SECTION 2: Mixed Modality Tests (Browser + State Managers)
+# SECTION 2: Mixed Modality Tests (Computer + State Managers)
 # ════════════════════════════════════════════════════════════════════════════
 
 
 CANNED_PLAN_MIXED_MODALITY = textwrap.dedent(
     """
     async def main_plan():
-        '''Search for CEO info via browser, then save to contacts.'''
+        '''Search for CEO info via web, then save to contacts.'''
         from pydantic import BaseModel, Field
 
         print("--- Mixed Modality Test: Starting ---")
 
-        # Step 1: Browser search
+        # Step 1: Web search
         print("--- Step 1: Navigating to search engine ---")
         await computer_primitives.navigate("https://google.com")
 
@@ -501,7 +501,7 @@ CANNED_PLAN_MIXED_MODALITY = textwrap.dedent(
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
 async def test_mixed_modality_task_searches_web_and_updates_contacts():
-    """Test that Actor can orchestrate mixed workflows combining browser and state managers."""
+    """Test that Actor can orchestrate mixed workflows combining computer and state managers."""
 
     # Setup: Create primitives with mocked state managers
     primitives = Primitives()
@@ -514,7 +514,7 @@ async def test_mixed_modality_task_searches_web_and_updates_contacts():
     _ = primitives.contacts  # Initialize the contact manager
     primitives.contacts.update = AsyncMock(side_effect=mock_contacts_update)
 
-    # Create Actor with default environments (browser + state managers)
+    # Create Actor with default environments (computer + state managers)
     actor = HierarchicalActor(
         headless=True,
         computer_mode="mock",
@@ -587,7 +587,7 @@ async def test_mixed_modality_task_searches_web_and_updates_contacts():
             _HierarchicalHandleState.STOPPED,
         ], f"Expected COMPLETED or STOPPED, got {active_task._state}"
 
-        # Verify browser methods were called
+        # Verify computer methods were called
         assert (
             actor.computer_primitives.navigate.called
         ), "navigate should have been called"
@@ -603,9 +603,9 @@ async def test_mixed_modality_task_searches_web_and_updates_contacts():
         call_args = primitives.contacts.update.call_args
         assert "Dario Amodei" in str(call_args), "Expected CEO name in call args"
 
-        # Verify interaction log contains BOTH browser and state manager calls
-        browser_calls = find_tool_calls(active_task, "computer_primitives")
-        assert len(browser_calls) > 0, "Expected browser calls"
+        # Verify interaction log contains BOTH computer and state manager calls
+        computer_calls = find_tool_calls(active_task, "computer_primitives")
+        assert len(computer_calls) > 0, "Expected computer calls"
 
         state_calls = find_tool_calls(active_task, "primitives.contacts")
         assert len(state_calls) > 0, "Expected state manager calls"
@@ -721,10 +721,10 @@ async def test_pure_logic_task_calculates_average_without_tools():
         ], f"Expected COMPLETED or STOPPED, got {active_task._state}"
 
         # Verify NO tool calls were made
-        browser_calls = find_tool_calls(active_task, "computer_primitives")
+        computer_calls = find_tool_calls(active_task, "computer_primitives")
         assert (
-            len(browser_calls) == 0
-        ), "No browser calls should occur in pure logic test"
+            len(computer_calls) == 0
+        ), "No computer calls should occur in pure logic test"
 
         state_calls = find_tool_calls(active_task, "primitives.")
         assert (
@@ -904,7 +904,7 @@ async def test_live_handle_management_tracks_steerable_primitives():
 @_handle_project
 async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
     """
-    Test that CodeActActor can run in primitives-only mode (no browser env) and
+    Test that CodeActActor can run in primitives-only mode (no computer env) and
     its PythonExecutionSession can successfully call state manager methods.
 
     This test is sandbox-only (no LLM/tool-loop) to keep it deterministic.
@@ -936,9 +936,9 @@ async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
 @_handle_project
-async def test_code_act_actor_mixed_envs_sandbox_can_call_browser_and_state_managers():
+async def test_code_act_actor_mixed_envs_sandbox_can_call_computer_and_state_managers():
     """
-    Test that CodeActActor in mixed mode (browser + primitives envs) injects both namespaces
+    Test that CodeActActor in mixed mode (computer + primitives envs) injects both namespaces
     and the PythonExecutionSession can call both tool domains.
 
     This test is sandbox-only (no LLM/tool-loop) to keep it deterministic.
@@ -953,7 +953,7 @@ async def test_code_act_actor_mixed_envs_sandbox_can_call_browser_and_state_mana
     _ = primitives.contacts
     primitives.contacts.update = AsyncMock(side_effect=mock_contacts_update)
 
-    # Mock browser primitives
+    # Mock computer primitives
     mock_cp = MagicMock(spec=ComputerPrimitives)
     mock_cp.navigate = AsyncMock(return_value=None)
     mock_cp.act = AsyncMock(return_value=None)

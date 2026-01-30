@@ -735,8 +735,8 @@ jobs:
         print('✓ Local packages verified successfully')
         "
 
-    # Cache Playwright browsers (~500MB) to avoid re-downloading on every run
-    - name: Cache Playwright browsers
+    # Cache Playwright assets (~500MB) to avoid re-downloading on every run
+    - name: Cache Playwright assets
       uses: actions/cache@v4
       id: playwright-cache
       with:
@@ -745,7 +745,7 @@ jobs:
         restore-keys: |
           playwright-${{ runner.os }}-
 
-    - name: Install Playwright browsers
+    - name: Install Playwright assets
       if: steps.playwright-cache.outputs.cache-hit != 'true'
       run: |
         uv run playwright install --with-deps
