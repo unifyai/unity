@@ -38,7 +38,7 @@ async def test_repo_navigation_and_analysis_via_shell_then_python():
     handle = await actor.act(
         "Do the following steps using ONLY JSON tool calls (no prose until the final answer):\n"
         "1) Call execute_code(language='bash', state_mode='stateless') to run:\n"
-        "   `find tests/actor/test_code_act -maxdepth 1 -name 'test_*.py' | wc -l`\n"
+        "   `find tests/actor/code_act -maxdepth 1 -name 'test_*.py' | wc -l`\n"
         "2) Then call execute_code(language='python', state_mode='stateless') to parse the previous bash stdout,\n"
         "   extract the integer count, and return it.\n"
         "3) Finally, return a JSON object with keys: bash_count, python_count, used_bash, used_python.\n",
