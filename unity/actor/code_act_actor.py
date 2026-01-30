@@ -2016,6 +2016,7 @@ class CodeActActor(BaseCodeActActor):
                         await notification_q.put(
                             {
                                 "type": "execution_started",
+                                "message": "execution_started",
                                 "sandbox_id": sandbox_id,
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
@@ -2055,6 +2056,7 @@ class CodeActActor(BaseCodeActActor):
                             await notification_q.put(
                                 {
                                     "type": "execution_error",
+                                    "message": "execution_error",
                                     "sandbox_id": sandbox_id,
                                     "error_kind": "exception",
                                     "traceback_preview": tb[:2000],
@@ -2108,11 +2110,13 @@ class CodeActActor(BaseCodeActActor):
 
                 if notification_q is not None and str(language) == "python":
                     try:
+                        _status = ("ok" if not out.get("error") else "error")
                         await notification_q.put(
                             {
                                 "type": "execution_finished",
                                 "sandbox_id": sandbox_id,
-                                "status": ("ok" if not out.get("error") else "error"),
+                                "status": _status,
+                                "message": f"execution_finished:{_status}",
                                 "stdout_len": len(out.get("stdout") or ""),
                                 "stderr_len": len(out.get("stderr") or ""),
                                 "computer_used": bool(out.get("computer_used")),
