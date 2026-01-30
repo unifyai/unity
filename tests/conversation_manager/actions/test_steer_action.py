@@ -107,9 +107,10 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     )
 
     # Efficiency: Step 2 is pure small talk (acknowledge + wait)
+    # Step 3 uses async ask_* which may take extra turns (interim ack + result relay)
     assert_efficient(result1, "Step 1: initial action")
     assert_efficient(result2, "Step 2: small talk")
-    assert_efficient(result3, "Step 3: ask status")
+    assert_reasonably_efficient(result3, "Step 3: ask status")
 
 
 @pytest.mark.asyncio
@@ -164,9 +165,10 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
     )
 
     # Efficiency: Step 2 is a question that could trigger act to check time/timezone
+    # Step 3 uses async ask_* which may take extra turns (interim ack + result relay)
     assert_efficient(result1, "Step 1: initial action")
     assert_reasonably_efficient(result2, "Step 2: unrelated question (may trigger act)")
-    assert_efficient(result3, "Step 3: ask progress")
+    assert_reasonably_efficient(result3, "Step 3: ask progress")
 
 
 # ---------------------------------------------------------------------------
