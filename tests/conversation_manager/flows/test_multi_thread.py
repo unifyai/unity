@@ -533,3 +533,102 @@ async def test_multiple_threads_different_recipients(initialized_cm):
         f"Expected reply to technical thread (Thread A), "
         f"but got email_id_replied_to={email.email_id_replied_to}"
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_reply_adds_re_prefix_to_subject(initialized_cm):
+    """
+    Reply to email should auto-prefix subject with "Re:" if not present.
+
+    Scenario:
+    1. Alice sends email with subject "Meeting Request"
+    2. Boss asks to reply
+    3. EXPECTED: Reply subject should be "Re: Meeting Request"
+    """
+    cm = initialized_cm
+    alice = TEST_CONTACTS[0]
+
+    email_id = "CAKx7fQ_re_prefix_test@mail.gmail.com"
+
+    # Alice sends initial email
+    await cm.step(
+        EmailReceived(
+            contact=alice,
+            subject="Meeting Request",
+            body="Can we schedule a meeting for next week?",
+            email_id=email_id,
+            attachments=[],
+        ),
+    )
+
+    # Boss asks to reply
+    result = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content="Reply to Alice's meeting request and tell her Tuesday at 2pm works.",
+        ),
+    )
+
+    # Should have exactly one email sent
+    assert_has_one(result.output_events, EmailSent)
+    email = filter_events_by_type(result.output_events, EmailSent)[0]
+
+    # Verify subject has "Re:" prefix
+    assert email.subject.startswith(
+        "Re:",
+    ), f"Expected subject to start with 'Re:', got '{email.subject}'"
+    # Verify it's threaded correctly
+    assert (
+        email.email_id_replied_to == email_id
+    ), f"Expected email_id_replied_to={email_id}, got {email.email_id_replied_to}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_subject_auto_inference_threads_correctly(initialized_cm):
+    """
+    When no explicit email_id is provided, system should auto-infer
+    based on subject matching and thread to the correct email.
+
+    Scenario:
+    1. Alice sends email about "Project Alpha"
+    2. Boss asks to reply about "Project Alpha" (subject hint)
+    3. EXPECTED: Reply should be threaded to Alice's email
+    """
+    cm = initialized_cm
+    alice = TEST_CONTACTS[0]
+
+    email_id = "CAKx7fQ_auto_infer_test@mail.gmail.com"
+
+    # Alice sends email
+    await cm.step(
+        EmailReceived(
+            contact=alice,
+            subject="Project Alpha",
+            body="Here's the latest update on Project Alpha.",
+            email_id=email_id,
+            attachments=[],
+        ),
+    )
+
+    # Boss asks to reply (subject inference should kick in)
+    result = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "Reply to the Project Alpha email and tell Alice "
+                "the updates look good and we should proceed."
+            ),
+        ),
+    )
+
+    # Should have exactly one email sent
+    assert_has_one(result.output_events, EmailSent)
+    email = filter_events_by_type(result.output_events, EmailSent)[0]
+
+    # Verify it's correctly threaded via auto-inference
+    assert email.email_id_replied_to == email_id, (
+        f"Expected auto-inference to thread to email_id={email_id}, "
+        f"got email_id_replied_to={email.email_id_replied_to}"
+    )

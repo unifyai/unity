@@ -114,7 +114,7 @@ Each manager owns a specific domain. The Actor plans and calls the appropriate m
 
 | Manager | Role |
 |---------|------|
-| **Actor** | Ephemeral, real-time action executor. Can invoke functions, control browsers, read files, or use any available capability. Returns a live steerable handle. |
+| **Actor** | Ephemeral, real-time action executor. Can invoke functions, control computer interfaces, read files, or use any available capability. Returns a live steerable handle. |
 | **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
 | **FunctionManager** | Catalogue of reusable Python functions (created by the Actor or provided by the user). |
 
@@ -273,15 +273,15 @@ source .venv/bin/activate
 python start.py
 ```
 
-### Browser Automation (Controller Mode)
+### Web Automation (Controller Mode)
 
-**Browser Mode** (default):
+**Web Mode** (default):
 
 ```bash
 # Start the agent service
 npx ts-node agent-service/src/index.ts
 
-# The Actor will use browser mode by default (agent_mode="browser")
+# The Actor will use web mode by default (agent_mode="web")
 ```
 
 **Desktop Mode** (for full desktop automation):
@@ -381,7 +381,7 @@ unity/
 │   ├── actor/               # Top Level orchestrator
 │   ├── contact_manager/     # Contact records
 │   ├── conversation_manager/ # Live chat orchestration
-│   ├── controller/          # Browser control layer
+│   ├── controller/          # Computer control layer
 │   ├── events/              # EventBus pub/sub
 │   ├── file_manager/        # File parsing/registry
 │   ├── function_manager/    # User functions
@@ -397,7 +397,7 @@ unity/
 │   └── common/              # Shared utilities
 │       └── _async_tool/     # Async tool loop infrastructure
 ├── tests/                   # Test suite
-├── agent-service/           # Node.js browser agent
+├── agent-service/           # Node.js web/desktop agent
 ├── codesandbox-service/     # CodeSandbox integration
 ├── desktop/                 # Virtual desktop setup
 ├── scripts/                 # Utility scripts

@@ -220,6 +220,7 @@ def ensure_vector_column(
     source_column: str,
     derived_expr: str | None = None,
     *,
+    async_embeddings: bool = False,
     from_ids: list[int] | None = None,
 ) -> None:
     """
@@ -232,6 +233,7 @@ def ensure_vector_column(
         source_column (str): The name of the source column to embed. (eg: "content_plus_desc")
         derived_expr Optional(str): An optional expression to dynamically derive the source column
             (in case it's not already present) (eg: "str({name}) + ' || ' + str({description})")
+        async_embeddings (bool): Whether to generate embeddings asynchronously.
     """
     # If a derived expression was provided for the source, ensure the source column exists.
     if derived_expr is not None:
@@ -251,7 +253,7 @@ def ensure_vector_column(
         return
 
     # Define the embedding equation with explicit lg scoping and ensure the embedding column.
-    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}')"
+    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}', async_embeddings={async_embeddings})"
     ensure_derived_column(
         context=context,
         key=embed_column,

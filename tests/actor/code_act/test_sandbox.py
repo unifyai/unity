@@ -95,9 +95,9 @@ async def test_sandbox_stateful_class_definition():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_sandbox_browser_tool_execution(mock_computer_primitives):
+async def test_sandbox_computer_tool_execution(mock_computer_primitives):
     """
-    Tests that the sandbox can execute code that calls browser tools via
+    Tests that the sandbox can execute code that calls computer tools via
     the injected computer_primitives.
     """
     sandbox = PythonExecutionSession(computer_primitives=mock_computer_primitives)
@@ -355,7 +355,7 @@ async def test_execute_code_surfaces_computer_state_when_computer_used():
         execute_code = tools["execute_code"]
 
         res = await execute_code(
-            thought="Navigate so browser tools are exercised",
+            thought="Navigate so computer tools are exercised",
             language="python",
             state_mode="stateful",
             code="await computer_primitives.navigate('https://example.com')",
@@ -371,7 +371,9 @@ async def test_execute_code_surfaces_computer_state_when_computer_used():
         )
         assert isinstance(llm_content, list)
 
-        text_blocks = [b for b in llm_content if isinstance(b, dict) and b.get("type") == "text"]
+        text_blocks = [
+            b for b in llm_content if isinstance(b, dict) and b.get("type") == "text"
+        ]
         image_blocks = [
             b
             for b in llm_content
@@ -388,7 +390,8 @@ async def test_execute_code_surfaces_computer_state_when_computer_used():
 
         assert image_blocks, "Expected a computer screenshot image_url block"
         assert all(
-            isinstance(b.get("image_url"), dict) and isinstance(b["image_url"].get("url"), str)
+            isinstance(b.get("image_url"), dict)
+            and isinstance(b["image_url"].get("url"), str)
             for b in image_blocks
         )
     finally:

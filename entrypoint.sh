@@ -67,7 +67,7 @@ redis-server --save "" --appendonly no &
 REDIS_PID=$!
 echo "Redis started with PID: $REDIS_PID"
 
-# Start agent-service on port 3000 (for browser automation via Magnitude)
+# Start agent-service on port 3000 (for web automation via Magnitude)
 echo "Starting agent-service..."
 npx ts-node /app/agent-service/src/index.ts &
 AGENT_PID=$!

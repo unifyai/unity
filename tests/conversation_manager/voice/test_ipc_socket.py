@@ -153,7 +153,8 @@ class TestCallEventSocketClient:
 
         client = CallEventSocketClient(socket_path)
         result = await client.send_event(
-            "app:comms:phone_utterance", '{"text": "hello"}'
+            "app:comms:phone_utterance",
+            '{"text": "hello"}',
         )
 
         assert result is True
@@ -824,7 +825,7 @@ class TestSocketAwareEventBroker:
             )
 
             with patch(
-                "unity.conversation_manager.medium_scripts.common.get_event_broker"
+                "unity.conversation_manager.medium_scripts.common.get_event_broker",
             ) as mock_get_broker:
                 mock_broker = MagicMock()
                 mock_broker.publish = AsyncMock()

@@ -34,6 +34,7 @@ def embed_column(
     source_column: str,
     target_column: str,
     from_ids: Optional[List[int]] = None,
+    async_embeddings: bool = True,
 ) -> bool:
     """
     Embed a single column in a context.
@@ -48,6 +49,8 @@ def embed_column(
         Name of the vector column to create/update.
     from_ids : list[int] | None
         If provided, only embed rows with these log IDs.
+    async_embeddings : bool
+        Whether to generate embeddings asynchronously.
 
     Returns
     -------
@@ -59,6 +62,7 @@ def embed_column(
             context,
             embed_column=target_column,
             source_column=source_column,
+            async_embeddings=async_embeddings,
             from_ids=list(from_ids or []),
         )
         return True
@@ -111,6 +115,7 @@ def embed_content_batch(
                 context=context,
                 source_column=source_col,
                 target_column=target_col,
+                async_embeddings=True,
                 from_ids=inserted_ids,
             )
             results[target_col] = success
@@ -192,6 +197,7 @@ def embed_table_batch(
                 context=context,
                 source_column=source_col,
                 target_column=target_col,
+                async_embeddings=True,
                 from_ids=inserted_ids,
             )
             results[target_col] = success

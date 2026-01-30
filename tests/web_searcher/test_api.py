@@ -127,7 +127,7 @@ def test_clear_initialises_and_resets_caches():
 async def test_gated_site_routes_to_gated_website_search(monkeypatch):
     """When a gated site is requested, the ask loop should call _gated_website_search.
 
-    We patch the tool method to avoid invoking the real actor/browser and record calls.
+    We patch the tool method to avoid invoking the real actor/computer interface and record calls.
     """
 
     calls = {"gated_website_count": 0}

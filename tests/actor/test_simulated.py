@@ -318,7 +318,7 @@ async def test_pause_freezes_duration():
 @_handle_project
 async def test_entrypoint_demonstrates_function_knowledge_during_ask():
     """
-    Simulate a browser-style function that works on LinkedIn sales leads.
+    Simulate a web-style function that works on LinkedIn sales leads.
     The docstring should state:
       1) trouble logging into LinkedIn; 2) then resolved.
 
@@ -330,7 +330,7 @@ async def test_entrypoint_demonstrates_function_knowledge_during_ask():
 
     impl = '''
 def simulate_linkedin_sales_leads() -> str:
-    """Simulated browser flow:
+    """Simulated web flow:
     1) Trouble logging into LinkedIn (login blocked initially).
     2) Issue resolved; proceed to search sales leads on LinkedIn."""
     print("Trouble logging into LinkedIn: login blocked")

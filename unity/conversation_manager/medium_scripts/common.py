@@ -98,7 +98,7 @@ class SocketAwareEventBroker:
                 return 1
             else:
                 print(
-                    f"[SocketAwareEventBroker] Socket send failed, using fallback: {channel}"
+                    f"[SocketAwareEventBroker] Socket send failed, using fallback: {channel}",
                 )
 
         # Fall back to in-memory broker (won't work cross-process but useful for testing)

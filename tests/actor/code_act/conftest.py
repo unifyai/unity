@@ -10,7 +10,7 @@ from unity.function_manager.primitives import ComputerPrimitives
 def mock_computer_primitives():
     """Fixture to create a mock ComputerPrimitives for testing."""
     mock_provider = MagicMock(spec=ComputerPrimitives)
-    # Mock the correct method names (navigate, act, observe - NOT browser_*)
+    # Mock the correct method names (navigate, act, observe)
     mock_provider.navigate = AsyncMock(return_value="navigated")
     mock_provider.act = AsyncMock(return_value="acted")
     mock_provider.observe = AsyncMock(return_value={"data": "observed_data"})

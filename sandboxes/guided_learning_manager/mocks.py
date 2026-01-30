@@ -158,7 +158,7 @@ def mock_computer_primitives(
     screenshot: str = "",  # Empty uses MockComputerBackend's default (valid PNG)
 ) -> None:
     """
-    Set up mock computer primitives to avoid real browser operations.
+    Set up mock computer primitives to avoid real web operations.
 
     This configures the actor's ComputerPrimitives to use MockComputerBackend
     with the specified URL and screenshot values.

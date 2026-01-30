@@ -11,7 +11,7 @@ Uses **direct handler testing** pattern (same as ContactManager tests):
 - Works reliably with pytest-asyncio
 
 These tests use **real** state managers (ContactManager, TranscriptManager, etc.)
-with only the **Actor** being simulated (SimulatedActor) to avoid browser/computer
+with only the **Actor** being simulated (SimulatedActor) to avoid computer
 environment dependencies while still testing real database-backed behavior.
 
 Parallel execution is coordinated using scenario_file_lock (same pattern as
@@ -114,7 +114,7 @@ TEST_CONTACTS = [
 def pytest_configure(config):
     """Configure environment variables before any tests run."""
     # Only Actor is simulated - all other state managers use real implementations
-    # This avoids browser/computer environment dependencies while testing real DB behavior
+    # This avoids computer environment dependencies while testing real DB behavior
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "0"  # Allows pause+resume interactions
 
@@ -150,7 +150,7 @@ async def conversation_manager(request) -> CMStepDriver:
     tests - direct method calls, not event publishing.
 
     Uses SimulatedActor explicitly for fast, deterministic testing without
-    browser/computer environment dependencies.
+    computer environment dependencies.
 
     Uses scenario_file_lock to coordinate initialization across parallel test
     processes, preventing race conditions when ContactManager creates system
@@ -177,7 +177,7 @@ async def conversation_manager(request) -> CMStepDriver:
     print("  Using SimulatedActor for deterministic testing")
 
     # Create SimulatedActor for fast, deterministic testing
-    # (avoids HierarchicalActor's browser/computer environment setup)
+    # (avoids HierarchicalActor's computer environment setup)
     #
     # Uses steps=None, duration=None so actions run indefinitely until explicitly
     # completed via trigger_completion() in test cleanup. This makes tests fully

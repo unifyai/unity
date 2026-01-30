@@ -29,13 +29,13 @@ class ComputerBackend(ABC):
     """
     Abstract Base Class defining the interface for any computer use backend.
 
-    Supports both browser automation (agent_mode="browser") and general
+    Supports both web automation (agent_mode="web") and general
     desktop/computer control (agent_mode="desktop") via vision-based agents.
     """
 
     @abstractmethod
     async def act(self, instruction: str) -> str:
-        """Perform an action on the screen (browser or desktop)."""
+        """Perform an action on the screen (web UI or desktop)."""
 
     @abstractmethod
     async def observe(self, query: str, response_format: Any = str) -> Any:
@@ -51,7 +51,7 @@ class ComputerBackend(ABC):
 
     @abstractmethod
     async def get_current_url(self) -> str:
-        """Get the current URL (browser mode) or active window info (desktop mode)."""
+        """Get the current URL (web mode) or active window info (desktop mode)."""
 
     @abstractmethod
     async def navigate(self, url: str) -> str:
@@ -310,7 +310,7 @@ class MagnitudeBackend(ComputerBackend):
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         **kwargs,
     ):
         self.agent_mode = agent_mode
@@ -699,7 +699,7 @@ class MagnitudeBackend(ComputerBackend):
         """
         Executes a high-level computer task using the Magnitude agent.
 
-        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the browser page.
+        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the current web view.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
@@ -796,7 +796,7 @@ class MagnitudeBackend(ComputerBackend):
         This is your primary tool for perception. The agent uses a vision-language model to
         analyze the page, so its success depends entirely on the quality and clarity of your `query`.
 
-        This is a perception tool for what is *currently visible* in the browser tab or
+        This is a perception tool for what is *currently visible* in the web view or
         on-screen desktop. It is NOT a general-purpose data access tool.
 
         **Key Principles for an Effective Query:**

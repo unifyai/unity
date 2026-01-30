@@ -416,7 +416,7 @@ class TestVoiceEvents:
         assert event.content == "Hello there!"
 
     def test_outbound_unify_meet_utterance_event(self):
-        """OutboundUnifyMeetUtterance event for browser call TTS responses."""
+        """OutboundUnifyMeetUtterance event for web call TTS responses."""
         from unity.conversation_manager.events import OutboundUnifyMeetUtterance
 
         contact = {"contact_id": 1, "first_name": "Test", "surname": "User"}

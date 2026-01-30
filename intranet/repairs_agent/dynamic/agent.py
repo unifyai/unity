@@ -149,7 +149,7 @@ class DynamicRepairsAgent:
         self._system_prompt_extension = build_repairs_system_prompt(config_path)
 
         # Create CodeActActor with FunctionManager access and only StateManager environment
-        # (no browser environment needed for data analysis)
+        # (no computer environment needed for data analysis)
         self._actor = CodeActActor(
             function_manager=ManagerRegistry.get_function_manager(),
             environments=[StateManagerEnvironment(self._primitives)],

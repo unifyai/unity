@@ -22,7 +22,7 @@ async def test_hierarchical_actor_response_format_returns_model():
     ActionResult.model_rebuild()
 
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
-    # Avoid any real browser interactions
+    # Avoid any real computer interactions
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="ok")
     actor.computer_primitives.observe = AsyncMock(return_value="ok")

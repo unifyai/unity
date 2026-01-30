@@ -9,9 +9,9 @@ from unity.function_manager.primitives import ComputerPrimitives
 
 
 class ComputerEnvironment(BaseEnvironment):
-    """Computer (browser/desktop) control environment backed by `ComputerPrimitives`.
+    """Computer (web/desktop) control environment backed by `ComputerPrimitives`.
 
-    Exposes browser control methods like `computer_primitives.act(instruction)` for use inside
+    Exposes web control methods like `computer_primitives.act(instruction)` for use inside
     generated plan code.
     """
 
@@ -38,7 +38,7 @@ class ComputerEnvironment(BaseEnvironment):
         return self._computer_primitives
 
     def get_prompt_context(self) -> str:
-        """Return Markdown-formatted rules/examples for using browser/desktop control."""
+        """Return Markdown-formatted rules/examples for using web/desktop control."""
         return ""
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
@@ -47,7 +47,7 @@ class ComputerEnvironment(BaseEnvironment):
         impure = {"navigate", "act"}
         steerable = (
             set()
-        )  # browser primitives sometimes return handles, but actor proxies detect dynamically
+        )  # computer primitives sometimes return handles, but actor proxies detect dynamically
 
         tool_names = [
             "navigate",
@@ -83,7 +83,7 @@ class ComputerEnvironment(BaseEnvironment):
         return tools
 
     def get_prompt_context(self) -> str:
-        """Return concise guidance for using computer/browser primitives in plan code."""
+        """Return concise guidance for using computer/web primitives in plan code."""
         return (
             "### Computer Tools (`computer_primitives`)\n"
             "- Use `await computer_primitives.navigate(url)` to open pages.\n"
@@ -93,7 +93,7 @@ class ComputerEnvironment(BaseEnvironment):
         )
 
     async def capture_state(self) -> Dict[str, Any]:
-        """Captures visual browser state (screenshot + URL)."""
+        """Captures visual computer state (screenshot + URL)."""
         try:
             screenshot = await self._computer_primitives.computer.get_screenshot()
             url = await self._computer_primitives.computer.get_current_url()

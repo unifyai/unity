@@ -716,7 +716,7 @@ async def chain_cp(url: str, question: str) -> dict:
         # Test error with details
         mock_cp = MagicMock()
         mock_cp.navigate = AsyncMock(
-            side_effect=RuntimeError("Connection refused: browser not responding"),
+            side_effect=RuntimeError("Connection refused: computer not responding"),
         )
 
         result = await fm.execute_in_venv(

@@ -15,7 +15,7 @@ class Example:
     title: str
     code: str
     description: str
-    environment_tags: List[str]  # e.g., ["browser"], ["primitives"], ["mixed"]
+    environment_tags: List[str]  # e.g., ["computer"], ["primitives"], ["mixed"]
 
 
 # ---------------------------------------------------------------------------
@@ -222,15 +222,15 @@ async def main_plan():
 
 
 # ---------------------------------------------------------------------------
-# 3. Browser Examples
+# 3. Computer Examples
 # ---------------------------------------------------------------------------
 
 
-def get_browser_navigation_example() -> str:
+def get_computer_navigation_example() -> str:
     """Example: navigate and extract data from a webpage."""
 
     return '''
-# Example: Browser navigation and extraction
+# Example: Computer navigation and extraction
 async def fetch_product_price(product_url: str) -> float:
     """Navigate to product page and extract price."""
     await computer_primitives.navigate(product_url)
@@ -252,11 +252,11 @@ async def fetch_product_price(product_url: str) -> float:
 '''
 
 
-def get_browser_multistep_example() -> str:
-    """Example: multi-step browser workflow with verification."""
+def get_computer_multistep_example() -> str:
+    """Example: multi-step computer workflow with verification."""
 
     return '''
-# Example: Multi-step browser workflow
+# Example: Multi-step computer workflow
 async def complete_checkout(cart_items: list) -> str:
     """Complete e-commerce checkout flow."""
     # Navigate to checkout
@@ -281,8 +281,8 @@ async def complete_checkout(cart_items: list) -> str:
 '''
 
 
-def get_browser_screenshot_driven_example() -> str:
-    """Example: screenshot-driven implementation (within a browser loop).
+def get_computer_screenshot_driven_example() -> str:
+    """Example: screenshot-driven implementation (within a computer loop).
 
     UI actions are guided by the current page state (captured as screenshots/evidence).
     """
@@ -292,10 +292,9 @@ def get_browser_screenshot_driven_example() -> str:
 async def proceed_using_screenshot() -> str:
     await computer_primitives.navigate("https://example.com/setup")
 
-    # The Actor captures the page screenshot as evidence; use observe to read UI state from it.
-    visible = await computer_primitives.observe("From the screenshot, is there a 'Continue' button visible?")
-    if "no" in str(visible).lower():
-        raise ValueError("Expected a 'Continue' button in the screenshot")
+    # After computer actions, the loop surfaces a screenshot as an image block.
+    # Prefer acting directly from that context, and only use observe for structured extraction
+    # or when a precise, machine-checkable answer is required.
 
     await computer_primitives.act("Using the screenshot, click the 'Continue' button.")
     return await computer_primitives.observe("From the new screenshot, confirm we reached the next step.")
@@ -570,7 +569,7 @@ async def research_latest_news() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 5. Mixed Examples (Browser + Primitives)
+# 5. Mixed Examples (Computer + Primitives)
 # ---------------------------------------------------------------------------
 
 
@@ -608,10 +607,10 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
 
 
 def get_mixed_concurrent_example() -> str:
-    """Example: concurrent browser and state manager operations."""
+    """Example: concurrent computer and state manager operations."""
 
     return '''
-# Example: Concurrent browser + state manager operations
+# Example: Concurrent computer + state manager operations
 import asyncio
 
 async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
@@ -843,10 +842,10 @@ def get_verification_strategic_failure_example() -> str:
 """.strip()
 
 
-def get_browser_verification_extraction_example() -> str:
-    """Verification example: browser extraction (browser environment)."""
+def get_computer_verification_extraction_example() -> str:
+    """Verification example: extraction (computer environment)."""
     return """
-### Browser Verification Example: extraction
+### Computer Verification Example: extraction
 - **Goal**: "Find the product price."
 - **Intent**: `extract_price()`
 - **Agent Trace**:
@@ -860,10 +859,10 @@ def get_browser_verification_extraction_example() -> str:
 """.strip()
 
 
-def get_browser_verification_multistep_example() -> str:
-    """Verification example: browser multi-step success (browser environment)."""
+def get_computer_verification_multistep_example() -> str:
+    """Verification example: multi-step success (computer environment)."""
     return """
-### Browser Verification Example: multistep ok
+### Computer Verification Example: multistep ok
 - **Goal**: "Submit the signup form."
 - **Intent**: `submit_signup(email='a@corp.com')`
 - **Agent Trace**:
@@ -914,7 +913,7 @@ def get_primitives_verification_cross_manager_example() -> str:
 
 
 def get_mixed_verification_browse_persist_example() -> str:
-    """Verification example: mixed browse + persist success (browser + primitives)."""
+    """Verification example: mixed browse + persist success (computer + primitives)."""
     return """
 ### Mixed Verification Example: browse + persist ok
 - **Goal**: "Find support email on the site and save it to Knowledge."
@@ -926,13 +925,13 @@ def get_mixed_verification_browse_persist_example() -> str:
 - **Evidence**: Screenshot shows the extracted email; update return value indicates persistence succeeded.
 - **Decision**:
 ```json
-{"status": "ok", "reason": "The browser evidence matches the extracted email, and the state-manager update confirms it was saved."}
+{"status": "ok", "reason": "The computer evidence matches the extracted email, and the state-manager update confirms it was saved."}
 ```
 """.strip()
 
 
 def get_verification_examples_for_environments(
-    has_browser: bool,
+    has_computer: bool,
     has_primitives: bool,
 ) -> str:
     """Return verification examples appropriate for the given environment combination."""
@@ -949,13 +948,13 @@ def get_verification_examples_for_environments(
         ),
     )
 
-    if has_browser:
+    if has_computer:
         sections.append(
-            "### Browser Verification Examples\n"
+            "### Computer Verification Examples\n"
             + "\n\n".join(
                 [
-                    get_browser_verification_extraction_example().strip(),
-                    get_browser_verification_multistep_example().strip(),
+                    get_computer_verification_extraction_example().strip(),
+                    get_computer_verification_multistep_example().strip(),
                 ],
             ),
         )
@@ -971,7 +970,7 @@ def get_verification_examples_for_environments(
             ),
         )
 
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         sections.append(
             "### Mixed Verification Examples\n"
             + get_mixed_verification_browse_persist_example().strip(),
@@ -1340,13 +1339,13 @@ def get_code_act_pattern_examples() -> str:
     return "\n\n".join(examples)
 
 
-def get_browser_examples() -> str:
-    """Get all browser-specific examples."""
+def get_computer_examples() -> str:
+    """Get all computer-specific examples."""
 
     examples = [
-        get_browser_navigation_example().strip(),
-        get_browser_multistep_example().strip(),
-        get_browser_screenshot_driven_example().strip(),
+        get_computer_navigation_example().strip(),
+        get_computer_multistep_example().strip(),
+        get_computer_screenshot_driven_example().strip(),
     ]
     return "\n\n".join(examples)
 
@@ -1406,7 +1405,7 @@ def get_mixed_examples() -> str:
 
 
 def get_examples_for_environments(
-    has_browser: bool,
+    has_computer: bool,
     has_primitives: bool,
     include_core: bool = True,
     *,
@@ -1415,7 +1414,7 @@ def get_examples_for_environments(
     """Get examples appropriate for the given environment combination.
 
     Args:
-        has_browser: Whether computer_primitives environment is active
+        has_computer: Whether computer_primitives environment is active
         has_primitives: Whether primitives environment is active
         include_core: Whether to include core patterns (default: True)
         managers: If provided, only include examples for these managers
@@ -1431,15 +1430,15 @@ def get_examples_for_environments(
             "### Core Patterns (Environment-Agnostic)\n" + get_core_pattern_examples(),
         )
 
-    if has_browser:
-        sections.append("### Browser Examples\n" + get_browser_examples())
+    if has_computer:
+        sections.append("### Computer Examples\n" + get_computer_examples())
 
     if has_primitives:
         sections.append(
             "### State Manager Examples\n" + get_primitives_examples(managers=managers),
         )
 
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         sections.append("### Mixed-Mode Examples\n" + get_mixed_examples())
 
     return "\n\n".join(sections)

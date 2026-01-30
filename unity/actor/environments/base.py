@@ -155,7 +155,7 @@ class _ClarificationQueueInjector:
 class BaseEnvironment(ABC):
     """Abstract interface for execution environments.
 
-    An environment encapsulates a domain of tools (browser control, state managers,
+    An environment encapsulates a domain of tools (computer/web control, state managers,
     custom adapters) and provides:
     - a namespace to inject into the plan execution sandbox
     - metadata for tools (purity/steerability)

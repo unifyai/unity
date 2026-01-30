@@ -136,7 +136,7 @@ async def cm_with_eventbus():
     from unity.conversation_manager import start_async, stop_async
     from unity.conversation_manager.domains import managers_utils
 
-    # Only Actor is simulated - avoids browser/computer environment dependencies
+    # Only Actor is simulated - avoids computer environment dependencies
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
     os.environ["UNITY_MEMORY_ENABLED"] = "false"

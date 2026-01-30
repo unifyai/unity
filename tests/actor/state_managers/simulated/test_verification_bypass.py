@@ -13,7 +13,7 @@ pytestmark = pytest.mark.eval
 async def test_verification_bypass_works(mock_verification):
     """Verify that verification is bypassed but plan generation works."""
     async with make_hierarchical_actor(impl="simulated") as actor:
-        # Use a state-manager-only prompt to avoid any dependency on browser reasoning models.
+        # Use a state-manager-only prompt to avoid any dependency on computer reasoning models.
         # Persist defaults to True on HierarchicalActor.act; in tests we want the handle to complete
         # immediately rather than pausing for interjections after the main plan finishes.
         handle = await actor.act(
