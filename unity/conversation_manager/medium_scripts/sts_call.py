@@ -45,6 +45,7 @@ from unity.conversation_manager.medium_scripts.common import (
     configure_from_cli,
     should_dispatch_livekit_agent,
     log_sts_usage,
+    start_event_broker_receive,
 )
 
 logger = logging.getLogger("gpt-realtime-agent")
@@ -97,6 +98,12 @@ async def entrypoint(ctx: JobContext) -> None:
     print("Connecting to room...")
     await ctx.connect()
     print("Connected to room")
+
+    # Flag for call_answered that may arrive during initialization
+    call_answered_flag = asyncio.Event()
+
+    # Start receiving events from parent (callbacks registered later)
+    await start_event_broker_receive()
 
     # Populate SESSION_DETAILS from environment (set by configure_from_cli)
     SESSION_DETAILS.populate_from_env()
@@ -219,52 +226,58 @@ async def entrypoint(ctx: JobContext) -> None:
     await publish_call_started(contact, channel)
     touch_activity()
 
-    async def wait_for_nudges():
-        print("waiting")
-        rt = agent.realtime_llm_session  # underlying OpenAI RealtimeSession
-        async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance", "app:call:status")
-            while True:
-                msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=None,
-                )
-                if msg is not None:
-                    print("got notif", msg)
-                    data = json.loads(msg["data"])
-
-                    # Handle status messages (call answered, stop)
-                    if data.get("type") == "call_answered":
-                        print("call received")
-                        agent.set_call_received()
-                        continue
-                    elif data.get("type") == "stop":
-                        print("STOPPING CALL")
-                        await end_call()
-                        break
-
-                    # Handle guidance from Main CM Brain
-                    payload = data.get("payload") or data
-                    msg = payload
-                    chat_ctx = rt.chat_ctx
-                    chat_ctx.add_message(
-                        role="user",
-                        content=[f"""[notification] {msg["content"]}"""],
-                    )
-                    await rt.update_chat_ctx(chat_ctx)
-                    print(rt.chat_ctx.items)
-
-                    nonlocal user_is_speaking
-                    touch_activity()
-
-                    if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
-                        await session.generate_reply(allow_interruptions=True)
-
-                await asyncio.sleep(0.1)
-
     logger.info("starting AgentSession")
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
-    asyncio.create_task(wait_for_nudges())
+
+    # Register callbacks AFTER session.start() so agent.realtime_llm_session exists
+    rt = agent.realtime_llm_session
+
+    def on_status(data: dict) -> None:
+        """Handle status events (call_answered, stop)."""
+        event_type = data.get("type", "")
+        print(f"[Status] {event_type}")
+        touch_activity()
+
+        if event_type == "call_answered":
+            call_answered_flag.set()
+            agent.set_call_received()
+        elif event_type == "stop":
+            asyncio.create_task(end_call())
+
+    def on_guidance(data: dict) -> None:
+        """Handle guidance from conversation manager."""
+        payload = data.get("payload") or data
+        content = payload.get("content", "")
+        print(
+            f"[Guidance] {content[:50]}..."
+            if len(content) > 50
+            else f"[Guidance] {content}"
+        )
+        touch_activity()
+
+        if content:
+            chat_ctx = rt.chat_ctx
+            chat_ctx.add_message(
+                role="user",
+                content=[f"[notification] {content}"],
+            )
+
+            async def update_and_reply():
+                await rt.update_chat_ctx(chat_ctx)
+                nonlocal user_is_speaking
+                if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
+                    await session.generate_reply(allow_interruptions=True)
+
+            asyncio.create_task(update_and_reply())
+
+    event_broker.register_callback("app:call:status", on_status)
+    event_broker.register_callback("app:call:call_guidance", on_guidance)
+
+    # Handle call_answered that arrived during initialization
+    if call_answered_flag.is_set():
+        print("[Status] call_answered arrived during init - applying now")
+        agent.set_call_received()
+
     await session.generate_reply(allow_interruptions=True)
 
 

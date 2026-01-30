@@ -486,6 +486,298 @@ class TestIntegration:
         await server.stop()
 
 
+class TestBidirectionalCommunication:
+    """Tests for bidirectional socket communication (parent ↔ child)."""
+
+    @pytest.fixture
+    def real_event_broker(self):
+        """Create a real in-memory event broker for testing forwarding."""
+        from unity.conversation_manager.in_memory_event_broker import (
+            InMemoryEventBroker,
+        )
+
+        return InMemoryEventBroker()
+
+    @pytest.mark.asyncio
+    async def test_server_forwards_events_to_client(self, real_event_broker):
+        """Server forwards events from parent broker to connected clients."""
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        # Start server with forwarding enabled (default: app:call:*)
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        # Connect client and start receive loop
+        client = CallEventSocketClient(socket_path)
+        await client.start_receive_loop(on_event)
+
+        # Give time for connection to establish
+        await asyncio.sleep(0.1)
+
+        # Parent publishes event on a forwarded channel
+        await real_event_broker.publish(
+            "app:call:call_guidance",
+            '{"content": "Ask about their schedule"}',
+        )
+
+        # Wait for event to propagate
+        await asyncio.sleep(0.2)
+
+        # Client should have received the event
+        assert len(received_events) == 1
+        assert received_events[0][0] == "app:call:call_guidance"
+        assert "schedule" in received_events[0][1]
+
+        await client.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_server_forwards_status_events(self, real_event_broker):
+        """Server forwards status events (call_answered, stop) to client."""
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        client = CallEventSocketClient(socket_path)
+        await client.start_receive_loop(on_event)
+        await asyncio.sleep(0.1)
+
+        # Parent publishes status events
+        await real_event_broker.publish(
+            "app:call:status",
+            '{"type": "call_answered"}',
+        )
+        await real_event_broker.publish(
+            "app:call:status",
+            '{"type": "stop"}',
+        )
+
+        await asyncio.sleep(0.2)
+
+        # Client should have received both events
+        assert len(received_events) == 2
+        assert any("call_answered" in e[1] for e in received_events)
+        assert any("stop" in e[1] for e in received_events)
+
+        await client.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_server_does_not_forward_non_matching_channels(
+        self, real_event_broker
+    ):
+        """Server only forwards events matching forward_channels patterns."""
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],  # Only app:call:* channels
+        )
+        socket_path = await server.start()
+
+        client = CallEventSocketClient(socket_path)
+        await client.start_receive_loop(on_event)
+        await asyncio.sleep(0.1)
+
+        # Parent publishes on non-matching channel
+        await real_event_broker.publish(
+            "app:comms:email_received",
+            '{"subject": "Test"}',
+        )
+
+        await asyncio.sleep(0.2)
+
+        # Client should NOT receive this event
+        assert len(received_events) == 0
+
+        await client.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_bidirectional_full_round_trip(self, real_event_broker):
+        """Test complete bidirectional flow: parent → child AND child → parent."""
+        parent_received = []
+        child_received = []
+
+        # Custom on_event for server to track parent-side received events
+        async def parent_on_event(channel: str, event_json: str):
+            parent_received.append((channel, event_json))
+            # Also publish to broker for completeness
+            await real_event_broker.publish(channel, event_json)
+
+        async def child_on_event(channel: str, event_json: str):
+            child_received.append((channel, event_json))
+
+        # Start server with forwarding and custom callback
+        server = CallEventSocketServer(
+            real_event_broker,
+            on_event=parent_on_event,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        # Connect client and start receive loop
+        client = CallEventSocketClient(socket_path)
+        await client.start_receive_loop(child_on_event)
+        await asyncio.sleep(0.1)
+
+        # OUTBOUND: Child → Parent (utterance)
+        await client.send_event(
+            "app:comms:phone_utterance",
+            '{"text": "Hello from child"}',
+        )
+
+        # INBOUND: Parent → Child (guidance)
+        await real_event_broker.publish(
+            "app:call:call_guidance",
+            '{"content": "Guidance from parent"}',
+        )
+
+        await asyncio.sleep(0.3)
+
+        # Verify OUTBOUND: Parent received child's utterance
+        assert len(parent_received) == 1
+        assert parent_received[0][0] == "app:comms:phone_utterance"
+        assert "Hello from child" in parent_received[0][1]
+
+        # Verify INBOUND: Child received parent's guidance
+        assert len(child_received) == 1
+        assert child_received[0][0] == "app:call:call_guidance"
+        assert "Guidance from parent" in child_received[0][1]
+
+        await client.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_multiple_clients_receive_forwarded_events(self, real_event_broker):
+        """Server forwards events to all connected clients."""
+        client1_received = []
+        client2_received = []
+
+        async def client1_on_event(channel: str, event_json: str):
+            client1_received.append((channel, event_json))
+
+        async def client2_on_event(channel: str, event_json: str):
+            client2_received.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        # Connect two clients
+        client1 = CallEventSocketClient(socket_path)
+        await client1.start_receive_loop(client1_on_event)
+
+        client2 = CallEventSocketClient(socket_path)
+        await client2.start_receive_loop(client2_on_event)
+
+        await asyncio.sleep(0.1)
+
+        # Parent publishes event
+        await real_event_broker.publish(
+            "app:call:call_guidance",
+            '{"content": "Broadcast message"}',
+        )
+
+        await asyncio.sleep(0.2)
+
+        # Both clients should receive the event
+        assert len(client1_received) == 1
+        assert len(client2_received) == 1
+        assert "Broadcast message" in client1_received[0][1]
+        assert "Broadcast message" in client2_received[0][1]
+
+        await client1.close()
+        await client2.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_client_receive_loop_handles_disconnect(self, real_event_broker):
+        """Client receive loop handles server disconnect gracefully."""
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        client = CallEventSocketClient(socket_path)
+        await client.start_receive_loop(on_event)
+        await asyncio.sleep(0.1)
+
+        # Stop server while client is connected
+        await server.stop()
+
+        # Wait for client to detect disconnect
+        await asyncio.sleep(0.3)
+
+        # Client should have stopped running (not crash)
+        assert client._running is False
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_start_receive_loop_is_idempotent(self, real_event_broker):
+        """Calling start_receive_loop multiple times is safe."""
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        client = CallEventSocketClient(socket_path)
+
+        # Start receive loop multiple times
+        result1 = await client.start_receive_loop(on_event)
+        result2 = await client.start_receive_loop(on_event)
+
+        assert result1 is True
+        assert result2 is True  # Should return True (already running)
+
+        await asyncio.sleep(0.1)
+
+        # Publish an event
+        await real_event_broker.publish(
+            "app:call:call_guidance",
+            '{"content": "Test"}',
+        )
+
+        await asyncio.sleep(0.2)
+
+        # Should receive exactly one event (not duplicated)
+        assert len(received_events) == 1
+
+        await client.close()
+        await server.stop()
+
+
 class TestSocketAwareEventBroker:
     """Tests for the SocketAwareEventBroker wrapper in common.py."""
 
@@ -549,3 +841,92 @@ class TestSocketAwareEventBroker:
             if env_backup:
                 os.environ[CM_EVENT_SOCKET_ENV] = env_backup
             ipc_module._socket_client = None
+
+    @pytest.mark.asyncio
+    async def test_start_receiving_enables_inbound_events(self):
+        """SocketAwareEventBroker.start_receiving() enables receiving parent events."""
+        from unity.conversation_manager.in_memory_event_broker import (
+            InMemoryEventBroker,
+        )
+
+        # Create real parent broker
+        parent_broker = InMemoryEventBroker()
+
+        # Start server with forwarding
+        server = CallEventSocketServer(
+            parent_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        import unity.conversation_manager.domains.ipc_socket as ipc_module
+
+        ipc_module._socket_client = None
+        ipc_module._receive_loop_started = False
+
+        with patch.dict(os.environ, {CM_EVENT_SOCKET_ENV: socket_path}):
+            from unity.conversation_manager.medium_scripts.common import (
+                SocketAwareEventBroker,
+            )
+
+            # Create wrapper
+            wrapper = SocketAwareEventBroker()
+
+            # Register callback to capture events
+            received_events = []
+
+            def on_guidance(data):
+                received_events.append(data)
+
+            wrapper.register_callback("app:call:call_guidance", on_guidance)
+
+            # Start receiving
+            result = await wrapper.start_receiving()
+            assert result is True
+
+            # Wait for receive loop to start
+            await asyncio.sleep(0.1)
+
+            # Parent publishes event
+            await parent_broker.publish(
+                "app:call:call_guidance",
+                '{"content": "Test guidance"}',
+            )
+
+            # Wait for forwarding
+            await asyncio.sleep(0.3)
+
+            # Should have received the forwarded event via callback
+            assert len(received_events) == 1
+            assert received_events[0]["content"] == "Test guidance"
+
+            await wrapper.stop()
+
+        ipc_module._socket_client = None
+        ipc_module._receive_loop_started = False
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_receiving_returns_false_without_socket(self):
+        """start_receiving() returns False when no socket is available."""
+        import unity.conversation_manager.domains.ipc_socket as ipc_module
+
+        ipc_module._socket_client = None
+        ipc_module._receive_loop_started = False
+
+        env_backup = os.environ.pop(CM_EVENT_SOCKET_ENV, None)
+        try:
+            from unity.conversation_manager.medium_scripts.common import (
+                SocketAwareEventBroker,
+            )
+
+            wrapper = SocketAwareEventBroker()
+            result = await wrapper.start_receiving()
+
+            assert result is False
+
+        finally:
+            if env_backup:
+                os.environ[CM_EVENT_SOCKET_ENV] = env_backup
+            ipc_module._socket_client = None
+            ipc_module._receive_loop_started = False

@@ -40,6 +40,7 @@ from unity.conversation_manager.medium_scripts.common import (
     publish_call_started,
     configure_from_cli,
     should_dispatch_livekit_agent,
+    start_event_broker_receive,
 )
 
 # Globals initialized lazily or via prewarm to avoid duplicate heavy init
@@ -130,6 +131,12 @@ async def entrypoint(ctx: agents.JobContext):
     print("Connecting to room...")
     await ctx.connect()
     print("Connected to room")
+
+    # Flag for call_answered that may arrive during initialization
+    call_answered_flag = asyncio.Event()
+
+    # Start receiving events from parent (callbacks registered later)
+    await start_event_broker_receive()
 
     # Populate SESSION_DETAILS from environment (set by configure_from_cli)
     SESSION_DETAILS.populate_from_env()
@@ -244,64 +251,50 @@ async def entrypoint(ctx: agents.JobContext):
     await publish_call_started(contact, channel)
     touch_activity()
 
-    async def wait_for_guidance():
-        """
-        Subscribe to guidance from Main CM Brain and inject into conversation.
-
-        The Main CM Brain (slow brain) sends call_guidance events when it has
-        important information to share (data provision, data requests, notifications).
-        """
-        print("waiting for guidance from Main CM Brain...")
-        async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance", "app:call:status")
-            while True:
-                msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=None,
-                )
-                if msg is not None:
-                    print("got guidance", msg)
-                    data = json.loads(msg["data"])
-
-                    touch_activity()
-
-                    # Handle status messages (call answered, stop)
-                    if data.get("type") == "call_answered":
-                        print("call received")
-                        assistant.set_call_received()
-                        continue
-                    elif data.get("type") == "stop":
-                        print("STOPPING CALL")
-                        await end_call()
-                        break
-
-                    # Handle guidance from Main CM Brain
-                    # Support both Event.to_json() format ({event_name, payload})
-                    # and legacy direct payload dicts ({"content": ...}).
-                    payload = data.get("payload") or data
-                    content = payload.get("content", "")
-                    if content:
-                        # Inject guidance into the conversation context
-                        chat_ctx = session.chat_ctx
-                        chat_ctx.add_message(
-                            role="user",
-                            content=[f"[notification] {content}"],
-                        )
-
-                        nonlocal user_is_speaking
-
-                        # Generate response if user isn't speaking and last message wasn't assistant
-                        if (
-                            not user_is_speaking
-                            and chat_ctx.items[-1].role != "assistant"
-                        ):
-                            await session.generate_reply(allow_interruptions=True)
-
-                await asyncio.sleep(0.1)
-
     print("starting AgentSession")
     await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
-    asyncio.create_task(wait_for_guidance())
+
+    # Register callbacks AFTER session.start() so session.chat_ctx exists
+    def on_status(data: dict) -> None:
+        """Handle status events (call_answered, stop)."""
+        event_type = data.get("type", "")
+        print(f"[Status] {event_type}")
+        touch_activity()
+
+        if event_type == "call_answered":
+            call_answered_flag.set()
+            assistant.set_call_received()
+        elif event_type == "stop":
+            asyncio.create_task(end_call())
+
+    def on_guidance(data: dict) -> None:
+        """Handle guidance from conversation manager."""
+        payload = data.get("payload") or data
+        content = payload.get("content", "")
+        print(
+            f"[Guidance] {content[:50]}..."
+            if len(content) > 50
+            else f"[Guidance] {content}"
+        )
+        touch_activity()
+
+        if content:
+            session.chat_ctx.add_message(
+                role="user",
+                content=[f"[notification] {content}"],
+            )
+            nonlocal user_is_speaking
+            if not user_is_speaking and session.chat_ctx.items[-1].role != "assistant":
+                asyncio.create_task(session.generate_reply(allow_interruptions=True))
+
+    event_broker.register_callback("app:call:status", on_status)
+    event_broker.register_callback("app:call:call_guidance", on_guidance)
+
+    # Handle call_answered that arrived during initialization
+    if call_answered_flag.is_set():
+        print("[Status] call_answered arrived during init - applying now")
+        assistant.set_call_received()
+
     await session.generate_reply(allow_interruptions=True)
 
 
