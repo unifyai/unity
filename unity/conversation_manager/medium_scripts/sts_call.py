@@ -226,11 +226,9 @@ async def entrypoint(ctx: JobContext) -> None:
     await publish_call_started(contact, channel)
     touch_activity()
 
-    logger.info("starting AgentSession")
-    await session.start(room=ctx.room, agent=agent, room_input_options=rio)
-
-    # Register callbacks AFTER session.start() so agent.realtime_llm_session exists
-    rt = agent.realtime_llm_session
+    # Buffer for guidance that arrives before session is ready
+    pending_guidance: list[str] = []
+    session_ready = False
 
     def on_status(data: dict) -> None:
         """Handle status events (call_answered, stop)."""
@@ -244,6 +242,22 @@ async def entrypoint(ctx: JobContext) -> None:
         elif event_type == "stop":
             asyncio.create_task(end_call())
 
+    def apply_guidance(content: str) -> None:
+        """Apply guidance to chat context and optionally trigger reply."""
+        chat_ctx = rt.chat_ctx
+        chat_ctx.add_message(
+            role="user",
+            content=[f"[notification] {content}"],
+        )
+
+        async def update_and_reply():
+            await rt.update_chat_ctx(chat_ctx)
+            nonlocal user_is_speaking
+            if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
+                session.generate_reply(allow_interruptions=True)
+
+        asyncio.create_task(update_and_reply())
+
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
         payload = data.get("payload") or data
@@ -256,19 +270,10 @@ async def entrypoint(ctx: JobContext) -> None:
         touch_activity()
 
         if content:
-            chat_ctx = rt.chat_ctx
-            chat_ctx.add_message(
-                role="user",
-                content=[f"[notification] {content}"],
-            )
-
-            async def update_and_reply():
-                await rt.update_chat_ctx(chat_ctx)
-                nonlocal user_is_speaking
-                if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
-                    await session.generate_reply(allow_interruptions=True)
-
-            asyncio.create_task(update_and_reply())
+            if not session_ready:
+                pending_guidance.append(content)
+            else:
+                apply_guidance(content)
 
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
@@ -278,7 +283,21 @@ async def entrypoint(ctx: JobContext) -> None:
         print("[Status] call_answered arrived during init - applying now")
         agent.set_call_received()
 
+    logger.info("starting AgentSession")
+    await session.start(room=ctx.room, agent=agent, room_input_options=rio)
+
+    # Get realtime session (only available after session.start())
+    rt = agent.realtime_llm_session
+
     await session.generate_reply(allow_interruptions=True)
+
+    # Session is now ready - process buffered guidance and mark ready for future
+    session_ready = True
+    if pending_guidance:
+        print(f"[Guidance] Processing {len(pending_guidance)} buffered message(s)")
+        for content in pending_guidance:
+            apply_guidance(content)
+        pending_guidance.clear()
 
 
 if __name__ == "__main__":
