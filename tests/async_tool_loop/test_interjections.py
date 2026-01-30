@@ -511,13 +511,20 @@ async def test_interjections_processed_successfully(model):
     handle = start_async_tool_loop(
         client,
         (
-            "Follow STRICTLY these steps:\n"
-            '1) Call the tool `echo` with {"txt":"A"}.\n'
-            "2) When you see a user interjection of the form 'X please', "
-            "immediately call `echo` with {\"txt\": \"X\"}. I will interject 'B please' then 'C please'.\n"
-            "3) Only after ALL echo calls (A, B, and C) have completed, reply with exactly the single word: done.\n"
-            "Never include 'B' or 'C' in your assistant messages; produce them only via tool calls. "
-            "Do NOT say you are waiting - just call the tools as instructed."
+            "CRITICAL: You must follow these steps ONE AT A TIME. Do NOT skip ahead.\n\n"
+            'STEP 1: Call `echo` with {"txt":"A"} and STOP. Do not call any other tools yet.\n\n'
+            "STEP 2: WAIT for a user message. When you see a message like 'X please', "
+            'call `echo` with {"txt": "X"} for that specific X value.\n\n'
+            "STEP 3: Repeat step 2 for each new user message you receive.\n\n"
+            "STEP 4: Only after you have received AND responded to multiple user interjections, "
+            "and all echo calls have completed, reply with exactly: done\n\n"
+            "ABSOLUTE RULES:\n"
+            "- You MUST NOT call echo('B') or echo('C') until you ACTUALLY SEE "
+            "a user message containing 'B please' or 'C please'.\n"
+            "- Do NOT anticipate or predict future interjections.\n"
+            "- Do NOT call multiple echo tools in a single response (except the first 'A').\n"
+            "- Each user interjection must trigger exactly ONE new echo call.\n"
+            "- Never include 'B' or 'C' in your text responses; only via tool calls."
         ),
         {"echo": echo},
     )
