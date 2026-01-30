@@ -72,77 +72,77 @@ async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug("ping", log_str)
 
 
-CallEvents = Union[
-    PhoneCallReceived,
-    PhoneCallSent,
-    UnifyMeetReceived,
-    PhoneCallAnswered,
-]
+@EventHandler.register(PhoneCallAnswered)
+async def _(event: PhoneCallAnswered, cm: "ConversationManager", *args, **kwargs):
+    """
+    Forward call answered status to the voice agent subprocess.
+
+    This event arrives from the telephony system (via GCP PubSub) when the contact
+    picks up for outbound calls. Forward it unconditionally - if this event arrives,
+    we're in a call context by definition.
+    """
+    await cm.event_broker.publish(
+        "app:call:status",
+        json.dumps({"type": "call_answered"}),
+    )
 
 
-@EventHandler.register(
-    (PhoneCallReceived, PhoneCallSent, UnifyMeetReceived, PhoneCallAnswered),
-)
-async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
-    if cm.mode.is_voice:
-        if isinstance(event, PhoneCallAnswered):
-            await cm.event_broker.publish(
-                "app:call:status",
-                json.dumps({"type": "call_answered"}),
-            )
+CallInitEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyMeetReceived]
+
+
+@EventHandler.register((PhoneCallReceived, PhoneCallSent, UnifyMeetReceived))
+async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
+    """
+    Handle incoming/outgoing call initiation - spawn voice agent subprocess.
+    """
+    boss = cm.contact_index.get_contact(contact_id=1)
+    if isinstance(event, UnifyMeetReceived):
+        contact = boss
     else:
-        message_content = None
-        notif_content = None
-        boss = cm.contact_index.get_contact(contact_id=1)
-        if isinstance(event, UnifyMeetReceived):
-            contact = boss
-        else:
-            contact = cm.contact_index.get_contact(
-                phone_number=event.contact["phone_number"],
+        contact = cm.contact_index.get_contact(
+            phone_number=event.contact["phone_number"],
+        )
+        if contact is None:
+            contact = event.contact
+
+    contact_id = (
+        contact.get("contact_id") if contact else event.contact.get("contact_id")
+    )
+    sender_name = _get_sender_name(contact)
+
+    match event:
+        case PhoneCallReceived() as e:
+            cm.call_manager.conference_name = e.conference_name
+            await cm.call_manager.start_call(contact, boss)
+            message_content = "<Recvieving Call...>"
+            notif_content = f"Call received from {sender_name}"
+        case PhoneCallSent():
+            await cm.call_manager.start_call(contact, boss, outbound=True)
+            message_content = "<Sending Call...>"
+            notif_content = f"Call sent to {sender_name}"
+        case UnifyMeetReceived() as e:
+            await cm.call_manager.start_unify_meet(
+                contact,
+                boss,
+                e.livekit_agent_name,
+                e.room_name,
             )
-            if contact is None:
-                contact = event.contact
+            message_content = "<Recieving Call...>"
+            notif_content = f"Call received from {sender_name}"
 
-        contact_id = (
-            contact.get("contact_id") if contact else event.contact.get("contact_id")
-        )
-        sender_name = _get_sender_name(contact)
-
-        match event:
-            case PhoneCallReceived() as e:
-                cm.call_manager.conference_name = e.conference_name
-                await cm.call_manager.start_call(contact, boss)
-                message_content = "<Recvieving Call...>"
-                notif_content = f"Call received from {sender_name}"
-            case PhoneCallSent() as e:
-                await cm.call_manager.start_call(contact, boss, outbound=True)
-                message_content = "<Sending Call...>"
-                notif_content = f"Call sent to {sender_name}"
-            case UnifyMeetReceived() as e:
-                await cm.call_manager.start_unify_meet(
-                    contact,
-                    boss,
-                    e.livekit_agent_name,
-                    e.room_name,
-                )
-                message_content = "<Recieving Call...>"
-                notif_content = f"Call received from {sender_name}"
-
-        cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
-        role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
-        medium = (
-            Medium.UNIFY_MEET
-            if isinstance(event, UnifyMeetReceived)
-            else Medium.PHONE_CALL
-        )
-        cm.contact_index.push_message(
-            contact_id=contact_id,
-            sender_name=sender_name,
-            thread_name=medium,
-            message_content=message_content,
-            role=role,
-            timestamp=event.timestamp,
-        )
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+    role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
+    medium = (
+        Medium.UNIFY_MEET if isinstance(event, UnifyMeetReceived) else Medium.PHONE_CALL
+    )
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=medium,
+        message_content=message_content,
+        role=role,
+        timestamp=event.timestamp,
+    )
 
 
 @EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
