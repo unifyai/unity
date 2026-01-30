@@ -1,5 +1,7 @@
 import { z, ZodTypeAny } from "zod";
 
+type RefCache = Map<string, ZodTypeAny>;
+
 /**
  * Convert a JSON Schema (Pydantic-style) into a Zod schema.
  *
@@ -11,6 +13,7 @@ export function jsonSchemaToZod(
   schema: any,
   definitions: any = {},
   visitedRefs = new Set<string>(),
+  refCache: RefCache = new Map(),
 ): ZodTypeAny {
   if (typeof schema !== "object" || schema === null) {
     return z.any();
@@ -25,15 +28,25 @@ export function jsonSchemaToZod(
   // Handle references and recursion
   if (schema.$ref) {
     const refName = schema.$ref;
-    if (visitedRefs.has(refName)) {
-      // If we've seen this ref in the current path, it's a recursive type.
-      // We return a lazy schema that will resolve later.
-      return z.lazy(() =>
-        jsonSchemaToZod({ $ref: refName }, defs, new Set([...visitedRefs])),
-      );
+
+    const cached = refCache.get(refName);
+    if (cached) {
+      return cached;
     }
 
-    visitedRefs.add(refName);
+    if (visitedRefs.has(refName)) {
+      // Recursive types may appear in JSON Schema. Return a lazy placeholder that
+      // resolves to the fully-built schema once it is cached.
+      const placeholder: ZodTypeAny = z.lazy(() => {
+        const resolved = refCache.get(refName);
+        return resolved ?? z.any();
+      });
+      refCache.set(refName, placeholder);
+      return placeholder;
+    }
+
+    const nextVisited = new Set(visitedRefs);
+    nextVisited.add(refName);
 
     const refPath = refName.split("/");
     const defName = refPath.pop();
@@ -43,7 +56,9 @@ export function jsonSchemaToZod(
       throw new Error(`Could not resolve schema reference: ${refName}`);
     }
     // Pass the definitions down to the recursive call
-    return jsonSchemaToZod(resolvedSchema, defs, visitedRefs);
+    const built = jsonSchemaToZod(resolvedSchema, defs, nextVisited, refCache);
+    refCache.set(refName, built);
+    return built;
   }
 
   // Handle unions and optionals
@@ -61,7 +76,7 @@ export function jsonSchemaToZod(
 
     // Fallback for more complex unions (e.g., string | number)
     const unionTypes = schema.anyOf.map((s: any) =>
-      jsonSchemaToZod(s, defs, visitedRefs),
+      jsonSchemaToZod(s, defs, visitedRefs, refCache),
     );
     return z.union(unionTypes as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
   }
@@ -78,12 +93,13 @@ export function jsonSchemaToZod(
         { ...schema, type: nonNullTypes[0] },
         defs,
         visitedRefs,
+        refCache,
       );
       return baseType.optional().nullable();
     }
 
     const types = schema.type.map((type: string) =>
-      jsonSchemaToZod({ ...schema, type }, defs, visitedRefs),
+      jsonSchemaToZod({ ...schema, type }, defs, visitedRefs, refCache),
     );
     return z.union(types as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
   }
@@ -126,7 +142,7 @@ export function jsonSchemaToZod(
     case "array": {
       let itemSchema: ZodTypeAny = z.any();
       if (schema.items) {
-        itemSchema = jsonSchemaToZod(schema.items, defs, visitedRefs);
+        itemSchema = jsonSchemaToZod(schema.items, defs, visitedRefs, refCache);
       }
       let zodArray = z.array(itemSchema);
       if (schema.minItems !== undefined) zodArray = zodArray.min(schema.minItems);
@@ -137,7 +153,12 @@ export function jsonSchemaToZod(
       const shape: { [key: string]: ZodTypeAny } = {};
       if (schema.properties) {
         for (const key in schema.properties) {
-          const propSchema = jsonSchemaToZod(schema.properties[key], defs, visitedRefs);
+          const propSchema = jsonSchemaToZod(
+            schema.properties[key],
+            defs,
+            visitedRefs,
+            refCache,
+          );
           shape[key] = schema.required?.includes(key) ? propSchema : propSchema.optional();
         }
       }
@@ -146,14 +167,16 @@ export function jsonSchemaToZod(
         zodObject = z.object(shape).strict();
       } else if (typeof schema.additionalProperties === "object") {
         zodObject = z.object(shape).catchall(
-          jsonSchemaToZod(schema.additionalProperties, defs, visitedRefs),
+          jsonSchemaToZod(schema.additionalProperties, defs, visitedRefs, refCache),
         );
       }
       return zodObject;
     }
   }
 
-  if (schema.properties) return jsonSchemaToZod({ ...schema, type: "object" }, defs, visitedRefs);
+  if (schema.properties) {
+    return jsonSchemaToZod({ ...schema, type: "object" }, defs, visitedRefs, refCache);
+  }
 
   return z.any();
 }
