@@ -19,6 +19,10 @@ python -m sandboxes.conversation_manager.sandbox --gui --project_name Sandbox --
 python -m sandboxes.conversation_manager.sandbox --real-comms --project_name Sandbox --overwrite
 ```
 
+## Loom walkthrough
+
+See the recorded walkthrough here: [Loom demo](https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab).
+
 ## Actor configurations (modes)
 
 On startup, the sandbox prompts you to select one of three configurations (and remembers the last-used choice in a project-local file):
@@ -142,9 +146,6 @@ Mode 3 requires:
 - `agent-service` running and reachable at `--agent-server-url`
 - `UNIFY_KEY` set (agent-service uses it for auth)
 
-### “Provider List: https://docs.litellm.ai/docs/providers”
-This is emitted by Litellm when provider config is missing/mismatched. Ensure your LLM credentials/config are set for local runs.
-
 ## Other entrypoints
 
 **Alternate (GUI-only module)**:
@@ -164,9 +165,11 @@ This sandbox provides:
 - Scenario seeding (`us`, `usv`)
 - Real-comms mode with safety prompts (`--real-comms`)
 
+## Example: CodeAct + real managers + browser (GUI)
 
-sms Can you find OpenAI's careers page, check if there’s a “Backend Engineer” role open, and if so create a task for me called “Apply to OpenAI” with the role URL in the description?
+Start the sandbox in GUI mode with agent-service wired up:
 
+```bash
 python -m sandboxes.conversation_manager.sandbox \
   --gui \
   --voice \
@@ -174,3 +177,12 @@ python -m sandboxes.conversation_manager.sandbox \
   --overwrite \
   --agent-server-url http://localhost:3000 \
   --agent-mode web
+```
+
+Then, in the command bar, try an end-to-end request (Mode 3):
+
+```text
+sms Can you find OpenAI's careers page, check if there’s a “Backend Engineer” role open, and if so create a task for me called “Apply to OpenAI” with the role URL in the description?
+```
+
+Tip: add `--headless` if you don’t want a visible Chromium window.
