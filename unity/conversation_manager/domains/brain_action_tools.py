@@ -171,19 +171,28 @@ class ConversationManagerBrainActionTools:
     async def send_sms(
         self,
         *,
-        contact_id: int | None = None,
-        contact_details: ContactDetailsPhone | None = None,
+        recipient: int | str,
         content: str,
     ) -> dict[str, Any]:
         """
         Send an SMS message to a contact.
 
         Args:
-            contact_id: Target contact_id when known (preferred).
-            contact_details: Target identity details when contact_id is unknown.
-            content: SMS body to send.
+            recipient: Who to send the SMS to. Provide EITHER:
+                - An integer contact_id (e.g., 42) to message an existing contact, OR
+                - A phone number string (e.g., "+1234567890") to message that number
+                  directly. If the number isn't already in your contacts, a new
+                  contact will be created automatically.
+            content: The text content of the SMS message to send.
         """
-        contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+        # Resolve recipient to contact (creates contact if phone number provided)
+        if isinstance(recipient, int):
+            contact = await _get_or_create_contact(self._cm, contact_id=recipient)
+        else:
+            contact = await _get_or_create_contact(
+                self._cm,
+                details=ContactDetailsPhone(phone_number=recipient),
+            )
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
@@ -644,17 +653,26 @@ class ConversationManagerBrainActionTools:
     async def make_call(
         self,
         *,
-        contact_id: int | None = None,
-        contact_details: ContactDetailsPhone | None = None,
+        recipient: int | str,
     ) -> dict[str, Any]:
         """
         Start an outbound phone call to a contact.
 
         Args:
-            contact_id: Target contact_id when known (preferred).
-            contact_details: Target identity details when contact_id is unknown.
+            recipient: Who to call. Provide EITHER:
+                - An integer contact_id (e.g., 42) to call an existing contact, OR
+                - A phone number string (e.g., "+1234567890") to call that number
+                  directly. If the number isn't already in your contacts, a new
+                  contact will be created automatically.
         """
-        contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+        # Resolve recipient to contact (creates contact if phone number provided)
+        if isinstance(recipient, int):
+            contact = await _get_or_create_contact(self._cm, contact_id=recipient)
+        else:
+            contact = await _get_or_create_contact(
+                self._cm,
+                details=ContactDetailsPhone(phone_number=recipient),
+            )
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:

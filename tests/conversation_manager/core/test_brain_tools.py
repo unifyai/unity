@@ -348,9 +348,9 @@ class TestSendSmsTool:
     """Tests for send_sms tool."""
 
     @pytest.mark.asyncio
-    async def test_requires_contact_id_or_details(self, brain_action_tools):
-        """Raises error if neither contact_id nor contact_details provided."""
-        with pytest.raises(ValueError, match="Either contact_id or details"):
+    async def test_requires_recipient(self, brain_action_tools):
+        """Raises TypeError if recipient not provided."""
+        with pytest.raises(TypeError):
             await brain_action_tools.send_sms(content="Hello")
 
     @pytest.mark.asyncio
@@ -358,6 +358,56 @@ class TestSendSmsTool:
         """Send SMS tool has descriptive docstring."""
         assert brain_action_tools.send_sms.__doc__ is not None
         assert "SMS" in brain_action_tools.send_sms.__doc__
+
+    @pytest.mark.asyncio
+    async def test_accepts_contact_id_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts integer contact_id as recipient."""
+        contact = {
+            "contact_id": 5,
+            "first_name": "Test",
+            "surname": "Person",
+            "phone_number": "+1234567890",
+            "should_respond": True,
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact])
+
+        result = await brain_action_tools.send_sms(
+            recipient=5,
+            content="Hello",
+        )
+
+        assert result["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_accepts_phone_number_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts phone number string as recipient."""
+        # Mock contact creation for new phone number
+        mock_cm.contact_manager = MagicMock()
+        mock_cm.contact_manager._create_contact.return_value = {
+            "details": {"contact_id": 99},
+        }
+        mock_cm.contact_manager.get_contact_info.return_value = {
+            99: {
+                "contact_id": 99,
+                "phone_number": "+1987654321",
+                "should_respond": True,
+            },
+        }
+
+        result = await brain_action_tools.send_sms(
+            recipient="+1987654321",
+            content="Hello",
+        )
+
+        assert result["status"] == "ok"
 
     @pytest.mark.asyncio
     async def test_returns_error_for_contact_without_phone(
@@ -378,7 +428,7 @@ class TestSendSmsTool:
         _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
         result = await brain_action_tools.send_sms(
-            contact_id=5,
+            recipient=5,
             content="Hello",
         )
 
@@ -717,15 +767,59 @@ class TestMakeCallTool:
     """Tests for make_call tool."""
 
     @pytest.mark.asyncio
-    async def test_requires_contact_id_or_details(self, brain_action_tools):
-        """Raises error if neither contact_id nor contact_details provided."""
-        with pytest.raises(ValueError, match="Either contact_id or details"):
+    async def test_requires_recipient(self, brain_action_tools):
+        """Raises TypeError if recipient not provided."""
+        with pytest.raises(TypeError):
             await brain_action_tools.make_call()
 
     def test_has_docstring(self, brain_action_tools):
         """Make call tool has descriptive docstring."""
         assert brain_action_tools.make_call.__doc__ is not None
         assert "call" in brain_action_tools.make_call.__doc__.lower()
+
+    @pytest.mark.asyncio
+    async def test_accepts_contact_id_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts integer contact_id as recipient."""
+        contact = {
+            "contact_id": 5,
+            "first_name": "Test",
+            "surname": "Person",
+            "phone_number": "+1234567890",
+            "should_respond": True,
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact])
+
+        result = await brain_action_tools.make_call(recipient=5)
+
+        assert result["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_accepts_phone_number_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts phone number string as recipient."""
+        # Mock contact creation for new phone number
+        mock_cm.contact_manager = MagicMock()
+        mock_cm.contact_manager._create_contact.return_value = {
+            "details": {"contact_id": 99},
+        }
+        mock_cm.contact_manager.get_contact_info.return_value = {
+            99: {
+                "contact_id": 99,
+                "phone_number": "+1987654321",
+                "should_respond": True,
+            },
+        }
+
+        result = await brain_action_tools.make_call(recipient="+1987654321")
+
+        assert result["status"] == "ok"
 
     @pytest.mark.asyncio
     async def test_returns_error_for_contact_without_phone(
@@ -745,7 +839,7 @@ class TestMakeCallTool:
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
-        result = await brain_action_tools.make_call(contact_id=5)
+        result = await brain_action_tools.make_call(recipient=5)
 
         assert result["status"] == "error"
         assert "does not have" in result["error"]
