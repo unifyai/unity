@@ -200,6 +200,10 @@ async def conversation_manager(request) -> CMStepDriver:
         # This avoids the background task / event loop interleaving issues
         print("⏳ Initializing managers directly...")
         await managers_utils.init_conv_manager(cm, actor=actor)
+        if not cm.initialized:
+            raise RuntimeError(
+                "ConversationManager managers failed to initialize - check logs for errors",
+            )
         print("✅ Managers initialized")
 
         # Update system contacts in ContactManager with proper names and test defaults.

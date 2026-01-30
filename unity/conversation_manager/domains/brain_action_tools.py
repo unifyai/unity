@@ -735,9 +735,17 @@ class ConversationManagerBrainActionTools:
 
         await managers_utils.wait_for_initialization(self._cm)
 
+        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
+        # This is the exact state the brain saw when making this decision.
+        parent_context = (
+            [self._cm._current_state_snapshot]
+            if self._cm._current_state_snapshot
+            else None
+        )
+
         handle = await self._cm.actor.act(
             query,
-            _parent_chat_context=self._cm.chat_history,
+            _parent_chat_context=parent_context,
         )
 
         handle_id = _next_handle_id
@@ -899,11 +907,16 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
 
-                        # Capture values for the closure
+                        # Capture values for the closure.
+                        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
                         _handle = handle
                         _param_value = param_value
                         _handle_id = handle_id
-                        _cm_chat_history = cm.chat_history
+                        _parent_context = (
+                            [cm._current_state_snapshot]
+                            if cm._current_state_snapshot
+                            else None
+                        )
 
                         # Spawn background task to perform ask and emit result
                         async def _perform_ask_and_emit():
@@ -911,7 +924,7 @@ class ConversationManagerBrainActionTools:
                                 # Start the ask operation (does the LLM roundtrip)
                                 ask_handle = await _handle.ask(
                                     _param_value,
-                                    _parent_chat_context=_cm_chat_history,
+                                    _parent_chat_context=_parent_context,
                                 )
                                 # Await the result
                                 ask_result = await ask_handle.result()
@@ -949,9 +962,15 @@ class ConversationManagerBrainActionTools:
                                     "query": param_value,
                                 },
                             )
+                        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
+                        parent_context_cont = (
+                            [cm._current_state_snapshot]
+                            if cm._current_state_snapshot
+                            else None
+                        )
                         await handle.interject(
                             param_value,
-                            _parent_chat_context_cont=cm.chat_history,
+                            _parent_chat_context_cont=parent_context_cont,
                             images=kwargs.get("images"),
                         )
                         result = "Interjected successfully"
