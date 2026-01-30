@@ -251,10 +251,10 @@ async def entrypoint(ctx: agents.JobContext):
     await publish_call_started(contact, channel)
     touch_activity()
 
-    print("starting AgentSession")
-    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
+    # Buffer for guidance that arrives before session is ready
+    pending_guidance: list[str] = []
+    session_ready = False
 
-    # Register callbacks AFTER session.start() so session.chat_ctx exists
     def on_status(data: dict) -> None:
         """Handle status events (call_answered, stop)."""
         event_type = data.get("type", "")
@@ -266,6 +266,16 @@ async def entrypoint(ctx: agents.JobContext):
             assistant.set_call_received()
         elif event_type == "stop":
             asyncio.create_task(end_call())
+
+    def apply_guidance(content: str) -> None:
+        """Apply guidance to chat context and optionally trigger reply."""
+        session._chat_ctx.add_message(
+            role="user",
+            content=[f"[notification] {content}"],
+        )
+        nonlocal user_is_speaking
+        if not user_is_speaking and session._chat_ctx.items[-1].role != "assistant":
+            session.generate_reply(allow_interruptions=True)
 
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
@@ -279,13 +289,10 @@ async def entrypoint(ctx: agents.JobContext):
         touch_activity()
 
         if content:
-            session.chat_ctx.add_message(
-                role="user",
-                content=[f"[notification] {content}"],
-            )
-            nonlocal user_is_speaking
-            if not user_is_speaking and session.chat_ctx.items[-1].role != "assistant":
-                asyncio.create_task(session.generate_reply(allow_interruptions=True))
+            if not session_ready:
+                pending_guidance.append(content)
+            else:
+                apply_guidance(content)
 
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
@@ -295,7 +302,18 @@ async def entrypoint(ctx: agents.JobContext):
         print("[Status] call_answered arrived during init - applying now")
         assistant.set_call_received()
 
+    print("starting AgentSession")
+    await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
+
     await session.generate_reply(allow_interruptions=True)
+
+    # Session is now ready - process buffered guidance and mark ready for future
+    session_ready = True
+    if pending_guidance:
+        print(f"[Guidance] Processing {len(pending_guidance)} buffered message(s)")
+        for content in pending_guidance:
+            apply_guidance(content)
+        pending_guidance.clear()
 
 
 if __name__ == "__main__":

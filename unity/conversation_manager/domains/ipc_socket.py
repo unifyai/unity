@@ -448,9 +448,31 @@ class CallEventSocketClient:
         """Background loop to receive events from the server."""
         loop = asyncio.get_event_loop()
         buffer = b""
+        reconnect_attempts = 0
+        max_reconnect_attempts = 3
 
         try:
-            while self._running and self._connected:
+            while self._running:
+                # Ensure we're connected
+                if not self._connected:
+                    if reconnect_attempts >= max_reconnect_attempts:
+                        print(
+                            f"[CallEventSocketClient] Max reconnect attempts "
+                            f"({max_reconnect_attempts}) reached, stopping"
+                        )
+                        break
+                    reconnect_attempts += 1
+                    print(
+                        f"[CallEventSocketClient] Attempting reconnect "
+                        f"({reconnect_attempts}/{max_reconnect_attempts})..."
+                    )
+                    await asyncio.sleep(0.5)  # Brief delay before reconnect
+                    if not await self.connect():
+                        continue
+                    buffer = b""  # Reset buffer on reconnect
+                    print("[CallEventSocketClient] Reconnected successfully")
+                    reconnect_attempts = 0  # Reset on successful reconnect
+
                 try:
                     chunk = await asyncio.wait_for(
                         loop.sock_recv(self._socket, 4096),
@@ -459,7 +481,8 @@ class CallEventSocketClient:
                     if not chunk:
                         # Server disconnected
                         print("[CallEventSocketClient] Server disconnected")
-                        break
+                        self._connected = False
+                        continue  # Try to reconnect
 
                     buffer += chunk
 
@@ -476,7 +499,14 @@ class CallEventSocketClient:
                 except Exception as e:
                     if self._running:
                         print(f"[CallEventSocketClient] Receive error: {e}")
-                    break
+                        self._connected = False
+                        if self._socket:
+                            try:
+                                self._socket.close()
+                            except Exception:
+                                pass
+                            self._socket = None
+                    continue  # Try to reconnect
 
         except Exception as e:
             print(f"[CallEventSocketClient] Receive loop error: {e}")
@@ -519,32 +549,52 @@ class CallEventSocketClient:
             True if sent successfully, False otherwise.
         """
         async with self._lock:
-            if not self._connected:
-                if not await self.connect():
-                    return False
+            return await self._send_event_impl(channel, event_json, retry=True)
 
-            try:
-                message = (
-                    json.dumps(
-                        {
-                            "channel": channel,
-                            "event": event_json,
-                        }
-                    )
-                    + "\n"
-                )
-
-                loop = asyncio.get_event_loop()
-                await loop.sock_sendall(self._socket, message.encode("utf-8"))
-                return True
-
-            except Exception as e:
-                print(f"[CallEventSocketClient] Send failed: {e}")
-                self._connected = False
-                if self._socket:
-                    self._socket.close()
-                    self._socket = None
+    async def _send_event_impl(
+        self, channel: str, event_json: str, retry: bool = True
+    ) -> bool:
+        """Internal send implementation with optional retry."""
+        if not self._connected:
+            if not await self.connect():
                 return False
+
+        try:
+            message = (
+                json.dumps(
+                    {
+                        "channel": channel,
+                        "event": event_json,
+                    }
+                )
+                + "\n"
+            )
+
+            loop = asyncio.get_event_loop()
+            await loop.sock_sendall(self._socket, message.encode("utf-8"))
+            return True
+
+        except Exception as e:
+            print(f"[CallEventSocketClient] Send failed: {e}")
+            self._connected = False
+            if self._socket:
+                self._socket.close()
+                self._socket = None
+
+            # Try to reconnect and retry once
+            if retry:
+                print("[CallEventSocketClient] Attempting reconnect...")
+                if await self.connect():
+                    # Restart receive loop if it was running
+                    if self._on_event and (
+                        self._receive_task is None or self._receive_task.done()
+                    ):
+                        self._running = True
+                        self._receive_task = asyncio.create_task(self._receive_loop())
+                        print("[CallEventSocketClient] Receive loop restarted")
+                    return await self._send_event_impl(channel, event_json, retry=False)
+
+            return False
 
     async def stop(self) -> None:
         """Stop the receive loop."""
