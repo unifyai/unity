@@ -459,20 +459,28 @@ class CommsManager:
                         print(f"Failed scheduling attachment download: {e}")
 
                 elif thread == "unify_message":
-                    # Use contact_id from event if provided, otherwise default to boss (1)
+                    # contact_id is required - no default to prevent silent privilege escalation
                     # Note: unify_message comes from internal interface, not external unknown senders
                     # so we don't apply blacklist check or unknown contact creation here
-                    target_contact_id = event.get("contact_id", 1)
+                    target_contact_id = event.get("contact_id")
+                    if target_contact_id is None:
+                        print(
+                            "Error: contact_id is required for unify_message, "
+                            "skipping message",
+                        )
+                        message.ack()
+                        return
                     contact = next(
                         (c for c in contacts if c["contact_id"] == target_contact_id),
                         None,
                     )
                     if contact is None:
                         print(
-                            f"Warning: contact_id {target_contact_id} not found, "
-                            f"falling back to boss contact (1)",
+                            f"Error: contact_id {target_contact_id} not found in "
+                            f"contacts list, skipping message",
                         )
-                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                        message.ack()
+                        return
 
                     # Extract attachment filenames for the event
                     attachments = event.get("attachments") or []
