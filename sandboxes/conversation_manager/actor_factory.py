@@ -1,126 +1,6 @@
 """
 Actor + primitives factory for the ConversationManager sandbox.
 
-This is sandbox-only wiring glue. It centralizes selecting the correct actor for a
-given sandbox configuration.
-"""
-
-from __future__ import annotations
-
-import logging
-from dataclasses import dataclass
-from typing import Any, Callable, Optional
-
-from sandboxes.conversation_manager.config_manager import ActorConfig
-from sandboxes.conversation_manager.sandbox_simulated_actor import SandboxSimulatedActor
-from unity.actor.code_act_actor import CodeActActor
-from unity.actor.environments import ComputerEnvironment, StateManagerEnvironment
-from unity.function_manager.primitives import ComputerPrimitives, Primitives
-from unity.manager_registry import ManagerRegistry
-
-LG = logging.getLogger("conversation_manager_sandbox")
-
-ProgressCallback = Callable[[str], None]
-
-
-@dataclass(frozen=True)
-class ActorFactoryResult:
-    actor: Any
-    primitives: Optional[Primitives]
-    computer_primitives: Optional[ComputerPrimitives]
-
-
-class ActorFactory:
-    """Create actors for sandbox configurations."""
-
-    _SIMULATION_GUIDANCE = (
-        "Return actionable results (found/not-found/need-identifier). "
-        "Do not claim side effects (sending SMS/email/calls) unless explicitly requested. "
-        "If key details are missing (recipient, identifier, time), ask for them succinctly. "
-        "Summarize the next step clearly."
-    )
-
-    @classmethod
-    def create_actor(
-        cls,
-        config: ActorConfig,
-        *,
-        args: Any,
-        progress_callback: Optional[ProgressCallback] = None,
-    ) -> ActorFactoryResult:
-        """
-        Create the actor instance for the selected sandbox configuration.
-
-        Returns the actor plus (for CodeAct) the constructed primitives objects that
-        back the actor environments.
-        """
-        progress = progress_callback or (lambda _m: None)
-
-        if config.actor_type == "simulated":
-            actor = SandboxSimulatedActor(
-                steps=None,
-                duration=8.0,
-                log_mode="print",
-                simulation_guidance=cls._SIMULATION_GUIDANCE,
-            )
-            return ActorFactoryResult(
-                actor=actor,
-                primitives=None,
-                computer_primitives=None,
-            )
-
-        # CodeAct configurations: start with fresh singleton registry to avoid leaks
-        # across sandbox restarts.
-        try:
-            ManagerRegistry.clear()
-        except Exception:
-            pass
-
-        progress("[init] Loading configuration...")
-        progress(f"✓ Actor selected: {config.actor_type}")
-
-        primitives = Primitives()
-
-        computer_primitives: Optional[ComputerPrimitives] = None
-        if config.computer_backend_mode == "mock":
-            progress("[computer] Using mock backend")
-            computer_primitives = ComputerPrimitives(computer_mode="mock", connect_now=False)
-        elif config.computer_backend_mode == "real":
-            progress("[computer] Starting agent-service...")
-            computer_primitives = ComputerPrimitives(
-                headless=bool(getattr(args, "headless", False)),
-                computer_mode="magnitude",
-                agent_mode=getattr(args, "agent_mode", "web"),
-                agent_server_url=str(
-                    getattr(args, "agent_server_url", "http://localhost:3000"),
-                ),
-                connect_now=True,
-            )
-            progress("✓ Computer ready (agent-service connected)")
-
-        envs = [StateManagerEnvironment(primitives)]
-        if computer_primitives is not None:
-            envs.append(ComputerEnvironment(computer_primitives))
-
-        actor = CodeActActor(
-            environments=envs,
-            computer_primitives=computer_primitives,
-            computer_mode=(
-                "mock" if config.computer_backend_mode == "mock" else "magnitude"
-            ),
-            agent_server_url=getattr(args, "agent_server_url", "http://localhost:3000"),
-            headless=bool(getattr(args, "headless", False)),
-        )
-
-        return ActorFactoryResult(
-            actor=actor,
-            primitives=primitives,
-            computer_primitives=computer_primitives,
-        )
-
-"""
-Actor + primitives factory for the ConversationManager sandbox.
-
 This is sandbox-only wiring glue. It centralizes:
 - selecting the correct actor type for the chosen sandbox configuration
 - configuring manager implementations (simulated vs real) via env vars
@@ -138,16 +18,12 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Optional
 
-from sandboxes.conversation_manager.computer_activity import (
-    ComputerActivity,
-    install_computer_activity_hooks,
-)
 from sandboxes.conversation_manager.config_manager import ActorConfig
 from sandboxes.conversation_manager.sandbox_simulated_actor import SandboxSimulatedActor
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.environments import ComputerEnvironment, StateManagerEnvironment
-from unity.function_manager.primitives import ComputerPrimitives, Primitives
 from unity.function_manager.computer_backends import VALID_MOCK_SCREENSHOT_PNG
+from unity.function_manager.primitives import ComputerPrimitives, Primitives
 from unity.manager_registry import ManagerRegistry
 
 LG = logging.getLogger("conversation_manager_sandbox")
@@ -213,27 +89,24 @@ class ActorFactory:
         progress("[init] Loading configuration...")
         progress(f"✓ Actor selected: {config.actor_type}")
 
-        primitives = cls.build_primitives(
-            mode=config.managers_mode,
-            progress_callback=progress,
-        )
-        computer_primitives = cls.create_computer_backend(
-            mode=config.computer_backend_mode,
-            args=args,
-            progress_callback=progress,
-        )
+        primitives = cls.build_primitives(mode=config.managers_mode, progress_callback=progress)
 
-        # Keep `primitives.computer` consistent with the dedicated `computer_primitives`
-        # environment. This avoids accidentally creating two separate computer backends.
-        if computer_primitives is not None:
-            try:
-                primitives._computer = computer_primitives  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        computer_primitives: Optional[ComputerPrimitives] = None
+        if config.computer_backend_mode == "mock":
+            progress("[computer] Using mock backend")
+            computer_primitives = ComputerPrimitives(computer_mode="mock", connect_now=False)
+        elif config.computer_backend_mode == "real":
+            progress("[computer] Starting agent-service...")
+            computer_primitives = ComputerPrimitives(
+                headless=bool(getattr(args, "headless", False)),
+                computer_mode="magnitude",
+                agent_mode=getattr(args, "agent_mode", "web"),
+                agent_server_url=str(getattr(args, "agent_server_url", "http://localhost:3000")),
+                connect_now=True,
+            )
+            progress("✓ Computer ready (agent-service connected)")
 
-        envs = [
-            StateManagerEnvironment(primitives),
-        ]
+        envs = [StateManagerEnvironment(primitives)]
         if computer_primitives is not None:
             envs.append(ComputerEnvironment(computer_primitives))
 
@@ -272,64 +145,6 @@ class ActorFactory:
         progress = progress_callback or (lambda _m: None)
         progress(f"[init] Managers mode: {mode}")
         return Primitives()
-
-    @staticmethod
-    def create_computer_backend(
-        *,
-        mode: Literal["none", "mock", "real"],
-        args: Any,
-        progress_callback: Optional[ProgressCallback] = None,
-    ) -> Optional[ComputerPrimitives]:
-        """
-        Create the computer backend for the selected mode.
-
-        - none: no computer tools
-        - mock: MockComputerBackend (no external deps)
-        - real: Magnitude backend via agent-service (connect now for startup feedback)
-        """
-        progress = progress_callback or (lambda _m: None)
-
-        if mode == "none":
-            progress("[computer] Disabled")
-            return None
-
-        if mode == "mock":
-            progress("[computer] Using mock backend")
-            # No external dependencies; connect lazily.
-            cp = ComputerPrimitives(
-                computer_mode="mock",
-                connect_now=False,
-            )
-            activity = ComputerActivity()
-            setattr(args, "_computer_activity", activity)
-            install_computer_activity_hooks(
-                computer_primitives=cp,
-                activity=activity,
-                emit_line=getattr(args, "_computer_log_sink", None),
-            )
-            return cp
-
-        # real
-        agent_server_url = getattr(args, "agent_server_url", "http://localhost:3000")
-        progress("[computer] Starting agent-service...")
-        cp = ComputerPrimitives(
-            headless=bool(getattr(args, "headless", False)),
-            computer_mode="magnitude",
-            agent_mode=getattr(args, "agent_mode", "web"),
-            agent_server_url=str(agent_server_url),
-            connect_now=True,
-        )
-        activity = ComputerActivity()
-        setattr(args, "_computer_activity", activity)
-        # We only know "connected" if `connect_now` succeeded.
-        activity.mark_connected_sync(True)
-        install_computer_activity_hooks(
-            computer_primitives=cp,
-            activity=activity,
-            emit_line=getattr(args, "_computer_log_sink", None),
-        )
-        progress("✓ Computer ready (agent-service connected)")
-        return cp
 
     @staticmethod
     def _apply_manager_impl_env(mode: Literal["simulated", "real"]) -> None:
