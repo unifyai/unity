@@ -93,7 +93,10 @@ class ActorFactory:
         progress("[init] Loading configuration...")
         progress(f"✓ Actor selected: {config.actor_type}")
 
-        primitives = cls.build_primitives(mode=config.managers_mode, progress_callback=progress)
+        primitives = cls.build_primitives(
+            mode=config.managers_mode,
+            progress_callback=progress,
+        )
 
         computer_primitives = cls.create_computer_backend(
             mode=config.computer_backend_mode,
