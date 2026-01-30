@@ -3,6 +3,11 @@ Brain action tools for ConversationManager.
 
 All contact information is fetched from ContactManager (source of truth).
 No local caching of contact data.
+
+Context Propagation:
+- When `act` is called, the current state snapshot is passed to Actor via _parent_chat_context
+- For `interject` operations, only the incremental diff from the initial snapshot is sent
+  via _parent_chat_context_cont, avoiding duplication of unchanged state
 """
 
 from __future__ import annotations
@@ -31,6 +36,10 @@ from unity.conversation_manager.task_actions import (
     derive_short_name,
     build_action_name,
     safe_call_id_suffix,
+)
+from unity.conversation_manager.domains.renderer import (
+    SnapshotState,
+    compute_snapshot_diff,
 )
 
 if TYPE_CHECKING:
@@ -750,10 +759,18 @@ class ConversationManagerBrainActionTools:
 
         handle_id = _next_handle_id
         _next_handle_id += 1
+
+        # Capture the snapshot state for incremental diff computation.
+        # This is used when interjecting to send only changed state, avoiding duplication.
+        initial_snapshot_state: SnapshotState | None = None
+        if hasattr(self._cm, "_current_snapshot_state"):
+            initial_snapshot_state = self._cm._current_snapshot_state
+
         self._cm.in_flight_actions[handle_id] = {
             "handle": handle,
             "query": query,
             "handle_actions": [],
+            "initial_snapshot_state": initial_snapshot_state,
         }
 
         await self._event_broker.publish(
@@ -962,12 +979,36 @@ class ConversationManagerBrainActionTools:
                                     "query": param_value,
                                 },
                             )
-                        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
-                        parent_context_cont = (
-                            [cm._current_state_snapshot]
-                            if cm._current_state_snapshot
+
+                        # Compute incremental diff from initial snapshot to current state.
+                        # This avoids sending duplicate information that was already in the
+                        # initial _parent_chat_context when act() was called.
+                        parent_context_cont = None
+                        initial_snapshot = (
+                            handle_data.get("initial_snapshot_state")
+                            if handle_data
                             else None
                         )
+                        current_snapshot = getattr(cm, "_current_snapshot_state", None)
+
+                        if current_snapshot is not None:
+                            # Compute diff between initial and current state
+                            diff_content = compute_snapshot_diff(
+                                initial_snapshot,
+                                current_snapshot,
+                            )
+                            if diff_content:
+                                parent_context_cont = [
+                                    {
+                                        "role": "user",
+                                        "content": diff_content,
+                                        "_cm_context_diff": True,
+                                    },
+                                ]
+                        elif cm._current_state_snapshot:
+                            # Fallback: if no snapshot tracking, use full snapshot (backward compat)
+                            parent_context_cont = [cm._current_state_snapshot]
+
                         await handle.interject(
                             param_value,
                             _parent_chat_context_cont=parent_context_cont,

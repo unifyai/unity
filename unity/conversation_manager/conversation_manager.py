@@ -148,6 +148,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._current_state_snapshot = (
             None  # Fresh rendered state for tools during _run_llm
         )
+        self._current_snapshot_state = (
+            None  # SnapshotState with element tracking for incremental diff computation
+        )
         self.is_summarizing = None
         self.max_messages = 30
 
@@ -423,6 +426,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Tools (act, steering) need the fresh rendered state, not the stale chat_history.
         self._current_state_snapshot = input_message
 
+        # Also capture the structured snapshot state for incremental diff computation.
+        # This enables interject operations to send only changes since the initial act().
+        self._current_snapshot_state = self.prompt_renderer.render_state_with_tracking(
+            self.contact_index,
+            self.notifications_bar,
+            self.in_flight_actions,
+            self.last_snapshot,
+        )
+
         # Log LLM thinking start
         self._session_logger.log_llm_thinking(f"mode={self.mode}")
 
@@ -484,8 +496,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.commit()
         self._session_logger.debug("state_update", "Committing state")
 
-        # Clear the temporary state snapshot now that tools have executed
+        # Clear the temporary state snapshots now that tools have executed
         self._current_state_snapshot = None
+        self._current_snapshot_state = None
 
         # Build assistant message for chat history
         assistant_content = (

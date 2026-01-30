@@ -137,21 +137,35 @@ class TestSteeringContextPropagation:
 
     @pytest.mark.asyncio
     @_handle_project
-    async def test_interject_passes_current_state_snapshot(self, initialized_cm):
+    async def test_interject_passes_incremental_diff_when_snapshot_state_available(
+        self,
+        initialized_cm,
+    ):
         """
-        Verify that interject steering passes [_current_state_snapshot] as
-        _parent_chat_context_cont.
+        Verify that interject steering passes an incremental diff as
+        _parent_chat_context_cont when SnapshotState tracking is available.
+
+        This tests the incremental context propagation feature: when an action
+        is started, its initial snapshot state is stored. When interjecting,
+        only the DIFF between the initial and current snapshot is sent.
 
         Setup:
-        - Create an in-flight action with a mock handle
-        - Set _current_state_snapshot to a known message
+        - Create an in-flight action with a mock handle and initial_snapshot_state
+        - Set _current_snapshot_state with some new elements (a new message)
         - Call the interject steering tool directly
         - Capture the _parent_chat_context_cont argument
 
         Assert:
-        - _parent_chat_context_cont is [_current_state_snapshot]
+        - _parent_chat_context_cont contains only the diff (new elements)
+        - _parent_chat_context_cont is marked with _cm_context_diff: True
         """
+        from datetime import datetime, timezone
         from unittest.mock import MagicMock
+
+        from unity.conversation_manager.domains.renderer import (
+            SnapshotState,
+            MessageElement,
+        )
 
         cm = initialized_cm.cm
 
@@ -164,20 +178,51 @@ class TestSteeringContextPropagation:
         mock_handle = MagicMock()
         mock_handle.interject = capturing_interject
 
-        # Register the mock handle as an in-flight action
+        # Create initial snapshot state (at time of act())
+        initial_ts = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        initial_snapshot_state = SnapshotState(
+            full_render="<initial>state</initial>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=initial_ts,
+                    rendered="[User @ ...]: Hello",
+                ),
+            ],
+        )
+
+        # Register the mock handle as an in-flight action WITH initial snapshot state
         cm.in_flight_actions[0] = {
             "handle": mock_handle,
             "query": "search for test data",
             "handle_actions": [],
+            "initial_snapshot_state": initial_snapshot_state,
         }
 
-        # Set a known state snapshot
-        test_snapshot = {
-            "role": "user",
-            "content": "<in_flight_actions><action>test action</action></in_flight_actions>",
-            "_cm_state_snapshot": True,
-        }
-        cm._current_state_snapshot = test_snapshot
+        # Create current snapshot state with a NEW message (simulating state change)
+        new_ts = datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc)
+        current_snapshot_state = SnapshotState(
+            full_render="<current>state with new message</current>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=initial_ts,
+                    rendered="[User @ ...]: Hello",
+                ),
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=1,
+                    timestamp=new_ts,
+                    rendered="[User @ ...]: Please also check the calendar",
+                ),
+            ],
+        )
+        cm._current_snapshot_state = current_snapshot_state
 
         try:
             # Build steering tools and find the interject tool
@@ -208,9 +253,163 @@ class TestSteeringContextPropagation:
             assert (
                 len(context) == 1
             ), "_parent_chat_context_cont should have one element"
+
+            # Verify it's marked as a diff
             assert (
-                context[0] is test_snapshot
-            ), "_parent_chat_context_cont[0] should be the exact snapshot"
+                context[0].get("_cm_context_diff") is True
+            ), "Context should be marked as a diff"
+
+            # Verify the diff contains only the NEW message, not the old one
+            diff_content = context[0].get("content", "")
+            assert (
+                "Please also check the calendar" in diff_content
+            ), "Diff should contain the new message"
+            assert (
+                "<new_messages>" in diff_content
+            ), "Diff should have <new_messages> section"
+            # The original message should NOT be in the diff
+            assert (
+                "Hello" not in diff_content
+            ), "Diff should NOT contain the original message"
+
+        finally:
+            cm.in_flight_actions.clear()
+            cm._current_state_snapshot = None
+            cm._current_snapshot_state = None
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_interject_returns_empty_diff_when_nothing_changed(
+        self,
+        initialized_cm,
+    ):
+        """
+        Verify that interject passes None when there's no diff (nothing changed).
+
+        When the initial snapshot and current snapshot are identical, there's
+        no incremental update to send.
+        """
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock
+
+        from unity.conversation_manager.domains.renderer import (
+            SnapshotState,
+            MessageElement,
+        )
+
+        cm = initialized_cm.cm
+
+        captured_context = []
+
+        async def capturing_interject(message, **kwargs):
+            captured_context.append(kwargs.get("_parent_chat_context_cont"))
+
+        mock_handle = MagicMock()
+        mock_handle.interject = capturing_interject
+
+        # Create identical initial and current snapshots
+        ts = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        snapshot_state = SnapshotState(
+            full_render="<state>unchanged</state>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts,
+                    rendered="[User @ ...]: Hello",
+                ),
+            ],
+        )
+
+        cm.in_flight_actions[0] = {
+            "handle": mock_handle,
+            "query": "search for test data",
+            "handle_actions": [],
+            "initial_snapshot_state": snapshot_state,
+        }
+        cm._current_snapshot_state = snapshot_state
+
+        try:
+            brain_tools = ConversationManagerBrainActionTools(cm)
+            steering_tools = brain_tools.build_action_steering_tools()
+
+            interject_tool = None
+            for name, tool in steering_tools.items():
+                if name.startswith("interject_"):
+                    interject_tool = tool
+                    break
+
+            await interject_tool(message="additional instruction")
+
+            assert len(captured_context) == 1
+            # When nothing changed, context should be None (empty diff)
+            assert (
+                captured_context[0] is None
+            ), "When nothing changed, _parent_chat_context_cont should be None"
+
+        finally:
+            cm.in_flight_actions.clear()
+            cm._current_snapshot_state = None
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_interject_falls_back_to_full_snapshot_when_no_tracking(
+        self,
+        initialized_cm,
+    ):
+        """
+        Verify backward compatibility: when no snapshot tracking is available,
+        interject falls back to using the full _current_state_snapshot.
+        """
+        from unittest.mock import MagicMock
+
+        cm = initialized_cm.cm
+
+        captured_context = []
+
+        async def capturing_interject(message, **kwargs):
+            captured_context.append(kwargs.get("_parent_chat_context_cont"))
+
+        mock_handle = MagicMock()
+        mock_handle.interject = capturing_interject
+
+        # Register WITHOUT initial_snapshot_state (no tracking)
+        cm.in_flight_actions[0] = {
+            "handle": mock_handle,
+            "query": "search for test data",
+            "handle_actions": [],
+            # No initial_snapshot_state
+        }
+
+        # Set full snapshot (old behavior)
+        test_snapshot = {
+            "role": "user",
+            "content": "<full_state>test content</full_state>",
+            "_cm_state_snapshot": True,
+        }
+        cm._current_state_snapshot = test_snapshot
+        cm._current_snapshot_state = None  # No tracking
+
+        try:
+            brain_tools = ConversationManagerBrainActionTools(cm)
+            steering_tools = brain_tools.build_action_steering_tools()
+
+            interject_tool = None
+            for name, tool in steering_tools.items():
+                if name.startswith("interject_"):
+                    interject_tool = tool
+                    break
+
+            await interject_tool(message="additional instruction")
+
+            assert len(captured_context) == 1
+            context = captured_context[0]
+
+            # Should fall back to full snapshot
+            assert context is not None
+            assert len(context) == 1
+            assert context[0] is test_snapshot
 
         finally:
             cm.in_flight_actions.clear()
@@ -393,8 +592,11 @@ class TestContextContent:
         """
         Verify that when steering an in-flight action, the context shows that action.
 
-        This proves the context is fresh: if we're interjecting an in-flight action,
-        the context should show it as "executing".
+        With incremental context propagation, the interject receives a diff that may
+        include <action_updates> (when action state changed) or the action may be
+        part of the initial snapshot (sent with the original act() call).
+
+        This tests that the context is fresh and includes relevant action information.
         """
         from tests.conversation_manager.conftest import BOSS
         from unity.conversation_manager.events import SMSReceived, ActorHandleStarted
@@ -440,12 +642,22 @@ class TestContextContent:
                 ),
             )
 
-            # If interject was called, verify the context shows the in-flight action
+            # If interject was called, verify the context shows relevant information
             if captured_context and captured_context[0]:
                 content = captured_context[0][0].get("content", "")
+
+                # With incremental diffs, the action may appear in <action_updates>
+                # (if its state changed) or the full snapshot (backward compat mode).
+                # Either format is acceptable as long as action info is present.
+                has_action_info = (
+                    "<action_updates>" in content
+                    or "<in_flight_actions>" in content
+                    or "action id='0'" in content
+                )
                 assert (
-                    "<in_flight_actions>" in content
-                ), "Should have in_flight_actions section"
+                    has_action_info
+                ), f"Should have action information in context. Got: {content[:500]}..."
+
                 # The action should be visible as executing
                 assert (
                     "executing" in content.lower() or "search" in content.lower()

@@ -8,17 +8,27 @@ These are symbolic tests that verify rendering logic without invoking the LLM.
 """
 
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
 from unity.conversation_manager.domains.contact_index import (
+    ContactIndex,
     EmailMessage,
     Message,
     UnifyMessage,
 )
+from unity.conversation_manager.domains.notifications import (
+    NotificationBar,
+    Notification,
+)
 from unity.conversation_manager.domains.renderer import (
     Renderer,
+    SnapshotState,
+    MessageElement,
+    NotificationElement,
+    ActionElement,
+    compute_snapshot_diff,
     _get_assistant_email_role,
 )
 
@@ -430,3 +440,446 @@ class TestRendererUnifyMessage:
         assert "analysis.pdf (attached)" in result
         # Should NOT say "auto-downloaded"
         assert "auto-downloaded" not in result
+
+
+# =============================================================================
+# Tests for SnapshotState and Incremental Diff
+# =============================================================================
+
+
+class TestSnapshotState:
+    """Tests for SnapshotState identity tracking."""
+
+    def test_message_ids_returns_identity_tuples(self):
+        """message_ids() returns set of (contact_id, thread, index, timestamp) tuples."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc)
+
+        snapshot = SnapshotState(
+            full_render="<test>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts1,
+                    rendered="[User @ ...]: Hello",
+                ),
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=1,
+                    timestamp=ts2,
+                    rendered="[You @ ...]: Hi there",
+                ),
+            ],
+        )
+
+        ids = snapshot.message_ids()
+        assert len(ids) == 2
+        assert (1, "global", 0, ts1) in ids
+        assert (1, "global", 1, ts2) in ids
+
+    def test_notification_ids_returns_identity_tuples(self):
+        """notification_ids() returns set of (timestamp, content_hash, pinned) tuples."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+        snapshot = SnapshotState(
+            full_render="<test>",
+            notifications=[
+                NotificationElement(
+                    timestamp=ts1,
+                    content_hash=hash("Task completed"),
+                    pinned=False,
+                    rendered="[Task Notification @ ...] Task completed",
+                ),
+            ],
+        )
+
+        ids = snapshot.notification_ids()
+        assert len(ids) == 1
+        assert (ts1, hash("Task completed"), False) in ids
+
+    def test_action_states_returns_handle_to_state_dict(self):
+        """action_states() returns dict mapping handle_id to (status, history_count)."""
+        snapshot = SnapshotState(
+            full_render="<test>",
+            actions=[
+                ActionElement(
+                    handle_id=0,
+                    query="search contacts",
+                    status="executing",
+                    history_count=2,
+                    rendered="<action id='0'>...",
+                ),
+                ActionElement(
+                    handle_id=1,
+                    query="send email",
+                    status="paused",
+                    history_count=0,
+                    rendered="<action id='1'>...",
+                ),
+            ],
+        )
+
+        states = snapshot.action_states()
+        assert states[0] == ("executing", 2)
+        assert states[1] == ("paused", 0)
+
+
+class TestComputeSnapshotDiff:
+    """Tests for compute_snapshot_diff incremental diff computation."""
+
+    def test_diff_returns_full_render_when_old_is_none(self):
+        """When old_snapshot is None, returns full new snapshot."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        new_snapshot = SnapshotState(
+            full_render="<full_state>content</full_state>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts1,
+                    rendered="[User @ ...]: Hello",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(None, new_snapshot)
+        assert diff == "<full_state>content</full_state>"
+
+    def test_diff_returns_empty_when_nothing_changed(self):
+        """When snapshots are identical, returns empty string."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+        old_snapshot = SnapshotState(
+            full_render="<state>same</state>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts1,
+                    rendered="[User @ ...]: Hello",
+                ),
+            ],
+        )
+        new_snapshot = SnapshotState(
+            full_render="<state>same</state>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts1,
+                    rendered="[User @ ...]: Hello",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(old_snapshot, new_snapshot)
+        assert diff == ""
+
+    def test_diff_includes_new_messages(self):
+        """New messages are included in <new_messages> section."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc)
+
+        old_snapshot = SnapshotState(
+            full_render="<state>old</state>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts1,
+                    rendered="[User @ ...]: Hello",
+                ),
+            ],
+        )
+        new_snapshot = SnapshotState(
+            full_render="<state>new</state>",
+            messages=[
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=0,
+                    timestamp=ts1,
+                    rendered="[User @ ...]: Hello",
+                ),
+                MessageElement(
+                    contact_id=1,
+                    thread_name="global",
+                    index_in_thread=1,
+                    timestamp=ts2,
+                    rendered="[User @ ...]: Please help me",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(old_snapshot, new_snapshot)
+        assert "<new_messages>" in diff
+        assert "[User @ ...]: Please help me" in diff
+        assert "[User @ ...]: Hello" not in diff  # Old message not in diff
+
+    def test_diff_includes_new_notifications(self):
+        """New notifications are included in <new_notifications> section."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc)
+
+        old_snapshot = SnapshotState(
+            full_render="<state>old</state>",
+            notifications=[
+                NotificationElement(
+                    timestamp=ts1,
+                    content_hash=hash("Task started"),
+                    pinned=False,
+                    rendered="[Task Notification] Task started",
+                ),
+            ],
+        )
+        new_snapshot = SnapshotState(
+            full_render="<state>new</state>",
+            notifications=[
+                NotificationElement(
+                    timestamp=ts1,
+                    content_hash=hash("Task started"),
+                    pinned=False,
+                    rendered="[Task Notification] Task started",
+                ),
+                NotificationElement(
+                    timestamp=ts2,
+                    content_hash=hash("Task completed"),
+                    pinned=False,
+                    rendered="[Task Notification] Task completed",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(old_snapshot, new_snapshot)
+        assert "<new_notifications>" in diff
+        assert "Task completed" in diff
+        assert "Task started" not in diff  # Old notification not in diff
+
+    def test_diff_includes_action_state_changes(self):
+        """Action state changes are included in <action_updates> section."""
+        old_snapshot = SnapshotState(
+            full_render="<state>old</state>",
+            actions=[
+                ActionElement(
+                    handle_id=0,
+                    query="search contacts",
+                    status="executing",
+                    history_count=0,
+                    rendered="<action id='0' status='executing'>...",
+                ),
+            ],
+        )
+        new_snapshot = SnapshotState(
+            full_render="<state>new</state>",
+            actions=[
+                ActionElement(
+                    handle_id=0,
+                    query="search contacts",
+                    status="executing",
+                    history_count=1,  # History count changed (new event)
+                    rendered="<action id='0' status='executing'>new history event...",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(old_snapshot, new_snapshot)
+        assert "<action_updates>" in diff
+        assert "new history event" in diff
+
+    def test_diff_includes_new_actions(self):
+        """New actions (not in old snapshot) are included in diff."""
+        old_snapshot = SnapshotState(
+            full_render="<state>old</state>",
+            actions=[],
+        )
+        new_snapshot = SnapshotState(
+            full_render="<state>new</state>",
+            actions=[
+                ActionElement(
+                    handle_id=0,
+                    query="search contacts",
+                    status="executing",
+                    history_count=0,
+                    rendered="<action id='0'>search contacts...",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(old_snapshot, new_snapshot)
+        assert "<action_updates>" in diff
+        assert "search contacts" in diff
+
+    def test_diff_tracks_notification_pinned_state_change(self):
+        """Notification pinned state change is detected as a new notification."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+        old_snapshot = SnapshotState(
+            full_render="<state>old</state>",
+            notifications=[
+                NotificationElement(
+                    timestamp=ts1,
+                    content_hash=hash("Important reminder"),
+                    pinned=False,  # Not pinned
+                    rendered="[Notification] Important reminder",
+                ),
+            ],
+        )
+        new_snapshot = SnapshotState(
+            full_render="<state>new</state>",
+            notifications=[
+                NotificationElement(
+                    timestamp=ts1,
+                    content_hash=hash("Important reminder"),
+                    pinned=True,  # Now pinned
+                    rendered="[PINNED][Notification] Important reminder",
+                ),
+            ],
+        )
+
+        diff = compute_snapshot_diff(old_snapshot, new_snapshot)
+        # The pinned=True version has a different identity tuple
+        assert "<new_notifications>" in diff
+        assert "[PINNED]" in diff
+
+
+class TestRenderStateWithTracking:
+    """Tests for render_state_with_tracking method."""
+
+    @pytest.fixture
+    def contact_index(self):
+        """Create a ContactIndex with a conversation."""
+        ci = ContactIndex()
+        ci._fallback_contacts[1] = {
+            "contact_id": 1,
+            "first_name": "Alice",
+            "surname": "Smith",
+        }
+        return ci
+
+    @pytest.fixture
+    def notification_bar(self):
+        """Create a NotificationBar."""
+        return NotificationBar()
+
+    def test_returns_snapshot_state_with_full_render(
+        self,
+        renderer,
+        contact_index,
+        notification_bar,
+    ):
+        """render_state_with_tracking returns SnapshotState with full_render."""
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state_with_tracking(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            last_snapshot=last_snapshot,
+        )
+
+        assert isinstance(result, SnapshotState)
+        assert result.full_render is not None
+        assert "<notifications>" in result.full_render
+        assert "<in_flight_actions>" in result.full_render
+        assert "<active_conversations>" in result.full_render
+
+    def test_tracks_messages_in_conversation(
+        self,
+        renderer,
+        contact_index,
+        notification_bar,
+    ):
+        """Messages in conversations are tracked with identity."""
+        from unity.conversation_manager.types import Medium
+
+        # Add a message to the conversation
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        contact_index.push_message(
+            contact_id=1,
+            sender_name="Alice",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="Hello there!",
+            timestamp=ts1,
+            role="user",
+        )
+
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state_with_tracking(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            last_snapshot=last_snapshot,
+        )
+
+        # Should have tracked the message
+        assert len(result.messages) >= 1
+        msg = next(m for m in result.messages if "Hello there!" in m.rendered)
+        assert msg.contact_id == 1
+        assert msg.timestamp == ts1
+
+    def test_tracks_notifications(self, renderer, contact_index, notification_bar):
+        """Notifications are tracked with identity."""
+        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        notification_bar.notifications.append(
+            Notification(
+                type="task",
+                content="Action completed successfully",
+                timestamp=ts1,
+                pinned=False,
+            ),
+        )
+
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state_with_tracking(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            last_snapshot=last_snapshot,
+        )
+
+        assert len(result.notifications) == 1
+        notif = result.notifications[0]
+        assert notif.timestamp == ts1
+        assert notif.pinned is False
+        assert "Action completed" in notif.rendered
+
+    def test_tracks_in_flight_actions(self, renderer, contact_index, notification_bar):
+        """In-flight actions are tracked with identity."""
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Not paused
+
+        in_flight_actions = {
+            0: {
+                "handle": mock_handle,
+                "query": "Search for Alice's email",
+                "handle_actions": [
+                    {"action_name": "interject_0", "query": "also check phone"},
+                ],
+            },
+        }
+
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state_with_tracking(
+            contact_index,
+            notification_bar,
+            in_flight_actions=in_flight_actions,
+            last_snapshot=last_snapshot,
+        )
+
+        assert len(result.actions) == 1
+        action = result.actions[0]
+        assert action.handle_id == 0
+        assert action.query == "Search for Alice's email"
+        assert action.status == "executing"
+        assert action.history_count == 1
