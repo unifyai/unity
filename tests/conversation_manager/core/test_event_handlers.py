@@ -1164,7 +1164,15 @@ class TestSummarizeContextHandler:
 
         event = SummarizeContext()
 
-        await EventHandler.handle_event(event, mock_cm)
+        # Mock queue_operation to execute the function immediately
+        async def immediate_queue_operation(func, *args, **kwargs):
+            await func(*args, **kwargs)
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils.queue_operation",
+            side_effect=immediate_queue_operation,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
 
         # is_summarizing should be reset to False
         assert mock_cm.is_summarizing is False
