@@ -372,7 +372,9 @@ async def test_compare_screens_raw_context(static_now):
     def _find_line(prefix: str) -> str:
         pfx = prefix.lower()
         for ln in lines:
-            if ln.lower().startswith(pfx):
+            # Strip leading markdown bold markers (** or *) before matching
+            stripped = ln.lstrip("*").lstrip()
+            if stripped.lower().startswith(pfx):
                 return ln
         return ""
 
