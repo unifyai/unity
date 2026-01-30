@@ -102,7 +102,12 @@ class BespokeRepairsAgent:
             tools_start = time.perf_counter()
 
             try:
-                self._tools = dict(self._fm.get_tools("ask", include_sub_tools=True))
+                # Get ask_about_file tools (describe, list_columns, filter_files, etc.)
+                self._tools = dict(self._fm.get_tools("ask_about_file"))
+                # Also include multi-table join tools
+                self._tools.update(
+                    dict(self._fm.get_tools("ask_about_file.multi_table")),
+                )
                 tools_elapsed = time.perf_counter() - tools_start
 
                 tool_names = list(self._tools.keys())
