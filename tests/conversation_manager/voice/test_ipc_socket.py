@@ -712,8 +712,15 @@ class TestBidirectionalCommunication:
         await server.stop()
 
     @pytest.mark.asyncio
-    async def test_client_receive_loop_handles_disconnect(self, real_event_broker):
-        """Client receive loop handles server disconnect gracefully."""
+    async def test_client_attempts_reconnect_on_server_disconnect(
+        self,
+        real_event_broker,
+    ):
+        """Client attempts to reconnect when server disconnects (resilience feature).
+
+        The client is designed to be resilient to temporary server outages by
+        attempting reconnection. This test verifies that behavior.
+        """
         received_events = []
 
         async def on_event(channel: str, event_json: str):
@@ -729,13 +736,56 @@ class TestBidirectionalCommunication:
         await client.start_receive_loop(on_event)
         await asyncio.sleep(0.1)
 
+        # Verify client is connected and running
+        assert client._connected is True
+        assert client._running is True
+
         # Stop server while client is connected
         await server.stop()
 
-        # Wait for client to detect disconnect
+        # Wait for client to detect disconnect and start reconnection
         await asyncio.sleep(0.3)
 
-        # Client should have stopped running (not crash)
+        # Client should still be "running" (attempting reconnection)
+        # but no longer "connected" (server is gone)
+        assert client._running is True
+        assert client._connected is False
+
+        # Clean up - explicitly stop the client
+        await client.close()
+        assert client._running is False
+
+    @pytest.mark.asyncio
+    async def test_client_stops_after_max_reconnect_attempts(self, real_event_broker):
+        """Client stops running after exhausting all reconnection attempts.
+
+        The client attempts up to 3 reconnections with 0.5s delays. After all
+        attempts fail, it should stop gracefully.
+        """
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        socket_path = await server.start()
+
+        client = CallEventSocketClient(socket_path)
+        await client.start_receive_loop(on_event)
+        await asyncio.sleep(0.1)
+
+        # Stop server - client will attempt reconnection
+        await server.stop()
+
+        # Wait for all 3 reconnect attempts to exhaust
+        # Each attempt has 0.5s delay, plus some buffer for processing
+        # 3 attempts * 0.5s = 1.5s minimum, add buffer for safety
+        await asyncio.sleep(2.5)
+
+        # After max attempts, client should have stopped
         assert client._running is False
 
         await client.close()
