@@ -17,6 +17,7 @@ from tests.conversation_manager.actions.integration.helpers import (
     get_actor_started_event,
     inject_actor_result,
     run_cm_until_wait,
+    run_until_all_actors_complete,
     wait_for_actor_completion,
     verify_contact_in_db,
     verify_task_in_db,
@@ -155,15 +156,8 @@ async def test_summarize_file_then_create_task(
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(180)
 @_handle_project
-@pytest.mark.skip(
-    reason=(
-        "FIXME(Robust CM↔Actor E2E): CM brain can delegate only step 1 of a compound user "
-        "instruction to the actor (lossy multi-step). This test must run via CM→Actor, "
-        "but is currently unreliable until delegation is fixed."
-    ),
-)
 async def test_single_message_file_then_create_task(
     initialized_cm_codeact,
     test_files,
@@ -172,13 +166,14 @@ async def test_single_message_file_then_create_task(
     """
     Single-message multi-step: read a file, extract a token, then create a follow-up task.
 
-    Contract: CodeActActor can execute a multi-step plan from ONE natural-language request
-    and persist the requested side-effect (task creation), while actually reading the file
-    (validated via a token that exists only inside the file).
+    Contract: CM receives a compound instruction and completes the full workflow. The CM
+    may either:
+    - Execute everything in a single actor call, OR
+    - Break it into multiple serial actor calls (e.g., read file → create task)
+
+    Both approaches are valid. This test validates the end state: the task exists with
+    the correct token in its description (proving the file was actually read).
     """
-    # FIXME(Robust CM↔Actor E2E): Keep this test routed through CM (production path).
-    # The actor-direct variant that *does* pass is intentionally left commented below
-    # as guidance for what should succeed once CM delegation is fixed.
     import uuid
     from pathlib import Path
 
@@ -204,29 +199,25 @@ async def test_single_message_file_then_create_task(
             ),
         ),
     )
-    handle_id = get_actor_started_event(result).handle_id
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
 
+    # CM may break compound instructions into multiple serial actor calls.
+    # Loop until CM calls `wait` with zero in-flight actors.
+    _results = await run_until_all_actors_complete(cm, result, timeout_per_actor=90)
+
+    # Verify the task was created with the token in its description.
     task_id = find_task_id_by_name_contains(name=task_name)
-    row = verify_task_in_db(cm, task_id, expected_fields={"name": task_name})
+    # Note: verify_task_in_db only fetches fields in expected_fields.
+    # Use ... (Ellipsis) to fetch description without asserting exact value.
+    row = verify_task_in_db(
+        cm,
+        task_id,
+        expected_fields={"name": task_name, "description": ...},
+    )
     desc = str(row.get("description") or "")
     assert (
         token in desc
     ), f"Expected task description to contain token {token!r}, got: {desc!r}"
     assert_no_errors(result)
-
-    # Actor-direct variant (commented guidance):
-    # import asyncio
-    # actor = cm.cm.actor
-    # handle = await actor.act(
-    #     (
-    #         f"I just received a small text note at {str(note_path)}. "
-    #         "Read the note, extract the reference token, then create a task in my task list "
-    #         f"with the exact name '{task_name}' and a description that includes the extracted token."
-    #     ),
-    #     _parent_chat_context=cm.cm.chat_history,
-    # )
-    # _final = await asyncio.wait_for(handle.result(), timeout=90)
 
 
 @pytest.mark.asyncio
