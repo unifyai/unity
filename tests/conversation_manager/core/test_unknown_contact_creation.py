@@ -18,8 +18,9 @@ import asyncio
 import json
 import pytest
 from dataclasses import dataclass
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
+from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.in_memory_event_broker import (
     create_in_memory_event_broker,
     reset_in_memory_event_broker,
@@ -87,61 +88,9 @@ def create_pubsub_message(thread: str, event: dict) -> MockPubSubMessage:
     return MockPubSubMessage(data=json.dumps(payload).encode("utf-8"))
 
 
-class MockContactManager:
-    """Mock ContactManager for testing unknown contact creation."""
-
-    def __init__(self, existing_contacts: list[dict] | None = None):
-        self.existing_contacts = existing_contacts or []
-        self.created_contacts = []
-        self._next_contact_id = 100
-
-    def filter_contacts(self, *, filter: str = None, limit: int = 100):
-        """Return matching contacts based on filter."""
-        if not filter:
-            return {"contacts": self.existing_contacts}
-
-        # Simple filter parsing for test purposes
-        contacts = []
-        for contact in self.existing_contacts + self.created_contacts:
-            # Check for phone_number match
-            if "phone_number ==" in filter:
-                phone = filter.split("phone_number == '")[1].split("'")[0]
-                if contact.get("phone_number") == phone:
-                    mock_contact = Mock()
-                    mock_contact.model_dump.return_value = contact
-                    contacts.append(mock_contact)
-            # Check for email_address match
-            elif "email_address ==" in filter:
-                email = filter.split("email_address == '")[1].split("'")[0]
-                if contact.get("email_address") == email:
-                    mock_contact = Mock()
-                    mock_contact.model_dump.return_value = contact
-                    contacts.append(mock_contact)
-
-        return {"contacts": contacts}
-
-    def _create_contact(self, **kwargs):
-        """Create a new contact and return the outcome."""
-        contact_id = self._next_contact_id
-        self._next_contact_id += 1
-
-        new_contact = {
-            "contact_id": contact_id,
-            **kwargs,
-        }
-        self.created_contacts.append(new_contact)
-
-        return {
-            "outcome": "contact created successfully",
-            "details": {"contact_id": contact_id},
-        }
-
-    def get_contact_info(self, contact_id: int):
-        """Get contact info by ID."""
-        for contact in self.existing_contacts + self.created_contacts:
-            if contact.get("contact_id") == contact_id:
-                return {contact_id: contact}
-        return {}
+def get_non_system_contacts(cm: SimulatedContactManager) -> list[dict]:
+    """Get all non-system contacts from a SimulatedContactManager."""
+    return [c for c in cm._contacts.values() if c.get("contact_id") not in (0, 1)]
 
 
 async def collect_messages(
@@ -182,7 +131,7 @@ class TestUnknownSMSContactCreation:
         cm = CommsManager(broker)
         cm.loop = asyncio.get_event_loop()
 
-        mock_cm = MockContactManager(existing_contacts=[])
+        contact_manager = SimulatedContactManager()
 
         async with broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*")
@@ -205,7 +154,7 @@ class TestUnknownSMSContactCreation:
                 ),
                 patch(
                     "unity.manager_registry.ManagerRegistry.get_contact_manager",
-                    return_value=mock_cm,
+                    return_value=contact_manager,
                 ),
             ):
                 cm.handle_message(message)
@@ -215,8 +164,9 @@ class TestUnknownSMSContactCreation:
             assert message._acked
 
             # Contact should be created with correct settings
-            assert len(mock_cm.created_contacts) == 1
-            created = mock_cm.created_contacts[0]
+            created_contacts = get_non_system_contacts(contact_manager)
+            assert len(created_contacts) == 1
+            created = created_contacts[0]
             assert created["phone_number"] == "+15555559999"
             assert created["should_respond"] is False
             assert "unknown inbound" in created["response_policy"].lower()
@@ -234,7 +184,7 @@ class TestUnknownSMSContactCreation:
         cm = CommsManager(broker)
         cm.loop = asyncio.get_event_loop()
 
-        mock_cm = MockContactManager(existing_contacts=[])
+        contact_manager = SimulatedContactManager()
 
         async with broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*")
@@ -256,7 +206,7 @@ class TestUnknownSMSContactCreation:
                 ),
                 patch(
                     "unity.manager_registry.ManagerRegistry.get_contact_manager",
-                    return_value=mock_cm,
+                    return_value=contact_manager,
                 ),
             ):
                 cm.handle_message(message)
@@ -351,7 +301,7 @@ class TestUnknownEmailContactCreation:
         cm = CommsManager(broker)
         cm.loop = asyncio.get_event_loop()
 
-        mock_cm = MockContactManager(existing_contacts=[])
+        contact_manager = SimulatedContactManager()
 
         async with broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*")
@@ -375,7 +325,7 @@ class TestUnknownEmailContactCreation:
                 ),
                 patch(
                     "unity.manager_registry.ManagerRegistry.get_contact_manager",
-                    return_value=mock_cm,
+                    return_value=contact_manager,
                 ),
             ):
                 cm.handle_message(message)
@@ -385,8 +335,9 @@ class TestUnknownEmailContactCreation:
             assert message._acked
 
             # Contact should be created with correct settings
-            assert len(mock_cm.created_contacts) == 1
-            created = mock_cm.created_contacts[0]
+            created_contacts = get_non_system_contacts(contact_manager)
+            assert len(created_contacts) == 1
+            created = created_contacts[0]
             assert created["email_address"] == "unknown@example.com"
             assert created["should_respond"] is False
             assert "unknown inbound" in created["response_policy"].lower()
@@ -404,7 +355,7 @@ class TestUnknownEmailContactCreation:
         cm = CommsManager(broker)
         cm.loop = asyncio.get_event_loop()
 
-        mock_cm = MockContactManager(existing_contacts=[])
+        contact_manager = SimulatedContactManager()
 
         async with broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*")
@@ -428,7 +379,7 @@ class TestUnknownEmailContactCreation:
                 ),
                 patch(
                     "unity.manager_registry.ManagerRegistry.get_contact_manager",
-                    return_value=mock_cm,
+                    return_value=contact_manager,
                 ),
             ):
 
@@ -477,8 +428,8 @@ class TestDuplicatePrevention:
         cm = CommsManager(broker)
         cm.loop = asyncio.get_event_loop()
 
-        # MockContactManager that simulates finding the contact on second lookup
-        mock_cm = MockContactManager(existing_contacts=[])
+        # SimulatedContactManager that tracks contacts
+        contact_manager = SimulatedContactManager()
 
         async with broker.pubsub() as pubsub:
             await pubsub.psubscribe("app:comms:*")
@@ -500,7 +451,7 @@ class TestDuplicatePrevention:
                 ),
                 patch(
                     "unity.manager_registry.ManagerRegistry.get_contact_manager",
-                    return_value=mock_cm,
+                    return_value=contact_manager,
                 ),
             ):
 
@@ -508,7 +459,7 @@ class TestDuplicatePrevention:
                 await asyncio.sleep(0.2)
 
             # Should have created one contact
-            assert len(mock_cm.created_contacts) == 1
+            assert len(get_non_system_contacts(contact_manager)) == 1
 
             # Second message from same number
             message2 = create_pubsub_message(
@@ -527,7 +478,7 @@ class TestDuplicatePrevention:
                 ),
                 patch(
                     "unity.manager_registry.ManagerRegistry.get_contact_manager",
-                    return_value=mock_cm,
+                    return_value=contact_manager,
                 ),
             ):
 
@@ -535,4 +486,4 @@ class TestDuplicatePrevention:
                 await asyncio.sleep(0.2)
 
             # Should still have only one contact (reused the existing one)
-            assert len(mock_cm.created_contacts) == 1
+            assert len(get_non_system_contacts(contact_manager)) == 1
