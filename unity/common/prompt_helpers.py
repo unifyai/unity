@@ -11,6 +11,7 @@ __all__ = [
     "tool_name",
     "require_tools",
     "parallelism_guidance",
+    "tool_availability_guidance",
     "images_policy_block",
     "images_forwarding_block",
     # New standardized prompt composition utilities
@@ -167,6 +168,22 @@ def require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> N
     )
 
 
+def tool_availability_guidance() -> str:
+    """Guidance about per-turn tool availability and common first-turn patterns.
+
+    This is automatically included in all state manager prompts to explain why
+    tools may be restricted to a subset on certain turns.
+    """
+    return (
+        "Tool availability\n"
+        "-----------------\n"
+        "On some turns, only a subset of the tools listed above may be callable. "
+        "This is intentional—common patterns include: semantic search before lexical "
+        "filtering, and read-only lookup before mutation. "
+        "Use the available tool(s) to gather context; others unlock on subsequent turns."
+    )
+
+
 def parallelism_guidance() -> str:
     """Return a shared block encouraging batching/parallel tool use."""
     return (
@@ -282,6 +299,7 @@ class PromptSpec:
 
     # Tools block
     include_tools_block: bool = True
+    include_tool_availability_guidance: bool = True  # explain per-turn tool masking
 
     # Examples
     usage_examples: Optional[str] = None
@@ -679,6 +697,11 @@ def compose_system_prompt(spec: PromptSpec) -> str:
     if spec.include_tools_block:
         parts.append("")
         parts.append(render_tools_block(spec.tools))
+
+    # 7b) Tool availability guidance (per-turn masking explanation)
+    if spec.include_tool_availability_guidance:
+        parts.append("")
+        parts.append(tool_availability_guidance())
 
     # 8) Usage examples (+ optional clarification examples)
     if _nonempty(spec.usage_examples):
