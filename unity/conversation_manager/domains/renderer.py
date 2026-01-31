@@ -469,6 +469,7 @@ class Renderer:
         surname = contact_info.get("surname") or ""
         phone_number = contact_info.get("phone_number") or ""
         email_address = contact_info.get("email_address") or ""
+        timezone = contact_info.get("timezone") or ""
         bio = contact_info.get("bio") or ""
         rolling_summary = contact_info.get("rolling_summary") or ""
         response_policy = contact_info.get("response_policy") or ""
@@ -508,7 +509,7 @@ class Renderer:
         return (
             f'<contact contact_id="{contact_id}" first_name="{first_name}" surname="{surname}" '
             f'is_boss="{is_boss}" phone_number="{phone_number}" email_address="{email_address}" '
-            f'on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
+            f'timezone="{timezone}" on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
             f"<bio>{bio}</bio>\n"
             f"<rolling_summary>{rolling_summary}</rolling_summary>\n"
             f"<response_policy>{response_policy}</response_policy>\n"
@@ -594,6 +595,7 @@ class Renderer:
         surname = contact_info.get("surname") or ""
         phone_number = contact_info.get("phone_number") or ""
         email_address = contact_info.get("email_address") or ""
+        timezone = contact_info.get("timezone") or ""
         bio = contact_info.get("bio") or ""
         rolling_summary = contact_info.get("rolling_summary") or ""
         response_policy = contact_info.get("response_policy") or ""
@@ -630,7 +632,7 @@ class Renderer:
         return (
             f'<contact contact_id="{contact_id}" first_name="{first_name}" surname="{surname}" '
             f'is_boss="{is_boss}" phone_number="{phone_number}" email_address="{email_address}" '
-            f'on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
+            f'timezone="{timezone}" on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
             f"<bio>{bio}</bio>\n"
             f"<rolling_summary>{rolling_summary}</rolling_summary>\n"
             f"<response_policy>{response_policy}</response_policy>\n"

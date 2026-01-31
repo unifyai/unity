@@ -487,6 +487,7 @@ class TestRenderer:
             "surname": "Doe",
             "phone_number": "+15551234567",
             "email_address": "john@example.com",
+            "timezone": "America/New_York",
             "bio": "Test bio",
             "rolling_summary": "Test summary",
             "response_policy": "Be polite",
@@ -651,6 +652,7 @@ class TestRenderer:
         assert 'first_name="John"' in result
         assert 'surname="Doe"' in result
         assert 'is_boss="True"' in result
+        assert 'timezone="America/New_York"' in result
         assert "<bio>Test bio</bio>" in result
 
     def test_global_thread_rendered_before_per_medium_threads(self, renderer):
