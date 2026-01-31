@@ -37,6 +37,214 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
+# Timezone Helpers for Participant Awareness
+# =============================================================================
+
+
+def _get_current_time_in_timezone(tz_name: str) -> str:
+    """Get the current time formatted for a specific timezone.
+
+    Args:
+        tz_name: IANA timezone identifier (e.g., "America/New_York")
+
+    Returns:
+        Formatted time string like "3:45 PM"
+    """
+    from datetime import datetime, timezone as dt_timezone
+    from zoneinfo import ZoneInfo
+
+    utc_now = datetime.now(dt_timezone.utc)
+    try:
+        tz_info = ZoneInfo(tz_name)
+        local_dt = utc_now.astimezone(tz_info)
+        return local_dt.strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        return "unknown"
+
+
+def _get_assistant_timezone() -> str | None:
+    """Get the assistant's timezone from contact_id=0.
+
+    Returns:
+        IANA timezone identifier or None if not available.
+    """
+    import unify as _unify
+
+    try:
+        _ctxs = _unify.get_active_context()
+        _read_ctx = _ctxs.get("read")
+    except Exception:
+        _read_ctx = None
+    _contacts_ctx = f"{_read_ctx}/Contacts" if _read_ctx else "Contacts"
+
+    try:
+        rows = _unify.get_logs(
+            context=_contacts_ctx,
+            filter="contact_id == 0",
+            limit=1,
+            from_fields=["timezone"],
+        )
+        if rows:
+            val = rows[0].entries.get("timezone")
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _format_timezone_block(
+    assistant_tz: str | None,
+    participants: list[tuple[str, str | None]],
+) -> str | None:
+    """Format a timezone block showing current local times for all participants.
+
+    Groups participants by timezone and avoids duplication.
+
+    Format examples:
+    - Same timezone: "[Now: You and Alice 2:00 PM (America/New_York)]"
+    - Different: "[Now: You 2:00 PM (America/New_York) | Alice 11:00 AM (America/Los_Angeles)]"
+    - Multiple same: "[Now: You, Alice, and Bob 2:00 PM (America/New_York)]"
+
+    Args:
+        assistant_tz: Assistant's timezone (IANA identifier) or None
+        participants: List of (name, timezone) tuples for other participants
+
+    Returns:
+        Formatted timezone block string, or None if no timezone data
+    """
+    if not assistant_tz and not any(tz for _, tz in participants):
+        return None
+
+    # Build timezone -> list of names mapping
+    # Include "You" (assistant) in the mapping
+    tz_to_names: dict[str, list[str]] = {}
+    unknown_names: list[str] = []
+
+    if assistant_tz:
+        tz_to_names[assistant_tz] = ["You"]
+    else:
+        unknown_names.append("You")
+
+    for name, tz in participants:
+        if tz:
+            if tz not in tz_to_names:
+                tz_to_names[tz] = []
+            tz_to_names[tz].append(name)
+        else:
+            unknown_names.append(name)
+
+    if not tz_to_names and not unknown_names:
+        return None
+
+    # Format each timezone group
+    parts: list[str] = []
+    for tz_name in sorted(tz_to_names.keys()):
+        names = tz_to_names[tz_name]
+        current_time = _get_current_time_in_timezone(tz_name)
+        # Format names: "You", "You and Alice", "You, Alice, and Bob"
+        if len(names) == 1:
+            names_str = names[0]
+        elif len(names) == 2:
+            names_str = f"{names[0]} and {names[1]}"
+        else:
+            names_str = ", ".join(names[:-1]) + f", and {names[-1]}"
+        parts.append(f"{names_str} {current_time} ({tz_name})")
+
+    if unknown_names:
+        if len(unknown_names) == 1:
+            names_str = unknown_names[0]
+        elif len(unknown_names) == 2:
+            names_str = f"{unknown_names[0]} and {unknown_names[1]}"
+        else:
+            names_str = ", ".join(unknown_names[:-1]) + f", and {unknown_names[-1]}"
+        parts.append(f"{names_str} (unknown timezone)")
+
+    if not parts:
+        return None
+
+    return "[Now: " + " | ".join(parts) + "]"
+
+
+def _get_message_timezone_block(
+    contact_name: str,
+    contact_timezone: str | None,
+    assistant_timezone: str | None,
+) -> str | None:
+    """Get timezone block for a simple message (SMS, phone, Unify).
+
+    Args:
+        contact_name: Name of the contact
+        contact_timezone: Contact's timezone (IANA identifier) or None
+        assistant_timezone: Assistant's timezone or None
+
+    Returns:
+        Formatted timezone block or None
+    """
+    return _format_timezone_block(
+        assistant_tz=assistant_timezone,
+        participants=[(contact_name, contact_timezone)],
+    )
+
+
+def _get_email_timezone_block(
+    message: "EmailMessage",
+    contact_index: "ContactIndex | None",
+    assistant_timezone: str | None,
+) -> str | None:
+    """Get timezone block for an email message.
+
+    Looks up all recipients and groups by timezone.
+
+    Args:
+        message: The email message with to/cc/bcc recipients
+        contact_index: ContactIndex for looking up contacts by email
+        assistant_timezone: Assistant's timezone or None
+
+    Returns:
+        Formatted timezone block or None
+    """
+    if contact_index is None:
+        return None
+
+    # Collect all participant emails
+    all_emails: list[str] = []
+    all_emails.extend(message.to or [])
+    all_emails.extend(message.cc or [])
+    all_emails.extend(message.bcc or [])
+
+    if not all_emails:
+        return None
+
+    # Look up each contact and build participants list
+    participants: list[tuple[str, str | None]] = []
+    seen_emails: set[str] = set()
+
+    for email in all_emails:
+        if email.lower() in seen_emails:
+            continue
+        seen_emails.add(email.lower())
+
+        contact = contact_index.get_contact(email=email)
+        if contact:
+            first_name = contact.get("first_name") or ""
+            surname = contact.get("surname") or ""
+            name = f"{first_name} {surname}".strip() or email
+            tz = contact.get("timezone")
+            participants.append((name, tz))
+        else:
+            participants.append((email, None))
+
+    if not participants:
+        return None
+
+    return _format_timezone_block(
+        assistant_tz=assistant_timezone,
+        participants=participants,
+    )
+
+
+# =============================================================================
 # Snapshot State Tracking for Incremental Context Propagation
 # =============================================================================
 
@@ -438,6 +646,9 @@ class Renderer:
         elements_out: list[MessageElement] | None = None,
     ) -> str:
         """Render active conversations and track message elements."""
+        # Fetch assistant's timezone once for all contacts
+        assistant_timezone = _get_assistant_timezone()
+
         contacts = []
         for contact_id, conv_state in contact_index.active_conversations.items():
             contact_info = contact_index.get_contact(contact_id) or {}
@@ -448,6 +659,8 @@ class Renderer:
                 max_global_messages=max_global_messages,
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
+                contact_index=contact_index,
+                assistant_timezone=assistant_timezone,
             )
             contacts.append(rendered)
 
@@ -462,6 +675,8 @@ class Renderer:
         max_global_messages: int = 50,
         last_snapshot: datetime = None,
         elements_out: list[MessageElement] | None = None,
+        contact_index: ContactIndex | None = None,
+        assistant_timezone: str | None = None,
     ) -> str:
         """Render a single contact's conversation and track message elements."""
         contact_id = conv_state.contact_id
@@ -476,6 +691,10 @@ class Renderer:
         should_respond = contact_info.get("should_respond", True)
         is_boss = contact_id == 1
 
+        # Compute contact name for timezone display
+        contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"
+        contact_timezone = contact_info.get("timezone")
+
         # Render threads with tracking
         global_thread = ""
         if conv_state.global_thread:
@@ -486,6 +705,10 @@ class Renderer:
                 max_messages=max_global_messages,
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
+                contact_index=contact_index,
+                contact_name=contact_name,
+                contact_timezone=contact_timezone,
+                assistant_timezone=assistant_timezone,
             )
 
         per_medium_threads = "\n\n".join(
@@ -496,6 +719,10 @@ class Renderer:
                 max_messages=max_messages,
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
+                contact_index=contact_index,
+                contact_name=contact_name,
+                contact_timezone=contact_timezone,
+                assistant_timezone=assistant_timezone,
             )
             for t_name, t in conv_state.threads.items()
             if t
@@ -525,6 +752,10 @@ class Renderer:
         max_messages: int = 5,
         last_snapshot: datetime = None,
         elements_out: list[MessageElement] | None = None,
+        contact_index: ContactIndex | None = None,
+        contact_name: str | None = None,
+        contact_timezone: str | None = None,
+        assistant_timezone: str | None = None,
     ) -> str:
         """Render a thread and track message elements."""
         thread_list = list(thread)
@@ -533,7 +764,14 @@ class Renderer:
 
         rendered_messages = []
         for i, m in enumerate(displayed_messages):
-            rendered = self.render_message(m, last_snapshot)
+            rendered = self.render_message(
+                m,
+                last_snapshot,
+                contact_index=contact_index,
+                contact_name=contact_name,
+                contact_timezone=contact_timezone,
+                assistant_timezone=assistant_timezone,
+            )
             rendered_messages.append(rendered)
 
             if elements_out is not None:
@@ -559,6 +797,9 @@ class Renderer:
         last_snapshot: datetime = None,
     ):
         """Render all active conversations, fetching contact info from ContactManager."""
+        # Fetch assistant's timezone once for all contacts
+        assistant_timezone = _get_assistant_timezone()
+
         contacts = []
         for contact_id, conv_state in contact_index.active_conversations.items():
             # Fetch contact info from ContactManager (source of truth)
@@ -569,6 +810,8 @@ class Renderer:
                 max_messages=max_messages,
                 max_global_messages=max_global_messages,
                 last_snapshot=last_snapshot,
+                contact_index=contact_index,
+                assistant_timezone=assistant_timezone,
             )
             contacts.append(rendered)
 
@@ -582,6 +825,8 @@ class Renderer:
         max_messages: int = 5,
         max_global_messages: int = 50,
         last_snapshot: datetime = None,
+        contact_index: ContactIndex | None = None,
+        assistant_timezone: str | None = None,
     ):
         """
         Render a single contact's conversation.
@@ -589,6 +834,8 @@ class Renderer:
         Args:
             contact_info: Contact data from ContactManager (name, email, response_policy, etc.)
             conv_state: Conversation state from ContactIndex (threads, on_call)
+            contact_index: ContactIndex for looking up participant timezones in emails
+            assistant_timezone: Assistant's timezone for timezone comparison display
         """
         contact_id = conv_state.contact_id
         first_name = contact_info.get("first_name") or ""
@@ -602,6 +849,10 @@ class Renderer:
         should_respond = contact_info.get("should_respond", True)
         is_boss = contact_id == 1
 
+        # Compute contact name for timezone display
+        contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"
+        contact_timezone = contact_info.get("timezone")
+
         # Render threads
         global_thread = (
             self.render_thread(
@@ -609,6 +860,10 @@ class Renderer:
                 conv_state.global_thread,
                 max_messages=max_global_messages,
                 last_snapshot=last_snapshot,
+                contact_index=contact_index,
+                contact_name=contact_name,
+                contact_timezone=contact_timezone,
+                assistant_timezone=assistant_timezone,
             )
             if conv_state.global_thread
             else ""
@@ -619,6 +874,10 @@ class Renderer:
                 t,
                 max_messages=max_messages,
                 last_snapshot=last_snapshot,
+                contact_index=contact_index,
+                contact_name=contact_name,
+                contact_timezone=contact_timezone,
+                assistant_timezone=assistant_timezone,
             )
             for t_name, t in conv_state.threads.items()
             if t
@@ -640,9 +899,27 @@ class Renderer:
             f"</contact>"
         )
 
-    def render_thread(self, thread_name, thread, max_messages=5, last_snapshot=None):
+    def render_thread(
+        self,
+        thread_name,
+        thread,
+        max_messages=5,
+        last_snapshot=None,
+        contact_index: ContactIndex | None = None,
+        contact_name: str | None = None,
+        contact_timezone: str | None = None,
+        assistant_timezone: str | None = None,
+    ):
         messages = "\n".join(
-            self.render_message(m, last_snapshot) for m in list(thread)[-max_messages:]
+            self.render_message(
+                m,
+                last_snapshot,
+                contact_index=contact_index,
+                contact_name=contact_name,
+                contact_timezone=contact_timezone,
+                assistant_timezone=assistant_timezone,
+            )
+            for m in list(thread)[-max_messages:]
         )
         return f"<{thread_name}>\n{messages}\n</{thread_name}>"
 
@@ -650,6 +927,10 @@ class Renderer:
         self,
         message: Message | EmailMessage | UnifyMessage | GuidanceMessage,
         last_snapshot: datetime = None,
+        contact_index: ContactIndex | None = None,
+        contact_name: str | None = None,
+        contact_timezone: str | None = None,
+        assistant_timezone: str | None = None,
     ):
         # Mark all recent messages as NEW (both incoming and outbound)
         is_new = last_snapshot < message.timestamp
@@ -696,6 +977,17 @@ class Renderer:
             if assistant_role:
                 assistant_role_line = f"[Your role: {assistant_role}]\n"
 
+            # Show participant timezone info with current local times
+            # This helps the assistant be aware of recipients' local times
+            tz_block_line = ""
+            tz_block = _get_email_timezone_block(
+                message,
+                contact_index,
+                assistant_timezone,
+            )
+            if tz_block:
+                tz_block_line = f"{tz_block}\n"
+
             return (
                 f"{new_marker}[{message.name} @ {timestamp_str}]:\n"
                 f"{contact_role_line}"
@@ -703,6 +995,7 @@ class Renderer:
                 f"Subject: {message.subject}\n"
                 f"Email ID: {message.email_id}\n"
                 f"{recipients_lines}"
+                f"{tz_block_line}"
                 f"{attachments_line}"
                 f"Body:\n"
                 f"{message.body}"
@@ -721,9 +1014,33 @@ class Renderer:
                         for fname in message.attachments
                     ]
                 attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
-            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}"
 
-        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
+            # Show timezone info for the contact
+            tz_block_line = ""
+            if contact_name:
+                tz_block = _get_message_timezone_block(
+                    contact_name,
+                    contact_timezone,
+                    assistant_timezone,
+                )
+                if tz_block:
+                    tz_block_line = f"\n{tz_block}"
+
+            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tz_block_line}"
+
+        # Simple Message (SMS, phone call utterances)
+        # Show timezone info for the contact
+        tz_block_line = ""
+        if contact_name:
+            tz_block = _get_message_timezone_block(
+                contact_name,
+                contact_timezone,
+                assistant_timezone,
+            )
+            if tz_block:
+                tz_block_line = f"\n{tz_block}"
+
+        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
 
     def render_notification_bar(
         self,
