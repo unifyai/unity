@@ -50,8 +50,10 @@ async def full_roundtrip():
     async def on_event(channel: str, event_json: str):
         nonlocal received_guidance
         print(f"RECEIVED: {channel} = {event_json}")
-        if channel == "test:parent:guidance":
-            received_guidance = json.loads(event_json)
+        if channel == "app:call:call_guidance":
+            data = json.loads(event_json)
+            payload = data.get("payload", data)
+            received_guidance = {"content": payload.get("content", "")}
             guidance_ready.set()
 
     # Start receiving
@@ -60,9 +62,9 @@ async def full_roundtrip():
         print("ERROR: Failed to start receive loop", file=sys.stderr)
         sys.exit(1)
 
-    # Send "ready" to parent
+    # Send "ready" to parent (using app:call:* namespace like production)
     await client.send_event(
-        "test:subprocess:ready",
+        "app:call:ready",
         json.dumps({"status": "ready"}),
     )
     print("Sent 'ready' to parent, waiting for guidance...")
@@ -74,10 +76,10 @@ async def full_roundtrip():
         print("ERROR: Timeout waiting for guidance", file=sys.stderr)
         sys.exit(1)
 
-    # Send ack with the content we received
+    # Send ack with the content we received (using app:call:* namespace)
     content = received_guidance.get("content", "")
     await client.send_event(
-        "test:subprocess:ack",
+        "app:call:ack",
         json.dumps({"received_content": content}),
     )
     print(f"SUCCESS: Full roundtrip complete, received content: {content}")

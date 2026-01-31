@@ -93,7 +93,7 @@ class TestRealSubprocessIPC:
         server = CallEventSocketServer(
             event_broker,
             on_event=on_event,
-            forward_channels=["test:parent:*"],
+            forward_channels=["app:call:*"],
         )
         proc = None
 
@@ -102,6 +102,15 @@ class TestRealSubprocessIPC:
 
             env = os.environ.copy()
             env[CM_EVENT_SOCKET_ENV] = socket_path
+
+            # Ensure PYTHONPATH includes workspace root so subprocess can find unity
+            workspace_root = str(Path(__file__).parent.parent.parent.parent)
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                f"{workspace_root}:{existing_pythonpath}"
+                if existing_pythonpath
+                else workspace_root
+            )
 
             # Spawn subprocess that does full roundtrip
             proc = subprocess.Popen(
@@ -116,7 +125,7 @@ class TestRealSubprocessIPC:
             for _ in range(50):
                 await asyncio.sleep(0.1)
                 for channel, _ in received_from_child:
-                    if channel == "test:subprocess:ready":
+                    if channel == "app:call:ready":
                         ready_received = True
                         break
                 if ready_received:
@@ -124,10 +133,10 @@ class TestRealSubprocessIPC:
 
             assert ready_received, "Subprocess never sent 'ready' event"
 
-            # Clear and send guidance
+            # Clear and send guidance (using production channel name)
             received_from_child.clear()
             await event_broker.publish(
-                "test:parent:guidance",
+                "app:call:call_guidance",
                 json.dumps({"content": "Ask about their day"}),
             )
 
@@ -136,7 +145,7 @@ class TestRealSubprocessIPC:
             for _ in range(50):
                 await asyncio.sleep(0.1)
                 for channel, event_json in received_from_child:
-                    if channel == "test:subprocess:ack":
+                    if channel == "app:call:ack":
                         data = json.loads(event_json)
                         assert (
                             data["received_content"] == "Ask about their day"
