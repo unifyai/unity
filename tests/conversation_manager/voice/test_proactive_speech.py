@@ -37,6 +37,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.proactive_speech import (
     ProactiveDecision,
     ProactiveSpeech,
@@ -119,19 +120,20 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm.mode = "call"  # Default to voice mode where proactive speech is active
     cm._proactive_speech_task = None
 
-    # Create a mock ContactManager that returns sample contacts
-    mock_contact_manager = MagicMock()
-    contacts_by_id = {c["contact_id"]: c for c in sample_contacts}
-    mock_contact_manager.get_contact_info = MagicMock(
-        side_effect=lambda cid: (
-            {cid: contacts_by_id.get(cid)} if cid in contacts_by_id else {}
-        ),
-    )
-    mock_contact_manager.filter_contacts = MagicMock(return_value={"contacts": []})
+    # Create SimulatedContactManager and populate with sample contacts
+    contact_manager = SimulatedContactManager()
+    for contact_data in sample_contacts:
+        contact_manager.update_contact(
+            contact_id=contact_data["contact_id"],
+            first_name=contact_data.get("first_name"),
+            surname=contact_data.get("surname"),
+            email_address=contact_data.get("email_address"),
+            phone_number=contact_data.get("phone_number"),
+        )
 
-    # Set up contact index with mock ContactManager
+    # Set up contact index with SimulatedContactManager
     cm.contact_index = ContactIndex()
-    cm.contact_index.set_contact_manager(mock_contact_manager)
+    cm.contact_index.set_contact_manager(contact_manager)
 
     # Set up proactive speech instance
     cm.proactive_speech = ProactiveSpeech()
