@@ -883,3 +883,394 @@ class TestRenderStateWithTracking:
         assert action.query == "Search for Alice's email"
         assert action.status == "executing"
         assert action.history_count == 1
+
+
+# =============================================================================
+# Tests for Participant Timezone Rendering
+# =============================================================================
+
+
+class TestParticipantTimezones:
+    """Tests for participant timezone display in all message types."""
+
+    @pytest.fixture
+    def renderer(self):
+        return Renderer()
+
+    @pytest.fixture
+    def contact_index_with_timezones(self):
+        """Create a ContactIndex with contacts having different timezones."""
+        ci = ContactIndex()
+        ci._fallback_contacts = {
+            5: {
+                "contact_id": 5,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "email_address": "alice@example.com",
+                "timezone": "America/New_York",
+            },
+            8: {
+                "contact_id": 8,
+                "first_name": "Bob",
+                "surname": "Jones",
+                "email_address": "bob@example.com",
+                "timezone": "America/Los_Angeles",
+            },
+            12: {
+                "contact_id": 12,
+                "first_name": "Carol",
+                "surname": "White",
+                "email_address": "carol@example.com",
+                "timezone": "Europe/London",
+            },
+            15: {
+                "contact_id": 15,
+                "first_name": "Dave",
+                "surname": "Brown",
+                "email_address": "dave@example.com",
+                "timezone": "Asia/Tokyo",
+            },
+            20: {
+                "contact_id": 20,
+                "first_name": "Eve",
+                "surname": "Green",
+                "email_address": "eve@example.com",
+                "timezone": None,  # No timezone set
+            },
+        }
+        return ci
+
+    # =========================================================================
+    # SMS Message Tests
+    # =========================================================================
+
+    def test_sms_shows_timezone_block_when_different(self, renderer):
+        """SMS message shows timezone block when contact and assistant have different timezones."""
+        sms = Message(
+            name="Alice Smith",
+            content="Hey, can you call me?",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(
+            sms,
+            last_snapshot,
+            contact_name="Alice Smith",
+            contact_timezone="America/Los_Angeles",
+            assistant_timezone="America/New_York",
+        )
+
+        # Should have [Now: ...] format with both timezones
+        assert "[Now:" in result
+        assert "You" in result
+        assert "Alice Smith" in result
+        assert "America/New_York" in result
+        assert "America/Los_Angeles" in result
+        assert "|" in result  # Different timezones separated by |
+
+    def test_sms_shows_grouped_timezone_when_same(self, renderer):
+        """SMS message shows grouped timezone when contact and assistant share timezone."""
+        sms = Message(
+            name="Alice Smith",
+            content="Hey, can you call me?",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(
+            sms,
+            last_snapshot,
+            contact_name="Alice Smith",
+            contact_timezone="America/New_York",
+            assistant_timezone="America/New_York",
+        )
+
+        # Should have [Now: You and Alice Smith ...] format (grouped)
+        assert "[Now:" in result
+        assert "You and Alice Smith" in result
+        assert "America/New_York" in result
+        # Should NOT have separator since same timezone
+        assert "|" not in result
+
+    def test_sms_no_timezone_block_without_params(self, renderer):
+        """SMS message without timezone params doesn't show timezone block."""
+        sms = Message(
+            name="Alice Smith",
+            content="Hey there!",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(sms, last_snapshot)
+
+        # Should NOT have timezone block
+        assert "[Now:" not in result
+
+    # =========================================================================
+    # UnifyMessage Tests
+    # =========================================================================
+
+    def test_unify_message_shows_timezone_block(self, renderer):
+        """UnifyMessage shows timezone block with contact and assistant timezones."""
+        from unity.conversation_manager.domains.contact_index import UnifyMessage
+
+        msg = UnifyMessage(
+            name="Boss",
+            content="Please send the report",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+            attachments=[],
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(
+            msg,
+            last_snapshot,
+            contact_name="The Boss",
+            contact_timezone="Europe/London",
+            assistant_timezone="America/New_York",
+        )
+
+        assert "[Now:" in result
+        assert "You" in result
+        assert "The Boss" in result
+        assert "Europe/London" in result
+        assert "America/New_York" in result
+
+    # =========================================================================
+    # Email Message Tests
+    # =========================================================================
+
+    def test_email_shows_assistant_and_recipients_timezones(
+        self,
+        renderer,
+        contact_index_with_timezones,
+    ):
+        """Email rendering includes assistant and all recipient timezones."""
+        email = EmailMessage(
+            name="You",
+            subject="Team Update",
+            body="Hello team!",
+            email_id="test123@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=["alice@example.com"],  # America/New_York
+            cc=["carol@example.com"],  # Europe/London
+            bcc=[],
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=contact_index_with_timezones,
+                assistant_timezone="America/New_York",
+            )
+
+        # Should have [Now: ...] format
+        assert "[Now:" in result
+        # Assistant and Alice share America/New_York
+        assert "America/New_York" in result
+        # Carol is in Europe/London
+        assert "Europe/London" in result
+
+    def test_email_groups_assistant_with_same_timezone_recipients(
+        self,
+        renderer,
+        contact_index_with_timezones,
+    ):
+        """When assistant and recipient share timezone, they're grouped together."""
+        email = EmailMessage(
+            name="You",
+            subject="Quick Note",
+            body="Hi Alice",
+            email_id="test456@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=["alice@example.com"],  # America/New_York (same as assistant)
+            cc=[],
+            bcc=[],
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=contact_index_with_timezones,
+                assistant_timezone="America/New_York",
+            )
+
+        # You and Alice should be grouped (same timezone)
+        assert "You and Alice Smith" in result
+        # Should not have separator
+        assert "|" not in result.split("[Now:")[1].split("]")[0]
+
+    def test_email_shows_multiple_timezones_with_separator(
+        self,
+        renderer,
+        contact_index_with_timezones,
+    ):
+        """Email with recipients in different timezones shows them separated by |."""
+        email = EmailMessage(
+            name="You",
+            subject="Global Update",
+            body="Hello everyone!",
+            email_id="test789@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=["bob@example.com"],  # America/Los_Angeles
+            cc=["carol@example.com"],  # Europe/London
+            bcc=["dave@example.com"],  # Asia/Tokyo
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=contact_index_with_timezones,
+                assistant_timezone="America/New_York",
+            )
+
+        # All timezones should be present
+        assert "America/New_York" in result  # Assistant
+        assert "America/Los_Angeles" in result  # Bob
+        assert "Europe/London" in result  # Carol
+        assert "Asia/Tokyo" in result  # Dave
+        # Multiple separators for multiple timezone groups
+        assert result.count("|") >= 3
+
+    def test_email_shows_unknown_for_contacts_without_timezone(
+        self,
+        renderer,
+        contact_index_with_timezones,
+    ):
+        """Contacts without timezone are shown as unknown."""
+        email = EmailMessage(
+            name="You",
+            subject="Note",
+            body="Hi",
+            email_id="test000@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=["eve@example.com"],  # No timezone set
+            cc=[],
+            bcc=[],
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=contact_index_with_timezones,
+                assistant_timezone="America/New_York",
+            )
+
+        # Should show unknown timezone for Eve
+        assert "unknown timezone" in result.lower()
+        assert "Eve Green" in result
+
+    def test_email_no_timezone_block_without_contact_index(self, renderer):
+        """Email rendering without contact_index doesn't include timezone block."""
+        email = EmailMessage(
+            name="You",
+            subject="Test",
+            body="Hello",
+            email_id="test222@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=["alice@example.com"],
+            cc=[],
+            bcc=[],
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=None,  # No contact index
+            )
+
+        # Should NOT include timezone section
+        assert "[Now:" not in result
+
+    def test_email_no_timezone_block_for_empty_recipients(
+        self,
+        renderer,
+        contact_index_with_timezones,
+    ):
+        """Email with no recipients doesn't include timezone block."""
+        email = EmailMessage(
+            name="You",
+            subject="Draft",
+            body="Draft content",
+            email_id="test333@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=[],
+            cc=[],
+            bcc=[],
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=contact_index_with_timezones,
+            )
+
+        # Should NOT include timezone section (no recipients)
+        assert "[Now:" not in result
+
+    def test_timezone_includes_current_time_format(
+        self,
+        renderer,
+        contact_index_with_timezones,
+    ):
+        """Timezone display includes current local time in standard format."""
+        email = EmailMessage(
+            name="You",
+            subject="Time Check",
+            body="What time is it there?",
+            email_id="test444@mail.gmail.com",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="assistant",
+            to=["bob@example.com"],  # Different timezone than assistant
+            cc=[],
+            bcc=[],
+        )
+        with patch(
+            "unity.conversation_manager.domains.renderer.SESSION_DETAILS",
+        ) as mock_session:
+            mock_session.assistant.email = "assistant@unify.ai"
+            last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+            result = renderer.render_message(
+                email,
+                last_snapshot,
+                contact_index=contact_index_with_timezones,
+                assistant_timezone="America/New_York",
+            )
+
+        # Should have format like "[Now: ... HH:MM AM/PM (timezone)]"
+        import re
+
+        # Match pattern like "12:30 PM (America/New_York)" or "1:30 AM (America/Los_Angeles)"
+        pattern = r"\d{1,2}:\d{2} [AP]M \(America/"
+        assert re.search(pattern, result), f"Time format not found in: {result}"
