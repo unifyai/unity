@@ -464,7 +464,7 @@ async def test_interject_first_then_start_second(initialized_cm):
     result1 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Search the web for restaurant reviews.",
+            content="Search the web for Italian restaurant reviews in Rome for my upcoming summer trip.",
         ),
     )
     assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
@@ -473,7 +473,7 @@ async def test_interject_first_then_start_second(initialized_cm):
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="For those restaurants, only look at Italian places.",
+            content="For those restaurants, focus on ones near the Colosseum.",
         ),
     )
 
