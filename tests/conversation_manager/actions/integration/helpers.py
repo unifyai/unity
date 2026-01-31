@@ -220,7 +220,7 @@ async def run_cm_until_wait(
     events (e.g., ActorResult) request another LLM turn.
 
     Returns:
-        Output events emitted during these LLM steps (e.g., SMSSent).
+        Output events emitted during these LLM steps (e.g., SMSSent, ActorHandleStarted).
     """
     cm = cm_driver.cm
     output_events: list[Event] = []
@@ -239,10 +239,11 @@ async def run_cm_until_wait(
                 EmailSent,
                 UnifyMessageSent,
                 PhoneCallSent,
+                ActorHandleStarted,
             ),
         ):
             output_events.append(evt)
-        # Handle locally for deterministic state updates; do not forward to broker.
+        # Handle locally for deterministic state updates.
         if evt is not None:
             from unity.conversation_manager.domains.event_handlers import EventHandler
 
@@ -251,7 +252,8 @@ async def run_cm_until_wait(
                 cm,
                 is_voice_call=cm.call_manager.uses_realtime_api,
             )
-        return 0
+        # Forward to real broker so actor lifecycle events work correctly.
+        return await original_publish(channel, message)
 
     # Patch request_llm_run so "requested turns" don't escape into background debouncers.
     original_request = cm.request_llm_run
