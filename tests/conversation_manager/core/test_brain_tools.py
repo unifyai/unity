@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.brain_tools import (
     ConversationManagerBrainTools,
 )
@@ -46,45 +47,31 @@ from unity.conversation_manager.task_actions import (
 # =============================================================================
 
 
-def _setup_mock_contacts(contact_index, contacts: list[dict]) -> MagicMock:
+def _setup_mock_contacts(
+    contact_index,
+    contacts: list[dict],
+) -> SimulatedContactManager:
     """
-    Set up a mock ContactManager with the given contacts on a ContactIndex.
+    Set up a SimulatedContactManager with the given contacts on a ContactIndex.
 
-    Returns the mock ContactManager for additional configuration if needed.
+    Returns the SimulatedContactManager for additional inspection if needed.
     """
-    contacts_by_id = {c["contact_id"]: c for c in contacts}
-    contacts_by_phone = {
-        c["phone_number"]: c for c in contacts if c.get("phone_number")
-    }
-    contacts_by_email = {
-        c["email_address"]: c for c in contacts if c.get("email_address")
-    }
+    contact_manager = SimulatedContactManager()
 
-    def mock_get_contact_info(cid):
-        if cid in contacts_by_id:
-            return {cid: contacts_by_id[cid]}
-        return {}
+    # Populate contacts - update system contacts (0, 1) and create others
+    for contact_data in contacts:
+        contact_id = contact_data["contact_id"]
+        contact_manager.update_contact(
+            contact_id=contact_id,
+            first_name=contact_data.get("first_name"),
+            surname=contact_data.get("surname"),
+            email_address=contact_data.get("email_address"),
+            phone_number=contact_data.get("phone_number"),
+            should_respond=contact_data.get("should_respond", True),
+        )
 
-    def mock_filter_contacts(filter=None, limit=None):
-        if filter and "phone_number" in filter:
-            for phone, contact in contacts_by_phone.items():
-                if phone in filter:
-                    return {"contacts": [contact]}
-        if filter and "email_address" in filter:
-            for email, contact in contacts_by_email.items():
-                if email in filter:
-                    return {"contacts": [contact]}
-        return {"contacts": []}
-
-    mock_contact_manager = MagicMock()
-    mock_contact_manager.get_contact_info = MagicMock(side_effect=mock_get_contact_info)
-    mock_contact_manager.filter_contacts = MagicMock(side_effect=mock_filter_contacts)
-    mock_contact_manager._create_contact = MagicMock(
-        return_value={"details": {"contact_id": 100}},
-    )
-
-    contact_index.set_contact_manager(mock_contact_manager)
-    return mock_contact_manager
+    contact_index.set_contact_manager(contact_manager)
+    return contact_manager
 
 
 @pytest.fixture
@@ -98,7 +85,7 @@ def mock_cm():
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
     cm.assistant_email = "assistant@test.com"
-    # Set up empty mock contact manager
+    # Set up SimulatedContactManager (starts with system contacts 0 and 1)
     cm.contact_manager = _setup_mock_contacts(cm.contact_index, [])
     return cm
 
@@ -389,19 +376,8 @@ class TestSendSmsTool:
         mock_cm,
     ):
         """Accepts phone number string as recipient."""
-        # Mock contact creation for new phone number
-        mock_cm.contact_manager = MagicMock()
-        mock_cm.contact_manager._create_contact.return_value = {
-            "details": {"contact_id": 99},
-        }
-        mock_cm.contact_manager.get_contact_info.return_value = {
-            99: {
-                "contact_id": 99,
-                "phone_number": "+1987654321",
-                "should_respond": True,
-            },
-        }
-
+        # SimulatedContactManager will create the contact automatically
+        # when _get_or_create_contact is called with a phone number
         result = await brain_action_tools.send_sms(
             recipient="+1987654321",
             content="Hello",
@@ -851,35 +827,8 @@ class TestSendEmailTool:
         """Handles multiple recipients in to, cc, and bcc simultaneously."""
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
-        # Mock contact creation for external email addresses
-        created_contact_counter = [100]  # Use list to allow mutation in closure
-
-        def mock_create_contact(**kwargs):
-            contact_id = created_contact_counter[0]
-            created_contact_counter[0] += 1
-            return {"details": {"contact_id": contact_id}}
-
-        def mock_get_contact_info(contact_id):
-            # Return a minimal contact for created contacts
-            email = f"external{contact_id - 99}@example.com"
-            return {
-                contact_id: {
-                    "contact_id": contact_id,
-                    "email_address": email,
-                    "should_respond": True,
-                },
-            }
-
-        mock_cm.contact_manager = MagicMock()
-        mock_cm.contact_manager._create_contact = MagicMock(
-            side_effect=mock_create_contact,
-        )
-        mock_cm.contact_manager.get_contact_info = MagicMock(
-            side_effect=mock_get_contact_info,
-        )
-        mock_cm.contact_manager.filter_contacts = MagicMock(
-            return_value={"contacts": []},
-        )
+        # SimulatedContactManager will create contacts for external email addresses
+        # when _get_or_create_contact is called with emails not in the store
 
         with patch(
             "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
@@ -943,19 +892,8 @@ class TestMakeCallTool:
         mock_cm,
     ):
         """Accepts phone number string as recipient."""
-        # Mock contact creation for new phone number
-        mock_cm.contact_manager = MagicMock()
-        mock_cm.contact_manager._create_contact.return_value = {
-            "details": {"contact_id": 99},
-        }
-        mock_cm.contact_manager.get_contact_info.return_value = {
-            99: {
-                "contact_id": 99,
-                "phone_number": "+1987654321",
-                "should_respond": True,
-            },
-        }
-
+        # SimulatedContactManager will create the contact automatically
+        # when _get_or_create_contact is called with a phone number
         result = await brain_action_tools.make_call(recipient="+1987654321")
 
         assert result["status"] == "ok"
