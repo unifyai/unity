@@ -416,6 +416,28 @@ else
 fi
 unset _orchestra_repo_path _local_orchestra_script
 
+# ---------------------------------------------------------------------------
+# Communication Service URL Setup
+# ---------------------------------------------------------------------------
+# UNITY_COMMS_URL is auto-selected based on git branch if not explicitly set:
+# - main branch → production: https://unity-comms-app-262420637606.us-central1.run.app
+# - other branches → staging: https://unity-comms-app-staging-262420637606.us-central1.run.app
+#
+# This mirrors the CI behavior in .github/workflows/tests.yml
+if [[ -z "${UNITY_COMMS_URL:-}" ]]; then
+  _current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+  if [[ "$_current_branch" == "main" ]]; then
+    export UNITY_COMMS_URL="https://unity-comms-app-262420637606.us-central1.run.app"
+    echo "Using production communication service (main branch)"
+  else
+    export UNITY_COMMS_URL="https://unity-comms-app-staging-262420637606.us-central1.run.app"
+    echo "Using staging communication service (branch: $_current_branch)"
+  fi
+  unset _current_branch
+else
+  echo "Using communication service: $UNITY_COMMS_URL"
+fi
+
 # Build pytest marker filter based on flags
 MARKER_FILTER=""
 if (( EVAL_ONLY )); then
@@ -567,7 +589,7 @@ build_env_exports() {
   # NOT propagated to individual sessions. They are handled at the script level to avoid race
   # conditions where multiple sessions try to delete the shared project simultaneously.
   # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_COMMS_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       # Quote values containing special characters (paths, URLs with colons/slashes)
