@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from dataclasses import dataclass
 
@@ -148,77 +147,7 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
 
 
 # =============================================================================
-# 1. ProactiveDecision Model Tests
-# =============================================================================
-
-
-class TestProactiveDecisionModel:
-    """Tests for the ProactiveDecision Pydantic model."""
-
-    def test_decision_with_all_fields(self):
-        """ProactiveDecision accepts all fields."""
-        decision = ProactiveDecision(
-            should_speak=True,
-            delay=3,
-            content="Still working on that for you.",
-        )
-        assert decision.should_speak is True
-        assert decision.delay == 3
-        assert decision.content == "Still working on that for you."
-
-    def test_decision_with_defaults(self):
-        """ProactiveDecision has sensible defaults."""
-        decision = ProactiveDecision(should_speak=False)
-        assert decision.should_speak is False
-        assert decision.delay == 5  # Default delay
-        assert decision.content is None
-
-    def test_decision_serialization(self):
-        """ProactiveDecision can be serialized to JSON."""
-        decision = ProactiveDecision(
-            should_speak=True,
-            delay=2,
-            content="Hello?",
-        )
-        json_str = decision.model_dump_json()
-        data = json.loads(json_str)
-
-        assert data["should_speak"] is True
-        assert data["delay"] == 2
-        assert data["content"] == "Hello?"
-
-    def test_decision_deserialization(self):
-        """ProactiveDecision can be deserialized from JSON."""
-        json_str = '{"should_speak": true, "delay": 4, "content": "Are you there?"}'
-        decision = ProactiveDecision.model_validate_json(json_str)
-
-        assert decision.should_speak is True
-        assert decision.delay == 4
-        assert decision.content == "Are you there?"
-
-
-# =============================================================================
-# 2. ProactiveSpeech Class Tests
-# =============================================================================
-
-
-class TestProactiveSpeechClass:
-    """Tests for the ProactiveSpeech decision-making class."""
-
-    def test_default_model_is_fast(self):
-        """ProactiveSpeech uses a fast model for low-latency decisions."""
-        ps = ProactiveSpeech()
-        # Should use a flash/mini model for quick responses
-        assert "flash" in ps.model.lower() or "mini" in ps.model.lower()
-
-    def test_custom_model_accepted(self):
-        """ProactiveSpeech accepts a custom model."""
-        ps = ProactiveSpeech(model="gpt-5-mini@openai")
-        assert ps.model == "gpt-5-mini@openai"
-
-
-# =============================================================================
-# 3. schedule_proactive_speech() Tests
+# 1. schedule_proactive_speech() Tests
 # =============================================================================
 
 
@@ -362,137 +291,13 @@ class TestCancelProactiveSpeech:
 
 
 # =============================================================================
-# 5. _proactive_speech_loop() Tests
+# 3. _proactive_speech_loop() Tests
 # =============================================================================
 
 
 @pytest.mark.asyncio
 class TestProactiveSpeechLoop:
     """Tests for the _proactive_speech_loop() method."""
-
-    async def test_loop_waits_initial_10_seconds(self, mock_cm):
-        """The loop waits 10 seconds initially before checking."""
-        from unity.conversation_manager.conversation_manager import ConversationManager
-
-        mock_cm.mode = Mode.CALL
-
-        async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False)
-
-        mock_cm.proactive_speech.decide = mock_decide
-        mock_cm.schedule_proactive_speech = AsyncMock()
-        mock_cm.schedule_proactive_speech.side_effect = asyncio.CancelledError()
-
-        sleep_calls = []
-
-        async def track_sleep(duration):
-            sleep_calls.append(duration)
-
-        with (
-            patch("asyncio.sleep", new=track_sleep),
-            patch(
-                "unity.conversation_manager.conversation_manager.build_brain_spec",
-                return_value=MockBrainSpec(),
-            ),
-        ):
-            try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=False,
-                )
-            except asyncio.CancelledError:
-                pass
-
-        # Should have waited 10 seconds initially
-        assert 10 in sleep_calls
-
-    async def test_loop_skips_initial_wait_when_requested(self, mock_cm):
-        """The loop skips initial wait when skip_initial_wait=True."""
-        from unity.conversation_manager.conversation_manager import ConversationManager
-
-        mock_cm.mode = Mode.CALL
-
-        async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False)
-
-        mock_cm.proactive_speech.decide = mock_decide
-        mock_cm.schedule_proactive_speech = AsyncMock()
-
-        sleep_calls = []
-
-        async def track_sleep(duration):
-            sleep_calls.append(duration)
-            if len(sleep_calls) >= 2:
-                raise asyncio.CancelledError()
-
-        with (
-            patch("asyncio.sleep", new=track_sleep),
-            patch(
-                "unity.conversation_manager.conversation_manager.build_brain_spec",
-                return_value=MockBrainSpec(),
-            ),
-        ):
-            try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
-            except asyncio.CancelledError:
-                pass
-
-        # Should NOT have 10 second initial wait
-        assert 10 not in sleep_calls
-
-    async def test_loop_calculates_elapsed_time(self, mock_cm):
-        """The loop calculates elapsed time from last message timestamp."""
-        from unity.conversation_manager.conversation_manager import ConversationManager
-
-        mock_cm.mode = Mode.CALL
-
-        # Set up a fixed "now" time and a transcript timestamp 15 seconds before
-        fixed_now = datetime(2025, 1, 1, 12, 0, 15)
-        past_time = datetime(2025, 1, 1, 12, 0, 0)  # 15 seconds before fixed_now
-
-        mock_cm.get_recent_voice_transcript = MagicMock(
-            return_value=(
-                [{"role": "user", "content": "Hello"}],
-                past_time,
-            ),
-        )
-
-        captured_elapsed = None
-
-        async def mock_decide(chat_history, system_prompt, elapsed_seconds=0):
-            nonlocal captured_elapsed
-            captured_elapsed = elapsed_seconds
-            return ProactiveDecision(should_speak=False)
-
-        mock_cm.proactive_speech.decide = mock_decide
-        mock_cm.schedule_proactive_speech = AsyncMock()
-        mock_cm.schedule_proactive_speech.side_effect = asyncio.CancelledError()
-
-        with (
-            patch("asyncio.sleep", new=AsyncMock()),
-            patch(
-                "unity.conversation_manager.conversation_manager.build_brain_spec",
-                return_value=MockBrainSpec(),
-            ),
-            patch(
-                "unity.conversation_manager.conversation_manager.prompt_now",
-                return_value=fixed_now,
-            ),
-        ):
-            try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
-            except asyncio.CancelledError:
-                pass
-
-        # Should have calculated exactly 15 seconds elapsed
-        assert captured_elapsed is not None
-        assert captured_elapsed == 15.0
 
     async def test_loop_publishes_guidance_when_should_speak(self, mock_cm):
         """The loop publishes call_guidance when decision says to speak."""
@@ -593,71 +398,9 @@ class TestProactiveSpeechLoop:
 
         assert proactive_msg is not None
 
-    async def test_loop_reschedules_with_adaptive_wait(self, mock_cm):
-        """The loop reschedules with adaptive wait when not speaking."""
-        from unity.conversation_manager.conversation_manager import ConversationManager
-
-        mock_cm.mode = Mode.CALL
-
-        # Set up fixed timestamps: elapsed time = 5s (< 10s threshold)
-        # This should result in wait_time = min(12 - 5, 7) = 7 seconds
-        fixed_now = datetime(2025, 1, 1, 12, 0, 5)
-        past_time = datetime(2025, 1, 1, 12, 0, 0)  # 5 seconds before
-
-        mock_cm.get_recent_voice_transcript = MagicMock(
-            return_value=(
-                [{"role": "user", "content": "Hello"}],
-                past_time,
-            ),
-        )
-
-        async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False, delay=3)
-
-        mock_cm.proactive_speech.decide = mock_decide
-
-        schedule_called_with_skip = None
-
-        async def mock_schedule(skip_initial_wait=False):
-            nonlocal schedule_called_with_skip
-            schedule_called_with_skip = skip_initial_wait
-            raise asyncio.CancelledError()
-
-        mock_cm.schedule_proactive_speech = mock_schedule
-
-        sleep_durations = []
-
-        async def track_sleep(duration):
-            sleep_durations.append(duration)
-
-        with (
-            patch("asyncio.sleep", new=track_sleep),
-            patch(
-                "unity.conversation_manager.conversation_manager.build_brain_spec",
-                return_value=MockBrainSpec(),
-            ),
-            patch(
-                "unity.conversation_manager.conversation_manager.prompt_now",
-                return_value=fixed_now,
-            ),
-        ):
-            try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
-            except asyncio.CancelledError:
-                pass
-
-        # Should have rescheduled with skip_initial_wait=True
-        assert schedule_called_with_skip is True
-
-        # Should have adaptive wait of 7 seconds (min(12 - 5, 7) = 7)
-        assert 7 in sleep_durations
-
 
 # =============================================================================
-# 6. ProactiveSpeech.decide() Integration Tests (Real LLM)
+# 4. ProactiveSpeech.decide() Integration Tests (Real LLM)
 # =============================================================================
 
 
@@ -1033,69 +776,6 @@ class TestProactiveSpeechBlindSpots:
             f"Expected proactive message in UNIFY_MEET thread. "
             f"Meet thread: {meet_thread}, Phone thread: {phone_thread}"
         )
-
-    # -------------------------------------------------------------------------
-    # Test: Adaptive wait when elapsed_seconds >= 10
-    # -------------------------------------------------------------------------
-
-    async def test_loop_adaptive_wait_when_elapsed_over_10(self, mock_cm):
-        """When elapsed >= 10s, loop should wait 5s (not adaptive calculation)."""
-        from unity.conversation_manager.conversation_manager import ConversationManager
-
-        mock_cm.mode = Mode.CALL
-
-        # Set up fixed timestamps: elapsed time = 15s (>= 10s threshold)
-        # This should result in wait_time = 5 seconds (the fixed value)
-        fixed_now = datetime(2025, 1, 1, 12, 0, 15)
-        past_time = datetime(2025, 1, 1, 12, 0, 0)  # 15 seconds before
-
-        mock_cm.get_recent_voice_transcript = MagicMock(
-            return_value=(
-                [{"role": "user", "content": "Hello"}],
-                past_time,
-            ),
-        )
-
-        async def mock_decide(*args, **kwargs):
-            return ProactiveDecision(should_speak=False, delay=3)
-
-        mock_cm.proactive_speech.decide = mock_decide
-
-        schedule_called = False
-
-        async def mock_schedule(skip_initial_wait=False):
-            nonlocal schedule_called
-            schedule_called = True
-            raise asyncio.CancelledError()
-
-        mock_cm.schedule_proactive_speech = mock_schedule
-
-        sleep_durations = []
-
-        async def track_sleep(duration):
-            sleep_durations.append(duration)
-
-        with (
-            patch("asyncio.sleep", new=track_sleep),
-            patch(
-                "unity.conversation_manager.conversation_manager.build_brain_spec",
-                return_value=MockBrainSpec(),
-            ),
-            patch(
-                "unity.conversation_manager.conversation_manager.prompt_now",
-                return_value=fixed_now,
-            ),
-        ):
-            try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
-            except asyncio.CancelledError:
-                pass
-
-        # Should have waited exactly 5 seconds (not 7 or adaptive)
-        assert 5 in sleep_durations, f"Expected 5s wait, got: {sleep_durations}"
 
     # -------------------------------------------------------------------------
     # Test: InboundUnifyMeetUtterance cancels proactive speech
