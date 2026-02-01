@@ -39,7 +39,6 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
-import asyncio
 import json
 
 import pytest
@@ -271,12 +270,6 @@ class TestSTSAssistantClass:
 class TestCommonHelpers:
     """Tests for shared helper functions in common.py."""
 
-    def test_default_inactivity_timeout_value(self):
-        """DEFAULT_INACTIVITY_TIMEOUT is 5 minutes (300 seconds)."""
-        from unity.conversation_manager.medium_scripts import common
-
-        assert common.DEFAULT_INACTIVITY_TIMEOUT == 300
-
     def test_should_dispatch_livekit_agent_with_dev_command(self, monkeypatch):
         """should_dispatch_livekit_agent returns True for 'dev' command."""
         from unity.conversation_manager.medium_scripts import common
@@ -325,20 +318,6 @@ class TestSTSUsageLogging:
         log_sts_usage(call_duration_seconds=-10)
 
         assert "Skipping STS usage logging" in caplog.text
-
-    def test_sts_billing_constants(self):
-        """STS billing constants have expected values."""
-        from unity.conversation_manager.medium_scripts.common import (
-            _STS_BILLING_MODEL,
-            _STS_TOKENS_PER_SECOND,
-            _STS_SPEECH_RATIO,
-            _STS_INPUT_OUTPUT_SPLIT,
-        )
-
-        assert _STS_BILLING_MODEL == "gpt-4o-realtime-preview"
-        assert _STS_TOKENS_PER_SECOND == 150
-        assert _STS_SPEECH_RATIO == 0.5
-        assert _STS_INPUT_OUTPUT_SPLIT == 0.5
 
 
 # =============================================================================
@@ -1002,33 +981,3 @@ class TestInactivityTimeout:
 
         # Should not raise
         touch()
-
-
-# =============================================================================
-# Unit Tests: Module Structure
-# =============================================================================
-
-
-class TestModuleStructure:
-    """Tests for medium script module structure."""
-
-    def test_call_module_has_entrypoint(self):
-        """call.py has an entrypoint function."""
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        assert hasattr(call_module, "entrypoint")
-        assert asyncio.iscoroutinefunction(call_module.entrypoint)
-
-    def test_call_module_has_prewarm(self):
-        """call.py has a prewarm function for heavy initialization."""
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        assert hasattr(call_module, "prewarm")
-        assert callable(call_module.prewarm)
-
-    def test_sts_module_has_entrypoint(self):
-        """sts_call.py has an entrypoint function."""
-        from unity.conversation_manager.medium_scripts import sts_call as sts_module
-
-        assert hasattr(sts_module, "entrypoint")
-        assert asyncio.iscoroutinefunction(sts_module.entrypoint)

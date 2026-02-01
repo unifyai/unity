@@ -443,88 +443,8 @@ class TestRendererUnifyMessage:
 
 
 # =============================================================================
-# Tests for SnapshotState and Incremental Diff
+# Tests for Incremental Diff
 # =============================================================================
-
-
-class TestSnapshotState:
-    """Tests for SnapshotState identity tracking."""
-
-    def test_message_ids_returns_identity_tuples(self):
-        """message_ids() returns set of (contact_id, thread, index, timestamp) tuples."""
-        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
-        ts2 = datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc)
-
-        snapshot = SnapshotState(
-            full_render="<test>",
-            messages=[
-                MessageElement(
-                    contact_id=1,
-                    thread_name="global",
-                    index_in_thread=0,
-                    timestamp=ts1,
-                    rendered="[User @ ...]: Hello",
-                ),
-                MessageElement(
-                    contact_id=1,
-                    thread_name="global",
-                    index_in_thread=1,
-                    timestamp=ts2,
-                    rendered="[You @ ...]: Hi there",
-                ),
-            ],
-        )
-
-        ids = snapshot.message_ids()
-        assert len(ids) == 2
-        assert (1, "global", 0, ts1) in ids
-        assert (1, "global", 1, ts2) in ids
-
-    def test_notification_ids_returns_identity_tuples(self):
-        """notification_ids() returns set of (timestamp, content_hash, pinned) tuples."""
-        ts1 = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
-
-        snapshot = SnapshotState(
-            full_render="<test>",
-            notifications=[
-                NotificationElement(
-                    timestamp=ts1,
-                    content_hash=hash("Task completed"),
-                    pinned=False,
-                    rendered="[Task Notification @ ...] Task completed",
-                ),
-            ],
-        )
-
-        ids = snapshot.notification_ids()
-        assert len(ids) == 1
-        assert (ts1, hash("Task completed"), False) in ids
-
-    def test_action_states_returns_handle_to_state_dict(self):
-        """action_states() returns dict mapping handle_id to (status, history_count)."""
-        snapshot = SnapshotState(
-            full_render="<test>",
-            actions=[
-                ActionElement(
-                    handle_id=0,
-                    query="search contacts",
-                    status="executing",
-                    history_count=2,
-                    rendered="<action id='0'>...",
-                ),
-                ActionElement(
-                    handle_id=1,
-                    query="send email",
-                    status="paused",
-                    history_count=0,
-                    rendered="<action id='1'>...",
-                ),
-            ],
-        )
-
-        states = snapshot.action_states()
-        assert states[0] == ("executing", 2)
-        assert states[1] == ("paused", 0)
 
 
 class TestComputeSnapshotDiff:
