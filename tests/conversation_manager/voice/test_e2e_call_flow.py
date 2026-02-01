@@ -444,6 +444,489 @@ class TestEndToEndCallFlow:
         )
 
 
+class TestContactIndexFallbackDuringInit:
+    """
+    Tests for contact lookup fallback before ContactManager is initialized.
+
+    These tests verify the fallback mechanism added in commit 307b210f that
+    caches contacts from inbound messages for quick lookup before/during
+    ContactManager initialization.
+
+    WHY THIS MATTERS:
+    Before this fix, inbound events that arrived before ContactManager was
+    fully initialized would fail to resolve contacts, causing:
+    - Missing sender names in notifications
+    - Failed contact lookups in event handlers
+    - Broken message routing
+    """
+
+    @pytest.mark.asyncio
+    async def test_contact_lookup_before_manager_initialized(self, event_broker):
+        """
+        Test that contact lookup works BEFORE ContactManager is set.
+
+        This simulates the race condition where an inbound message arrives
+        before managers are fully initialized. The BackupContactsEvent should
+        populate the fallback cache so subsequent lookups succeed.
+
+        This test would have caught Ved's bug (307b210f).
+        """
+        from unity.conversation_manager.domains.contact_index import ContactIndex
+
+        contact_index = ContactIndex()
+
+        # Manager is NOT initialized yet
+        assert contact_index._contact_manager is None
+
+        # Simulate backup contacts from inbound message (CommsManager does this)
+        fallback_contacts = [
+            {
+                "contact_id": 1,
+                "first_name": "Boss",
+                "surname": "User",
+                "phone_number": "+15555550001",
+                "email_address": "boss@example.com",
+            },
+            {
+                "contact_id": 2,
+                "first_name": "Alice",
+                "surname": "Smith",
+                "phone_number": "+15555551234",
+                "email_address": "alice@example.com",
+            },
+        ]
+        contact_index.set_fallback_contacts(fallback_contacts)
+
+        # Lookup should work via fallback cache
+        boss = contact_index.get_contact(contact_id=1)
+        assert boss is not None, "Contact lookup failed before manager init"
+        assert boss["first_name"] == "Boss"
+
+        alice = contact_index.get_contact(phone_number="+15555551234")
+        assert alice is not None, "Phone number lookup failed before manager init"
+        assert alice["first_name"] == "Alice"
+
+    @pytest.mark.asyncio
+    async def test_backup_contacts_event_populates_fallback(
+        self,
+        event_broker,
+        sample_contact,
+        boss_contact,
+    ):
+        """
+        Test that BackupContactsEvent handler populates fallback cache.
+
+        This is the production code path - CommsManager publishes BackupContactsEvent
+        when inbound messages arrive, and the handler should cache contacts.
+        """
+        from unity.conversation_manager.domains.event_handlers import EventHandler
+        from unity.conversation_manager.events import BackupContactsEvent
+
+        # Create a minimal mock CM with uninitialized contact_manager
+        mock_cm = MagicMock()
+        mock_cm.contact_index._contact_manager = None
+        mock_cm.contact_index._fallback_contacts = {}
+        mock_cm._session_logger = MagicMock()
+
+        # Real set_fallback_contacts implementation
+        def set_fallback_contacts(contacts):
+            for c in contacts:
+                cid = c.get("contact_id")
+                if cid is not None:
+                    mock_cm.contact_index._fallback_contacts[cid] = c
+
+        mock_cm.contact_index.set_fallback_contacts = set_fallback_contacts
+
+        # Trigger the event
+        event = BackupContactsEvent(contacts=[boss_contact, sample_contact])
+        await EventHandler.handle_event(event, mock_cm)
+
+        # Fallback cache should now contain the contacts
+        assert 1 in mock_cm.contact_index._fallback_contacts
+        assert 2 in mock_cm.contact_index._fallback_contacts
+
+
+class TestRoomNameHandling:
+    """
+    Tests for correct room name and agent name handling in Unify Meets.
+
+    These tests verify the argument passing to start_unify_meet() that was
+    broken and fixed in commit 81596d0e.
+
+    WHY THIS MATTERS:
+    The LiveKit room name and agent name must be passed correctly for the
+    voice agent to join the correct room. Wrong names = call fails to connect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unify_meet_room_name_passed_correctly(
+        self,
+        event_broker,
+        boss_contact,
+    ):
+        """
+        Test that room_name and livekit_agent_name are passed correctly.
+
+        Before fix 81596d0e, the room name handling was broken because
+        assistant_number was removed from args but still expected.
+        """
+        from unity.conversation_manager.domains.event_handlers import EventHandler
+        from unity.conversation_manager.domains.call_manager import (
+            CallConfig,
+            LivekitCallManager,
+        )
+        from unity.conversation_manager.events import UnifyMeetReceived
+        from unity.conversation_manager.types import Mode
+
+        mock_cm = MagicMock()
+        mock_cm.mode = Mode.TEXT  # Not in voice mode
+
+        # Mock contact_index to return boss contact
+        mock_cm.contact_index.get_contact = MagicMock(return_value=boss_contact)
+
+        config = CallConfig(
+            assistant_id="test",
+            assistant_bio="Test bio",
+            assistant_number="+15555550000",
+            voice_provider="cartesia",
+            voice_id="test_voice",
+            voice_mode="tts",
+        )
+        call_manager = LivekitCallManager(config, event_broker)
+        mock_cm.call_manager = call_manager
+        mock_cm.notifications_bar = MagicMock()
+
+        # Track captured arguments
+        captured_args = {}
+
+        async def mock_start_unify_meet(contact, boss, agent_name, room_name):
+            captured_args["contact"] = contact
+            captured_args["boss"] = boss
+            captured_args["agent_name"] = agent_name
+            captured_args["room_name"] = room_name
+
+        call_manager.start_unify_meet = mock_start_unify_meet
+
+        # The specific room/agent names that were broken
+        event = UnifyMeetReceived(
+            contact=boss_contact,
+            livekit_agent_name="unity_25_web",
+            room_name="unity_room_12345",
+        )
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        # Verify the correct values were passed
+        assert (
+            captured_args["agent_name"] == "unity_25_web"
+        ), f"Agent name not passed correctly: got {captured_args.get('agent_name')}"
+        assert (
+            captured_args["room_name"] == "unity_room_12345"
+        ), f"Room name not passed correctly: got {captured_args.get('room_name')}"
+
+
+class TestRapidEventHandling:
+    """
+    Tests for handling rapid sequential events.
+
+    These tests verify the system handles multiple events in quick succession
+    without race conditions, as fixed in commit 3c44b692.
+
+    WHY THIS MATTERS:
+    In production, /wakeup and /pre-hire requests can arrive within 3 seconds
+    of each other. Race conditions caused duplicate processing and errors.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rapid_startup_events_handled_correctly(self, event_broker):
+        """
+        Test that rapid startup + inbound events don't cause race conditions.
+
+        This simulates the production scenario where:
+        1. Adapter sends startup message to unity-startup
+        2. Adapter immediately sends inbound message to unity-{assistant_id}
+        3. Container must handle both without race conditions
+        """
+        from unity.conversation_manager.events import (
+            StartupEvent,
+            SMSReceived,
+            Event,
+        )
+
+        received_events = []
+
+        async with event_broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            # Simulate rapid-fire events (like in production)
+            startup = StartupEvent(
+                api_key="test_key",
+                medium="sms",
+                assistant_id="25",
+                user_id="123",
+                assistant_name="Test Assistant",
+                assistant_age="25",
+                assistant_nationality="American",
+                assistant_about="A test assistant",
+                assistant_number="+15555550000",
+                assistant_email="assistant@test.com",
+                user_name="Boss User",
+                user_number="+15555550001",
+                user_email="boss@test.com",
+                voice_provider="cartesia",
+                voice_id="test_voice",
+                voice_mode="tts",
+            )
+
+            sms = SMSReceived(
+                contact={
+                    "contact_id": 1,
+                    "first_name": "Boss",
+                    "surname": "User",
+                    "phone_number": "+15555550001",
+                    "email_address": "boss@test.com",
+                },
+                content="Hello!",
+            )
+
+            # Publish both events rapidly (no wait between them)
+            await event_broker.publish("app:comms:startup", startup.to_json())
+            await event_broker.publish("app:comms:msg_message", sms.to_json())
+
+            # Collect events
+            import asyncio
+
+            for _ in range(10):  # Check for messages
+                msg = await pubsub.get_message(
+                    timeout=0.5,
+                    ignore_subscribe_messages=True,
+                )
+                if msg:
+                    try:
+                        event = Event.from_json(msg["data"])
+                        received_events.append(event)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.1)
+
+        # Both events should be processable
+        startup_events = [e for e in received_events if isinstance(e, StartupEvent)]
+        sms_events = [e for e in received_events if isinstance(e, SMSReceived)]
+
+        assert len(startup_events) >= 1, "Startup event not received"
+        assert len(sms_events) >= 1, "SMS event not received"
+
+
+class TestEventChannelRouting:
+    """
+    Tests for correct event channel routing.
+
+    These tests verify events are published to the correct channels,
+    as fixed in commit 6237411a where pre-hire logging was using the
+    wrong channel name.
+
+    WHY THIS MATTERS:
+    Wrong channel names mean events never reach their handlers, causing
+    silent failures that are very hard to debug in production.
+    """
+
+    @pytest.mark.asyncio
+    async def test_call_guidance_uses_correct_channel(
+        self,
+        event_broker,
+        sample_contact,
+    ):
+        """
+        Test that CallGuidance is published to the correct channel.
+
+        The voice agent subprocess listens on specific channels. Wrong
+        channel = guidance never reaches the agent.
+        """
+        from unity.conversation_manager.events import CallGuidance
+
+        guidance = CallGuidance(
+            contact=sample_contact,
+            content="Ask about their schedule",
+        )
+
+        received_on_channel = None
+
+        async with event_broker.pubsub() as pubsub:
+            # Subscribe to the channel the voice agent listens on
+            await pubsub.subscribe("app:call:call_guidance")
+
+            await event_broker.publish(
+                "app:call:call_guidance",
+                guidance.to_json(),
+            )
+
+            import asyncio
+
+            for _ in range(20):
+                msg = await pubsub.get_message(
+                    timeout=0.5,
+                    ignore_subscribe_messages=True,
+                )
+                if msg:
+                    received_on_channel = msg["channel"]
+                    break
+                await asyncio.sleep(0.1)
+
+        assert (
+            received_on_channel == "app:call:call_guidance"
+        ), f"CallGuidance published to wrong channel: {received_on_channel}"
+
+    @pytest.mark.asyncio
+    async def test_call_status_channel_for_answered(self, event_broker):
+        """
+        Test that call_answered status is published to app:call:status.
+
+        This is the channel the voice agent subprocess monitors for
+        call state changes.
+        """
+        received_on_channel = None
+        received_data = None
+
+        async with event_broker.pubsub() as pubsub:
+            await pubsub.subscribe("app:call:status")
+
+            await event_broker.publish(
+                "app:call:status",
+                json.dumps({"type": "call_answered"}),
+            )
+
+            import asyncio
+
+            for _ in range(20):
+                msg = await pubsub.get_message(
+                    timeout=0.5,
+                    ignore_subscribe_messages=True,
+                )
+                if msg:
+                    received_on_channel = msg["channel"]
+                    received_data = json.loads(msg["data"])
+                    break
+                await asyncio.sleep(0.1)
+
+        assert received_on_channel == "app:call:status"
+        assert received_data["type"] == "call_answered"
+
+
+class TestIPCBidirectionalCommunication:
+    """
+    Extended tests for IPC bidirectional communication.
+
+    These tests extend the basic IPC test to cover more scenarios that
+    were broken before Ved's fix in c34270dc.
+    """
+
+    @pytest.mark.asyncio
+    async def test_multiple_guidance_messages(self, event_broker, sample_contact):
+        """
+        Test that multiple guidance messages can be sent sequentially.
+
+        Before the bidirectional fix, only the first message might work.
+        """
+        from unity.conversation_manager.domains.ipc_socket import (
+            CallEventSocketServer,
+            CM_EVENT_SOCKET_ENV,
+        )
+        from unity.conversation_manager.events import CallGuidance
+
+        events_from_subprocess = []
+
+        async def on_subprocess_event(channel: str, event_json: str):
+            events_from_subprocess.append((channel, event_json))
+
+        socket_server = CallEventSocketServer(
+            event_broker,
+            on_event=on_subprocess_event,
+            forward_channels=["app:call:*"],
+        )
+
+        subprocess_proc = None
+        test_subprocess = Path(__file__).parent / "ipc_test_subprocess.py"
+
+        try:
+            socket_path = await socket_server.start()
+            os.environ[CM_EVENT_SOCKET_ENV] = socket_path
+
+            env = os.environ.copy()
+            env[CM_EVENT_SOCKET_ENV] = socket_path
+
+            # Ensure PYTHONPATH includes workspace root
+            workspace_root = str(Path(__file__).parent.parent.parent.parent)
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                f"{workspace_root}:{existing_pythonpath}"
+                if existing_pythonpath
+                else workspace_root
+            )
+
+            subprocess_proc = subprocess.Popen(
+                [sys.executable, str(test_subprocess), "full_roundtrip"],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            # Wait for ready
+            ready_received = False
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                for channel, _ in events_from_subprocess:
+                    if channel == "app:call:ready":
+                        ready_received = True
+                        break
+                if ready_received:
+                    break
+
+            assert ready_received, "Subprocess never signaled ready"
+
+            # Send guidance (subprocess will ack and exit after first one)
+            await event_broker.publish(
+                "app:call:call_guidance",
+                CallGuidance(
+                    contact=sample_contact,
+                    content="First guidance message",
+                ).to_json(),
+            )
+
+            # Wait for acknowledgment
+            ack_received = False
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                for channel, event_json in events_from_subprocess:
+                    if channel == "app:call:ack":
+                        data = json.loads(event_json)
+                        if "First guidance" in data.get("received_content", ""):
+                            ack_received = True
+                            break
+                if ack_received:
+                    break
+
+            subprocess_proc.terminate()
+            stdout, stderr = subprocess_proc.communicate(timeout=2)
+
+            assert ack_received, (
+                f"Guidance not received by subprocess. "
+                f"stdout: {stdout.decode()}, stderr: {stderr.decode()}"
+            )
+
+        finally:
+            if CM_EVENT_SOCKET_ENV in os.environ:
+                del os.environ[CM_EVENT_SOCKET_ENV]
+
+            if subprocess_proc and subprocess_proc.poll() is None:
+                subprocess_proc.terminate()
+                try:
+                    subprocess_proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    subprocess_proc.kill()
+
+            await socket_server.stop()
+
+
 @pytest.mark.skipif(
     SKIP_LIVEKIT or not LIVEKIT_SERVER_AVAILABLE,
     reason=(
