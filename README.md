@@ -192,6 +192,12 @@ LIVEKIT_URL=<your-livekit-url>
 LIVEKIT_API_KEY=<your-livekit-key>
 LIVEKIT_API_SECRET=<your-livekit-secret>
 
+# Communication Service (auto-detected if not set)
+# Staging (default for non-main branches):
+UNITY_COMMS_URL=https://unity-comms-app-staging-262420637606.us-central1.run.app
+# Production (main branch only):
+# UNITY_COMMS_URL=https://unity-comms-app-262420637606.us-central1.run.app
+
 # Assistant Configuration
 ASSISTANT_ID=<id>
 ASSISTANT_NAME=<name>
