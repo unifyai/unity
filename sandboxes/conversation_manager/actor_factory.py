@@ -190,7 +190,7 @@ class ActorFactory:
 
         # real
         agent_server_url = getattr(args, "agent_server_url", "http://localhost:3000")
-        progress("[computer] Starting agent-service...")
+        progress("[computer] Connecting to agent-service...")
         cp = ComputerPrimitives(
             headless=bool(getattr(args, "headless", False)),
             computer_mode="magnitude",

@@ -21,7 +21,7 @@ python -m sandboxes.conversation_manager.sandbox --real-comms --project_name San
 
 ## Loom walkthrough
 
-See the recorded walkthrough here: [Loom demo](https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab).
+https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab
 
 ## Actor configurations (modes)
 
@@ -52,6 +52,7 @@ Relevant flags:
 - `--agent-server-url http://localhost:3000`
 - `--agent-mode web` (or `desktop`)
 - `--headless` (launch Chromium headless)
+- `--agent-service-bootstrap guide|auto` (help with setup; `auto` can install/build/start best-effort)
 
 ## Command reference (REPL + GUI command bar)
 
@@ -145,6 +146,11 @@ Real-comms requires backend infrastructure and correct env/session configuration
 Mode 3 requires:
 - `agent-service` running and reachable at `--agent-server-url`
 - `UNIFY_KEY` set (agent-service uses it for auth)
+
+If you’re on a fresh install and don’t have Magnitude set up yet:
+- See `sandboxes/actor/README.md` → “Magnitude Agent Service Setup” (step-by-step)
+- The sandbox can also print setup instructions (default) and can *attempt* auto-bootstrap with:
+  - `--agent-service-bootstrap auto`
 
 ## Other entrypoints
 
