@@ -647,7 +647,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(2)
 
     async def cleanup(self):
-        """Clean up any running call processes"""
+        """Clean up any running call processes.
+
+        Always updates rolling summaries before shutdown, regardless of message count,
+        to ensure conversation context is persisted for the next session.
+        """
+        # Import inline to avoid potential circular import issues with type checkers
+        from unity.conversation_manager.domains import managers_utils
+
+        # Always update rolling summaries before shutdown
+        self._session_logger.info(
+            "cleanup", "Updating rolling summaries before shutdown"
+        )
+        try:
+            await managers_utils.update_rolling_summaries(self)
+        except Exception as e:
+            self._session_logger.error(
+                "cleanup",
+                f"Failed to update rolling summaries: {e}",
+            )
+
         await self.store_chat_history()
         await self.call_manager.cleanup_call_proc()
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:

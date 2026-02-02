@@ -545,6 +545,7 @@ def build_voice_agent_prompt(
     contact_surname: str | None = None,
     contact_phone_number: str | None = None,
     contact_email: str | None = None,
+    contact_rolling_summary: str | None = None,
 ) -> str:
     """Build the system prompt for the Voice Agent (fast brain).
 
@@ -573,6 +574,8 @@ def build_voice_agent_prompt(
         External contact's phone number (only used when is_boss_user=False).
     contact_email : str | None
         External contact's email (only used when is_boss_user=False).
+    contact_rolling_summary : str | None
+        Rolling summary of past conversations with the contact on this call.
 
     Returns
     -------
@@ -690,6 +693,18 @@ The following are your boss's details:
             f"""Contact details
 ---------------
 {contact_details}""",
+        )
+
+    # Add conversation history if available
+    if contact_rolling_summary:
+        parts.append(
+            f"""Conversation history
+--------------------
+This is a summary of your past conversations with the person on this call:
+
+{contact_rolling_summary}
+
+Use this context to personalize the conversation, but don't explicitly reference "your records" or "our past conversations" unless natural to do so.""",
         )
 
     # Join all parts
