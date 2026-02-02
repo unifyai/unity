@@ -246,7 +246,7 @@ async def entrypoint(ctx: JobContext) -> None:
         """Apply guidance to chat context and optionally trigger reply."""
         chat_ctx = rt.chat_ctx
         chat_ctx.add_message(
-            role="user",
+            role="system",
             content=[f"[notification] {content}"],
         )
 

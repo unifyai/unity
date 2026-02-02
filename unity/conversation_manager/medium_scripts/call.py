@@ -270,7 +270,7 @@ async def entrypoint(ctx: agents.JobContext):
     def apply_guidance(content: str) -> None:
         """Apply guidance to chat context and optionally trigger reply."""
         session._chat_ctx.add_message(
-            role="user",
+            role="system",
             content=[f"[notification] {content}"],
         )
         nonlocal user_is_speaking
