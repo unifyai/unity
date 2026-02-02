@@ -21,6 +21,8 @@ What This File Tests:
 3. **Coordination timing**: Does the slow brain avoid duplicating what the fast brain
    already handles autonomously?
 4. **Schema correctness**: Do the response models allow the intended behavior?
+5. **Rapid utterance handling**: Does the slow brain complete thinking even with
+   rapid user turns?
 
 Key Principle (per system prompt in prompt_builders.py):
 --------------------------------------------------------
@@ -43,19 +45,28 @@ When a call starts, the slow brain may provide conversational guidance like
 "Greet Ved warmly" even though the fast brain has already greeted the user
 autonomously. This causes duplicate speech. Tests in this file document and
 verify the fix for this issue.
+
+Known Issue (rapid utterance cancellation):
+-------------------------------------------
+When user turns occur faster than the slow brain can think, every new utterance
+cancels the in-flight LLM run (because interject_or_run uses cancel_running=True).
+This means the slow brain NEVER completes thinking if the user keeps talking.
+Tests in this file document and verify the fix for this issue.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
 from unity.conversation_manager.events import (
     PhoneCallStarted,
+    InboundPhoneUtterance,
     CallGuidance,
 )
-from unity.conversation_manager.types import Medium
+from unity.conversation_manager.types import Medium, Mode
 
 from tests.conversation_manager.conftest import TEST_CONTACTS
 
@@ -303,3 +314,361 @@ class TestSlowBrainAppropriateGuidance:
 
         guidance_msgs = [msg for msg in voice_thread if msg.name == "guidance"]
         assert any("Running 10 minutes late" in msg.content for msg in guidance_msgs)
+
+
+# =============================================================================
+# Test: Rapid utterance handling - slow brain should complete even with fast turns
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestRapidUtteranceHandling:
+    """
+    Tests for slow brain behavior during rapid user turns.
+
+    When the user speaks faster than the slow brain can think, the system
+    must handle this gracefully. The key principle is:
+
+    - Running LLM tasks should complete (not be cancelled by new utterances)
+    - Pending tasks can be replaced/debounced
+    - This creates a "queue of 2": 1 running + 1 pending
+
+    Without this, rapid speech causes the slow brain to NEVER complete
+    thinking, which breaks any functionality that depends on slow brain output
+    (action completion, cross-channel notifications, etc.).
+
+    The bug: interject_or_run() uses cancel_running=True, which cancels
+    even the in-flight LLM call. With rapid utterances, none ever complete.
+    """
+
+    @pytest.fixture
+    def boss_contact(self):
+        """The boss contact (contact_id=1) who is on the call."""
+        return TEST_CONTACTS[1]
+
+    async def test_rapid_utterances_should_allow_llm_completion(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        FAILING TEST: With rapid user utterances, at least some LLM runs
+        should complete within a reasonable time window.
+
+        This test simulates the scenario where:
+        - User is on a voice call
+        - User speaks multiple times rapidly (faster than LLM thinking time)
+        - Each utterance triggers interject_or_run() -> request_llm_run()
+        - flush_llm_requests() submits to the debouncer
+
+        Current behavior (BUG):
+        - interject_or_run uses cancel_running=True
+        - Each new utterance cancels the in-flight LLM run
+        - With 5 utterances, we see ~4 cancellations, 0-1 completions
+        - If user keeps talking indefinitely, slow brain never completes
+
+        Expected behavior (after fix):
+        - interject_or_run uses cancel_running=False for voice mode
+        - Running LLM completes, only pending tasks are replaced
+        - With 5 utterances, we see 0 cancellations, 1-2 completions
+        - First run completes, final debounced run completes
+
+        NOTE: We simulate LLM thinking time (0.5s) because UNIFY_CACHE=True
+        causes cached LLM calls to return immediately, which would not
+        properly test the cancellation behavior.
+        """
+        cm = initialized_cm.cm
+
+        # Start a call first
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        # Verify we're in voice mode
+        assert cm.mode == Mode.CALL, "Should be in CALL mode after PhoneCallStarted"
+
+        # Track LLM run completions with simulated thinking time
+        llm_completions = []
+        original_run_llm = cm._run_llm
+
+        # Simulated LLM thinking time - must be longer than the interval
+        # between utterances (0.1s) to demonstrate the cancellation issue
+        SIMULATED_LLM_THINKING_TIME = 0.5  # seconds
+
+        async def tracked_run_llm_with_simulated_delay():
+            """
+            Wrapper that:
+            1. Simulates LLM thinking time (to test cancellation behavior)
+            2. Tracks when _run_llm completes vs gets cancelled
+            """
+            try:
+                # Simulate slow LLM thinking time BEFORE the actual call
+                # This ensures the test works regardless of cache hits
+                await asyncio.sleep(SIMULATED_LLM_THINKING_TIME)
+
+                # Now run the actual LLM (may be cached/fast, but we already waited)
+                result = await original_run_llm()
+                llm_completions.append(("completed", result))
+                return result
+            except asyncio.CancelledError:
+                llm_completions.append(("cancelled", None))
+                raise
+
+        cm._run_llm = tracked_run_llm_with_simulated_delay
+
+        # Simulate rapid user utterances
+        # We'll send 5 utterances with 0.1s between them
+        # Simulated LLM thinking time is 0.5s, so utterances arrive faster
+        # than the LLM can complete
+        utterances = [
+            "Hello",
+            "Can you help me with something?",
+            "I need to schedule a meeting",
+            "Actually make that two meetings",
+            "One on Monday and one on Friday",
+        ]
+
+        # Time between utterances - must be LESS than simulated LLM time
+        # to demonstrate the rapid-fire cancellation issue
+        UTTERANCE_INTERVAL = 0.1  # seconds
+
+        try:
+            # Send utterances rapidly using the real event handling path
+            # We must call flush_llm_requests() after each event to trigger
+            # the debouncer, just like the production event loop does.
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            for i, text in enumerate(utterances):
+                event = InboundPhoneUtterance(contact=boss_contact, content=text)
+
+                # Handle the event (this calls interject_or_run -> request_llm_run)
+                await EventHandler.handle_event(
+                    event,
+                    cm,
+                    is_voice_call=cm.call_manager.uses_realtime_api,
+                )
+
+                # Flush triggers the debouncer (matches production behavior)
+                # This is where cancel_running=True causes the problem
+                await cm.flush_llm_requests()
+
+                # Small delay between utterances (simulating rapid speech)
+                # This also gives async tasks a chance to execute
+                if i < len(utterances) - 1:
+                    await asyncio.sleep(UTTERANCE_INTERVAL)
+
+            # Wait for any pending LLM runs to have a chance to complete
+            # Timeline with bug (cancel_running=True):
+            #   t=0.0: utterance 1 -> LLM run 1 starts
+            #   t=0.1: utterance 2 -> LLM run 1 CANCELLED, run 2 starts
+            #   t=0.2: utterance 3 -> LLM run 2 CANCELLED, run 3 starts
+            #   t=0.3: utterance 4 -> LLM run 3 CANCELLED, run 4 starts
+            #   t=0.4: utterance 5 -> LLM run 4 CANCELLED, run 5 starts
+            #   t=0.9: LLM run 5 completes (if we wait)
+            #   Result: 4 cancelled, 0-1 completed
+            #
+            # Timeline with fix (cancel_running=False):
+            #   t=0.0: utterance 1 -> LLM run 1 starts
+            #   t=0.1: utterance 2 -> pending for run 2 created (waits for run 1)
+            #   t=0.2: utterance 3 -> pending replaced with run 3
+            #   t=0.3: utterance 4 -> pending replaced with run 4
+            #   t=0.4: utterance 5 -> pending replaced with run 5
+            #   t=0.5: LLM run 1 COMPLETES, run 5 starts
+            #   t=1.0: LLM run 5 COMPLETES
+            #   Result: 0 cancelled, 2 completed
+
+            max_wait_time = 3.0  # seconds (enough for 2 LLM runs @ 0.5s each + buffer)
+            check_interval = 0.2  # seconds
+            elapsed = 0.0
+
+            while elapsed < max_wait_time:
+                await asyncio.sleep(check_interval)
+                elapsed += check_interval
+
+                # Check if we have any completions
+                completed_count = sum(
+                    1 for status, _ in llm_completions if status == "completed"
+                )
+                if completed_count > 0:
+                    break
+
+                # Also check if debouncer has a running task that's done
+                if cm.debouncer.running_task and cm.debouncer.running_task.done():
+                    # Give a moment for completion tracking to update
+                    await asyncio.sleep(0.1)
+                    break
+
+            # Count results
+            completed_count = sum(
+                1 for status, _ in llm_completions if status == "completed"
+            )
+            cancelled_count = sum(
+                1 for status, _ in llm_completions if status == "cancelled"
+            )
+
+            # The key assertion: at least ONE LLM run should complete
+            #
+            # Before fix: cancelled_count ~= 4, completed_count ~= 0-1
+            #   (only the last run might complete if we wait long enough)
+            #
+            # After fix: cancelled_count = 0, completed_count >= 1
+            #   (first run completes, final debounced run also completes)
+            assert completed_count >= 1, (
+                f"No LLM runs completed with rapid utterances!\n"
+                f"  Completed: {completed_count}\n"
+                f"  Cancelled: {cancelled_count}\n"
+                f"  Utterances sent: {len(utterances)}\n"
+                f"  Simulated LLM time: {SIMULATED_LLM_THINKING_TIME}s\n"
+                f"  Utterance interval: {UTTERANCE_INTERVAL}s\n"
+                f"  Wait time: {elapsed:.1f}s\n"
+                f"\n"
+                f"This indicates the bug where interject_or_run() uses\n"
+                f"cancel_running=True, causing every new utterance to cancel\n"
+                f"the in-flight LLM run. With rapid speech, none ever complete.\n"
+                f"\n"
+                f"Fix: Use cancel_running=False for voice mode so running\n"
+                f"LLM tasks complete while only pending tasks are debounced."
+            )
+
+        finally:
+            cm._run_llm = original_run_llm
+
+    async def test_debouncer_preserves_running_task_when_cancel_running_false(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        Verify that with cancel_running=False, the running task completes.
+
+        This is the core behavior we need for the rapid utterance fix:
+        - When cancel_running=False, the currently running task must complete
+        - New submissions replace the pending task, not the running one
+
+        This test uses a simple approach: submit one task, then while it's
+        running, submit another with cancel_running=False. The first task
+        MUST complete.
+        """
+        from unity.conversation_manager.domains.utils import Debouncer
+
+        # Use a fresh debouncer to avoid interference from CM state
+        debouncer = Debouncer()
+
+        # Track task executions
+        execution_log = []
+        task1_started = asyncio.Event()
+        task1_can_complete = asyncio.Event()
+
+        async def task1():
+            """First task - signals when started, waits for permission to complete."""
+            execution_log.append("task1:started")
+            task1_started.set()
+            # Wait until we're told to complete (or timeout)
+            try:
+                await asyncio.wait_for(task1_can_complete.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                execution_log.append("task1:timeout")
+                return
+            except asyncio.CancelledError:
+                execution_log.append("task1:cancelled")
+                raise
+            execution_log.append("task1:completed")
+
+        async def task2():
+            """Second task."""
+            execution_log.append("task2:started")
+            await asyncio.sleep(0.1)
+            execution_log.append("task2:completed")
+
+        # Submit first task
+        await debouncer.submit(task1, cancel_running=False)
+
+        # Wait for first task to start
+        await asyncio.wait_for(task1_started.wait(), timeout=2.0)
+
+        # Now submit second task WITH cancel_running=False
+        # This should NOT cancel task1
+        await debouncer.submit(task2, cancel_running=False)
+
+        # Give the system a moment to process the cancellation (if it happens)
+        await asyncio.sleep(0.1)
+
+        # Now allow task1 to complete
+        task1_can_complete.set()
+
+        # Wait for everything to settle
+        await asyncio.sleep(0.5)
+
+        # KEY ASSERTION: Task 1 should have COMPLETED, not been cancelled
+        assert "task1:completed" in execution_log, (
+            f"Task 1 should have completed when cancel_running=False!\n"
+            f"  Execution log: {execution_log}\n"
+            f"\n"
+            f"With cancel_running=False, the running task should be allowed\n"
+            f"to complete. Only the pending task should be replaced."
+        )
+
+        assert "task1:cancelled" not in execution_log, (
+            f"Task 1 was cancelled even though cancel_running=False!\n"
+            f"  Execution log: {execution_log}"
+        )
+
+    async def test_debouncer_cancels_running_task_when_cancel_running_true(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        Verify that with cancel_running=True (current behavior), the running
+        task IS cancelled.
+
+        This test documents the current (buggy) behavior that causes the
+        rapid utterance problem. After the fix, interject_or_run should use
+        cancel_running=False for voice mode.
+        """
+        from unity.conversation_manager.domains.utils import Debouncer
+
+        debouncer = Debouncer()
+
+        execution_log = []
+        task1_started = asyncio.Event()
+
+        async def task1():
+            """First task - will be cancelled."""
+            execution_log.append("task1:started")
+            task1_started.set()
+            try:
+                await asyncio.sleep(5.0)  # Long sleep - should be cancelled
+                execution_log.append("task1:completed")
+            except asyncio.CancelledError:
+                execution_log.append("task1:cancelled")
+                raise
+
+        async def task2():
+            """Second task."""
+            execution_log.append("task2:started")
+            await asyncio.sleep(0.1)
+            execution_log.append("task2:completed")
+
+        # Submit first task
+        await debouncer.submit(task1, cancel_running=False)
+
+        # Wait for first task to start
+        await asyncio.wait_for(task1_started.wait(), timeout=2.0)
+
+        # Submit second task WITH cancel_running=True
+        # This SHOULD cancel task1 (demonstrating the current buggy behavior)
+        await debouncer.submit(task2, cancel_running=True)
+
+        # Wait for everything to settle
+        await asyncio.sleep(0.5)
+
+        # Task 1 should have been CANCELLED (not completed)
+        assert "task1:cancelled" in execution_log, (
+            f"Task 1 should have been cancelled when cancel_running=True!\n"
+            f"  Execution log: {execution_log}"
+        )
+
+        # Task 2 should have run
+        assert "task2:completed" in execution_log, (
+            f"Task 2 should have completed!\n" f"  Execution log: {execution_log}"
+        )
