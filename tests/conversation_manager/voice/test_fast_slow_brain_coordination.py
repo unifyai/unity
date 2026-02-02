@@ -48,7 +48,6 @@ verify the fix for this issue.
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
 
@@ -86,21 +85,29 @@ class TestSlowBrainDecisionBoundaries:
         boss_contact,
     ):
         """
-        FAILING TEST: When a call starts, the slow brain should NOT provide
-        conversational guidance like 'Greet the user' or 'Say hello'.
+        When a call starts, the slow brain should NOT run at all and should NOT
+        provide conversational guidance like 'Greet the user' or 'Say hello'.
 
-        The fast brain handles greetings autonomously. If the slow brain also
-        sends greeting guidance, the fast brain will speak twice (duplicate speech).
+        The fast brain handles greetings and all conversational aspects autonomously.
+        The slow brain should only be triggered later when there's actual content
+        that requires its attention (user utterance, action completion, etc.).
 
-        This test documents the bug reported by Ved:
+        This test documents the bug reported by Ved and verifies the fix:
+
+        BUG (before fix):
         - Call starts
-        - Fast brain greets user immediately (autonomous behavior)
-        - Slow brain runs, sees "Call started" notification
+        - Slow brain runs immediately via request_llm_run(delay=0)
+        - Slow brain sees "Call started" notification
         - Slow brain outputs call_guidance: "Greet Ved warmly..."
-        - Fast brain receives this guidance and greets AGAIN
+        - Fast brain (which already greeted) receives this guidance and greets AGAIN
+        - Result: duplicate speech
 
-        Expected: call_guidance should be empty or contain only data/notifications,
-        not conversational directives.
+        FIX:
+        - Call starts
+        - Slow brain does NOT run on call start
+        - Fast brain handles greeting autonomously
+        - Slow brain only runs later when there's actual content to process
+        - Result: no duplicate speech
         """
         # Track what call_guidance is published
         published_guidance: list[str] = []
@@ -126,49 +133,32 @@ class TestSlowBrainDecisionBoundaries:
 
         try:
             # Simulate a call starting with the boss
-            # This triggers the slow brain to run via request_llm_run(delay=0)
             event = PhoneCallStarted(contact=boss_contact)
             result = await initialized_cm.step(event)
 
-            # The slow brain ran
-            assert result.llm_ran, "Expected slow brain to run on PhoneCallStarted"
+            # The slow brain should NOT run on call start.
+            # The fast brain handles the greeting autonomously.
+            # Triggering the slow brain here would cause unnecessary call_guidance.
+            assert not result.llm_ran, (
+                "Slow brain should NOT run on PhoneCallStarted!\n"
+                "\n"
+                "The fast brain handles greetings and all conversational aspects\n"
+                "autonomously. If the slow brain runs on call start, it may provide\n"
+                "call_guidance like 'Greet the user', causing duplicate speech.\n"
+                "\n"
+                "The slow brain should only be triggered by:\n"
+                "- InboundPhoneUtterance (user says something)\n"
+                "- ActorResult (action completes)\n"
+                "- NotificationInjectedEvent (cross-channel notification)\n"
+                "- SMSReceived/EmailReceived while on call"
+            )
 
-            # Check that NO conversational guidance was published
-            # Conversational guidance includes things like:
-            # - "Greet..." / "Say hello..." / "Welcome..."
-            # - "Ask how they are..."
-            # - "Start by..." / "Begin with..."
-            # - Any directive about what to SAY
-
-            conversational_patterns = [
-                r"\bgreet\b",
-                r"\bsay\s+(hello|hi|hey)\b",
-                r"\bwelcome\b",
-                r"\bask\s+how\s+(they|he|she)\s+(are|is)\b",
-                r"\bstart\s+(by|with)\b",
-                r"\bbegin\s+(by|with)\b",
-                r"\bsay\s+something\s+like\b",
-                r"\btell\s+(them|him|her)\b",
-                r"\bintroduce\b",
-                r"\bopen\s+(with|by)\b",
-            ]
-
-            for guidance in published_guidance:
-                guidance_lower = guidance.lower()
-                for pattern in conversational_patterns:
-                    match = re.search(pattern, guidance_lower)
-                    assert match is None, (
-                        f"Slow brain provided conversational guidance on call start!\n"
-                        f"  Guidance: '{guidance}'\n"
-                        f"  Matched pattern: '{pattern}'\n"
-                        f"\n"
-                        f"This causes duplicate speech because the fast brain has already\n"
-                        f"greeted the user autonomously. The slow brain should NOT provide\n"
-                        f"conversational guidance - only data, requests, or notifications.\n"
-                        f"\n"
-                        f"See: _build_voice_calls_guide() in prompt_builders.py for the\n"
-                        f"intended behavior documented in the system prompt."
-                    )
+            # Also verify no call_guidance was published
+            assert len(published_guidance) == 0, (
+                f"call_guidance was published on call start: {published_guidance}\n"
+                "No guidance should be sent when a call starts - the fast brain\n"
+                "handles the initial interaction autonomously."
+            )
 
         finally:
             initialized_cm.cm.event_broker.publish = original_publish
