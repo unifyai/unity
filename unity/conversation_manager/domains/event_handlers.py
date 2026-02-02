@@ -281,13 +281,15 @@ async def _(
     if isinstance(event, PhoneCallEnded):
         cm.call_manager.conference_name = None
     if isinstance(event, UnifyMeetEnded):
-        contact = cm.contact_index.get_contact(contact_id=1)
+        contact_id = event.contact.get("contact_id")
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
     else:
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
         )
-        if contact is None:
-            contact = event.contact
+
+    if contact is None:
+        contact = event.contact
 
     contact_id = (
         contact.get("contact_id") if contact else event.contact.get("contact_id")
