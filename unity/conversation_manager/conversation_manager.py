@@ -37,6 +37,10 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
+from unity.conversation_manager.domains.guidance_filter import (
+    GuidanceFilter,
+    ConversationMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +371,107 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
+    async def _check_guidance_relevance(
+        self,
+        guidance_content: str,
+        slow_brain_start_time: "datetime",
+    ) -> bool:
+        """
+        Check if guidance is still relevant given conversation changes since slow brain started.
+
+        The slow brain takes 10-20 seconds to think. During this time, the user may change
+        topics, the fast brain may respond, etc. This method uses a fast LLM filter to
+        determine if the guidance is still relevant or if it's stale.
+
+        Args:
+            guidance_content: The guidance text from the slow brain.
+            slow_brain_start_time: When the slow brain started thinking.
+
+        Returns:
+            True if guidance should be sent, False if it's stale and should be blocked.
+        """
+        from datetime import datetime, timezone
+
+        try:
+            # Get the current voice conversation
+            contact = self.get_active_contact()
+            if not contact:
+                return True  # No contact context, send guidance
+
+            contact_id = contact.get("contact_id")
+            conv_state = self.contact_index.get_conversation_state(contact_id)
+            if not conv_state:
+                return True  # No conversation state, send guidance
+
+            # Get the voice thread
+            voice_medium = (
+                Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
+            )
+            voice_thread = list(conv_state.threads.get(voice_medium, []))
+
+            if not voice_thread:
+                return True  # No messages to compare, send guidance
+
+            # Convert to ConversationMessage format with is_new flag
+            conversation_messages = []
+            for msg in voice_thread:
+                content = (msg.content or "").strip()
+
+                # Skip system messages (e.g., "<Call Started>")
+                if content.startswith("<") and content.endswith(">"):
+                    continue
+
+                # Determine role
+                if hasattr(msg, "role"):
+                    role = msg.role
+                else:
+                    role = "assistant" if msg.name == "You" else "user"
+
+                # Check if this message arrived AFTER slow brain started
+                msg_time = getattr(msg, "timestamp", None)
+                is_new = False
+                if msg_time is not None:
+                    # Ensure timezone-aware comparison
+                    if msg_time.tzinfo is None:
+                        msg_time = msg_time.replace(tzinfo=timezone.utc)
+                    is_new = msg_time > slow_brain_start_time
+
+                conversation_messages.append(
+                    ConversationMessage(
+                        role=role,
+                        content=content,
+                        timestamp=msg_time or datetime.now(timezone.utc),
+                        is_new=is_new,
+                    ),
+                )
+
+            # If no new messages, guidance is definitely still relevant
+            if not any(m.is_new for m in conversation_messages):
+                return True
+
+            # Use the GuidanceFilter to make the decision
+            guidance_filter = GuidanceFilter()
+            decision = await guidance_filter.should_send_guidance(
+                guidance_content,
+                conversation_messages,
+            )
+
+            self._session_logger.debug(
+                "guidance_filter",
+                f"Filter decision: send={decision.send_guidance}, "
+                f"thoughts={decision.thoughts[:100]}...",
+            )
+
+            return decision.send_guidance
+
+        except Exception as e:
+            # On error, default to sending guidance (fail-open)
+            self._session_logger.error(
+                "guidance_filter",
+                f"Error in guidance filter, defaulting to send: {e}",
+            )
+            return True
+
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
@@ -413,6 +518,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     async def _run_llm(self) -> str | None:
         """Run a single LLM decision and return the tool name that was called."""
+        # Capture when slow brain starts thinking (for guidance staleness detection)
+        from datetime import datetime, timezone
+
+        slow_brain_start_time = datetime.now(timezone.utc)
+
         self.snapshot()
         brain_spec = build_brain_spec(self)
         self._session_logger.debug(
@@ -472,16 +582,28 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if self.mode.is_voice:
                 call_guidance = getattr(structured, "call_guidance", "")
                 if call_guidance:
-                    contact = self.get_active_contact()
-                    event = CallGuidance(contact, call_guidance)
-                    await self.event_broker.publish(
-                        "app:call:call_guidance",
-                        event.to_json(),
+                    # Check if guidance is still relevant (conversation may have moved on)
+                    should_send = await self._check_guidance_relevance(
+                        call_guidance,
+                        slow_brain_start_time,
                     )
-                    await self.event_broker.publish(
-                        "app:comms:assistant_call_guidance",
-                        event.to_json(),
-                    )
+
+                    if should_send:
+                        contact = self.get_active_contact()
+                        event = CallGuidance(contact, call_guidance)
+                        await self.event_broker.publish(
+                            "app:call:call_guidance",
+                            event.to_json(),
+                        )
+                        await self.event_broker.publish(
+                            "app:comms:assistant_call_guidance",
+                            event.to_json(),
+                        )
+                    else:
+                        self._session_logger.info(
+                            "guidance_filtered",
+                            f"Stale guidance blocked: {call_guidance[:50]}...",
+                        )
 
         # Log LLM response
         self._session_logger.log_llm_response(
