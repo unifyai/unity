@@ -22,6 +22,10 @@ from typing import Literal, Optional
 
 import unify
 
+from sandboxes.conversation_manager.agent_service_bootstrap import (
+    diagnose_agent_service_setup,
+)
+
 LG = logging.getLogger("conversation_manager_sandbox")
 
 ActorType = Literal["simulated", "codeact_simulated", "codeact_real"]
@@ -73,6 +77,7 @@ class ValidationResult:
     ok: bool
     error: Optional[str] = None
     failed_component: Optional[str] = None
+    help_text: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,7 @@ class ConfigurationManager:
         filename: str = ".cm_sandbox_config",
     ) -> None:
         self._project_name = str(project_name)
+        self._project_root = Path(project_root)
         self._path = Path(project_root) / filename
 
     @property
@@ -161,14 +167,23 @@ class ConfigurationManager:
                     ok=False,
                     failed_component="Real Computer Interface",
                     error="UNIFY_KEY is not set (required for agent-service authentication)",
+                    help_text=diagnose_agent_service_setup(
+                        repo_root=self._project_root,
+                        agent_server_url=agent_server_url,
+                    ).help_text,
                 )
             # Real computer interface requires agent-service.
             ok = self._validate_agent_service(agent_server_url)
             if not ok:
+                diag = diagnose_agent_service_setup(
+                    repo_root=self._project_root,
+                    agent_server_url=agent_server_url,
+                )
                 return ValidationResult(
                     ok=False,
                     failed_component="Real Computer Interface",
-                    error="agent-service is not running, unreachable, or unauthorized",
+                    error=diag.summary,
+                    help_text=diag.help_text,
                 )
 
             # Real managers require project connectivity. This is a lightweight probe; it

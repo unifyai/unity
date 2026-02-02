@@ -29,6 +29,10 @@ from sandboxes.conversation_manager.config_manager import (
     ActorConfig,
     ConfigurationManager,
 )
+from sandboxes.conversation_manager.agent_service_bootstrap import (
+    try_start_agent_service_direct,
+    try_auto_bootstrap_agent_service,
+)
 from sandboxes.conversation_manager.event_subscriber import subscribe_to_responses
 from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
 from sandboxes.conversation_manager.gui import run_gui_mode
@@ -88,6 +92,17 @@ async def _main_async() -> None:
         action="store_true",
         default=False,
         help="(real web mode) launch Chromium in headless mode",
+    )
+    parser.add_argument(
+        "--agent-service-bootstrap",
+        dest="agent_service_bootstrap",
+        default="guide",
+        choices=["off", "guide", "auto"],
+        help=(
+            "Mode 3 helper: "
+            "'guide' prints step-by-step setup instructions if agent-service is missing; "
+            "'auto' also tries to install/build/start agent-service automatically."
+        ),
     )
     parser.add_argument(
         "--show-trace",
@@ -220,6 +235,92 @@ async def _main_async() -> None:
             selected = await asyncio.to_thread(_prompt)
         # Validate infra with retry/switch/exit loop.
         while True:
+
+            def _should_offer_agent_help() -> bool:
+                return (
+                    getattr(selected, "actor_type", None) == "codeact_real"
+                    and getattr(args, "agent_service_bootstrap", "guide") != "off"
+                )
+
+            async def _attempt_agent_service_recovery() -> None:
+                """
+                One consolidated action:
+                1) try starting agent-service directly (no installs/builds)
+                2) if that fails, fall back to auto-bootstrap (install/build/start)
+                """
+                # Avoid spawning multiple subprocesses in the same sandbox run.
+                existing = getattr(args, "_agent_service_process", None)
+                if (
+                    existing is not None
+                    and hasattr(existing, "poll")
+                    and existing.poll() is None
+                ):
+                    return
+
+                agent_server_url = getattr(
+                    args,
+                    "agent_server_url",
+                    "http://localhost:3000",
+                )
+
+                try:
+                    print("\n[agent-service] Attempting to start (direct)...\n")
+                    res1 = await asyncio.to_thread(
+                        try_start_agent_service_direct,
+                        repo_root=project_root,
+                        agent_server_url=agent_server_url,
+                        progress=(lambda m: print(m)),
+                    )
+                    if res1.ok and res1.process is not None:
+                        setattr(args, "_agent_service_process", res1.process)
+                        print(f"[agent-service] {res1.summary}\n")
+                        return
+                    if res1.process is not None:
+                        try:
+                            res1.process.terminate()
+                            res1.process.wait(timeout=2.0)
+                        except Exception:
+                            try:
+                                res1.process.kill()
+                            except Exception:
+                                pass
+                    print(f"[agent-service] {res1.summary}\n")
+                except Exception as exc:
+                    print(f"[agent-service] Direct start failed: {exc}\n")
+
+                try:
+                    print("[agent-service] Falling back to auto-bootstrap...\n")
+                    res2 = await asyncio.to_thread(
+                        try_auto_bootstrap_agent_service,
+                        repo_root=project_root,
+                        agent_server_url=agent_server_url,
+                        progress=(lambda m: print(m)),
+                    )
+                    if res2.ok and res2.process is not None:
+                        setattr(args, "_agent_service_process", res2.process)
+                        print(f"[agent-service] {res2.summary}\n")
+                        return
+                    if res2.process is not None:
+                        try:
+                            res2.process.terminate()
+                            res2.process.wait(timeout=2.0)
+                        except Exception:
+                            try:
+                                res2.process.kill()
+                            except Exception:
+                                pass
+                    print(f"[agent-service] {res2.summary}\n")
+                except Exception as exc:
+                    print(f"[agent-service] Auto-bootstrap failed: {exc}\n")
+
+            # Best-effort: if user asked for auto bootstrap and we're in Mode 3,
+            # attempt to bring up agent-service before validating.
+            if (
+                getattr(selected, "actor_type", None) == "codeact_real"
+                and getattr(args, "agent_service_bootstrap", "guide") == "auto"
+            ):
+                await _attempt_agent_service_recovery()
+
             vr = await asyncio.to_thread(
                 cfg_mgr.validate_config,
                 selected,
@@ -239,14 +340,30 @@ async def _main_async() -> None:
                 print(f"Failed to initialize: {vr.failed_component}")
             if vr.error:
                 print(f"Reason: {vr.error}")
+            if getattr(vr, "help_text", None):
+                print("")
+                print("How to fix:")
+                print(getattr(vr, "help_text"))
             print("")
             print("Options:")
-            print("1. Retry (after fixing infrastructure)")
+            if _should_offer_agent_help():
+                print(
+                    "1. Retry (attempt start agent-service, then bootstrap if needed)",
+                )
+            else:
+                print("1. Retry (after fixing infrastructure)")
             print("2. Switch to different configuration")
             print("3. Exit sandbox")
             print("")
-            choice = (await asyncio.to_thread(input, "Enter choice (1-3): ")).strip()
+            choice = (
+                await asyncio.to_thread(
+                    input,
+                    "Enter choice (1-3): ",
+                )
+            ).strip()
             if choice == "1":
+                if _should_offer_agent_help():
+                    await _attempt_agent_service_recovery()
                 continue
             if choice == "2":
                 selected = await asyncio.to_thread(_prompt)
@@ -439,6 +556,20 @@ async def _main_async() -> None:
             with suppress(asyncio.CancelledError):
                 await sub_task
             await shutdown_cm(cm)
+            # If we auto-started agent-service, stop it on exit.
+            try:
+                proc = getattr(args, "_agent_service_process", None)
+                if proc is not None and hasattr(proc, "terminate"):
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
         # Restart requested by REPL `config`.
         if bool(getattr(args, "_restart_requested", False)):
