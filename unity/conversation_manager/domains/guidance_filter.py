@@ -88,16 +88,18 @@ You will receive:
 ## Decision Criteria
 
 ### SEND the guidance (send_guidance=true) when:
-- The topic is the same or closely related
-- The guidance provides useful data the fast brain needs
-- The NEW messages are follow-up questions about the same topic
-- The guidance is a notification that's still relevant (e.g., SMS from someone)
+- The conversation is still about the SAME TOPIC (even if asking different questions about it)
+- The guidance provides useful context about that topic
+- The guidance is a notification that's still relevant
+- **CRITICAL**: If the user asks a follow-up question about the SAME SUBJECT, SEND the guidance!
+  Example: User asks about meeting time, then asks about meeting attendees → SAME TOPIC (meeting)
 
 ### BLOCK the guidance (send_guidance=false) when:
-- The user explicitly changed topics ("actually, never mind", "forget that", "different question")
-- The NEW messages show the conversation has moved to a completely different subject
-- The fast brain already addressed what the guidance was about
-- Sending the guidance would confuse the user or seem random
+- The user explicitly changed to a DIFFERENT topic ("never mind", "forget that", "actually...")
+- The topic switched to something UNRELATED (e.g., meeting → weather = DIFFERENT topics)
+- The fast brain already said the same thing
+- **CRITICAL**: Only block for TOPIC CHANGE. Follow-up questions about the same subject are NOT topic changes!
+  Example: User asks about meeting time, then asks about weather → DIFFERENT TOPICS (block)
 
 ## Examples
 
@@ -111,14 +113,18 @@ CONVERSATION:
 Decision: send_guidance=false
 Reason: User explicitly changed topics to weather. Meeting info is now stale.
 
-### Example 2: SEND - Same Topic, Follow-up Question
+### Example 2: SEND - Same Topic, Follow-up Question (IMPORTANT!)
 GUIDANCE: "The meeting tomorrow is at 3pm in Conference Room B"
 CONVERSATION:
   [user]: What time is the meeting tomorrow?
-  **NEW** [user]: And who's going to be there?
+  **NEW** [user]: And who's going to be at the meeting?
 
 Decision: send_guidance=true
-Reason: User is still asking about the same meeting. The time/location is still relevant.
+Reason: CRITICAL - User is asking about THE SAME TOPIC (the meeting). Even though the
+guidance doesn't directly answer the attendee question, the meeting time/location is
+still USEFUL CONTEXT for the ongoing discussion about the meeting. The topic has NOT
+changed! Both questions are about the same meeting. SEND guidance about the same topic
+even if it doesn't answer the most recent question.
 
 ### Example 3: SEND - Notification Still Relevant
 GUIDANCE: "SMS from Alice: 'Running 10 minutes late'"
