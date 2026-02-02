@@ -14,7 +14,6 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1045,13 +1044,13 @@ class TestNotificationEventHandlers:
         mock_cm.request_llm_run.assert_called_once_with(delay=0, cancel_running=True)
 
     @pytest.mark.asyncio
-    async def test_notification_unpinned_removes_from_bar(self, mock_cm):
+    async def test_notification_unpinned_removes_from_bar(self, mock_cm, static_now):
         """NotificationUnpinnedEvent removes pinned notification."""
         # First add a pinned notification
         mock_cm.notifications_bar.push_notif(
             "Test",
             "Pinned content",
-            datetime.now(),
+            static_now,
             pinned=True,
             id="notif_123",
         )

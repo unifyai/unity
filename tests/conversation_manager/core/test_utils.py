@@ -8,7 +8,7 @@ These are pure unit tests that don't require Redis, LLM calls, or async infrastr
 They test the building blocks used by the conversation manager.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
@@ -407,9 +407,9 @@ class TestParsedActionNameProperties:
 class TestNotification:
     """Tests for Notification dataclass."""
 
-    def test_basic_notification(self):
+    def test_basic_notification(self, static_now):
         """Creates notification with required fields."""
-        ts = datetime.now()
+        ts = static_now
         n = Notification(type="Test", content="Hello", timestamp=ts)
         assert n.type == "Test"
         assert n.content == "Hello"
@@ -417,9 +417,9 @@ class TestNotification:
         assert n.pinned is False
         assert n.interjection_id is None
 
-    def test_pinned_notification(self):
+    def test_pinned_notification(self, static_now):
         """Creates pinned notification."""
-        ts = datetime.now()
+        ts = static_now
         n = Notification(
             type="Alert",
             content="Important",
@@ -439,28 +439,28 @@ class TestNotificationBar:
         bar = NotificationBar()
         assert len(bar.notifications) == 0
 
-    def test_push_notif(self):
+    def test_push_notif(self, static_now):
         """Can push notifications."""
         bar = NotificationBar()
-        ts = datetime.now()
+        ts = static_now
         bar.push_notif("Comms", "SMS received", ts)
         assert len(bar.notifications) == 1
         assert bar.notifications[0].type == "Comms"
         assert bar.notifications[0].content == "SMS received"
 
-    def test_push_multiple(self):
+    def test_push_multiple(self, static_now):
         """Can push multiple notifications."""
         bar = NotificationBar()
-        ts = datetime.now()
+        ts = static_now
         bar.push_notif("Type1", "Content1", ts)
         bar.push_notif("Type2", "Content2", ts)
         bar.push_notif("Type3", "Content3", ts)
         assert len(bar.notifications) == 3
 
-    def test_push_pinned(self):
+    def test_push_pinned(self, static_now):
         """Can push pinned notifications."""
         bar = NotificationBar()
-        ts = datetime.now()
+        ts = static_now
         bar.push_notif("Alert", "Urgent", ts, pinned=True, id="alert_1")
         assert bar.notifications[0].pinned is True
         assert bar.notifications[0].interjection_id == "alert_1"
@@ -581,30 +581,30 @@ class TestRenderer:
         assert "clarification_request" in result
         assert "Need more info?" in result
 
-    def test_render_notification_bar_empty(self, renderer):
+    def test_render_notification_bar_empty(self, renderer, static_now):
         """Renders empty notification bar."""
         bar = NotificationBar()
-        last_snapshot = datetime.now() - timedelta(hours=1)
+        last_snapshot = static_now - timedelta(hours=1)
         result = renderer.render_notification_bar(bar, last_snapshot)
         assert "<notifications>" in result
         assert "</notifications>" in result
 
-    def test_render_notification_bar_with_notifications(self, renderer):
+    def test_render_notification_bar_with_notifications(self, renderer, static_now):
         """Renders notification bar with notifications."""
         bar = NotificationBar()
-        ts = datetime.now()
+        ts = static_now
         bar.push_notif("Comms", "SMS received from John", ts)
-        last_snapshot = datetime.now() - timedelta(seconds=10)
+        last_snapshot = static_now - timedelta(seconds=10)
         result = renderer.render_notification_bar(bar, last_snapshot)
         assert "SMS received from John" in result
 
-    def test_render_message(self, renderer):
+    def test_render_message(self, renderer, static_now):
         """Renders a message with NEW tag for new messages."""
-        old_snapshot = datetime.now() - timedelta(hours=1)
+        old_snapshot = static_now - timedelta(hours=1)
         msg = Message(
             name="John",
             content="Hello!",
-            timestamp=datetime.now(),
+            timestamp=static_now,
             role="user",
         )
         result = renderer.render_message(msg, old_snapshot)
@@ -612,27 +612,27 @@ class TestRenderer:
         assert "John" in result
         assert "Hello!" in result
 
-    def test_render_message_not_new(self, renderer):
+    def test_render_message_not_new(self, renderer, static_now):
         """Old messages don't have NEW tag."""
-        recent_snapshot = datetime.now() + timedelta(seconds=10)
+        recent_snapshot = static_now + timedelta(seconds=10)
         msg = Message(
             name="John",
             content="Hello!",
-            timestamp=datetime.now(),
+            timestamp=static_now,
             role="user",
         )
         result = renderer.render_message(msg, recent_snapshot)
         assert "**NEW**" not in result
 
-    def test_render_email_message(self, renderer):
+    def test_render_email_message(self, renderer, static_now):
         """Renders email message with subject and body."""
-        old_snapshot = datetime.now() - timedelta(hours=1)
+        old_snapshot = static_now - timedelta(hours=1)
         msg = EmailMessage(
             name="Jane",
             subject="Important Update",
             body="Please review the attached document.",
             email_id="email_456",
-            timestamp=datetime.now(),
+            timestamp=static_now,
             role="user",
         )
         result = renderer.render_message(msg, old_snapshot)
@@ -640,9 +640,15 @@ class TestRenderer:
         assert "Email ID: email_456" in result
         assert "Please review" in result
 
-    def test_render_contact(self, renderer, sample_contact_info, sample_conv_state):
+    def test_render_contact(
+        self,
+        renderer,
+        sample_contact_info,
+        sample_conv_state,
+        static_now,
+    ):
         """Renders contact with all details."""
-        last_snapshot = datetime.now()
+        last_snapshot = static_now
         result = renderer.render_contact(
             contact_info=sample_contact_info,
             conv_state=sample_conv_state,
@@ -655,7 +661,11 @@ class TestRenderer:
         assert 'timezone="America/New_York"' in result
         assert "<bio>Test bio</bio>" in result
 
-    def test_global_thread_rendered_before_per_medium_threads(self, renderer):
+    def test_global_thread_rendered_before_per_medium_threads(
+        self,
+        renderer,
+        static_now,
+    ):
         """Global thread appears before per-medium threads in rendered output."""
         contact_info = {
             "contact_id": 1,
@@ -667,12 +677,12 @@ class TestRenderer:
         }
         conv_state = ConversationState(contact_id=1)
         # Add messages to both global and per-medium threads
-        ts = datetime.now()
+        ts = static_now
         msg = Message(name="John", content="Hello!", timestamp=ts, role="user")
         conv_state.global_thread.append(msg)
         conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
-        last_snapshot = datetime.now() - timedelta(hours=1)
+        last_snapshot = static_now - timedelta(hours=1)
         result = renderer.render_contact(
             contact_info=contact_info,
             conv_state=conv_state,
@@ -688,7 +698,11 @@ class TestRenderer:
             global_pos < sms_pos
         ), "Global thread should appear before per-medium threads"
 
-    def test_global_thread_shows_more_messages_than_per_medium(self, renderer):
+    def test_global_thread_shows_more_messages_than_per_medium(
+        self,
+        renderer,
+        static_now,
+    ):
         """Global thread renders up to 50 messages while per-medium shows 5."""
         contact_info = {
             "contact_id": 1,
@@ -700,7 +714,7 @@ class TestRenderer:
         }
         conv_state = ConversationState(contact_id=1)
         # Add 10 messages to both threads
-        base_time = datetime.now()
+        base_time = static_now
         for i in range(10):
             ts = base_time + timedelta(minutes=i)
             msg = Message(
@@ -712,7 +726,7 @@ class TestRenderer:
             conv_state.global_thread.append(msg)
             conv_state.threads[Medium.SMS_MESSAGE].append(msg)
 
-        last_snapshot = datetime.now() - timedelta(hours=1)
+        last_snapshot = static_now - timedelta(hours=1)
         result = renderer.render_contact(
             contact_info=contact_info,
             conv_state=conv_state,
@@ -748,9 +762,10 @@ class TestRenderer:
         renderer,
         sample_contact_info,
         sample_conv_state,
+        static_now,
     ):
         """Empty global thread is not rendered."""
-        last_snapshot = datetime.now()
+        last_snapshot = static_now
         result = renderer.render_contact(
             contact_info=sample_contact_info,
             conv_state=sample_conv_state,
@@ -888,9 +903,10 @@ class TestContactIndex:
         self,
         contact_index,
         sample_contact_dict,
+        static_now,
     ):
         """Messages in global thread maintain chronological order across mediums."""
-        base_time = datetime.now()
+        base_time = static_now
 
         # Interleave messages from different mediums
         contact_index.push_message(
