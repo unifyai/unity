@@ -211,6 +211,7 @@ async def entrypoint(ctx: JobContext) -> None:
         contact_phone_number=contact["phone_number"],
         contact_email=contact["email_address"],
         is_boss_user=contact["contact_id"] == 1,
+        contact_rolling_summary=contact.get("rolling_summary", ""),
     )
     print("PRINTING SYSTEM PROMPT")
     print(system)
