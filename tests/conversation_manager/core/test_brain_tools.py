@@ -236,17 +236,17 @@ class TestCmListNotifications:
         result = brain_tools.cm_list_notifications()
         assert result == []
 
-    def test_returns_all_notifications(self, brain_tools, mock_cm):
+    def test_returns_all_notifications(self, brain_tools, mock_cm, static_now):
         """Returns all notifications when pinned_only=False."""
-        ts = datetime.now()
+        ts = static_now
         mock_cm.notifications_bar.push_notif("Type1", "Content1", ts)
         mock_cm.notifications_bar.push_notif("Type2", "Content2", ts, pinned=True)
         result = brain_tools.cm_list_notifications()
         assert len(result) == 2
 
-    def test_filters_pinned_only(self, brain_tools, mock_cm):
+    def test_filters_pinned_only(self, brain_tools, mock_cm, static_now):
         """Returns only pinned notifications when pinned_only=True."""
-        ts = datetime.now()
+        ts = static_now
         mock_cm.notifications_bar.push_notif("Regular", "Not pinned", ts)
         mock_cm.notifications_bar.push_notif("Pinned", "Important", ts, pinned=True)
         result = brain_tools.cm_list_notifications(pinned_only=True)

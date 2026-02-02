@@ -61,12 +61,12 @@ class TestMalformedEvents:
         with pytest.raises(KeyError):
             Event.from_json(data)
 
-    def test_from_json_unknown_event_type(self):
+    def test_from_json_unknown_event_type(self, static_now):
         """Event.from_json should raise on unknown event type."""
         data = json.dumps(
             {
                 "event_name": "NonExistentEvent",
-                "payload": {"timestamp": datetime.now().isoformat()},
+                "payload": {"timestamp": static_now.isoformat()},
             },
         )
         with pytest.raises(Exception, match="not registered"):
@@ -83,19 +83,19 @@ class TestMalformedEvents:
         with pytest.raises(ValueError):
             Event.from_json(data)
 
-    def test_from_json_missing_required_field(self):
+    def test_from_json_missing_required_field(self, static_now):
         """Event.from_json should raise when required field is missing."""
         # SMSReceived requires 'contact' and 'content'
         data = json.dumps(
             {
                 "event_name": "SMSReceived",
-                "payload": {"timestamp": datetime.now().isoformat()},
+                "payload": {"timestamp": static_now.isoformat()},
             },
         )
         with pytest.raises(TypeError):
             Event.from_json(data)
 
-    def test_from_json_extra_fields_ignored(self):
+    def test_from_json_extra_fields_ignored(self, static_now):
         """Event.from_json should ignore extra fields not in dataclass."""
         contact = TEST_CONTACTS[1]
         data = json.dumps(
@@ -104,7 +104,7 @@ class TestMalformedEvents:
                 "payload": {
                     "contact": contact,
                     "content": "test message",
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": static_now.isoformat(),
                     "extra_field_that_does_not_exist": "should be ignored",
                     "another_random_field": 12345,
                 },
@@ -373,18 +373,18 @@ class TestNotificationBarEdgeCases:
         cm.cm.notifications_bar.remove_notif("nonexistent_id_12345")
 
     @pytest.mark.asyncio
-    async def test_push_notification_with_datetime_timestamp(self, initialized_cm):
+    async def test_push_notification_with_datetime_timestamp(
+        self,
+        initialized_cm,
+        static_now,
+    ):
         """push_notif should accept datetime timestamp."""
         cm = initialized_cm
-
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
 
         cm.cm.notifications_bar.push_notif(
             type="Test",
             notif_content="Test notification",
-            timestamp=now,
+            timestamp=static_now,
         )
 
         # Should have added the notification

@@ -87,14 +87,14 @@ def sample_sent_email():
 class TestGetAssistantEmailRole:
     """Tests for the _get_assistant_email_role helper function."""
 
-    def test_assistant_is_direct_recipient_to(self):
+    def test_assistant_is_direct_recipient_to(self, static_now):
         """When assistant's email is in To field, returns 'direct recipient'."""
         email = EmailMessage(
             name="Alice Smith",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="user",
             to=["assistant@unify.ai", "other@example.com"],
             cc=[],
@@ -107,14 +107,14 @@ class TestGetAssistantEmailRole:
             result = _get_assistant_email_role(email)
             assert result == "You were a direct recipient (To)"
 
-    def test_assistant_is_cc_recipient(self):
+    def test_assistant_is_cc_recipient(self, static_now):
         """When assistant's email is in Cc field, returns 'CC'd'."""
         email = EmailMessage(
             name="Alice Smith",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="user",
             to=["bob@example.com"],
             cc=["assistant@unify.ai"],
@@ -127,14 +127,14 @@ class TestGetAssistantEmailRole:
             result = _get_assistant_email_role(email)
             assert result == "You were CC'd"
 
-    def test_assistant_is_bcc_recipient(self):
+    def test_assistant_is_bcc_recipient(self, static_now):
         """When assistant's email is in Bcc field, returns 'BCC'd'."""
         email = EmailMessage(
             name="Alice Smith",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="user",
             to=["bob@example.com"],
             cc=[],
@@ -147,14 +147,14 @@ class TestGetAssistantEmailRole:
             result = _get_assistant_email_role(email)
             assert result == "You were BCC'd"
 
-    def test_assistant_sent_email(self):
+    def test_assistant_sent_email(self, static_now):
         """When assistant sent the email (role=assistant), returns 'sent'."""
         email = EmailMessage(
             name="You",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="assistant",
             to=["alice@example.com"],
             cc=[],
@@ -167,14 +167,14 @@ class TestGetAssistantEmailRole:
             result = _get_assistant_email_role(email)
             assert result == "You sent this email"
 
-    def test_assistant_not_in_email(self):
+    def test_assistant_not_in_email(self, static_now):
         """When assistant's email is not in any field, returns None."""
         email = EmailMessage(
             name="Alice Smith",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="user",
             to=["bob@example.com"],
             cc=["charlie@example.com"],
@@ -187,14 +187,14 @@ class TestGetAssistantEmailRole:
             result = _get_assistant_email_role(email)
             assert result is None
 
-    def test_case_insensitive_email_matching(self):
+    def test_case_insensitive_email_matching(self, static_now):
         """Email matching should be case-insensitive."""
         email = EmailMessage(
             name="Alice Smith",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="user",
             to=["ASSISTANT@UNIFY.AI"],  # Uppercase
             cc=[],
@@ -207,14 +207,14 @@ class TestGetAssistantEmailRole:
             result = _get_assistant_email_role(email)
             assert result == "You were a direct recipient (To)"
 
-    def test_no_assistant_email_configured(self):
+    def test_no_assistant_email_configured(self, static_now):
         """When assistant email is not configured, returns None."""
         email = EmailMessage(
             name="Alice Smith",
             subject="Test",
             body="Test body",
             email_id="test@mail.gmail.com",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=static_now,
             role="user",
             to=["assistant@unify.ai"],
             cc=[],
