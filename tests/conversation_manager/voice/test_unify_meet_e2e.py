@@ -723,14 +723,14 @@ class TestUnifyMeetCleanup:
             "cleanup_call_proc",
             new_callable=AsyncMock,
         ):
-            with patch.object(
-                initialized_cm.cm,
-                "request_llm_run",
-                new_callable=AsyncMock,
-            ) as mock_llm:
-                await initialized_cm.step(ended)
+            result = await initialized_cm.step(ended)
 
-                mock_llm.assert_called_once_with(delay=0, cancel_running=True)
+            # CMStepDriver.step() intercepts request_llm_run calls and tracks them
+            # via StepResult.llm_requested - this is the correct way to verify
+            # that the event handler requested an LLM run
+            assert (
+                result.llm_requested
+            ), "UnifyMeetEnded should trigger an LLM run to process the ended call"
 
 
 # =============================================================================
