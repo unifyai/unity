@@ -368,7 +368,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return messages
 
     async def interject_or_run(self, content: str):
-        """Interject the ask handle or run the LLM."""
+        """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
             self._session_logger.info(
                 "event",
@@ -384,15 +384,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "Triggering main CM brain",
                 icon_override="🔀",
             )
-            # For voice mode: cancel_running=False ensures running LLM tasks
-            # complete while only pending tasks are replaced. This creates a
-            # "queue of 2" (1 running + 1 pending) that prevents rapid user
-            # speech from cancelling every LLM run before completion.
-            #
-            # For text mode: cancel_running=True is fine because rapid messages
-            # should trigger fresh responses with the latest context.
-            cancel_running = not self.mode.is_voice
-            await self.request_llm_run(delay=0, cancel_running=cancel_running)
+            await self.request_llm_run(delay=0, cancel_running=True)
 
     # this is non-blocking, it will quickly submit the
     # coro and return
@@ -571,6 +563,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
+                break  # Exit the loop after triggering shutdown
 
     def set_details(self, payload: dict):
         """Populate assistant/user/voice details into SESSION_DETAILS."""
