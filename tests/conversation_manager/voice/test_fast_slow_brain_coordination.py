@@ -352,30 +352,29 @@ class TestRapidUtteranceHandling:
         boss_contact,
     ):
         """
-        FAILING TEST: With rapid user utterances, at least some LLM runs
-        should complete within a reasonable time window.
+        Test that rapid user utterances don't cancel running LLM tasks.
 
-        This test simulates the scenario where:
+        This test replicates the REAL production scenario:
         - User is on a voice call
-        - User speaks multiple times rapidly (faster than LLM thinking time)
-        - Each utterance triggers interject_or_run() -> request_llm_run()
-        - flush_llm_requests() submits to the debouncer
+        - User speaks rapidly (multiple utterances while LLM is thinking)
+        - LLM takes ~10-15 seconds per thinking step (realistic timing)
+        - Each utterance triggers the slow brain via interject_or_run()
 
-        Current behavior (BUG):
-        - interject_or_run uses cancel_running=True
-        - Each new utterance cancels the in-flight LLM run
-        - With 5 utterances, we see ~4 cancellations, 0-1 completions
-        - If user keeps talking indefinitely, slow brain never completes
+        THE BUG (without fix):
+        - interject_or_run uses cancel_running=True for all modes
+        - Each new utterance CANCELS the in-flight LLM run
+        - With rapid speech, NO LLM runs ever complete
+        - The slow brain becomes completely non-functional
 
-        Expected behavior (after fix):
+        THE FIX:
         - interject_or_run uses cancel_running=False for voice mode
-        - Running LLM completes, only pending tasks are replaced
-        - With 5 utterances, we see 0 cancellations, 1-2 completions
-        - First run completes, final debounced run completes
+        - Debouncer uses asyncio.shield() to protect running tasks
+        - Running LLM completes, only pending tasks are debounced
+        - "Queue of 2" behavior: 1 running + 1 pending
 
-        NOTE: We simulate LLM thinking time (0.5s) because UNIFY_CACHE=True
-        causes cached LLM calls to return immediately, which would not
-        properly test the cancellation behavior.
+        Expected results:
+        - With fix: cancelled_count = 0, completed_count >= 1
+        - Without fix: cancelled_count > 0 (running tasks get cancelled)
         """
         cm = initialized_cm.cm
 
@@ -386,39 +385,38 @@ class TestRapidUtteranceHandling:
         # Verify we're in voice mode
         assert cm.mode == Mode.CALL, "Should be in CALL mode after PhoneCallStarted"
 
-        # Track LLM run completions with simulated thinking time
+        # Track LLM run completions with REALISTIC simulated thinking time
         llm_completions = []
-        original_run_llm = cm._run_llm
 
-        # Simulated LLM thinking time - must be longer than the interval
-        # between utterances (0.1s) to demonstrate the cancellation issue
-        SIMULATED_LLM_THINKING_TIME = 0.5  # seconds
+        # Realistic LLM thinking time - opus-4.5 typically takes 10-20 seconds
+        # We use 2s as a compromise between realism and test speed, while still
+        # being much longer than the utterance interval (0.1s)
+        SIMULATED_LLM_THINKING_TIME = (
+            2.0  # seconds (realistic ratio to utterance timing)
+        )
 
         async def tracked_run_llm_with_simulated_delay():
             """
-            Wrapper that:
-            1. Simulates LLM thinking time (to test cancellation behavior)
-            2. Tracks when _run_llm completes vs gets cancelled
+            Simulates realistic LLM thinking time and tracks completion/cancellation.
+
+            We don't call the original _run_llm because:
+            - We need deterministic timing for test assertions
+            - The simulated delay accurately represents the timing relationship
+              between LLM processing and user speech
             """
             try:
-                # Simulate slow LLM thinking time BEFORE the actual call
-                # This ensures the test works regardless of cache hits
                 await asyncio.sleep(SIMULATED_LLM_THINKING_TIME)
-
-                # Now run the actual LLM (may be cached/fast, but we already waited)
-                result = await original_run_llm()
-                llm_completions.append(("completed", result))
-                return result
+                llm_completions.append(("completed", None))
+                return None
             except asyncio.CancelledError:
                 llm_completions.append(("cancelled", None))
                 raise
 
         cm._run_llm = tracked_run_llm_with_simulated_delay
 
-        # Simulate rapid user utterances
-        # We'll send 5 utterances with 0.1s between them
-        # Simulated LLM thinking time is 0.5s, so utterances arrive faster
-        # than the LLM can complete
+        # Simulate rapid user utterances - this is the REAL scenario
+        # User speaks naturally, with multiple utterances arriving while
+        # the slow brain is still processing
         utterances = [
             "Hello",
             "Can you help me with something?",
@@ -427,20 +425,17 @@ class TestRapidUtteranceHandling:
             "One on Monday and one on Friday",
         ]
 
-        # Time between utterances - must be LESS than simulated LLM time
-        # to demonstrate the rapid-fire cancellation issue
+        # Time between utterances - realistic rapid speech
+        # Much shorter than LLM thinking time to trigger the bug
         UTTERANCE_INTERVAL = 0.1  # seconds
 
         try:
-            # Send utterances rapidly using the real event handling path
-            # We must call flush_llm_requests() after each event to trigger
-            # the debouncer, just like the production event loop does.
             from unity.conversation_manager.domains.event_handlers import EventHandler
 
             for i, text in enumerate(utterances):
                 event = InboundPhoneUtterance(contact=boss_contact, content=text)
 
-                # Handle the event (this calls interject_or_run -> request_llm_run)
+                # Handle the event (triggers interject_or_run -> request_llm_run)
                 await EventHandler.handle_event(
                     event,
                     cm,
@@ -448,54 +443,35 @@ class TestRapidUtteranceHandling:
                 )
 
                 # Flush triggers the debouncer (matches production behavior)
-                # This is where cancel_running=True causes the problem
                 await cm.flush_llm_requests()
 
-                # Small delay between utterances (simulating rapid speech)
-                # This also gives async tasks a chance to execute
+                # Rapid speech - utterances arrive faster than LLM can complete
                 if i < len(utterances) - 1:
                     await asyncio.sleep(UTTERANCE_INTERVAL)
 
-            # Wait for any pending LLM runs to have a chance to complete
-            # Timeline with bug (cancel_running=True):
-            #   t=0.0: utterance 1 -> LLM run 1 starts
-            #   t=0.1: utterance 2 -> LLM run 1 CANCELLED, run 2 starts
-            #   t=0.2: utterance 3 -> LLM run 2 CANCELLED, run 3 starts
-            #   t=0.3: utterance 4 -> LLM run 3 CANCELLED, run 4 starts
-            #   t=0.4: utterance 5 -> LLM run 4 CANCELLED, run 5 starts
-            #   t=0.9: LLM run 5 completes (if we wait)
-            #   Result: 4 cancelled, 0-1 completed
-            #
-            # Timeline with fix (cancel_running=False):
-            #   t=0.0: utterance 1 -> LLM run 1 starts
-            #   t=0.1: utterance 2 -> pending for run 2 created (waits for run 1)
-            #   t=0.2: utterance 3 -> pending replaced with run 3
-            #   t=0.3: utterance 4 -> pending replaced with run 4
-            #   t=0.4: utterance 5 -> pending replaced with run 5
-            #   t=0.5: LLM run 1 COMPLETES, run 5 starts
-            #   t=1.0: LLM run 5 COMPLETES
+            # Wait for LLM runs to complete
+            # Timeline with fix (cancel_running=False + shield):
+            #   t=0.0: U1 -> run 1 starts (2s duration)
+            #   t=0.1: U2 -> pending waits for run 1
+            #   t=0.2: U3 -> pending replaced
+            #   t=0.3: U4 -> pending replaced
+            #   t=0.4: U5 -> pending replaced (final pending)
+            #   t=2.0: run 1 COMPLETES, run 5 starts
+            #   t=4.0: run 5 COMPLETES
             #   Result: 0 cancelled, 2 completed
+            #
+            # Timeline with bug (cancel_running=True, no shield):
+            #   t=0.0: U1 -> run 1 starts
+            #   t=0.1: U2 -> run 1 CANCELLED, run 2 starts
+            #   t=0.2: U3 -> run 2 CANCELLED, run 3 starts
+            #   t=0.3: U4 -> run 3 CANCELLED, run 4 starts
+            #   t=0.4: U5 -> run 4 CANCELLED, run 5 starts
+            #   t=2.4: run 5 COMPLETES (if we wait)
+            #   Result: 4 cancelled, 1 completed
 
-            max_wait_time = 3.0  # seconds (enough for 2 LLM runs @ 0.5s each + buffer)
-            check_interval = 0.2  # seconds
-            elapsed = 0.0
-
-            while elapsed < max_wait_time:
-                await asyncio.sleep(check_interval)
-                elapsed += check_interval
-
-                # Check if we have any completions
-                completed_count = sum(
-                    1 for status, _ in llm_completions if status == "completed"
-                )
-                if completed_count > 0:
-                    break
-
-                # Also check if debouncer has a running task that's done
-                if cm.debouncer.running_task and cm.debouncer.running_task.done():
-                    # Give a moment for completion tracking to update
-                    await asyncio.sleep(0.1)
-                    break
+            # Wait long enough for 2 LLM runs to complete with fix
+            max_wait_time = 6.0  # 2x LLM time + buffer
+            await asyncio.sleep(max_wait_time)
 
             # Count results
             completed_count = sum(
@@ -505,29 +481,37 @@ class TestRapidUtteranceHandling:
                 1 for status, _ in llm_completions if status == "cancelled"
             )
 
-            # The key assertion: at least ONE LLM run should complete
+            # THE KEY ASSERTION: No running tasks should be cancelled
             #
-            # Before fix: cancelled_count ~= 4, completed_count ~= 0-1
-            #   (only the last run might complete if we wait long enough)
+            # With the fix, running tasks are protected and complete normally.
+            # Without the fix, running tasks get cancelled by each new utterance.
             #
-            # After fix: cancelled_count = 0, completed_count >= 1
-            #   (first run completes, final debounced run also completes)
-            assert completed_count >= 1, (
-                f"No LLM runs completed with rapid utterances!\n"
+            # This assertion will:
+            # - PASS with fix: cancelled_count = 0
+            # - FAIL without fix: cancelled_count > 0 (typically 3-4)
+            assert cancelled_count == 0, (
+                f"Running LLM tasks were cancelled by rapid utterances!\n"
                 f"  Completed: {completed_count}\n"
                 f"  Cancelled: {cancelled_count}\n"
                 f"  Utterances sent: {len(utterances)}\n"
                 f"  Simulated LLM time: {SIMULATED_LLM_THINKING_TIME}s\n"
                 f"  Utterance interval: {UTTERANCE_INTERVAL}s\n"
-                f"  Wait time: {elapsed:.1f}s\n"
                 f"\n"
-                f"This indicates the bug where interject_or_run() uses\n"
-                f"cancel_running=True, causing every new utterance to cancel\n"
-                f"the in-flight LLM run. With rapid speech, none ever complete.\n"
+                f"This indicates the bug where rapid utterances cancel running\n"
+                f"LLM tasks instead of just debouncing pending tasks.\n"
                 f"\n"
-                f"Fix: Use cancel_running=False for voice mode so running\n"
-                f"LLM tasks complete while only pending tasks are debounced."
+                f"Required fixes:\n"
+                f"1. interject_or_run must use cancel_running=False for voice mode\n"
+                f"2. Debouncer must use asyncio.shield() to protect running tasks"
+            )
+
+            # Secondary assertion: at least one task should complete
+            assert completed_count >= 1, (
+                f"No LLM runs completed!\n"
+                f"  Completed: {completed_count}\n"
+                f"  Cancelled: {cancelled_count}\n"
+                f"  Wait time: {max_wait_time}s\n"
             )
 
         finally:
-            cm._run_llm = original_run_llm
+            cm._run_llm = tracked_run_llm_with_simulated_delay  # Keep mock for teardown
