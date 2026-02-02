@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time as _time
 import pytest
 from dataclasses import dataclass
 from unittest.mock import Mock, MagicMock, patch
@@ -27,6 +28,27 @@ from unity.conversation_manager.in_memory_event_broker import (
     create_in_memory_event_broker,
     reset_in_memory_event_broker,
 )
+
+# =============================================================================
+# Helper for deterministic waiting
+# =============================================================================
+
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.02,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
+
+
 from unity.conversation_manager.events import (
     Event,
     SMSReceived,
@@ -307,11 +329,17 @@ class TestThreadSafePublishing:
             # Call _publish_from_callback (simulating call from thread pool)
             cm._publish_from_callback("test:channel", '{"test": "data"}')
 
-            # Give the event loop time to process
-            await asyncio.sleep(0.1)
+            # Poll for message to arrive instead of fixed sleep
+            msg = None
+            for _ in range(50):  # 5s timeout with 0.1s poll
+                msg = await pubsub.get_message(
+                    timeout=0.1,
+                    ignore_subscribe_messages=True,
+                )
+                if msg:
+                    break
 
             # Should receive the message
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
             assert msg["data"] == '{"test": "data"}'
 
@@ -362,7 +390,8 @@ class TestSMSMessageHandling:
 
             # Handle the message
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             # Should receive SMS message event
             msg = await get_message_on_channel(pubsub, "app:comms:msg_message")
@@ -422,7 +451,8 @@ class TestEmailMessageHandling:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             # Should receive email message event
             msg = await get_message_on_channel(pubsub, "app:comms:email_message")
@@ -475,7 +505,8 @@ class TestEmailMessageHandling:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             # Attachment download should have been scheduled
             # (Note: run_coroutine_threadsafe doesn't immediately call the function)
@@ -524,7 +555,8 @@ class TestUnifyMessageHandling:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             # Should receive unify_message event
             msg = await get_message_on_channel(
@@ -573,7 +605,8 @@ class TestUnifyMessageHandling:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # For rejected messages, use a brief poll to ensure processing completes
+            await _wait_for_condition(lambda: message._acked, timeout=1.0)
 
             # No event should be published - message was rejected
             msg = await get_message_on_channel(
@@ -619,7 +652,8 @@ class TestUnifyMessageHandling:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # For rejected messages, use a brief poll to ensure processing completes
+            await _wait_for_condition(lambda: message._acked, timeout=1.0)
 
             # No event should be published - message was rejected
             msg = await get_message_on_channel(
@@ -840,7 +874,8 @@ class TestStartupEvents:
                 # Handle in a separate thread to allow subscribe_to_topic to be mocked
                 with patch.object(cm, "subscribe_to_topic"):
                     cm.handle_message(message)
-                    await asyncio.sleep(0.1)
+                    # Poll for message acknowledgment instead of fixed sleep
+                    await _wait_for_condition(lambda: message._acked)
 
                 msg = await pubsub.get_message(
                     timeout=1.0,
@@ -891,7 +926,8 @@ class TestStartupEvents:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -936,7 +972,8 @@ class TestSystemEvents:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -971,7 +1008,8 @@ class TestSystemEvents:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             event = Event.from_json(msg["data"])
@@ -1002,7 +1040,8 @@ class TestSystemEvents:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -1037,7 +1076,8 @@ class TestSystemEvents:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
             assert msg is not None
@@ -1094,7 +1134,8 @@ class TestPreHireChatLogging:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.1)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             # Collect pre-hire messages (may arrive in any order)
             pre_hire_messages = []
@@ -1164,7 +1205,8 @@ class TestPreHireChatLogging:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.2)
+            # Poll for message acknowledgment instead of fixed sleep
+            await _wait_for_condition(lambda: message._acked)
 
             # Collect all pre-hire messages
             messages_received = []

@@ -8,6 +8,7 @@ from the voice agent subprocess back to the parent ConversationManager process.
 import asyncio
 import json
 import os
+import time as _time
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,6 +20,25 @@ from unity.conversation_manager.domains.ipc_socket import (
     get_socket_client,
     send_event_to_parent,
 )
+
+# =============================================================================
+# Helper for deterministic waiting
+# =============================================================================
+
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.01,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
 
 
 class TestCallEventSocketServer:
@@ -100,8 +120,8 @@ class TestCallEventSocketServer:
         client = CallEventSocketClient(socket_path)
         await client.send_event("test:channel", '{"test": "data"}')
 
-        # Give time for event to be processed
-        await asyncio.sleep(0.1)
+        # Wait for event to be processed (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: len(received_events) >= 1)
 
         assert len(received_events) == 1
         assert received_events[0] == ("test:channel", '{"test": "data"}')
@@ -159,8 +179,8 @@ class TestCallEventSocketClient:
 
         assert result is True
 
-        # Give time for event to be processed
-        await asyncio.sleep(0.1)
+        # Wait for event to be processed (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: broker.publish.called)
 
         broker.publish.assert_called_once_with(
             "app:comms:phone_utterance",
@@ -268,8 +288,8 @@ class TestSendEventToParent:
 
             assert result is True
 
-            # Give time for event to be processed
-            await asyncio.sleep(0.1)
+            # Wait for event to be processed (poll instead of fixed sleep)
+            await _wait_for_condition(lambda: broker.publish.called)
 
             broker.publish.assert_called_once_with(
                 "app:comms:phone_utterance",
@@ -337,8 +357,8 @@ class TestIntegration:
         }
         await client.send_event("app:comms:phone_utterance", json.dumps(event_data))
 
-        # Wait for processing
-        await asyncio.sleep(0.1)
+        # Wait for processing (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: broker.publish.called)
 
         # Verify
         broker.publish.assert_called_once()
@@ -370,8 +390,8 @@ class TestIntegration:
         for channel, data in events:
             await client.send_event(channel, json.dumps(data))
 
-        # Wait for processing
-        await asyncio.sleep(0.2)
+        # Wait for all events to be processed (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: broker.publish.call_count >= 3)
 
         # Verify all events were published
         assert broker.publish.call_count == 3
@@ -518,8 +538,8 @@ class TestBidirectionalCommunication:
         client = CallEventSocketClient(socket_path)
         await client.start_receive_loop(on_event)
 
-        # Give time for connection to establish
-        await asyncio.sleep(0.1)
+        # Small delay for connection to fully establish (local IPC is fast)
+        await asyncio.sleep(0.05)
 
         # Parent publishes event on a forwarded channel
         await real_event_broker.publish(
@@ -527,8 +547,8 @@ class TestBidirectionalCommunication:
             '{"content": "Ask about their schedule"}',
         )
 
-        # Wait for event to propagate
-        await asyncio.sleep(0.2)
+        # Wait for event to propagate (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: len(received_events) >= 1)
 
         # Client should have received the event
         assert len(received_events) == 1
@@ -554,7 +574,9 @@ class TestBidirectionalCommunication:
 
         client = CallEventSocketClient(socket_path)
         await client.start_receive_loop(on_event)
-        await asyncio.sleep(0.1)
+
+        # Small delay for connection to fully establish
+        await asyncio.sleep(0.05)
 
         # Parent publishes status events
         await real_event_broker.publish(
@@ -566,7 +588,8 @@ class TestBidirectionalCommunication:
             '{"type": "stop"}',
         )
 
-        await asyncio.sleep(0.2)
+        # Wait for both events to propagate
+        await _wait_for_condition(lambda: len(received_events) >= 2)
 
         # Client should have received both events
         assert len(received_events) == 2
@@ -595,7 +618,9 @@ class TestBidirectionalCommunication:
 
         client = CallEventSocketClient(socket_path)
         await client.start_receive_loop(on_event)
-        await asyncio.sleep(0.1)
+
+        # Small delay for connection to fully establish
+        await asyncio.sleep(0.05)
 
         # Parent publishes on non-matching channel
         await real_event_broker.publish(
@@ -603,7 +628,8 @@ class TestBidirectionalCommunication:
             '{"subject": "Test"}',
         )
 
-        await asyncio.sleep(0.2)
+        # Small wait to verify event does NOT arrive (negative assertion)
+        await asyncio.sleep(0.1)
 
         # Client should NOT receive this event
         assert len(received_events) == 0

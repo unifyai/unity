@@ -9,11 +9,32 @@ debouncing semantics. It supports:
 
 These tests verify the Debouncer's behavior independent of the
 ConversationManager integration.
+
+NOTE: Debouncer tests are inherently timing-sensitive since the debouncer
+manages task timing. Some fixed sleeps are intentional to test the debounce
+behavior (e.g., simulating LLM thinking time). Where possible, we use
+event-based synchronization for task coordination.
 """
 
 import asyncio
+import time as _time
 
 import pytest
+
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.02,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
 
 
 class TestDebouncerCancelRunning:
@@ -66,14 +87,15 @@ class TestDebouncerCancelRunning:
         # This should NOT cancel task1
         await debouncer.submit(task2, cancel_running=False)
 
-        # Give the system a moment to process
-        await asyncio.sleep(0.1)
+        # Wait for task2 to be queued (pending)
+        await _wait_for_condition(lambda: debouncer.pending_task is not None)
 
         # Now allow task1 to complete
         task1_can_complete.set()
 
-        # Wait for everything to settle
-        await asyncio.sleep(0.5)
+        # Wait for both tasks to complete (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: "task1:completed" in execution_log)
+        await _wait_for_condition(lambda: "task2:completed" in execution_log)
 
         # KEY ASSERTION: Task 1 should have COMPLETED, not been cancelled
         assert "task1:completed" in execution_log, (
@@ -131,8 +153,8 @@ class TestDebouncerCancelRunning:
         # This SHOULD cancel task1
         await debouncer.submit(task2, cancel_running=True)
 
-        # Wait for everything to settle
-        await asyncio.sleep(0.5)
+        # Wait for task2 to complete (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: "task2:completed" in execution_log)
 
         # Task 1 should have been CANCELLED (not completed)
         assert "task1:cancelled" in execution_log, (
@@ -190,18 +212,22 @@ class TestDebouncerCancellationPropagation:
 
         # Submit task 0 - it starts running
         await debouncer.submit(slow_task, args=(0,), cancel_running=False)
-        await asyncio.sleep(0.05)  # Let task 0 start
+        # Wait for task 0 to start
+        await _wait_for_condition(lambda: "task0:started" in results)
 
         # Submit task 1 - becomes pending, waiting for task 0
         await debouncer.submit(slow_task, args=(1,), cancel_running=False)
-        await asyncio.sleep(0.05)  # Let task 1 become pending
+        # Wait for task 1 to be queued as pending
+        await _wait_for_condition(lambda: debouncer.pending_task is not None)
 
         # Submit task 2 - this cancels pending task 1 (debounce)
         # The bug: task 1's cancellation would propagate to task 0
         await debouncer.submit(slow_task, args=(2,), cancel_running=False)
 
-        # Wait for all tasks to complete
-        await asyncio.sleep(1.0)
+        # Wait for task 0 and task 2 to complete (poll instead of fixed sleep)
+        await _wait_for_condition(
+            lambda: "task0:completed" in results and "task2:completed" in results,
+        )
 
         # Task 0 MUST have completed (not cancelled)
         assert "task0:completed" in results, (
@@ -249,13 +275,21 @@ class TestDebouncerCancellationPropagation:
                 raise
 
         # Rapid submissions (faster than task completion time)
+        # NOTE: The 0.1s delay between submissions is intentional - it simulates
+        # rapid user utterances in voice mode (faster than LLM thinking time)
         for i in range(5):
             await debouncer.submit(task, args=(i,), cancel_running=False)
             if i < 4:
-                await asyncio.sleep(0.1)  # 0.1s between submissions
+                await asyncio.sleep(
+                    0.1,
+                )  # 0.1s between submissions (intentional timing)
 
-        # Wait for tasks to complete
-        await asyncio.sleep(2.0)
+        # Wait for final tasks to complete (poll instead of fixed 2s sleep)
+        # With cancel_running=False: task0 runs to completion, then task4 runs
+        await _wait_for_condition(
+            lambda: sum(1 for r in results if "completed" in r) >= 2,
+            timeout=5.0,
+        )
 
         # Count results
         completed = sum(1 for r in results if "completed" in r)
