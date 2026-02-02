@@ -479,9 +479,25 @@ class TestRapidUtteranceHandling:
             #   t=2.4: run 5 COMPLETES (if we wait)
             #   Result: 4 cancelled, 1 completed
 
-            # Wait long enough for 2 LLM runs to complete with fix
-            max_wait_time = 6.0  # 2x LLM time + buffer
-            await asyncio.sleep(max_wait_time)
+            # Poll for LLM runs to complete (deterministic wait instead of fixed sleep)
+            # We expect at least 1 completion. With fix, we get 2 completions (first + final).
+            # Use generous timeout for slow CI environments, but poll frequently.
+            MAX_WAIT = 30.0  # generous timeout for uncached LLM or slow CI
+            POLL_INTERVAL = 0.1
+            import time as _time
+
+            start = _time.perf_counter()
+            while _time.perf_counter() - start < MAX_WAIT:
+                completed_so_far = sum(
+                    1 for status, _ in llm_completions if status == "completed"
+                )
+                # With the fix, we expect 2 completions (first run + final pending)
+                # With the bug, we'd see cancellations instead
+                if completed_so_far >= 1:
+                    # Give a small buffer for any additional completions to register
+                    await asyncio.sleep(0.5)
+                    break
+                await asyncio.sleep(POLL_INTERVAL)
 
             # Count results
             completed_count = sum(
@@ -660,19 +676,19 @@ class TestStaleGuidanceFiltering:
             slow_brain_started = asyncio.Event()
             slow_brain_can_finish = asyncio.Event()
 
+            # Track when guidance has been published
+            guidance_published = asyncio.Event()
+
             async def slow_brain_with_delay_and_stale_guidance():
                 """
                 Simulates slow brain that:
-                1. Takes time to think (SLOW_BRAIN_THINKING_TIME)
+                1. Waits for signal to finish (after topic change)
                 2. Returns guidance about topic A (meeting time) - which will be stale
                 """
                 slow_brain_started.set()
 
                 # Wait for the signal that we can finish (after topic change)
                 await slow_brain_can_finish.wait()
-
-                # Simulate thinking time
-                await asyncio.sleep(0.1)  # Small delay for realism
 
                 # Now we need to actually run the brain logic but with mocked output
                 # We'll directly publish the call_guidance that the slow brain would produce
@@ -693,6 +709,7 @@ class TestStaleGuidanceFiltering:
                     "app:call:call_guidance",
                     guidance_event.to_json(),
                 )
+                guidance_published.set()
 
                 return None
 
@@ -707,8 +724,6 @@ class TestStaleGuidanceFiltering:
             # ─────────────────────────────────────────────────────────────────
             # Step 3: While slow brain is "thinking", user changes topic to B
             # ─────────────────────────────────────────────────────────────────
-            await asyncio.sleep(0.2)  # Small delay to simulate natural conversation
-
             topic_b_utterance = InboundPhoneUtterance(
                 contact=boss_contact,
                 content="Actually, forget about that. What's the weather like today?",
@@ -722,8 +737,6 @@ class TestStaleGuidanceFiltering:
             # ─────────────────────────────────────────────────────────────────
             # Step 4: Fast brain responds about weather (simulated)
             # ─────────────────────────────────────────────────────────────────
-            await asyncio.sleep(0.1)
-
             # Simulate fast brain's response about weather
             fast_brain_response = OutboundPhoneUtterance(
                 contact=boss_contact,
@@ -740,8 +753,8 @@ class TestStaleGuidanceFiltering:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Give time for slow brain to complete and publish guidance
-            await asyncio.sleep(0.5)
+            # Wait for guidance to be published (deterministic trigger)
+            await asyncio.wait_for(guidance_published.wait(), timeout=5.0)
 
             # ─────────────────────────────────────────────────────────────────
             # Step 6: Verify that stale guidance was NOT sent to fast brain
@@ -854,11 +867,11 @@ class TestStaleGuidanceFiltering:
             original_run_llm = cm._run_llm
             slow_brain_started = asyncio.Event()
             slow_brain_can_finish = asyncio.Event()
+            guidance_published = asyncio.Event()
 
             async def slow_brain_with_relevant_guidance():
                 slow_brain_started.set()
                 await slow_brain_can_finish.wait()
-                await asyncio.sleep(0.1)
 
                 # Guidance about meeting - should be relevant
                 relevant_guidance = (
@@ -872,6 +885,7 @@ class TestStaleGuidanceFiltering:
                     "app:call:call_guidance",
                     guidance_event.to_json(),
                 )
+                guidance_published.set()
                 return None
 
             cm._run_llm = slow_brain_with_relevant_guidance
@@ -879,7 +893,6 @@ class TestStaleGuidanceFiltering:
             await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
 
             # User asks follow-up about SAME topic (meeting)
-            await asyncio.sleep(0.2)
             utterance2 = InboundPhoneUtterance(
                 contact=boss_contact,
                 content="And who's going to be at the meeting?",
@@ -890,9 +903,9 @@ class TestStaleGuidanceFiltering:
                 is_voice_call=cm.call_manager.uses_realtime_api,
             )
 
-            # Let slow brain finish
+            # Let slow brain finish and wait for guidance to be published
             slow_brain_can_finish.set()
-            await asyncio.sleep(0.5)
+            await asyncio.wait_for(guidance_published.wait(), timeout=5.0)
 
             # Guidance about meeting should be sent (topic didn't change)
             meeting_guidance = [

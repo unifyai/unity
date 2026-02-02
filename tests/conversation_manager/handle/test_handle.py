@@ -56,6 +56,23 @@ pytestmark = pytest.mark.eval
 
 
 # =============================================================================
+# Helper Functions for Deterministic Waiting
+# =============================================================================
+
+
+async def _wait_for_condition(predicate, *, timeout: float = 30.0, poll: float = 0.05):
+    """Poll predicate() until it returns True or timeout expires."""
+    import time as _time
+
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
+
+
+# =============================================================================
 # Test Response Formats (Pydantic Models and Enums)
 # =============================================================================
 
@@ -632,8 +649,12 @@ async def test_ask_path2_asks_when_ambiguous(initialized_cm):
         response_format=MeetingTime,
     )
 
-    # Give it time to start and ask
-    await asyncio.sleep(0.5)
+    # Wait for active_ask_handle to be set (indicates PATH 2 started)
+    # Use polling instead of fixed sleep for deterministic behavior
+    await _wait_for_condition(
+        lambda: cm.cm.active_ask_handle is not None,
+        timeout=30.0,
+    )
 
     # If PATH 2, there should be a direct speech asking the question
     # The handle should be waiting for user reply
@@ -738,13 +759,20 @@ async def test_ask_path2_multiple_followup_questions(initialized_cm):
         "What is the user's phone number for callbacks?",
     )
 
-    # Wait for first question
-    await asyncio.sleep(0.5)
+    # Wait for first question to be asked (poll for direct_speech event)
+    await _wait_for_condition(
+        lambda: len(questions_asked) >= 1,
+        timeout=30.0,
+    )
 
     # Give vague reply - should trigger follow-up
     await ask_handle.interject("You can reach me anytime")
 
-    await asyncio.sleep(0.5)
+    # Wait for follow-up question (poll for second question)
+    await _wait_for_condition(
+        lambda: len(questions_asked) >= 2 or ask_handle.done(),
+        timeout=30.0,
+    )
 
     # Provide actual answer
     await ask_handle.interject("+1-555-123-4567")
@@ -1197,8 +1225,13 @@ async def test_ask_handles_empty_transcript(initialized_cm):
 
     ask_handle = await handle.ask("What is the user's name?")
 
+    # Wait for active_ask_handle to be set (PATH 2 started)
+    await _wait_for_condition(
+        lambda: cm.cm.active_ask_handle is not None,
+        timeout=30.0,
+    )
+
     # Should be waiting for user input (PATH 2)
-    await asyncio.sleep(0.5)
     assert not ask_handle.done()
 
     # Provide answer via interject

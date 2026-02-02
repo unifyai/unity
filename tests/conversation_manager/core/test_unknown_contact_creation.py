@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time as _time
 import pytest
 from dataclasses import dataclass
 from unittest.mock import patch
@@ -25,6 +26,26 @@ from unity.conversation_manager.in_memory_event_broker import (
     create_in_memory_event_broker,
     reset_in_memory_event_broker,
 )
+
+# =============================================================================
+# Helper for deterministic waiting
+# =============================================================================
+
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.02,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
+
 
 # =============================================================================
 # Fixtures
@@ -158,7 +179,11 @@ class TestUnknownSMSContactCreation:
                 ),
             ):
                 cm.handle_message(message)
-                await asyncio.sleep(0.2)
+                # Wait for message to be acked and contact created
+                await _wait_for_condition(
+                    lambda: message._acked
+                    and len(get_non_system_contacts(contact_manager)) >= 1,
+                )
 
             # Message should be acked
             assert message._acked
@@ -210,7 +235,8 @@ class TestUnknownSMSContactCreation:
                 ),
             ):
                 cm.handle_message(message)
-                await asyncio.sleep(0.3)
+                # Wait for message to be acked
+                await _wait_for_condition(lambda: message._acked)
 
             # Collect messages
             messages = await collect_messages(
@@ -263,7 +289,8 @@ class TestUnknownSMSContactCreation:
                 return_value=False,
             ):
                 cm.handle_message(message)
-                await asyncio.sleep(0.2)
+                # Wait for message to be acked
+                await _wait_for_condition(lambda: message._acked)
 
             # Message should be acked
             assert message._acked
@@ -329,7 +356,11 @@ class TestUnknownEmailContactCreation:
                 ),
             ):
                 cm.handle_message(message)
-                await asyncio.sleep(0.2)
+                # Wait for message to be acked and contact created
+                await _wait_for_condition(
+                    lambda: message._acked
+                    and len(get_non_system_contacts(contact_manager)) >= 1,
+                )
 
             # Message should be acked
             assert message._acked
@@ -384,7 +415,8 @@ class TestUnknownEmailContactCreation:
             ):
 
                 cm.handle_message(message)
-                await asyncio.sleep(0.3)
+                # Wait for message to be acked
+                await _wait_for_condition(lambda: message._acked)
 
             messages = await collect_messages(
                 pubsub,
@@ -456,7 +488,11 @@ class TestDuplicatePrevention:
             ):
 
                 cm.handle_message(message1)
-                await asyncio.sleep(0.2)
+                # Wait for message to be acked and contact created
+                await _wait_for_condition(
+                    lambda: message1._acked
+                    and len(get_non_system_contacts(contact_manager)) >= 1,
+                )
 
             # Should have created one contact
             assert len(get_non_system_contacts(contact_manager)) == 1
@@ -483,7 +519,8 @@ class TestDuplicatePrevention:
             ):
 
                 cm.handle_message(message2)
-                await asyncio.sleep(0.2)
+                # Wait for second message to be acked
+                await _wait_for_condition(lambda: message2._acked)
 
             # Should still have only one contact (reused the existing one)
             assert len(get_non_system_contacts(contact_manager)) == 1

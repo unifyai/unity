@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time as _time
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
@@ -44,6 +45,25 @@ from unity.conversation_manager.in_memory_event_broker import (
     create_in_memory_event_broker,
     reset_in_memory_event_broker,
 )
+
+# =============================================================================
+# Helper for deterministic waiting
+# =============================================================================
+
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.02,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
 
 
 @pytest_asyncio.fixture
@@ -257,7 +277,8 @@ class TestMessageAcknowledgment:
         )
 
         cm.handle_message(message)
-        await asyncio.sleep(0.1)  # Allow async publish to complete
+        # Poll for message acknowledgment instead of fixed sleep
+        await _wait_for_condition(lambda: message._acked)
 
         assert message._acked, "SMS message should be acknowledged"
 
@@ -281,7 +302,8 @@ class TestMessageAcknowledgment:
         )
 
         cm.handle_message(message)
-        await asyncio.sleep(0.1)
+        # Poll for message acknowledgment instead of fixed sleep
+        await _wait_for_condition(lambda: message._acked)
 
         assert message._acked, "Email message should be acknowledged"
 
@@ -392,10 +414,15 @@ class TestThreadSafePublishing:
             thread.start()
             thread.join()
 
-            # Allow async processing
-            await asyncio.sleep(0.2)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
+            # Poll for message to arrive instead of fixed sleep
+            msg = None
+            for _ in range(50):  # 5s timeout with 0.1s poll
+                msg = await pubsub.get_message(
+                    timeout=0.1,
+                    ignore_subscribe_messages=True,
+                )
+                if msg:
+                    break
 
             assert msg is not None, "Message not received from thread-safe publish"
             assert msg["data"] == '{"test": "data"}'
@@ -432,18 +459,17 @@ class TestThreadSafePublishing:
             for t in threads:
                 t.join()
 
-            await asyncio.sleep(0.3)
-
-            # Collect all messages
+            # Collect all messages - poll until we have all 5 or timeout
             received = []
-            for _ in range(10):
+            for _ in range(100):  # 10s timeout with 0.1s poll
                 msg = await pubsub.get_message(
-                    timeout=0.5,
+                    timeout=0.1,
                     ignore_subscribe_messages=True,
                 )
                 if msg:
                     received.append(json.loads(msg["data"]))
-                await asyncio.sleep(0.05)
+                if len(received) >= 5:
+                    break
 
             # All 5 messages should be received
             indices = {m["index"] for m in received}
@@ -519,18 +545,16 @@ class TestStartupInboundRace:
                 with patch("subprocess.run"):
                     cm.handle_message(message)
 
-                await asyncio.sleep(0.2)
-
-                # Collect events
-                for _ in range(10):
+                # Collect events - poll until we find startup event or timeout
+                for _ in range(50):  # 5s timeout with 0.1s poll
                     msg = await pubsub.get_message(
-                        timeout=0.3,
+                        timeout=0.1,
                         ignore_subscribe_messages=True,
                     )
                     if msg and msg["channel"] == "app:comms:startup":
                         event = Event.from_json(msg["data"])
                         received_events.append(event)
-                    await asyncio.sleep(0.05)
+                        break
 
             # StartupEvent should have been published
             startup_events = [e for e in received_events if isinstance(e, StartupEvent)]
@@ -574,18 +598,18 @@ class TestStartupInboundRace:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.2)
 
-            for _ in range(15):
+            # Poll until we find backup_contacts event or timeout
+            for _ in range(50):  # 5s timeout with 0.1s poll
                 msg = await pubsub.get_message(
-                    timeout=0.3,
+                    timeout=0.1,
                     ignore_subscribe_messages=True,
                 )
                 if msg and msg["channel"] == "app:comms:backup_contacts":
                     event = Event.from_json(msg["data"])
                     if isinstance(event, BackupContactsEvent):
                         received_backup.append(event)
-                await asyncio.sleep(0.05)
+                        break
 
         assert len(received_backup) >= 1, (
             "BackupContactsEvent not published with SMS. "
@@ -700,17 +724,16 @@ class TestEventPublishChannels:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.2)
 
-            for _ in range(10):
+            # Poll until we find msg_message event or timeout
+            for _ in range(50):  # 5s timeout with 0.1s poll
                 msg = await pubsub.get_message(
-                    timeout=0.3,
+                    timeout=0.1,
                     ignore_subscribe_messages=True,
                 )
                 if msg and "msg_message" in msg["channel"]:
                     received_channel = msg["channel"]
                     break
-                await asyncio.sleep(0.05)
 
         assert (
             received_channel == "app:comms:msg_message"
@@ -745,17 +768,16 @@ class TestEventPublishChannels:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.2)
 
-            for _ in range(10):
+            # Poll until we find email_message event or timeout
+            for _ in range(50):  # 5s timeout with 0.1s poll
                 msg = await pubsub.get_message(
-                    timeout=0.3,
+                    timeout=0.1,
                     ignore_subscribe_messages=True,
                 )
                 if msg and "email_message" in msg["channel"]:
                     received_channel = msg["channel"]
                     break
-                await asyncio.sleep(0.05)
 
         assert (
             received_channel == "app:comms:email_message"
@@ -794,17 +816,16 @@ class TestEventPublishChannels:
             )
 
             cm.handle_message(message)
-            await asyncio.sleep(0.2)
 
-            for _ in range(10):
+            # Poll until we find pre_hire event or timeout
+            for _ in range(50):  # 5s timeout with 0.1s poll
                 msg = await pubsub.get_message(
-                    timeout=0.3,
+                    timeout=0.1,
                     ignore_subscribe_messages=True,
                 )
                 if msg and "pre_hire" in msg["channel"]:
                     received_channel = msg["channel"]
                     break
-                await asyncio.sleep(0.05)
 
         assert received_channel == "app:comms:pre_hire", (
             f"Pre-hire published to wrong channel: {received_channel}. "
