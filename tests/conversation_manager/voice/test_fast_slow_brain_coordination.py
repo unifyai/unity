@@ -23,6 +23,8 @@ What This File Tests:
 4. **Schema correctness**: Do the response models allow the intended behavior?
 5. **Rapid utterance handling**: Does the slow brain complete thinking even with
    rapid user turns?
+6. **Stale guidance filtering**: Does the system filter out guidance that's no longer
+   relevant because the conversation moved on?
 
 Key Principle (per system prompt in prompt_builders.py):
 --------------------------------------------------------
@@ -52,6 +54,13 @@ When user turns occur faster than the slow brain can think, every new utterance
 cancels the in-flight LLM run (because interject_or_run uses cancel_running=True).
 This means the slow brain NEVER completes thinking if the user keeps talking.
 Tests in this file document and verify the fix for this issue.
+
+Known Issue (stale guidance after topic change):
+------------------------------------------------
+When the user changes topics while the slow brain is thinking, the slow brain's
+guidance may be about the OLD topic. Without filtering, this stale guidance is
+sent to the fast brain, causing confusing out-of-context speech.
+Tests in this file document and verify the fix for this issue.
 """
 
 from __future__ import annotations
@@ -64,6 +73,7 @@ import pytest
 from unity.conversation_manager.events import (
     PhoneCallStarted,
     InboundPhoneUtterance,
+    OutboundPhoneUtterance,
     CallGuidance,
 )
 from unity.conversation_manager.types import Medium, Mode
@@ -515,3 +525,391 @@ class TestRapidUtteranceHandling:
 
         finally:
             cm._run_llm = tracked_run_llm_with_simulated_delay  # Keep mock for teardown
+
+
+# =============================================================================
+# Test: Stale guidance filtering - guidance should not be sent if topic changed
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestStaleGuidanceFiltering:
+    """
+    Tests for filtering out stale guidance when the conversation has moved on.
+
+    The slow brain takes 10-20 seconds to think. During this time, the conversation
+    continues - the user may change topics, the fast brain may respond, etc.
+
+    When the slow brain finally produces guidance, it may be about the OLD topic
+    that was being discussed when it STARTED thinking, not the CURRENT topic.
+
+    Without filtering, this stale guidance causes confusing out-of-context speech:
+    - User: "What time is the meeting?"
+    - (slow brain starts thinking about meeting time)
+    - User: "Actually never mind, what's the weather like?"
+    - Fast brain: "Let me check the weather for you..."
+    - (slow brain finishes): "The meeting is at 3pm Thursday"  <-- STALE!
+    - Result: Confusing, out-of-context mention of meeting time
+
+    The fix is a relevance filter that checks if guidance is still relevant before
+    sending it to the fast brain. The filter uses a fast model (no extended thinking)
+    to quickly assess relevance based on:
+    - The guidance content
+    - Messages that arrived AFTER the slow brain started thinking
+    - Whether the topic/context has changed
+    """
+
+    @pytest.fixture
+    def boss_contact(self):
+        """The boss contact (contact_id=1) who is on the call."""
+        return TEST_CONTACTS[1]
+
+    async def test_stale_guidance_should_be_filtered_after_topic_change(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        FAILING TEST: Stale guidance about old topic should NOT be sent to fast brain.
+
+        This test simulates a real-world scenario:
+        1. User asks about topic A (meeting time)
+        2. Slow brain starts thinking (simulated 3 second delay)
+        3. While slow brain thinks, user changes to topic B (weather)
+        4. Fast brain responds about weather
+        5. Slow brain finishes with guidance about topic A (meeting)
+        6. This guidance is NOW STALE - the conversation moved on
+
+        Expected behavior (with relevance filter):
+        - The guidance about meeting time should NOT be published to fast brain
+        - The filter should detect that the conversation has moved to weather
+
+        Current behavior (without filter - THIS TEST SHOULD FAIL):
+        - The guidance about meeting time IS published to fast brain
+        - Fast brain speaks about meeting time, confusing the user
+
+        The relevance filter will:
+        - Intercept guidance before publishing to app:call:call_guidance
+        - Check messages that arrived AFTER the slow brain's snapshot
+        - Use a fast model to determine if guidance is still relevant
+        - Only publish if relevant; drop if stale
+        """
+        cm = initialized_cm.cm
+
+        # Start a call
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        # Verify we're in voice mode
+        assert cm.mode == Mode.CALL, "Should be in CALL mode after PhoneCallStarted"
+
+        # Track what guidance is actually published to the fast brain
+        published_guidance: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_guidance(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                try:
+                    data = json.loads(message)
+                    # Extract content from either Event format or plain dict
+                    if "payload" in data:
+                        content = data["payload"].get("content", "")
+                    else:
+                        content = data.get("content", "")
+                    if content:
+                        published_guidance.append(
+                            {
+                                "content": content,
+                                "raw": data,
+                            },
+                        )
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_guidance
+
+        # Simulate the scenario with realistic timing
+        SLOW_BRAIN_THINKING_TIME = 3.0  # Simulated slow brain delay
+
+        try:
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 1: User asks about topic A (meeting time)
+            # ─────────────────────────────────────────────────────────────────
+            topic_a_utterance = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="Hey, what time is the meeting tomorrow?",
+            )
+            await EventHandler.handle_event(
+                topic_a_utterance,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Record the state snapshot that slow brain will use
+            # (In reality, this happens inside _run_llm, but we need to track it)
+            slow_brain_snapshot_time = asyncio.get_event_loop().time()
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 2: Mock slow brain to take time and return guidance about topic A
+            # ─────────────────────────────────────────────────────────────────
+            # We need to intercept the LLM call, delay it, and return specific guidance
+            original_run_llm = cm._run_llm
+            slow_brain_started = asyncio.Event()
+            slow_brain_can_finish = asyncio.Event()
+
+            async def slow_brain_with_delay_and_stale_guidance():
+                """
+                Simulates slow brain that:
+                1. Takes time to think (SLOW_BRAIN_THINKING_TIME)
+                2. Returns guidance about topic A (meeting time) - which will be stale
+                """
+                slow_brain_started.set()
+
+                # Wait for the signal that we can finish (after topic change)
+                await slow_brain_can_finish.wait()
+
+                # Simulate thinking time
+                await asyncio.sleep(0.1)  # Small delay for realism
+
+                # Now we need to actually run the brain logic but with mocked output
+                # We'll directly publish the call_guidance that the slow brain would produce
+                # This simulates what happens when _run_llm completes in conversation_manager.py
+
+                # The slow brain's guidance is about the ORIGINAL topic (meeting)
+                # because that's what was in its snapshot when it started thinking
+                stale_guidance_content = (
+                    "The meeting tomorrow is scheduled for 3pm in Conference Room B"
+                )
+
+                # Publish the guidance (this is what _run_llm does via structured output handling)
+                guidance_event = CallGuidance(
+                    contact=boss_contact,
+                    content=stale_guidance_content,
+                )
+                await cm.event_broker.publish(
+                    "app:call:call_guidance",
+                    guidance_event.to_json(),
+                )
+
+                return None
+
+            cm._run_llm = slow_brain_with_delay_and_stale_guidance
+
+            # Trigger the slow brain (it will start but wait for our signal)
+            await cm.flush_llm_requests()
+
+            # Wait for slow brain to start
+            await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 3: While slow brain is "thinking", user changes topic to B
+            # ─────────────────────────────────────────────────────────────────
+            await asyncio.sleep(0.2)  # Small delay to simulate natural conversation
+
+            topic_b_utterance = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="Actually, forget about that. What's the weather like today?",
+            )
+            await EventHandler.handle_event(
+                topic_b_utterance,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 4: Fast brain responds about weather (simulated)
+            # ─────────────────────────────────────────────────────────────────
+            await asyncio.sleep(0.1)
+
+            # Simulate fast brain's response about weather
+            fast_brain_response = OutboundPhoneUtterance(
+                contact=boss_contact,
+                content="Let me check the weather for you. It looks like it's going to be sunny today, around 72 degrees.",
+            )
+            await EventHandler.handle_event(
+                fast_brain_response,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 5: Now let slow brain finish (it will publish stale guidance)
+            # ─────────────────────────────────────────────────────────────────
+            slow_brain_can_finish.set()
+
+            # Give time for slow brain to complete and publish guidance
+            await asyncio.sleep(0.5)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 6: Verify that stale guidance was NOT sent to fast brain
+            # ─────────────────────────────────────────────────────────────────
+
+            # Find any guidance about the meeting (topic A)
+            meeting_guidance = [
+                g
+                for g in published_guidance
+                if "meeting" in g["content"].lower()
+                or "3pm" in g["content"].lower()
+                or "conference room" in g["content"].lower()
+            ]
+
+            # THE KEY ASSERTION: Stale guidance should be filtered out
+            #
+            # With relevance filter: meeting_guidance should be empty (filtered)
+            # Without filter (current): meeting_guidance will contain the stale guidance
+            #
+            # This test SHOULD FAIL until the relevance filter is implemented
+            assert len(meeting_guidance) == 0, (
+                f"Stale guidance was sent to fast brain!\n"
+                f"\n"
+                f"The conversation moved from 'meeting time' to 'weather', but the\n"
+                f"slow brain's guidance about the meeting was still published.\n"
+                f"\n"
+                f"Published guidance about meeting:\n"
+                f"  {[g['content'] for g in meeting_guidance]}\n"
+                f"\n"
+                f"Conversation flow:\n"
+                f"  1. User: 'What time is the meeting tomorrow?'\n"
+                f"  2. (slow brain starts thinking...)\n"
+                f"  3. User: 'Actually, forget about that. What's the weather?'\n"
+                f"  4. Fast brain: 'Let me check the weather... sunny, 72 degrees'\n"
+                f"  5. Slow brain finishes: 'Meeting is at 3pm' <-- STALE!\n"
+                f"\n"
+                f"Required fix:\n"
+                f"  Implement a relevance filter that checks if guidance is still\n"
+                f"  relevant before sending it to the fast brain. The filter should:\n"
+                f"  1. Capture the conversation state when slow brain STARTED thinking\n"
+                f"  2. Compare to current state when slow brain FINISHES\n"
+                f"  3. Use a fast model to determine if guidance is still relevant\n"
+                f"  4. Drop guidance if the topic/context has changed"
+            )
+
+        finally:
+            cm.event_broker.publish = original_publish
+            cm._run_llm = original_run_llm
+
+    async def test_relevant_guidance_should_still_be_sent(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        Control test: Guidance that IS still relevant should be sent normally.
+
+        This ensures the relevance filter doesn't over-filter. If the user asks
+        about a topic and the conversation stays on that topic, the guidance
+        should be sent.
+
+        Scenario:
+        1. User asks about meeting time
+        2. Slow brain starts thinking
+        3. User asks follow-up about the same meeting (topic stays the same)
+        4. Slow brain finishes with guidance about meeting
+        5. Guidance IS still relevant - should be sent
+        """
+        cm = initialized_cm.cm
+
+        # Start a call
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        # Track published guidance
+        published_guidance: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_guidance(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                try:
+                    data = json.loads(message)
+                    if "payload" in data:
+                        content = data["payload"].get("content", "")
+                    else:
+                        content = data.get("content", "")
+                    if content:
+                        published_guidance.append({"content": content})
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_guidance
+
+        try:
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            # User asks about meeting
+            utterance1 = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="What time is the meeting tomorrow?",
+            )
+            await EventHandler.handle_event(
+                utterance1,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Mock slow brain
+            original_run_llm = cm._run_llm
+            slow_brain_started = asyncio.Event()
+            slow_brain_can_finish = asyncio.Event()
+
+            async def slow_brain_with_relevant_guidance():
+                slow_brain_started.set()
+                await slow_brain_can_finish.wait()
+                await asyncio.sleep(0.1)
+
+                # Guidance about meeting - should be relevant
+                relevant_guidance = (
+                    "The meeting tomorrow is at 3pm in Conference Room B"
+                )
+                guidance_event = CallGuidance(
+                    contact=boss_contact,
+                    content=relevant_guidance,
+                )
+                await cm.event_broker.publish(
+                    "app:call:call_guidance",
+                    guidance_event.to_json(),
+                )
+                return None
+
+            cm._run_llm = slow_brain_with_relevant_guidance
+            await cm.flush_llm_requests()
+            await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
+
+            # User asks follow-up about SAME topic (meeting)
+            await asyncio.sleep(0.2)
+            utterance2 = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="And who's going to be at the meeting?",
+            )
+            await EventHandler.handle_event(
+                utterance2,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Let slow brain finish
+            slow_brain_can_finish.set()
+            await asyncio.sleep(0.5)
+
+            # Guidance about meeting should be sent (topic didn't change)
+            meeting_guidance = [
+                g
+                for g in published_guidance
+                if "meeting" in g["content"].lower() or "3pm" in g["content"].lower()
+            ]
+
+            assert len(meeting_guidance) >= 1, (
+                f"Relevant guidance was filtered incorrectly!\n"
+                f"\n"
+                f"The user asked about the meeting and then asked a follow-up\n"
+                f"about the same meeting. The guidance should have been sent.\n"
+                f"\n"
+                f"Published guidance: {[g['content'] for g in published_guidance]}\n"
+            )
+
+        finally:
+            cm.event_broker.publish = original_publish
+            cm._run_llm = original_run_llm
