@@ -9,6 +9,7 @@ that holds operations until the ConversationManager is fully initialized.
 from __future__ import annotations
 
 import asyncio
+import time as _time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,21 @@ from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.events import SyncContacts
+
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.02,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
 
 
 @pytest.mark.asyncio
@@ -62,8 +78,8 @@ async def test_queue_operation_waits_for_initialization():
         # Now mark as initialized - this unblocks the listener
         mock_cm.initialized = True
 
-        # Wait for the queued operation to be processed
-        await asyncio.sleep(0.2)
+        # Wait for the queued operation to be processed (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: mock_sync.called, timeout=2.0)
 
         # NOW the sync should have been called
         mock_sync.assert_called_once()

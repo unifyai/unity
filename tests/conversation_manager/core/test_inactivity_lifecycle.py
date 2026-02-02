@@ -183,12 +183,10 @@ class TestInactivityDetectionBasics:
 
         initial_activity_time = cm.last_activity_time
 
-        # Simulate some time passing
-        await asyncio.sleep(0.1)
-
-        # Publishing an event and processing it should update last_activity_time
-        # We'll do this by directly simulating what wait_for_events does
-        cm.last_activity_time = cm.loop.time()
+        # Simulate activity update (what wait_for_events does when receiving an event)
+        # We use direct time manipulation instead of sleeping - this makes the test
+        # deterministic regardless of actual wall-clock time
+        cm.last_activity_time = cm.loop.time() + 0.1
 
         assert (
             cm.last_activity_time > initial_activity_time
@@ -286,11 +284,9 @@ class TestPingKeepAlive:
         # Record initial activity time
         initial_time = cm.last_activity_time
 
-        # Simulate time passing
-        await asyncio.sleep(0.1)
-
-        # Simulate receiving a ping (what wait_for_events does)
-        cm.last_activity_time = cm.loop.time()
+        # Simulate activity update from receiving a ping
+        # We use direct time manipulation instead of sleeping
+        cm.last_activity_time = cm.loop.time() + 0.1
 
         # Handle the ping event
         ping_event = Ping(kind="keepalive")
@@ -626,11 +622,8 @@ class TestFullLifecycleIntegration:
         cm.inactivity_timeout = 0.1
         cm.inactivity_check_interval = 0.03
 
-        # Simulate some activity
-        cm.last_activity_time = cm.loop.time()
-        await asyncio.sleep(0.05)
-
-        # Let inactivity kick in
+        # Set activity time to simulate recent activity, then force timeout
+        # We use direct time manipulation instead of sleeping
         cm.last_activity_time = cm.loop.time() - 1.0  # Force timeout
 
         # Run check_inactivity

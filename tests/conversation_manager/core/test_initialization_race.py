@@ -515,7 +515,7 @@ class TestRapidEventsRaceCondition:
             )
             await asyncio.gather(t1, t2)
 
-            # Collect events with short timeout
+            # Collect events with short timeout (get_message already has timeout, no extra sleep needed)
             for _ in range(10):
                 msg = await pubsub.get_message(
                     timeout=0.2,
@@ -527,7 +527,6 @@ class TestRapidEventsRaceCondition:
                         received.append(type(event).__name__)
                     except Exception:
                         pass
-                await asyncio.sleep(0.05)
 
         # Both events should have been received
         assert "StartupEvent" in received, "Startup event lost in race"
@@ -566,7 +565,7 @@ class TestRapidEventsRaceCondition:
 
             await asyncio.gather(*tasks)
 
-            # Collect all messages
+            # Collect all messages (get_message already has timeout, no extra sleep needed)
             for _ in range(20):
                 msg = await pubsub.get_message(
                     timeout=0.2,
@@ -579,7 +578,6 @@ class TestRapidEventsRaceCondition:
                             messages_received.append(event.content)
                     except Exception:
                         pass
-                await asyncio.sleep(0.05)
 
         # All 5 messages should be received
         assert len(messages_received) >= 5, (
