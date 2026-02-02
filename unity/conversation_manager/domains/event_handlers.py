@@ -189,7 +189,17 @@ async def _(
     )
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
-    await cm.request_llm_run(delay=0)
+    # NOTE: Do NOT trigger slow brain LLM run on call start.
+    # The fast brain (Voice Agent) handles the initial greeting and all
+    # conversational aspects autonomously. Triggering the slow brain here
+    # would cause it to provide unnecessary call_guidance (e.g., "Greet the user"),
+    # which leads to duplicate speech since the fast brain already greeted.
+    #
+    # The slow brain will be triggered later by:
+    # - InboundPhoneUtterance (user says something)
+    # - ActorResult (action completes)
+    # - NotificationInjectedEvent (cross-channel notification)
+    # - SMSReceived/EmailReceived while on call
 
 
 @EventHandler.register(

@@ -33,10 +33,15 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
         __base__=BaseModel,
     )
 
-    # Voice mode: thoughts + guidance for the Voice Agent
+    # Voice mode: thoughts + optional call_guidance for the Voice Agent
     # Both TTS and Realtime modes use call_guidance - the Main CM Brain
-    # provides guidance/data to the voice agent (fast brain) which handles
-    # the actual conversation.
+    # provides data/notifications to the voice agent (fast brain) which handles
+    # the actual conversation autonomously.
+    #
+    # IMPORTANT: call_guidance is OPTIONAL (default="") because the Voice Agent
+    # handles all conversational aspects independently. The slow brain should
+    # only provide call_guidance when it has specific data, requests, or
+    # notifications to communicate - NOT for conversational steering.
     VoiceResponse = create_model(
         "VoiceResponse",
         thoughts=(
@@ -45,7 +50,16 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
         ),
         call_guidance=(
             str,
-            Field(..., description="Guidance for the Voice Agent handling the call"),
+            Field(
+                default="",
+                description=(
+                    "Data, requests, or notifications for the Voice Agent. "
+                    "Leave empty unless you need to provide specific information "
+                    "(e.g., 'The meeting time was 3pm'), request data from the caller, "
+                    "or relay a notification from another channel. "
+                    "Do NOT use for conversational guidance - the Voice Agent handles that autonomously."
+                ),
+            ),
         ),
         __base__=BaseModel,
     )
