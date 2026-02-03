@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from sandboxes.display.formatting import draw_box, join_blocks, truncate
+from unity.events.types.manager_method import ManagerMethodPayload
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -41,6 +42,9 @@ class TraceDisplay:
         self._event_id: str = ""
         self._last_capture_error: str | None = None
         self._last_capture_error_at: float | None = None
+        # Optional mapping used by IPC-driven tracing:
+        # call_id (ManagerMethod) → index into `_entries`
+        self._call_id_to_index: dict[str, int] = {}
 
     def set_event_context(self, *, event_id: str) -> None:
         """Set the current event context (resets turn counter for the event)."""
@@ -53,6 +57,7 @@ class TraceDisplay:
         self._event_id = ""
         self._last_capture_error = None
         self._last_capture_error_at = None
+        self._call_id_to_index.clear()
 
     def entry_count(self) -> int:
         return len(self._entries)
@@ -81,7 +86,109 @@ class TraceDisplay:
         if len(self._entries) > self._max_entries:
             # FIFO eviction
             self._entries = self._entries[-self._max_entries :]
+            # Rebuild call_id mapping after eviction (small, bounded list).
+            try:
+                self._call_id_to_index = {
+                    k: i
+                    for i, (k, _idx) in enumerate(
+                        sorted(
+                            self._call_id_to_index.items(),
+                            key=lambda kv: kv[1],
+                        ),
+                    )
+                    if i < len(self._entries)
+                }
+            except Exception:
+                self._call_id_to_index.clear()
         return entry
+
+    def handle_codeact_execute_code(
+        self,
+        *,
+        call_id: str,
+        payload: ManagerMethodPayload,
+    ) -> None:
+        """
+        Ingest CodeActActor `execute_code` ManagerMethod events (IPC mode).
+
+        In multi-process GUI mode, the worker streams EventBus `ManagerMethod` events
+        across IPC. The UI process owns this TraceDisplay and uses these events to
+        render a best-effort CodeAct trace without directly instrumenting the actor.
+
+        We only handle:
+        - manager == "CodeActActor"
+        - method == "execute_code"
+        - phase in {"incoming", "outgoing"}
+        """
+
+        try:
+            if payload.manager != "CodeActActor" or payload.method != "execute_code":
+                return
+        except Exception:
+            return
+
+        phase = (payload.phase or "").strip().lower()
+        cid = str(call_id or "")
+        if not cid:
+            return
+
+        # Prefer a stable "execution id" per hierarchy label.
+        try:
+            if payload.hierarchy_label:
+                self._event_id = str(payload.hierarchy_label)
+        except Exception:
+            pass
+
+        if phase == "incoming":
+            code = (payload.instructions or payload.question or "").rstrip()
+            # Create a placeholder result; it will be updated on outgoing.
+            entry = TraceEntry(
+                turn_index=self._turn_counter + 1,
+                timestamp=time.time(),
+                event_id=self._event_id,
+                code=code,
+                result={"stdout": "", "stderr": "", "error": None},
+                error=None,
+            )
+            self._turn_counter += 1
+            self._entries.append(entry)
+            self._call_id_to_index[cid] = len(self._entries) - 1
+            if len(self._entries) > self._max_entries:
+                self._entries = self._entries[-self._max_entries :]
+                # Conservative: mapping may be stale after eviction.
+                self._call_id_to_index.clear()
+            return
+
+        if phase == "outgoing":
+            idx = self._call_id_to_index.get(cid)
+            if idx is None or idx < 0 or idx >= len(self._entries):
+                # Missing incoming; create a minimal entry.
+                self.capture_execution(
+                    code=(payload.instructions or payload.question or "").rstrip(),
+                    result={
+                        "stdout": (payload.answer or "").rstrip(),
+                        "stderr": "",
+                        "error": payload.error,
+                    },
+                )
+                return
+            try:
+                prior = self._entries[idx]
+                res = {
+                    "stdout": (payload.answer or "").rstrip(),
+                    "stderr": "",
+                    "error": payload.error,
+                }
+                self._entries[idx] = TraceEntry(
+                    turn_index=prior.turn_index,
+                    timestamp=prior.timestamp,
+                    event_id=prior.event_id,
+                    code=prior.code,
+                    result=res,
+                    error=str(payload.error) if payload.error else None,
+                )
+            except Exception:
+                return
 
     def render_recent(self, count: int = 3) -> str:
         n = int(max(1, count))
