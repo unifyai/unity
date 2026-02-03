@@ -1055,3 +1055,254 @@ class TestStaleGuidanceFiltering:
         finally:
             cm.event_broker.publish = original_publish
             cm._run_llm = original_run_llm
+
+
+# =============================================================================
+# Test: User corrections and restatements - guidance about wrong entity
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestUserCorrectionsAndRestatements:
+    """
+    Tests for when the user corrects or clarifies their request while slow brain is thinking.
+
+    This is different from a topic CHANGE - the user is still asking about the same
+    type of thing (e.g., "a meeting"), but they're correcting WHICH specific instance
+    they mean (e.g., "the Friday meeting, not Thursday").
+
+    The guidance filter currently checks for topic changes, but it may not catch
+    corrections where the general topic stays the same but the specific entity changes.
+
+    Example scenario:
+        User: "What time is the meeting?"
+        (slow brain starts thinking about THE meeting - assumes Thursday)
+        User: "I mean the Friday meeting, not Thursday"
+        Fast brain: "Got it, checking the Friday meeting"
+        Slow brain: "Meeting is at 3pm in Room A"  ← This is THURSDAY's meeting!
+
+    The guidance is about "a meeting" (same topic), but it's the WRONG meeting.
+    Sending this guidance would cause the fast brain to give incorrect information.
+    """
+
+    @pytest.fixture
+    def boss_contact(self):
+        """The boss contact (contact_id=1) who is on the call."""
+        return TEST_CONTACTS[1]
+
+    async def test_implicit_entity_correction_should_block_wrong_entity_guidance(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        SUBTLE TEST: When user implicitly switches to a different entity (without
+        explicitly rejecting the original), guidance about the original entity
+        should still be blocked.
+
+        This is harder than explicit correction ("not the Thursday one") because:
+        - User just mentions a DIFFERENT entity
+        - No explicit rejection of the original
+        - The filter must infer the correction from context
+
+        Scenario:
+            User: "What time is the status meeting?"
+            (slow brain starts thinking about status meeting)
+            User: "Oh wait, I meant the budget review"
+            Fast brain: "Checking the budget review..."
+            Slow brain: "The status meeting is at 2pm"  ← Should this be blocked?
+
+        The guidance filter might see:
+        - Both are about "meetings" (same general topic)
+        - User didn't explicitly say "not the status meeting"
+        - Example 2 in prompt says same-topic follow-ups should SEND
+
+        But the CORRECT behavior is:
+        - User switched to asking about a DIFFERENT meeting (budget review)
+        - Guidance about status meeting is now stale/irrelevant
+        - Should be BLOCKED
+
+        This tests whether the filter understands IMPLICIT entity corrections.
+        """
+        cm = initialized_cm.cm
+
+        # Start a call
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        assert cm.mode == Mode.CALL, "Should be in CALL mode"
+
+        # Track published guidance
+        published_guidance: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_guidance(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                try:
+                    data = json.loads(message)
+                    if "payload" in data:
+                        content = data["payload"].get("content", "")
+                    else:
+                        content = data.get("content", "")
+                    if content:
+                        published_guidance.append({"content": content})
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_guidance
+
+        try:
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 1: User asks about the "status meeting"
+            # ─────────────────────────────────────────────────────────────────
+            initial_question = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="What time is the status meeting?",
+            )
+            await EventHandler.handle_event(
+                initial_question,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Mock slow brain
+            original_run_llm = cm._run_llm
+            slow_brain_started = asyncio.Event()
+            slow_brain_can_finish = asyncio.Event()
+
+            async def slow_brain_with_status_meeting_guidance():
+                """
+                Simulates slow brain that:
+                1. Started thinking about "status meeting"
+                2. Produces guidance about the STATUS meeting
+                3. But user has since switched to asking about BUDGET REVIEW
+                """
+                from unity.common.prompt_helpers import now as prompt_now
+
+                contact_id = boss_contact["contact_id"]
+                conv_state = cm.contact_index.get_conversation_state(contact_id)
+                voice_medium = Medium.PHONE_CALL
+                voice_thread = list(conv_state.threads.get(voice_medium, []))
+
+                if voice_thread:
+                    last_msg = voice_thread[-1]
+                    slow_brain_start_time = last_msg.timestamp
+                else:
+                    slow_brain_start_time = prompt_now(as_string=False)
+
+                slow_brain_started.set()
+                await slow_brain_can_finish.wait()
+                await asyncio.sleep(0.1)
+
+                # Guidance is about STATUS meeting - but user switched to BUDGET REVIEW
+                # No explicit rejection, just a different entity mentioned
+                wrong_meeting_guidance = (
+                    "The status meeting is scheduled for 2pm in the Main Conference Room. "
+                    "The usual attendees are the engineering team leads."
+                )
+
+                should_send = await cm._check_guidance_relevance(
+                    wrong_meeting_guidance,
+                    slow_brain_start_time,
+                )
+
+                if should_send:
+                    guidance_event = CallGuidance(
+                        contact=boss_contact,
+                        content=wrong_meeting_guidance,
+                    )
+                    await cm.event_broker.publish(
+                        "app:call:call_guidance",
+                        guidance_event.to_json(),
+                    )
+
+                return None
+
+            cm._run_llm = slow_brain_with_status_meeting_guidance
+            await cm.flush_llm_requests()
+            await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 2: User IMPLICITLY switches to a different meeting
+            # Note: NO explicit "not the status meeting" - just mentions different one
+            # ─────────────────────────────────────────────────────────────────
+            await asyncio.sleep(0.2)
+            user_implicit_switch = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="Oh wait, I meant the budget review. When is that?",
+            )
+            await EventHandler.handle_event(
+                user_implicit_switch,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 3: Fast brain acknowledges and switches context
+            # ─────────────────────────────────────────────────────────────────
+            fast_brain_ack = OutboundPhoneUtterance(
+                contact=boss_contact,
+                content="Sure, let me look up the budget review meeting.",
+            )
+            await EventHandler.handle_event(
+                fast_brain_ack,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 4: Let slow brain finish with WRONG meeting guidance
+            # ─────────────────────────────────────────────────────────────────
+            slow_brain_can_finish.set()
+
+            # Wait for guidance filter (LLM call)
+            await asyncio.sleep(10.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 5: Verify guidance about WRONG meeting was blocked
+            # ─────────────────────────────────────────────────────────────────
+            status_meeting_guidance = [
+                g
+                for g in published_guidance
+                if "status meeting" in g["content"].lower()
+                or "2pm" in g["content"].lower()
+                or "engineering team" in g["content"].lower()
+            ]
+
+            # THE KEY ASSERTION: Guidance about the WRONG entity should be blocked
+            #
+            # This test may FAIL because:
+            # - The filter sees "meeting" in both guidance and conversation
+            # - User didn't explicitly say "not the status meeting"
+            # - Filter might think this is same-topic (both about meetings)
+            #
+            # But the user clearly switched to a DIFFERENT meeting (budget review).
+            # The guidance about status meeting is now irrelevant.
+            assert len(status_meeting_guidance) == 0, (
+                f"Guidance about WRONG meeting was sent to fast brain!\n"
+                f"\n"
+                f"The user implicitly switched: 'Oh wait, I meant the budget review'\n"
+                f"But slow brain guidance was about the status meeting.\n"
+                f"\n"
+                f"Published status meeting guidance:\n"
+                f"  {[g['content'] for g in status_meeting_guidance]}\n"
+                f"\n"
+                f"Conversation flow:\n"
+                f"  1. User: 'What time is the status meeting?'\n"
+                f"  2. (slow brain starts thinking about status meeting)\n"
+                f"  3. User: 'Oh wait, I meant the budget review. When is that?'\n"
+                f"  4. Fast brain: 'Sure, let me look up the budget review meeting.'\n"
+                f"  5. Slow brain: 'The status meeting is at 2pm...'  ← WRONG!\n"
+                f"\n"
+                f"Unlike explicit correction ('not the status meeting'), this was\n"
+                f"an IMPLICIT switch - user just mentioned a different meeting.\n"
+                f"The filter needs to recognize that 'status meeting' ≠ 'budget review'\n"
+                f"even though both are meetings (same general topic, different entity).\n"
+            )
+
+        finally:
+            cm.event_broker.publish = original_publish
+            cm._run_llm = original_run_llm
