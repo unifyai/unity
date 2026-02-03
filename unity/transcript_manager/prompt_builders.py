@@ -29,6 +29,7 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
     two_table_reasoning_block as _two_table_reasoning_block,
     images_extras_for_transcripts as _images_extras_for_transcripts,
@@ -98,7 +99,7 @@ def build_ask_prompt(
     contact_columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
-) -> str:  # noqa: C901 – long, but flat
+) -> PromptParts:  # noqa: C901 – long, but flat
     """
     Build the system-prompt for :pyfunc:`TranscriptManager.ask`.
 

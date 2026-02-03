@@ -672,7 +672,7 @@ def images_first_ask_for_tasks(*, ask_image_name: Optional[str]) -> str:
     return "\n".join(lines)
 
 
-def compose_system_prompt(spec: PromptSpec) -> str:
+def compose_system_prompt(spec: PromptSpec) -> PromptParts:
     """Compose a standardized system prompt based on the provided spec.
 
     The block order is fixed; absent/None parts are skipped. Builders are
