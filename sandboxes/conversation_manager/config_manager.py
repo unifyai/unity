@@ -155,6 +155,7 @@ class ConfigurationManager:
         config: ActorConfig,
         *,
         agent_server_url: str = "http://localhost:3000",
+        require_agent_service_running: bool = True,
     ) -> ValidationResult:
         """
         Validate that required infrastructure for the selected config is available.
@@ -173,18 +174,23 @@ class ConfigurationManager:
                     ).help_text,
                 )
             # Real computer interface requires agent-service.
-            ok = self._validate_agent_service(agent_server_url)
-            if not ok:
-                diag = diagnose_agent_service_setup(
-                    repo_root=self._project_root,
-                    agent_server_url=agent_server_url,
-                )
-                return ValidationResult(
-                    ok=False,
-                    failed_component="Real Computer Interface",
-                    error=diag.summary,
-                    help_text=diag.help_text,
-                )
+            #
+            # In GUI mode, the runtime process owns agent-service startup and can surface
+            # failures in the UI. In that mode, we don't require agent-service to be
+            # running *before* spawning the runtime.
+            if require_agent_service_running:
+                ok = self._validate_agent_service(agent_server_url)
+                if not ok:
+                    diag = diagnose_agent_service_setup(
+                        repo_root=self._project_root,
+                        agent_server_url=agent_server_url,
+                    )
+                    return ValidationResult(
+                        ok=False,
+                        failed_component="Real Computer Interface",
+                        error=diag.summary,
+                        help_text=diag.help_text,
+                    )
 
             # Real managers require project connectivity. This is a lightweight probe; it
             # will fail early if the backend session is misconfigured.
