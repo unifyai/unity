@@ -180,7 +180,6 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> str:
         """Interject a message into the in-flight handle.
 
@@ -188,8 +187,6 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
             message: The interjection message to inject.
             _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         if self._cancelled:
             return "Interaction stopped."
@@ -238,7 +235,6 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.
 
@@ -246,8 +242,6 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
             question: The question to ask.
             parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         follow_up_prompt = build_followup_prompt(
             question=question,

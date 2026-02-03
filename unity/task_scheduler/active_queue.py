@@ -648,7 +648,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )
-                # Deliver any queued interjections (message + images) for the newly active task
+                # Deliver any queued interjections for the newly active task
                 try:
                     pending_msgs = getattr(self, "_queued_interjections", {}).pop(
                         self._current_task_id,
@@ -658,13 +658,9 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                         try:
                             if isinstance(_item, dict):
                                 _m = _item.get("message", "")
-                                _imgs = _item.get("images")
                             else:
-                                _m, _imgs = _item, None
-                            if _imgs is None:
-                                await self._current_handle.interject(_m)
-                            else:
-                                await self._current_handle.interject(_m, images=_imgs)
+                                _m = _item
+                            await self._current_handle.interject(_m)
                         except Exception:
                             pass
                 except Exception:
@@ -679,7 +675,6 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
     ) -> None:  # type: ignore[override]
         """Route interjections to specific tasks in the queue using an LLM router.
 
@@ -697,17 +692,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         if self._should_delegate_directly():
             if not (message or "").strip():
                 return
-            if images is None:
-                await self._current_handle.interject(
-                    message,
-                    _parent_chat_context_cont=_parent_chat_context_cont,
-                )
-            else:
-                await self._current_handle.interject(
-                    message,
-                    _parent_chat_context_cont=_parent_chat_context_cont,
-                    images=images,
-                )
+            await self._current_handle.interject(
+                message,
+                _parent_chat_context_cont=_parent_chat_context_cont,
+            )
             return
 
         # Fast path: empty/whitespace → no-op
@@ -746,10 +734,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 except Exception:
                     pass
                 return
-            if images is None:
-                await self._current_handle.interject(message)
-            else:
-                await self._current_handle.interject(message, images=images)
+            await self._current_handle.interject(message)
             return
 
         if not hasattr(self, "_queued_interjections"):
@@ -763,16 +748,11 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             for tid in task_ids:
                 if tid == self._current_task_id:
                     try:
-                        await self._current_handle.interject(instr, images=images)
+                        await self._current_handle.interject(instr)
                     except Exception:
                         pass
                 else:
-                    self._queued_interjections.setdefault(tid, []).append(
-                        {
-                            "message": instr,
-                            "images": images,
-                        },
-                    )
+                    self._queued_interjections.setdefault(tid, []).append(instr)
         return
 
     async def stop(self, *, cancel: bool = False, reason: Optional[str] = None, **kwargs) -> Optional[str]:  # type: ignore[override]

@@ -155,7 +155,6 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 parent_chat_context=_parent_chat_context,
                 clarification_up_q=_clarification_up_q,
                 clarification_down_q=_clarification_down_q,
-                images=None,
             )
         else:
             actor_steerable_handle = await actor.act(
@@ -190,7 +189,6 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
     ) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
         intent: Optional[str] = None
@@ -295,12 +293,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             return
 
         # No stop/defer/cancel intent ⇒ forward interjection to the actor.
-        # Avoid passing images kwarg when None to preserve compatibility with wrappers
-        # that don't declare the images kwarg (e.g., some test monkeypatches).
-        if images is None:
-            await self._actor_handle.interject(message)  # type: ignore[arg-type]
-        else:
-            await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
+        await self._actor_handle.interject(message)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
     async def stop(

@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple, Type, Union
 from pydantic import BaseModel
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 import asyncio
 import functools
 import re
@@ -206,7 +205,6 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -237,11 +235,6 @@ class ContactManager(BaseContactManager):
         )
         client.set_system_message(_ask_prompt)
 
-        if images:
-            tool_policy_fn = self._ask_tool_policy_with_images
-        else:
-            tool_policy_fn = self._default_ask_tool_policy
-
         handle = start_async_tool_loop(
             client,
             text,
@@ -249,11 +242,10 @@ class ContactManager(BaseContactManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            tool_policy=tool_policy_fn,
+            tool_policy=self._default_ask_tool_policy,
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            images=images,
             response_format=response_format,
         )
 
@@ -281,7 +273,6 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -317,7 +308,6 @@ class ContactManager(BaseContactManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
-            images=images,
             response_format=response_format,
         )
 
@@ -1199,26 +1189,4 @@ class ContactManager(BaseContactManager):
             and "ask" in current_tools
         ):
             return ("required", {"ask": current_tools["ask"]})
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _ask_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_contacts/ask_image/attach_image_raw (if enabled); auto thereafter.
-
-        This ensures the model begins by either running a semantic query, asking
-        a provided image a question, or attaching image context; subsequent steps
-        can proceed freely.
-        """
-        from unity.settings import SETTINGS
-
-        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_contacts", "ask_image", "attach_image_raw"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
         return ("auto", current_tools)

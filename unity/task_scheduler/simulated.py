@@ -205,7 +205,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> str:
         """Append a follow-up message that will be folded into the prompt.
 
@@ -213,8 +212,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             message: The interjection message to inject.
             _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         if self._cancelled:
             return "Interaction already stopped."
@@ -303,7 +300,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.
@@ -312,8 +308,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             question: The question to ask.
             parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
             _return_reasoning_steps: Whether to return reasoning steps.
         """
         follow_up_prompt = build_followup_prompt(
@@ -668,7 +662,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 message: str,
                 *,
                 _parent_chat_context_cont: list[dict] | None = None,
-                images: object | None = None,
             ) -> None:  # type: ignore[override]
                 self._log_interject(message)
                 try:
@@ -677,10 +670,9 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                         await self._inner.interject(  # type: ignore[arg-type]
                             message,
                             _parent_chat_context_cont=_parent_chat_context_cont,
-                            images=images,
                         )
                     except TypeError:
-                        await self._inner.interject(message, images=images)  # type: ignore[arg-type]
+                        await self._inner.interject(message)  # type: ignore[arg-type]
                 except Exception:
                     return None
 
@@ -754,7 +746,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 question: str,
                 *,
                 _parent_chat_context: list[dict] | None = None,
-                images: object | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":
                 return await self._inner.ask(question)  # type: ignore[attr-defined]
