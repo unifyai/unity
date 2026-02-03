@@ -347,40 +347,44 @@ class PromptParts:
     def add(self, part: str, separator: bool = True, static: bool = True) -> None:
         """Add a part, optionally with a preceding blank line separator.
 
+        Consecutive parts with the same `static` value are merged into a single
+        content block. A new entry is created only when the `static` value
+        differs from the previous content part. Empty parts are skipped.
+
         Parameters
         ----------
         part : str
-            The content to add.
+            The content to add. Empty strings are ignored.
         separator : bool
-            If True (default), a blank line entry is prepended before the part.
-            Set to False for the first part or when no separator is desired.
+            If True (default), adds ``\\n\\n`` before the part.
+            If False, only a single newline is added.
         static : bool
             If True (default), the part is marked as static content.
             Set to False for dynamic content that may change between runs.
         """
-        if separator:
-            self._parts.append({"type": "text", "content": "", "static": True})
-        self._parts.append({"type": "text", "content": part, "static": static})
+        # Skip empty parts
+        if not part:
+            return
+
+        if not self._parts:
+            # First item - add directly without separator
+            self._parts.append({"type": "text", "content": part, "static": static})
+        elif self._parts[-1]["static"] == static:
+            # Same static - merge with previous content
+            joiner = "\n\n" if separator else "\n"
+            self._parts[-1]["content"] += joiner + part
+        else:
+            # Different static - add new block
+            content = ("\n\n" + part) if separator else "\n" + part
+            self._parts.append({"type": "text", "content": content, "static": static})
 
     def to_list(self) -> List[Dict[str, Any]]:
-        """Return the internal structured parts, omitting empty separator entries."""
-        return [p for p in self._parts if p["content"]]
+        """Return the internal structured parts."""
+        return list(self._parts)
 
     def flatten(self) -> str:
-        """Normalize and return the full prompt string.
-
-        Normalization removes consecutive empty strings and trailing blanks,
-        then joins all content with newlines.
-        """
-        contents = [p["content"] for p in self._parts]
-        normalized: List[str] = []
-        for c in contents:
-            if c == "" and (not normalized or normalized[-1] == ""):
-                continue
-            normalized.append(c)
-        if normalized and normalized[-1] == "":
-            normalized.pop()
-        return "\n".join(normalized)
+        """Return the full prompt string by concatenating all parts."""
+        return "".join(p["content"] for p in self._parts)
 
 
 def render_tools_block(tools: Dict[str, Callable]) -> str:
