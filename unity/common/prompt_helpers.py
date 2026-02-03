@@ -752,8 +752,7 @@ def compose_system_prompt(spec: PromptSpec) -> str:
 
     # 7b) Tool availability guidance (per-turn masking explanation)
     if spec.include_tool_availability_guidance:
-        parts.append("")
-        parts.append(tool_availability_guidance())
+        parts.add(tool_availability_guidance())
 
     # 8) Usage examples (+ optional clarification examples)
     if _nonempty(spec.usage_examples):
