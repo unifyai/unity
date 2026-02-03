@@ -21,7 +21,7 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
     ) -> "SteerableToolHandle":
         return self
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
@@ -30,7 +30,7 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         return "ack"
 
     # SteerableToolHandle API
-    def stop(
+    async def stop(
         self,
         reason: str | None = None,
         *,
@@ -79,7 +79,7 @@ class _PrivateAttrHandle(SteerableToolHandle):
     async def interject(self, message: str, *, _parent_chat_context_cont: list[dict] | None = None) -> None:  # type: ignore[override]
         return None
 
-    def stop(self, reason: str | None = None):  # type: ignore[override]
+    async def stop(self, reason: str | None = None):  # type: ignore[override]
         return "stopped"
 
     async def pause(self):  # type: ignore[override]
@@ -186,7 +186,7 @@ class _CustomArgsHandle(SteerableToolHandle):
         return None
 
     # Stop with a different kw (abandon) than wrapper's cancel
-    def stop(
+    async def stop(
         self,
         *,
         reason: str | None = None,
@@ -278,7 +278,7 @@ async def test_stop_invokes_inner():
         "execute",
     )
 
-    ret = logged.stop(reason="please-stop")
+    ret = await logged.stop(reason="please-stop")
     assert ret == "stopped"
     # inner recorded call with our reason; abandon defaults to False
     assert inner.stop_calls and inner.stop_calls[-1]["reason"] == "please-stop"

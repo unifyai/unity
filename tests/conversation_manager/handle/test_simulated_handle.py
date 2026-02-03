@@ -245,7 +245,7 @@ async def test_stop():
     await asyncio.sleep(0.05)
     assert not result_task.done(), "Handle should not be done before stop()"
 
-    cm_handle.stop(reason="Test cleanup")
+    await cm_handle.stop(reason="Test cleanup")
 
     await asyncio.wait_for(result_task, timeout=1)
     assert cm_handle.done(), "Handle should report done after stop()"
@@ -357,7 +357,7 @@ async def test_stop_while_paused():
     assert not res_task.done(), "result() should block while waiting for stop()"
 
     # Stop should unblock and complete promptly
-    cm_handle.stop("cancelled by user")
+    await cm_handle.stop("cancelled by user")
 
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str), "result() should return a string"
@@ -385,7 +385,7 @@ async def test_result_blocks_until_stopped():
     res_task = await _assert_blocks_while_paused(cm_handle.result())
 
     # Stop the handle
-    cm_handle.stop("test complete")
+    await cm_handle.stop("test complete")
 
     # Now result() should complete
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)

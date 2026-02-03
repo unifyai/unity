@@ -86,13 +86,13 @@ class SteerableHandle(ABC):
         """
 
     @abstractmethod
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
-    ) -> Awaitable[Optional[str]] | Optional[str]:
+    ) -> Optional[str]:
         """Provide additional information or instructions to the running task.
 
         Use this to give the task new context, correct its approach, or add
@@ -117,12 +117,12 @@ class SteerableToolHandle(SteerableHandle):
         pass
 
     @abstractmethod
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,
         images: "Optional[ImageRefs]" = None,
-    ) -> Awaitable[Optional[str]] | Optional[str]:
+    ) -> Optional[str]:
         """Stop this task immediately, cancelling any pending work.
 
         Use this when the task should be terminated. This is a destructive
@@ -368,9 +368,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             class _StaticHandle(SteerableToolHandle):
                 def __init__(self): ...
 
-                async def interject(self, message: str): ...
+                async def interject(self, message: str, **kwargs): ...
 
-                def stop(self, reason: Optional[str] = None): ...
+                async def stop(self, reason: Optional[str] = None, **kwargs): ...
 
                 async def pause(self): ...
 
@@ -382,7 +382,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 async def result(self):
                     return await _static()
 
-                async def ask(self, question: str) -> "SteerableToolHandle":
+                async def ask(self, question: str, **kwargs) -> "SteerableToolHandle":
                     return self
 
                 # Inert stubs for required abstract event APIs
@@ -584,7 +584,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             pass
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,

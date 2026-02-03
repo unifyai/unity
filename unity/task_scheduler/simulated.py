@@ -200,7 +200,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
@@ -222,11 +222,12 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._interjections.append(message)
         return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,
         cancel: bool = False,
+        **kwargs,
     ) -> str:
         """Cancel further processing so `.result()` raises.
 
@@ -683,19 +684,20 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 except Exception:
                     return None
 
-            def stop(
+            async def stop(
                 self,
                 *,
                 cancel: bool = False,
                 reason: Optional[str] = None,
+                **kwargs,
             ) -> Optional[str]:  # type: ignore[override]
                 self._log_stop(reason)
                 # Prefer actor-style stop(reason) but tolerate both signatures
                 try:
-                    return self._inner.stop(reason)  # type: ignore[call-arg]
+                    return await self._inner.stop(reason)  # type: ignore[call-arg]
                 except TypeError:
                     try:
-                        return self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
+                        return await self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
                     except Exception:
                         return "Stopped."
                 except Exception:

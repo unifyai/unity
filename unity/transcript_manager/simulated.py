@@ -169,7 +169,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._msgs
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
@@ -191,9 +191,10 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._extra_user_msgs.append(message)
         return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
+        **kwargs,
     ) -> str:
         """Stop the in-flight handle.
 

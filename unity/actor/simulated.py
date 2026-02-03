@@ -43,9 +43,10 @@ class _StaticAnswerHandle(SteerableToolHandle):
     ) -> Optional[str]:
         return None
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         return None
 
@@ -341,9 +342,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
         return raw_result
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
+        **kwargs,
     ) -> str:
         """Stop the in-flight handle.
 

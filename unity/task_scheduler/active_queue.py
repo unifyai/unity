@@ -775,9 +775,9 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     )
         return
 
-    def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+    async def stop(self, *, cancel: bool = False, reason: Optional[str] = None, **kwargs) -> Optional[str]:  # type: ignore[override]
         try:
-            return self._current_handle.stop(cancel=cancel, reason=reason)
+            return await self._current_handle.stop(cancel=cancel, reason=reason)
         except Exception:
             return "Stopped."
 
@@ -1077,13 +1077,13 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             def __init__(self, text: str) -> None:
                 self._text = text
 
-            async def interject(self, message: str): ...
+            async def interject(self, message: str, **kwargs): ...
 
-            def stop(self, reason: Optional[str] = None): ...
+            async def stop(self, reason: Optional[str] = None, **kwargs): ...
 
-            def pause(self): ...
+            async def pause(self): ...
 
-            def resume(self): ...
+            async def resume(self): ...
 
             def done(self) -> bool:
                 return True
@@ -1091,7 +1091,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             async def result(self) -> str:
                 return self._text
 
-            async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
+            async def ask(self, q: str, **kwargs) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
             # New abstract event APIs – provide harmless stubs for the static handle

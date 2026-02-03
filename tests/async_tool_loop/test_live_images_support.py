@@ -736,4 +736,4 @@ async def test_ask_loop_injects_overview_and_exposes_helpers(
     ), "Expected helper loop to expose image helpers"
 
     # Clean up outer loop
-    outer.stop("done")
+    await outer.stop("done")

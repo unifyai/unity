@@ -333,7 +333,7 @@ class MultiRequestHandle:
         self._coordinator.inject_interjection(self._request_id, question)
         return self
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
@@ -343,12 +343,13 @@ class MultiRequestHandle:
         """Inject additional context for this request."""
         self._coordinator.inject_interjection(self._request_id, message)
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
         images: "Optional[ImageRefs]" = None,
+        **kwargs,
     ) -> None:
         """Stop/cancel this specific request.
 

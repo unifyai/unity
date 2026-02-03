@@ -135,7 +135,7 @@ async def test_handle_stop(monkeypatch):
     actor = SimulatedActor()
     handle = await actor.act("Generate a long report.")
     await asyncio.sleep(0.05)
-    stop_msg = handle.stop("Not needed")
+    stop_msg = await handle.stop("Not needed")
     assert "stopped" in stop_msg.lower()
     result = await handle.result()
     assert isinstance(result, str) and result.strip()
@@ -463,7 +463,7 @@ async def test_stop_while_paused_finishes_immediately():
     await asyncio.sleep(0.2)
 
     # Stopping should unpause and complete immediately
-    handle.stop("cancelled by user")
+    await handle.stop("cancelled by user")
     result = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(result, str) and "stopped" in result.lower()
     assert handle.done()
@@ -501,7 +501,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     assert isinstance(question, str) and "clarify" in question.lower()
 
     # Without answering, issue stop and ensure result returns promptly
-    handle.stop("no longer needed")
+    await handle.stop("no longer needed")
     result = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(result, str) and "stopped" in result.lower()
     assert handle.done()

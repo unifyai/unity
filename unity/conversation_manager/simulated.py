@@ -227,7 +227,7 @@ class SimulatedConversationManagerHandle(
             def done(inner_self) -> bool:
                 return inner_self._done
 
-            def stop(inner_self, reason: str | None = None, *args, **kwargs):
+            async def stop(inner_self, reason: str | None = None, *args, **kwargs):
                 inner_self._log_stop(reason)
 
             async def pause(inner_self):
@@ -312,7 +312,7 @@ class SimulatedConversationManagerHandle(
         self._paused = False
         return "Simulated conversation is resumed."
 
-    def stop(self, reason: Optional[str] = None) -> str:
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> str:
         """Stops the simulated conversation."""
         self._log_stop(reason)
         self._stopped = True

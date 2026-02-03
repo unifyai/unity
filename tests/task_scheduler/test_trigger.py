@@ -202,5 +202,5 @@ async def test_triggerable_start_clones_instance():
     assert status_by_inst[1] == Status.triggerable
 
     # Clean-up (avoid background thread leaks)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()

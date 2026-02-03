@@ -32,7 +32,7 @@ class BaseActiveTask(SteerableToolHandle, ABC):
     """
 
     @abstractmethod
-    def stop(
+    async def stop(
         self,
         *,
         cancel: bool,

@@ -115,16 +115,16 @@ async def test_handle_interject(monkeypatch):
     orig = _SimulatedGuidanceHandle.interject
 
     @functools.wraps(orig)
-    def wrapped(self, msg: str) -> str:  # type: ignore[override]
+    async def wrapped(self, msg: str, **kwargs) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return orig(self, msg)
+        return await orig(self, msg, **kwargs)
 
     monkeypatch.setattr(_SimulatedGuidanceHandle, "interject", wrapped, raising=True)
 
     gm = SimulatedGuidanceManager()
     h = await gm.ask("Summarize our onboarding guidance.")
     await asyncio.sleep(0.05)
-    reply = h.interject("Focus on European enterprise scenarios.")
+    reply = await h.interject("Focus on European enterprise scenarios.")
     assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
@@ -139,7 +139,7 @@ async def test_handle_stop():
     gm = SimulatedGuidanceManager()
     h = await gm.ask("Generate a full guidance export.")
     await asyncio.sleep(0.05)
-    h.stop()
+    await h.stop()
     await h.result()
     assert h.done(), "Handle should report done after stop()"
 
@@ -253,7 +253,7 @@ async def test_handle_ask():
     handle = await gm.ask("Summarize all onboarding guidance this quarter.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on European enterprise accounts.")
+    await handle.interject("Focus on European enterprise accounts.")
 
     # Invoke the dynamic ask on the running handle
     nested = await handle.ask("What is the key point to emphasize?")
@@ -304,11 +304,11 @@ async def test_clear():
 async def test_stop_while_paused_finishes_immediately():
     gm = SimulatedGuidanceManager()
     h = await gm.ask("Produce an exhaustive guidance export.")
-    h.pause()
+    await h.pause()
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
-    h.stop("cancelled by user")
+    await h.stop("cancelled by user")
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()
@@ -331,7 +331,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     )
     q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in q.lower()
-    h.stop("no longer needed")
+    await h.stop("no longer needed")
     out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()

@@ -101,7 +101,7 @@ async def test_execute_ask(monkeypatch):
     await ask_h.result()
 
     # Explicitly stop to avoid relying on step-based completion
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert calls["ask"] == 1, "ask must be called exactly once"
@@ -136,7 +136,7 @@ async def test_execute_interject(monkeypatch):
     # Give the background thread one beat to process the step counter.
     await asyncio.sleep(0.2)
     # Gracefully stop to avoid leaking the background thread.
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert calls["interject"] == 1, "interject must be called exactly once"
@@ -179,7 +179,7 @@ async def test_execute_pause_resume(monkeypatch):
     await asyncio.sleep(0.1)
     await task.resume()
     # Stop the task to finish quickly and collect counts.
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert counts == {"pause": 1, "resume": 1}, "pause/resume each called once"
@@ -210,7 +210,7 @@ async def test_execute_stop(monkeypatch):
         "Extract sentiment from reviews.",
     )
 
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     result = await task.result()
 
     assert called["stop"] == 1, "stop must be invoked exactly once"
@@ -234,7 +234,7 @@ async def test_execute_result_and_done():
 
     # Perform an interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     result = await task.result()
 
     assert "stopped" in result.lower()
@@ -287,7 +287,7 @@ async def test_execute_handle_introspection():
     assert "append" in doc.lower() and "task" in doc.lower()
 
     # Cleanup: ensure any background work is finalised quickly
-    handle.stop(cancel=False)
+    await handle.stop(cancel=False)
     await handle.result()
 
 
@@ -389,13 +389,13 @@ async def test_async_tool_loop_calls_append_helper():
     try:
         active = getattr(ts, "_active_task", None)
         if active is not None:
-            active.stop(cancel=False)
+            await active.stop(cancel=False)
     except Exception:
         pass
 
     # Also stop the outer async tool loop; the end-to-end goal (append helper) is verified.
     try:
-        outer.stop("test cleanup")
+        await outer.stop("test cleanup")
     except Exception:
         pass
 
@@ -405,7 +405,7 @@ async def test_async_tool_loop_calls_append_helper():
         assert isinstance(final, str)
     except Exception:
         # Best-effort cleanup if the model doesn't finish on its own
-        outer.stop("cleanup")
+        await outer.stop("cleanup")
         await asyncio.wait_for(asyncio.shield(outer.result()), timeout=120)
 
 
@@ -428,7 +428,7 @@ async def test_execute_sets_activated_by_explicit():
 
     # Start by id (fast-path)
     handle = await ts.execute(task_id=task_id)
-    handle.stop(cancel=False)
+    await handle.stop(cancel=False)
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
@@ -599,7 +599,7 @@ async def test_execute_default_keeps_followers():
 
     # Stop to avoid leaking the background task and wait for shutdown
     try:
-        handle.stop(cancel=True)
+        await handle.stop(cancel=True)
     except Exception:
         pass
     await handle.result()

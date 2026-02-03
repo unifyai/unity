@@ -988,7 +988,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop(model):
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
 
     # Now stop the OUTER loop directly – should propagate to inner
-    outer.stop("test-stop")
+    await outer.stop("test-stop")
 
     # The outer handle now returns a standardized notice instead of raising
     final = await outer.result()

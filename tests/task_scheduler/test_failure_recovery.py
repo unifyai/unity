@@ -60,7 +60,7 @@ async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
         await ts.execute(task_id=tid)
     # Cleanup: stop the original handle to avoid leaking background threads
     try:
-        h.stop(cancel=False)
+        await h.stop(cancel=False)
         await h.result()
     except Exception:
         pass
@@ -82,7 +82,7 @@ async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
         ts._update_task(task_id=tid, status=Status.paused)
 
     # Clean stop to avoid leaking background threads
-    h.stop(cancel=False)
+    await h.stop(cancel=False)
     await h.result()
 
 

@@ -87,7 +87,7 @@ async def test_persist_mode_waits_for_interjection(model):
     assert not handle.done(), "Persist loop should continue waiting after interjection"
 
     # Stop the loop explicitly
-    handle.stop()
+    await handle.stop()
     result = await handle.result()
     assert result == "processed stopped early, no result"
 
@@ -169,7 +169,7 @@ async def test_persist_mode_processes_multiple_interjections(model):
     await _wait_for_condition(_has_second_tool_call, poll=0.05, timeout=30.0)
 
     # Stop and verify
-    handle.stop()
+    await handle.stop()
     await handle.result()
 
     # Verify both additions were performed
@@ -200,7 +200,7 @@ async def test_persist_mode_terminates_on_stop(model):
     await _wait_for_condition(_has_response, poll=0.05, timeout=30.0)
 
     # Stop the loop
-    handle.stop()
+    await handle.stop()
 
     # Should terminate with the standard stop message
     result = await handle.result()
@@ -290,5 +290,5 @@ async def test_persist_mode_with_tool_calls(model):
     assert not handle.done(), "Persist loop should wait after tool call completes"
 
     # Clean up
-    handle.stop()
+    await handle.stop()
     await handle.result()

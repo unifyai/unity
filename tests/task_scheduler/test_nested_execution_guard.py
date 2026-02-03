@@ -144,7 +144,7 @@ async def test_nested_execute_raises_runtime_error_in_delegate_mode():
         except Exception:
             pass
         if handle is not None:
-            handle.stop(cancel=True)
+            await handle.stop(cancel=True)
             await handle.result()
         assert scheduler._active_task is None
 
@@ -191,7 +191,7 @@ async def test_failed_nested_execute_does_not_corrupt_tasks_table():
         except Exception:
             pass
         if handle is not None:
-            handle.stop(cancel=True)
+            await handle.stop(cancel=True)
             await handle.result()
         # After cleanup, there should be no active rows and no active pointer.
         assert scheduler._active_task is None

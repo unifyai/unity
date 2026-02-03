@@ -113,7 +113,7 @@ async def test_direct_delegation_then_switch_to_multitask(monkeypatch):
     assert "progress update" not in captured[-1]
 
     # Cleanup: stop the active task to complete quickly
-    handle.stop(cancel=False)
+    await handle.stop(cancel=False)
     await handle.result()
 
 
@@ -671,7 +671,7 @@ async def test_handle_ask_includes_queue_context(monkeypatch):
     assert "USER QUESTION:" in user_prompt and "How is the queue going?" in user_prompt
 
     # Cleanup: stop the active queue to avoid leaving background tasks running
-    h.stop(cancel=False)
+    await h.stop(cancel=False)
     await asyncio.wait_for(h.result(), timeout=10)
 
 
@@ -1175,7 +1175,7 @@ async def test_interject_image_seen_by_simulation(monkeypatch):
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
     # Explicitly stop to ensure clean shutdown without hang
-    h.stop(cancel=False)
+    await h.stop(cancel=False)
     await h.result()
 
 
