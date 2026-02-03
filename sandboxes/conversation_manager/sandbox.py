@@ -6,6 +6,10 @@ This module wires together:
 - in-process ConversationManager startup (simulated or real-comms)
 - outbound event subscription (prints CM responses)
 - either REPL mode (default) or Textual GUI mode (`--gui`)
+
+In GUI mode, the sandbox uses **two processes**:
+- a UI process (Textual) that stays responsive
+- a runtime process that runs CM/Actor and streams updates back to the UI
 """
 
 from __future__ import annotations
