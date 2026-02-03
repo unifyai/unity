@@ -74,6 +74,27 @@ def _terminate_process(proc: subprocess.Popen[str], *, timeout_s: float = 2.0) -
             return
     except Exception:
         return
+    # When started with `start_new_session=True`, `agent-service` is the leader
+    # of a new process group. Terminating only the parent (e.g. `npm exec`) can
+    # leave the child `node` process running, so prefer killing the whole group.
+    try:
+        import os as _os
+        import signal as _signal
+
+        pid = int(getattr(proc, "pid", 0) or 0)
+        if pid > 0:
+            try:
+                pgid = _os.getpgid(pid)
+            except Exception:
+                pgid = None
+            if pgid:
+                try:
+                    _os.killpg(pgid, _signal.SIGTERM)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     try:
         proc.terminate()
     except Exception:
@@ -81,6 +102,24 @@ def _terminate_process(proc: subprocess.Popen[str], *, timeout_s: float = 2.0) -
     try:
         proc.wait(timeout=float(timeout_s))
     except Exception:
+        try:
+            import os as _os
+            import signal as _signal
+
+            pid = int(getattr(proc, "pid", 0) or 0)
+            if pid > 0:
+                try:
+                    pgid = _os.getpgid(pid)
+                except Exception:
+                    pgid = None
+                if pgid:
+                    try:
+                        _os.killpg(pgid, _signal.SIGKILL)
+                        return
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         try:
             proc.kill()
         except Exception:
