@@ -219,3 +219,72 @@ async def typed_steerable_workflow(goal: str) -> SteerableHandle:
         await asyncio.wait_for(handle.result(), timeout=5.0)
     except Exception:
         pass
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# CodeActActor Steerable Function Test
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_compositional_function_returns_codeact_actor_handle():
+    """
+    A compositional function that wraps CodeActActor should be detected as steerable.
+
+    This is a critical pattern: storing CodeActActor configurations as compositional
+    functions allows for reusable, customizable agent workflows. The returned handle
+    must be detected as steerable so the execution layer can forward steering operations.
+    """
+    globals_dict = create_execution_globals()
+
+    # Define a compositional function that creates and returns a CodeActActor handle
+    code = """
+async def codeact_workflow(goal: str) -> SteerableHandle:
+    \"\"\"
+    A steerable workflow powered by CodeActActor.
+
+    This pattern allows storing pre-configured CodeActActor setups as
+    compositional functions that can be searched, retrieved, and executed
+    with full steering support.
+    \"\"\"
+    from unity.actor.code_act_actor import CodeActActor
+
+    # Create a CodeActActor with custom configuration
+    actor = CodeActActor()
+
+    # Start the actor - returns a SteerableToolHandle
+    handle = await actor.act(
+        description=goal,
+        clarification_enabled=False,
+    )
+
+    return handle
+"""
+    exec(code, globals_dict)
+
+    # Call the compositional function
+    handle = await globals_dict["codeact_workflow"]("Say hello briefly")
+
+    # Verify it's detected as steerable (the key assertion)
+    assert isinstance(
+        handle,
+        SteerableHandle,
+    ), "CodeActActor handle should be detected as SteerableHandle"
+    assert isinstance(
+        handle,
+        SteerableToolHandle,
+    ), "CodeActActor handle should be a SteerableToolHandle"
+
+    # Verify handle methods are available (these would be forwarded by SingleFunctionActor)
+    assert hasattr(handle, "interject")
+    assert hasattr(handle, "stop")
+    assert hasattr(handle, "pause")
+    assert hasattr(handle, "resume")
+    assert hasattr(handle, "result")
+
+    # Clean up - stop the actor
+    handle.stop("test cleanup")
+    try:
+        await asyncio.wait_for(handle.result(), timeout=10.0)
+    except Exception:
+        pass  # May error due to early stop, that's expected
