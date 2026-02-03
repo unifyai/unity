@@ -202,6 +202,71 @@ async def _(
     # - SMSReceived/EmailReceived while on call
 
 
+@EventHandler.register(PhoneCallNotAnswered)
+async def _(
+    event: PhoneCallNotAnswered,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """
+    Handle outbound call not answered (no-answer, busy, canceled, failed).
+
+    This event arrives from the telephony system (via GCP PubSub) when the contact
+    doesn't pick up for outbound calls. We need to:
+    1. Tell the voice agent to stop (if running)
+    2. Clean up the call process
+    3. Notify the LLM brain so it can react appropriately
+    """
+    contact = cm.contact_index.get_contact(
+        phone_number=event.contact.get("phone_number"),
+    )
+    if contact is None:
+        contact = event.contact
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+    reason = event.reason or "no-answer"
+
+    # Forward stop status to voice agent subprocess
+    await cm.event_broker.publish(
+        "app:call:status",
+        json.dumps({"type": "stop", "reason": f"call_not_answered:{reason}"}),
+    )
+
+    # Reset mode if we were in call mode
+    if cm.mode.is_voice:
+        cm.mode = Mode.TEXT
+        cm.call_manager.call_contact = None
+        cm.call_manager.conference_name = None
+
+    # Clean up the call process
+    await cm.call_manager.cleanup_call_proc()
+
+    # Build display content
+    reason_display = {
+        "no-answer": "did not answer",
+        "busy": "was busy",
+        "canceled": "call was canceled",
+        "failed": "call failed",
+    }.get(reason, f"not answered ({reason})")
+
+    notif_content = f"Outbound call to {sender_name} {reason_display}"
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.PHONE_CALL,
+        message_content=f"<Call Not Answered: {reason_display}>",
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
+    # Trigger LLM run so the brain can decide next steps
+    await cm.request_llm_run(delay=0, cancel_running=True)
+
+
 @EventHandler.register(
     (
         InboundPhoneUtterance,
