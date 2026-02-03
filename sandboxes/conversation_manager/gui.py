@@ -2,16 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import queue as _queue
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from sandboxes.conversation_manager.command_router import CommandRouter
-from sandboxes.conversation_manager.event_publisher import EventPublisher
-from sandboxes.conversation_manager.steering import is_active
+from sandboxes.conversation_manager.commands import HELP_TEXT, parse_command
+from sandboxes.conversation_manager.ipc_protocol import (
+    MessageType,
+    create_message,
+    new_message_id,
+    validate_message,
+)
+from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
+from sandboxes.conversation_manager.log_aggregator import LogAggregator
+from sandboxes.conversation_manager.trace_display import TraceDisplay
 from sandboxes.utils import steering_controls_hint
 
 LG = logging.getLogger("conversation_manager_sandbox")
+
+_WORKER_READY_TIMEOUT_S = 60.0
+_COMMAND_TIMEOUT_S = 30.0
+_RESTART_EXIT_CODE = 23
 
 # -----------------------------------------------------------------------------
 # Textual UI (optional dependency)
@@ -37,12 +50,71 @@ except Exception:  # pragma: no cover - optional dependency / runtime env
     _TEXTUAL_ADVANCED_AVAILABLE = False
 
 
+def _make_rich_log(
+    *,
+    id: str,
+    wrap: bool = True,
+    highlight: bool = True,
+    max_lines: int = 1500,
+) -> "RichLog":
+    """
+    Construct a RichLog with safe performance defaults.
+
+    Textual terminal rendering performance degrades sharply when RichLog buffers
+    grow without bound. We cap `max_lines` when supported by the installed
+    Textual version.
+    """
+    try:
+        import inspect as _inspect
+
+        kwargs: dict[str, Any] = {
+            "id": id,
+            "wrap": bool(wrap),
+            "highlight": bool(highlight),
+        }
+        try:
+            sig = _inspect.signature(RichLog)  # type: ignore[arg-type]
+            if "max_lines" in sig.parameters:
+                kwargs["max_lines"] = int(max(100, max_lines))
+        except Exception:
+            pass
+        return RichLog(**kwargs)  # type: ignore[arg-type]
+    except Exception:
+        # Fallback with minimal args.
+        return RichLog(id=id, wrap=wrap, highlight=highlight)  # type: ignore[call-arg]
+
+
 @dataclass
 class GuiRuntime:
-    cm: Any
+    ui_to_worker: Any
+    worker_to_ui: Any
+    config: dict
+    # UI-owned "args-like" namespace used by existing widgets for rendering.
     args: Any
+    # Minimal state mirrored from worker `{"type":"state"}` messages.
     state: Any
-    publisher: EventPublisher
+    ready: bool = False
+    last_worker_message_at: float = 0.0
+    started_at: float = 0.0
+    worker_pid: int | None = None
+    pending: dict[str, float] = field(default_factory=dict)  # cmd_id -> sent_at
+    last_timeout_warn_at: float = 0.0
+    computer_status: dict[str, Any] = field(default_factory=dict)
+    # Best-effort TTS de-dupe (UI-owned).
+    last_tts_text: str = ""
+    last_tts_at: float = 0.0
+    # Debounced panel refresh flags (avoid re-rendering on every IPC message).
+    dirty_tree: bool = False
+    dirty_logs: bool = False
+    dirty_trace: bool = False
+    dirty_computer: bool = False
+    # Avoid re-rendering unchanged small widgets.
+    last_hint_text: str = ""
+    last_computer_text: str = ""
+    # UI-owned displays (also attached to `args` for compatibility).
+    trace_display: TraceDisplay = field(default_factory=TraceDisplay)
+    event_tree_display: EventTreeDisplay = field(default_factory=EventTreeDisplay)
+    log_aggregator: LogAggregator = field(default_factory=LogAggregator)
 
 
 if _TEXTUAL_AVAILABLE:
@@ -78,7 +150,12 @@ if _TEXTUAL_AVAILABLE:
                         yield from self.compose_left()
                     with Vertical(id="right"):
                         yield Label("", id="steering_hint")
-                        yield RichLog(id="responses", wrap=True, highlight=True)
+                        yield _make_rich_log(
+                            id="responses",
+                            wrap=True,
+                            highlight=True,
+                            max_lines=1200,
+                        )
                 with Horizontal(id="cmd_row"):
                     yield Input(
                         placeholder="Commands: sms, email, call, say, end_call, us, /pause, /i, /ask, /stop",
@@ -98,12 +175,14 @@ if _TEXTUAL_AVAILABLE:
             app = self.app  # type: ignore[attr-defined]
             rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
             hint = self.query_one("#steering_hint", Label)
-            active = is_active(rt.cm, rt.state)
+            active = bool(getattr(rt.state, "active", False))
             hint.update(
                 (
                     steering_controls_hint(
-                        pending_clarification=False,
-                        voice_enabled=False,
+                        pending_clarification=bool(
+                            getattr(rt.state, "pending_clarification", False),
+                        ),
+                        voice_enabled=bool(getattr(rt.args, "voice", False)),
                     )
                     if active
                     else ""
@@ -252,7 +331,12 @@ if _TEXTUAL_AVAILABLE:
                                     yield Label("", id="tree_details")
                                 with TabPane("Computer", id="tab_computer"):
                                     yield Static("", id="computer_status")
-                    yield RichLog(id="conversation", wrap=True, highlight=True)
+                    yield _make_rich_log(
+                        id="conversation",
+                        wrap=True,
+                        highlight=True,
+                        max_lines=2000,
+                    )
                     with Horizontal(id="cmd_row"):
                         yield Input(
                             placeholder="Type a command (e.g., sms Hello, trace 3, tree, /stop)",
@@ -264,25 +348,45 @@ if _TEXTUAL_AVAILABLE:
                     with Vertical(id="logs"):
                         yield Label("Logs (Collapsible)", id="logs_title")
                         yield Collapsible(
-                            RichLog(id="logs_cm", wrap=True, highlight=True),
+                            _make_rich_log(
+                                id="logs_cm",
+                                wrap=True,
+                                highlight=True,
+                                max_lines=1200,
+                            ),
                             title="CM Logs",
                             id="coll_cm",
                             collapsed=False,
                         )
                         yield Collapsible(
-                            RichLog(id="logs_actor", wrap=True, highlight=True),
+                            _make_rich_log(
+                                id="logs_actor",
+                                wrap=True,
+                                highlight=True,
+                                max_lines=1200,
+                            ),
                             title="Actor Logs",
                             id="coll_actor",
                             collapsed=True,
                         )
                         yield Collapsible(
-                            RichLog(id="logs_manager", wrap=True, highlight=True),
+                            _make_rich_log(
+                                id="logs_manager",
+                                wrap=True,
+                                highlight=True,
+                                max_lines=1200,
+                            ),
                             title="Manager Logs",
                             id="coll_manager",
                             collapsed=True,
                         )
                     with Collapsible(
-                        RichLog(id="trace_panel", wrap=True, highlight=True),
+                        _make_rich_log(
+                            id="trace_panel",
+                            wrap=True,
+                            highlight=True,
+                            max_lines=1200,
+                        ),
                         title="Trace (CodeAct)",
                         id="coll_trace",
                         collapsed=True,
@@ -291,32 +395,8 @@ if _TEXTUAL_AVAILABLE:
                 yield Footer()
 
             def on_mount(self) -> None:
-                # Install GUI sink for sandbox subscriber.
                 app = self.app  # type: ignore[attr-defined]
                 rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
-
-                def _sink(line: str) -> None:
-                    try:
-                        conv = self.query_one("#conversation", RichLog)
-                        conv.write(line)
-                    except Exception:
-                        pass
-                    # New outbound events/notifications should refresh log + trace panels.
-                    try:
-                        self.post_message(RefreshPanels(logs=True, trace=True))
-                    except Exception:
-                        pass
-
-                setattr(rt.args, "_gui_line_sink", _sink)
-                # Allow non-UI code (subscriber / executor wrapper) to request a refresh.
-                try:
-                    setattr(
-                        rt.args,
-                        "_gui_refresh_request",
-                        lambda **kw: self.post_message(RefreshPanels(**kw)),
-                    )
-                except Exception:
-                    pass
 
                 # Preserve tree expansion state across refreshes. We rebuild the tree
                 # periodically, and without this the UI collapses nodes while the user
@@ -495,17 +575,31 @@ if _TEXTUAL_AVAILABLE:
                 app = self.app  # type: ignore[attr-defined]
                 rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
                 hint = self.query_one("#steering_hint", Label)
-                active = is_active(rt.cm, rt.state)
-                hint.update(
-                    (
+                active = bool(getattr(rt.state, "active", False))
+                try:
+                    new_txt = (
                         steering_controls_hint(
-                            pending_clarification=False,
-                            voice_enabled=False,
+                            pending_clarification=bool(
+                                getattr(rt.state, "pending_clarification", False),
+                            ),
+                            voice_enabled=bool(getattr(rt.args, "voice", False)),
                         )
                         if active
                         else ""
-                    ),
-                )
+                    )
+                except Exception:
+                    new_txt = ""
+                # Avoid re-rendering if unchanged.
+                try:
+                    if str(new_txt) == str(rt.last_hint_text):
+                        return
+                    rt.last_hint_text = str(new_txt)
+                except Exception:
+                    pass
+                try:
+                    hint.update(str(new_txt or ""))
+                except Exception:
+                    pass
 
             def _refresh_tree(self) -> None:
                 try:
@@ -660,18 +754,46 @@ if _TEXTUAL_AVAILABLE:
                 except Exception:
                     return
                 try:
-                    activity = getattr(rt.args, "_computer_activity", None)
-                    if activity is None:
-                        w.update("Computer not available.")
+                    snap = None
+                    try:
+                        snap = rt.computer_status
+                    except Exception:
+                        snap = None
+                    if not isinstance(snap, dict) or not snap:
+                        # Fallback: show config-level backend mode.
+                        cfg = getattr(rt.args, "_actor_config", None)
+                        backend_mode = (
+                            getattr(cfg, "computer_backend_mode", "none")
+                            if cfg
+                            else "none"
+                        )
+                        if backend_mode == "none":
+                            out_txt = "Computer: disabled"
+                        elif backend_mode == "mock":
+                            out_txt = "Computer: mock backend (waiting for activity)"
+                        else:
+                            out_txt = "Computer: real backend (waiting for activity)"
+                        try:
+                            if out_txt == rt.last_computer_text:
+                                return
+                            rt.last_computer_text = out_txt
+                        except Exception:
+                            pass
+                        w.update(out_txt)
                         return
-                    snap = activity.snapshot_sync()
+
                     connected = snap.get("connected", None)
+                    last_error = snap.get("last_error", None)
                     url = snap.get("last_url") or "(unknown URL)"
                     actions = snap.get("actions") or []
                     last = actions[-3:] if len(actions) > 3 else actions
                     last_lines = (
                         "\n".join(
-                            [f"- {a.kind}: {a.detail}" for a in last],
+                            [
+                                f"- {a.get('kind')}: {a.get('detail')}"
+                                for a in last
+                                if isinstance(a, dict)
+                            ],
                         )
                         if last
                         else "(no activity yet)"
@@ -681,7 +803,16 @@ if _TEXTUAL_AVAILABLE:
                         if connected
                         else ("disconnected" if connected is False else "unknown")
                     )
-                    w.update(f"Computer: {status}\nURL: {url}\nRecent:\n{last_lines}")
+                    out = f"Computer: {status}\nURL: {url}\nRecent:\n{last_lines}"
+                    if last_error:
+                        out += f"\nError: {last_error}"
+                    try:
+                        if out == rt.last_computer_text:
+                            return
+                        rt.last_computer_text = out
+                    except Exception:
+                        pass
+                    w.update(out)
                 except Exception:
                     w.update("Computer panel unavailable.")
 
@@ -839,9 +970,64 @@ if _TEXTUAL_AVAILABLE:
         #command_input { width: 1fr; }
         """
 
-        def __init__(self, runtime: GuiRuntime):
+        def __init__(self, *, ui_to_worker: Any, worker_to_ui: Any, config: dict):
             super().__init__()
-            self.runtime = runtime
+            from types import SimpleNamespace as _SimpleNamespace
+
+            from sandboxes.conversation_manager.config_manager import (
+                ActorConfig as _ActorConfig,
+            )
+
+            cfg = dict(config or {})
+            actor_cfg = _ActorConfig.from_json_obj(
+                (
+                    cfg.get("actor_config")
+                    if isinstance(cfg.get("actor_config"), dict)
+                    else cfg
+                ),
+            )
+            args = _SimpleNamespace(**cfg)
+            setattr(args, "voice", bool(getattr(args, "voice", False)))
+            setattr(args, "_actor_config", actor_cfg)
+
+            # UI-owned displays (used by dashboard refresh methods).
+            trace_display = TraceDisplay()
+            event_tree_display = EventTreeDisplay()
+            log_aggregator = LogAggregator()
+            setattr(args, "_trace_display", trace_display)
+            setattr(args, "_event_tree_display", event_tree_display)
+            setattr(args, "_log_aggregator", log_aggregator)
+
+            state = _SimpleNamespace(
+                active=False,
+                in_call=False,
+                pending_clarification=False,
+            )
+
+            worker_pid = None
+            try:
+                wp = cfg.get("worker_pid")
+                if wp is not None:
+                    worker_pid = int(wp)
+            except Exception:
+                worker_pid = None
+
+            now = time.monotonic()
+            self.runtime = GuiRuntime(
+                ui_to_worker=ui_to_worker,
+                worker_to_ui=worker_to_ui,
+                config=cfg,
+                args=args,
+                state=state,
+                ready=False,
+                last_worker_message_at=now,
+                started_at=now,
+                worker_pid=worker_pid,
+                trace_display=trace_display,
+                event_tree_display=event_tree_display,
+                log_aggregator=log_aggregator,
+                computer_status={},
+            )
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -852,32 +1038,122 @@ if _TEXTUAL_AVAILABLE:
                 self.push_screen(DashboardScreen())
             else:
                 self.push_screen(MenuScreen())
+            # Poll worker messages frequently (UI remains responsive even if worker blocks).
+            self.set_interval(0.075, self._poll_worker_messages)
+            self.set_interval(0.5, self._watchdogs)
+            # Debounce expensive panel refreshes (tree/logs/trace) to keep the UI snappy
+            # under high event volume.
+            self.set_interval(0.2, self._flush_dirty_panels)
+            # Disable input until worker announces readiness.
+            self._set_input_enabled(False)
+            self.post_message(AppendLine("[ui] Waiting for worker..."))
+
+        def _flush_dirty_panels(self) -> None:
+            rt = self.runtime
+            if not _TEXTUAL_ADVANCED_AVAILABLE:
+                return
+            tree = bool(rt.dirty_tree)
+            logs = bool(rt.dirty_logs)
+            trace = bool(rt.dirty_trace)
+            computer = bool(rt.dirty_computer)
+            if not (tree or logs or trace or computer):
+                return
+            rt.dirty_tree = False
+            rt.dirty_logs = False
+            rt.dirty_trace = False
+            rt.dirty_computer = False
+            try:
+                self.screen.post_message(
+                    RefreshPanels(tree=tree, logs=logs, trace=trace, computer=computer),
+                )
+            except Exception:
+                pass
 
         async def route_command(self, raw: str) -> None:
             rt = self.runtime
-            st = rt.state
-            router = CommandRouter(
-                cm=rt.cm,
-                args=rt.args,
-                state=st,
-                publisher=rt.publisher,
-                chat_history=getattr(st, "chat_history", []),
-                allow_voice=bool(getattr(rt.args, "voice", False)),
-                allow_save_project=False,
-                config_manager=getattr(rt.args, "_config_manager", None),
-                trace_display=getattr(rt.args, "_trace_display", None),
-                event_tree_display=getattr(rt.args, "_event_tree_display", None),
-                log_aggregator=getattr(rt.args, "_log_aggregator", None),
+            trimmed = (raw or "").strip()
+            if not trimmed:
+                return
+
+            # Always echo the user's command (UI-side) so the pane feels responsive.
+            self.post_message(AppendLine(f"[you] {trimmed}"))
+
+            cmd = parse_command(
+                text=trimmed,
+                in_call=bool(getattr(rt.state, "in_call", False)),
+                active=bool(getattr(rt.state, "active", False)),
             )
-            res = await router.execute_raw(
-                raw,
-                prompt_text=None,
-                in_call=bool(st.in_call),
-            )
-            for ln in res.lines:
-                self.post_message(AppendLine(ln))
-            if res.should_exit:
+
+            # Local validation errors (mirror CommandRouter behavior).
+            if cmd.kind == "unknown":
+                if cmd.error and cmd.error != "empty":
+                    self.post_message(AppendLine(cmd.error))
+                return
+
+            # UI-only commands
+            if cmd.kind == "help":
+                self.post_message(AppendLine("\n" + HELP_TEXT + "\n"))
+                return
+            if cmd.kind in {"show_logs", "collapse_logs"}:
+                self._handle_logs_locally(kind=cmd.kind, args=cmd.args)
+                return
+
+            # Quit should stop both UI and worker (best-effort).
+            if cmd.kind == "quit":
+                try:
+                    rt.ui_to_worker.put_nowait(
+                        create_message(
+                            MessageType.SHUTDOWN,
+                            payload={},
+                            id=new_message_id(),
+                        ),
+                    )
+                except Exception:
+                    pass
                 self.exit()
+                return
+
+            # Voice commands stay in UI process; translate to non-voice commands for worker.
+            if cmd.kind == "scenario_seed_voice":
+                desc = await self._record_and_transcribe_best_effort()
+                if not desc:
+                    self.post_message(AppendLine("⚠️ Voice transcription was empty."))
+                    return
+                trimmed = f"us {desc}"
+                self.post_message(AppendLine(f"▶️ {desc}"))
+            elif cmd.kind == "event" and cmd.name == "sayv":
+                text = (cmd.args or "").strip()
+                if not text:
+                    text = await self._record_and_transcribe_best_effort()
+                if not text:
+                    self.post_message(AppendLine("⚠️ Voice transcription was empty."))
+                    return
+                trimmed = f"say {text}"
+                self.post_message(AppendLine(f"▶️ {text}"))
+
+            # Immediate steering acknowledgment.
+            if cmd.kind == "steering":
+                self.post_message(AppendLine(f"✓ Sent: {cmd.args}"))
+
+            # Ship to worker.
+            cmd_id = new_message_id()
+            msg = create_message(
+                MessageType.EXECUTE_RAW,
+                id=cmd_id,
+                payload={
+                    "raw": trimmed,
+                    "in_call": bool(getattr(rt.state, "in_call", False)),
+                },
+            )
+            try:
+                rt.ui_to_worker.put_nowait(msg)
+                rt.pending[cmd_id] = time.monotonic()
+            except _queue.Full:
+                self.post_message(
+                    AppendLine("❌ UI→worker queue is full. Please retry."),
+                )
+            except Exception as exc:
+                self.post_message(AppendLine(f"❌ Failed to send to worker: {exc}"))
 
         async def on_append_line(self, msg: AppendLine) -> None:
             # Write into the active screen's response log.
@@ -892,22 +1168,486 @@ if _TEXTUAL_AVAILABLE:
             except Exception:
                 pass
 
+        # ──────────────────────────────────────────────────────────────
+        # IPC polling + handlers
+        # ──────────────────────────────────────────────────────────────
 
-async def run_gui_mode(*, cm: Any, args: Any, state: Any) -> bool:
-    """
-    Run GUI mode (Textual) in-process.
+        def _poll_worker_messages(self) -> None:
+            rt = self.runtime
+            q = rt.worker_to_ui
+            processed = 0
+            # Drain a bounded number of messages per tick to avoid UI starvation.
+            while processed < 200:
+                try:
+                    msg = q.get_nowait()
+                except _queue.Empty:
+                    break
+                except Exception:
+                    break
 
-    Returns:
-        True if GUI ran, False if Textual unavailable (caller should fallback to REPL).
-    """
-    if not _TEXTUAL_AVAILABLE:
-        return False
+                processed += 1
+                if not isinstance(msg, dict):
+                    continue
+                if not validate_message(msg):
+                    continue
 
-    publisher = EventPublisher(
-        cm=cm,
-        state=state,
-    )
-    runtime = GuiRuntime(cm=cm, args=args, state=state, publisher=publisher)
-    app = ModernizedMessagingApp(runtime)
-    await app.run_async()
-    return True
+                rt.last_worker_message_at = time.monotonic()
+                t = str(msg.get("type") or "")
+                payload = msg.get("payload") or {}
+                mid = msg.get("id")
+                if (
+                    isinstance(mid, str)
+                    and mid in rt.pending
+                    and t
+                    in {
+                        MessageType.LINES,
+                        MessageType.ERROR,
+                    }
+                ):
+                    try:
+                        rt.pending.pop(mid, None)
+                    except Exception:
+                        pass
+                if t == MessageType.READY:
+                    self._handle_ready()
+                elif t == MessageType.LINES:
+                    self._handle_lines(payload)
+                elif t == MessageType.STATE:
+                    self._handle_state(payload)
+                elif t == MessageType.EVENT:
+                    self._handle_event(payload)
+                elif t == MessageType.ERROR:
+                    self._handle_error(payload)
+                elif t == MessageType.WORKER_EXIT:
+                    self._handle_worker_exit(payload)
+
+        def _watchdogs(self) -> None:
+            """
+            Periodic edge-case handling:
+            - worker ready timeout
+            - worker process death (if pid is provided)
+            - per-command IPC timeouts
+            """
+
+            rt = self.runtime
+            now = time.monotonic()
+
+            # Ready timeout.
+            if (not rt.ready) and (now - rt.started_at) > _WORKER_READY_TIMEOUT_S:
+                self.post_message(
+                    AppendLine(
+                        "⚠️ Worker failed to start within 60s. Check logs and restart the sandbox.",
+                    ),
+                )
+                self._set_input_enabled(False)
+                # Prevent repeat.
+                rt.started_at = now + 1e9
+
+            # Worker liveness check (best-effort POSIX).
+            if rt.worker_pid is not None:
+                try:
+                    os.kill(int(rt.worker_pid), 0)
+                except Exception:
+                    self.post_message(
+                        AppendLine(
+                            "❌ Worker process crashed unexpectedly. Please restart the sandbox.",
+                        ),
+                    )
+                    self._set_input_enabled(False)
+                    rt.worker_pid = None
+
+            # Per-command timeout warnings.
+            try:
+                oldest = min(rt.pending.values()) if rt.pending else None
+            except Exception:
+                oldest = None
+            if oldest is not None and (now - float(oldest)) > _COMMAND_TIMEOUT_S:
+                if (now - rt.last_timeout_warn_at) > 5.0:
+                    self.post_message(
+                        AppendLine(
+                            "⚠️ Worker not responding. The worker may be busy or stuck. "
+                            "You can wait or restart the sandbox.",
+                        ),
+                    )
+                    rt.last_timeout_warn_at = now
+
+        def _handle_ready(self) -> None:
+            rt = self.runtime
+            if rt.ready:
+                return
+            rt.ready = True
+            self._set_input_enabled(True)
+            self.post_message(AppendLine("[ui] ✓ Worker ready"))
+
+        def _handle_lines(self, payload: dict) -> None:
+            lines = payload.get("lines") if isinstance(payload, dict) else None
+            if not isinstance(lines, list):
+                return
+            for ln in lines:
+                s = str(ln)
+                if s.strip():
+                    self.post_message(AppendLine(s))
+            # Lines often imply logs/tree/trace changed; refresh panels best-effort.
+            try:
+                rt = self.runtime
+                rt.dirty_logs = True
+                rt.dirty_trace = True
+            except Exception:
+                pass
+
+        def _handle_state(self, payload: dict) -> None:
+            rt = self.runtime
+            if not isinstance(payload, dict):
+                return
+            try:
+                rt.state.active = bool(payload.get("active", False))
+                rt.state.in_call = bool(payload.get("in_call", False))
+                rt.state.pending_clarification = bool(
+                    payload.get("pending_clarification", False),
+                )
+            except Exception:
+                return
+            self._update_input_placeholder()
+
+        def _handle_event(self, payload: dict) -> None:
+            if not isinstance(payload, dict):
+                return
+            channel = str(payload.get("channel") or "")
+            ev = payload.get("event")
+            if not isinstance(ev, dict):
+                return
+            try:
+                self._apply_event_to_displays(channel=channel, event=ev)
+            except Exception:
+                return
+
+        def _handle_error(self, payload: dict) -> None:
+            msg = ""
+            if isinstance(payload, dict):
+                msg = str(payload.get("message") or "")
+                tb = str(payload.get("traceback") or "")
+            else:
+                tb = ""
+            self.post_message(AppendLine(f"❌ Worker Error: {msg}".rstrip()))
+            if tb:
+                self.post_message(AppendLine("Traceback:"))
+                self.post_message(AppendLine(tb))
+            self.post_message(AppendLine("Please restart the sandbox."))
+            # If worker reports an error before ready, disable input.
+            self._set_input_enabled(False)
+
+        def _handle_worker_exit(self, payload: dict) -> None:
+            restart = False
+            try:
+                if isinstance(payload, dict):
+                    restart = bool(payload.get("restart", False))
+            except Exception:
+                restart = False
+
+            if restart:
+                self.post_message(
+                    AppendLine("[worker] Restart requested (config switch)."),
+                )
+                self.exit(_RESTART_EXIT_CODE)
+                return
+
+            self.post_message(
+                AppendLine("❌ Worker process exited. Please restart the sandbox."),
+            )
+            self._set_input_enabled(False)
+
+        def _apply_event_to_displays(self, *, channel: str, event: dict) -> None:
+            rt = self.runtime
+            # EventBus events arrive on channel like "eventbus:ManagerMethod".
+            if channel.startswith("eventbus:"):
+                kind = channel.split(":", 1)[1]
+                if kind == "ManagerMethod":
+                    from unity.events.types.manager_method import ManagerMethodPayload
+
+                    try:
+                        mm = ManagerMethodPayload.model_validate(
+                            event.get("payload") or {},
+                        )
+                    except Exception:
+                        return
+                    call_id = str(event.get("calling_id") or "")
+                    try:
+                        rt.event_tree_display.handle_manager_method(
+                            call_id=call_id,
+                            payload=mm,
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        direction = (mm.phase or "").strip().lower()
+                        label = (mm.hierarchy_label or "").strip()
+                        msg = f"{mm.manager}.{mm.method}"
+                        if direction:
+                            msg += f" [{direction}]"
+                        if label:
+                            msg += f" — {label}"
+                        rt.log_aggregator.handle_structured_event(
+                            category="manager",
+                            message=msg,
+                        )
+                    except Exception:
+                        pass
+                    # Trace is sourced from `trace:entry` by default. EventBus
+                    # ManagerMethod events do not include code/stdout for execute_code
+                    # boundaries, and can create empty placeholder trace entries.
+                    try:
+                        rt.dirty_tree = True
+                        rt.dirty_logs = True
+                        rt.dirty_trace = True
+                    except Exception:
+                        pass
+                    return
+                # Ignore other EventBus event types. They are high-volume
+                # (LLM/ToolLoop/Comms/Message) and make logs noisy + UI sluggish.
+                return
+
+            # Computer status snapshots (emitted by runtime process).
+            if channel == "computer:status":
+                try:
+                    rt.computer_status = dict(event)
+                except Exception:
+                    rt.computer_status = {}
+                try:
+                    rt.dirty_computer = True
+                except Exception:
+                    pass
+                return
+
+            # Sandbox trace entries streamed from the worker (CodeAct execute_code wrapper).
+            if channel == "trace:entry":
+                try:
+                    code = str(event.get("code") or "")
+                    res = (
+                        event.get("result")
+                        if isinstance(event.get("result"), dict)
+                        else {}
+                    )
+                    rt.trace_display.capture_execution(code=code, result=res)
+                except Exception:
+                    return
+                try:
+                    rt.dirty_trace = True
+                except Exception:
+                    pass
+                return
+
+            # Raw broker events (app:comms:* / app:actor:*) forwarded by the runtime process.
+            if channel.startswith("broker:"):
+                try:
+                    self._handle_broker_event(
+                        channel=channel[len("broker:") :],
+                        event=event,
+                    )
+                except Exception:
+                    return
+                try:
+                    rt.dirty_logs = True
+                except Exception:
+                    pass
+                return
+
+        def _handle_broker_event(self, *, channel: str, event: dict) -> None:
+            """
+            Update log buffers from broker events so the GUI log panes stay populated.
+
+            `event` is expected to match `unity.conversation_manager.events.Event.to_dict()`.
+            """
+
+            rt = self.runtime
+            name = str(event.get("event_name") or "")
+            payload = (
+                event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            )
+
+            # Choose category based on channel prefix.
+            cat = "cm"
+            if str(channel).startswith("app:actor:"):
+                cat = "actor"
+
+            msg = name or "Event"
+            try:
+                if name == "SMSReceived":
+                    content = str(payload.get("content") or "").strip()
+                    if content:
+                        msg = f"SMSReceived: {content[:120]}"
+                elif name == "SMSSent":
+                    content = str(payload.get("content") or "").strip()
+                    if content:
+                        msg = f"SMSSent: {content[:120]}"
+                elif name == "EmailSent":
+                    subj = str(payload.get("subject") or "").strip()
+                    if subj:
+                        msg = f"EmailSent: {subj[:120]}"
+                elif name == "EmailReceived":
+                    subj = str(payload.get("subject") or "").strip()
+                    if subj:
+                        msg = f"EmailReceived: {subj[:120]}"
+                elif name in {"InboundPhoneUtterance", "OutboundPhoneUtterance"}:
+                    content = str(payload.get("content") or "").strip()
+                    if content:
+                        msg = f"{name}: {content[:160]}"
+                elif name == "CallGuidance":
+                    content = str(payload.get("content") or "").strip()
+                    if content:
+                        msg = f"CallGuidance: {content[:160]}"
+                elif name == "ActorHandleStarted":
+                    q = str(payload.get("query") or "").strip()
+                    if q:
+                        msg = f"ActorHandleStarted: {q[:160]}"
+                elif name == "ActorNotification":
+                    r = str(payload.get("response") or "").strip()
+                    if r:
+                        msg = f"ActorNotification: {r[:160]}"
+                elif name == "ActorResult":
+                    r = str(payload.get("result") or "").strip()
+                    if r:
+                        msg = f"ActorResult: {r[:160]}"
+            except Exception:
+                pass
+
+            try:
+                rt.log_aggregator.handle_structured_event(
+                    category=cat,  # type: ignore[arg-type]
+                    message=msg,
+                )
+            except Exception:
+                pass
+
+            # Best-effort TTS in call mode: the user should hear assistant-side
+            # outputs (guidance to the voice agent and assistant utterances).
+            try:
+                if name in {"OutboundPhoneUtterance", "CallGuidance"}:
+                    content = str(payload.get("content") or "").strip()
+                    if content:
+                        self._maybe_tts(content)
+            except Exception:
+                pass
+
+        def _maybe_tts(self, text: str) -> None:
+            """
+            Speak `text` in the UI process (call mode only).
+
+            In the multi-process architecture the worker must not own audio/TTY.
+            """
+
+            rt = self.runtime
+            if not bool(getattr(rt.args, "voice", False)):
+                return
+            if not bool(getattr(rt.state, "in_call", False)):
+                return
+            txt = (text or "").strip()
+            if not txt:
+                return
+
+            # De-dupe repeats over short windows.
+            try:
+                now = time.monotonic()
+                if (
+                    rt.last_tts_text == txt
+                    and (now - float(rt.last_tts_at or 0.0)) < 2.0
+                ):
+                    return
+                rt.last_tts_text = txt
+                rt.last_tts_at = now
+            except Exception:
+                pass
+
+            try:
+                # Use stdin-safe speech for Textual UI; the normal "press enter to skip"
+                # listener competes with Textual's input handling and can cause typing lag.
+                from sandboxes.utils import speak_no_stdin as _speak
+
+                asyncio.create_task(asyncio.to_thread(_speak, txt))
+            except Exception:
+                return
+
+        def _set_input_enabled(self, enabled: bool) -> None:
+            try:
+                scr = self.screen
+                inp = scr.query_one("#command_input", Input)
+                btn = scr.query_one("#submit_command", Button)
+                inp.disabled = not enabled
+                btn.disabled = not enabled
+            except Exception:
+                pass
+
+        def _update_input_placeholder(self) -> None:
+            rt = self.runtime
+            active = bool(getattr(rt.state, "active", False))
+            placeholder = (
+                "/ask, /i, /pause, /resume, /stop"
+                if active
+                else "Type a command: sms, email, call, us, ..."
+            )
+            try:
+                inp = self.screen.query_one("#command_input", Input)
+                inp.placeholder = placeholder
+            except Exception:
+                pass
+
+        def _handle_logs_locally(self, *, kind: str, args: str) -> None:
+            rt = self.runtime
+            lg = rt.log_aggregator
+            raw = (args or "").strip().lower()
+            cats: list[str]
+            if raw in {"cm", "actor", "manager"}:
+                cats = [raw]
+            elif raw == "all":
+                cats = ["cm", "actor", "manager"]
+            else:
+                self.post_message(
+                    AppendLine(
+                        "⚠️ Usage: show_logs <cm|actor|manager|all>  or  collapse_logs <cm|actor|manager|all>",
+                    ),
+                )
+                return
+            if kind == "show_logs":
+                for c in cats:
+                    try:
+                        lg.expand(c)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+            else:
+                for c in cats:
+                    try:
+                        lg.collapse(c)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+            try:
+                rt.dirty_logs = True
+                rt.dirty_trace = True
+            except Exception:
+                pass
+
+        async def _record_and_transcribe_best_effort(self) -> str:
+            """
+            Record audio and transcribe in the UI process (blocking acceptable).
+            """
+
+            if not bool(getattr(self.runtime.args, "voice", False)):
+                self.post_message(
+                    AppendLine("⚠️ Restart with `--voice` to enable recording."),
+                )
+                return ""
+            try:
+                from sandboxes.utils import (
+                    record_for_seconds,
+                    transcribe_deepgram_no_input,
+                )
+            except Exception as exc:
+                self.post_message(AppendLine(f"⚠️ Voice mode unavailable ({exc})."))
+                return ""
+            try:
+                audio = await asyncio.to_thread(record_for_seconds, 6.0)
+                text = (
+                    await asyncio.to_thread(transcribe_deepgram_no_input, audio) or ""
+                ).strip()
+                return text
+            except Exception as exc:
+                self.post_message(AppendLine(f"❌ Voice transcription failed: {exc}"))
+                return ""
