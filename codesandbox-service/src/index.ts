@@ -14,7 +14,7 @@ const PORT = process.env.CODESANDBOX_SERVICE_PORT || process.env.PORT || 3100;
 function verifyApiKeyWithUnify(apiKey: string, assistant_email: string): Promise<boolean> {
   return new Promise((resolve) => {
     try {
-      const base = process.env.UNIFY_BASE_URL || '';
+      const base = process.env.ORCHESTRA_URL || '';
       if (!base) return resolve(false);
       const url = new URL(`${base}/assistant?email=${assistant_email}`);
       const options = {

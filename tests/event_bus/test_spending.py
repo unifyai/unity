@@ -85,7 +85,7 @@ class TestAtomicUpsert:
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -145,7 +145,7 @@ class TestAtomicUpsert:
                 mock_session.assistant_record = {"agent_id": "asst_789"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -203,7 +203,7 @@ class TestAtomicUpsert:
                 mock_session.org_name = "TestOrg"  # Set org name
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -250,7 +250,7 @@ class TestAtomicUpsert:
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -528,7 +528,7 @@ class TestConcurrentSpendUpdates:
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -1208,7 +1208,7 @@ class E2ETestConfig:
     @classmethod
     def from_env(cls) -> "E2ETestConfig":
         """Create config from environment variables."""
-        base_url = _os.getenv("UNIFY_BASE_URL", "http://localhost:8000/v0")
+        base_url = _os.getenv("ORCHESTRA_URL", "http://localhost:8000/v0")
         api_key = _os.getenv("UNIFY_KEY", "local-test-api-key")
         admin_key = _os.getenv("ORCHESTRA_ADMIN_KEY", api_key)
         return cls(base_url=base_url, api_key=api_key, admin_key=admin_key)

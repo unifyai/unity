@@ -80,7 +80,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_BASE_URL: str = "https://api.unify.ai/v0"
+    ORCHESTRA_URL: str = "https://api.unify.ai/v0"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging / Observability

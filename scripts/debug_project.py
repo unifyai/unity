@@ -25,7 +25,7 @@ if __name__ == "__main__":
     ]
     for user in users:
         response = requests.post(
-            f"{os.getenv('UNIFY_BASE_URL')}/admin/share-project",
+            f"{os.getenv('ORCHESTRA_URL')}/admin/share-project",
             json={
                 "from_user_id": "clxlmko0900539b72enccyi1o",
                 "to_user_id": user,

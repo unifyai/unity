@@ -168,7 +168,7 @@ def caller_function():
 - A dedicated Unify Request log file is also written to `.logs_unify_requests.txt`.
 
 ### Troubleshooting
-* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **Python file parsing** – When adding functions via `add <file>`, ensure the file contains valid Python syntax with functions starting at column 0 (no indentation).
 * **Function validation errors** – Functions that call dangerous built-ins or other user-defined functions will be rejected with specific error messages.
 * **Memory persistence** – Functions are stored persistently in the chosen project. Use `--overwrite` to start fresh if needed.

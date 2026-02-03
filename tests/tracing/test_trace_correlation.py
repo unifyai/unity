@@ -194,7 +194,7 @@ class TestEndToEndTraceCorrelation:
         """Check if local Orchestra is running and accessible."""
         import httpx
 
-        base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
+        base_url = os.environ.get("ORCHESTRA_URL", "http://127.0.0.1:8000/v0")
         try:
             # Orchestra's health endpoint is at /v0/health
             # Note: health endpoint is excluded from tracing, but useful for checking if running
@@ -242,7 +242,7 @@ class TestEndToEndTraceCorrelation:
             pytest.skip("ORCHESTRA_LOG_DIR not set (logging disabled)")
 
         # Make a real HTTP call to Orchestra
-        base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
+        base_url = os.environ.get("ORCHESTRA_URL", "http://127.0.0.1:8000/v0")
         endpoint = self._get_traced_endpoint()
 
         # Make the request - HTTPXClientInstrumentor injects traceparent header
@@ -311,7 +311,7 @@ class TestEndToEndTraceCorrelation:
         if trace_log_dir is None:
             pytest.skip("ORCHESTRA_LOG_DIR not set")
 
-        base_url = os.environ.get("UNIFY_BASE_URL", "http://127.0.0.1:8000/v0")
+        base_url = os.environ.get("ORCHESTRA_URL", "http://127.0.0.1:8000/v0")
         endpoint = self._get_traced_endpoint()
 
         # Make async request

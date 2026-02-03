@@ -145,5 +145,5 @@ Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text> (or plain text)
 
 ### Troubleshooting
 * **Deepgram / Cartesia keys** – if you use `--voice`, make sure the environment variables `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` are set.
-* **Unify backend access** – the sandbox creates contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – the sandbox creates contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **File visibility** – when running rootless, ensure you pass absolute paths and have read permissions.
