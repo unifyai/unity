@@ -42,6 +42,7 @@ DEFERRAL_PATTERNS = [
     r"let me look",
     r"i'll check",
     r"i'll look",
+    r"i can check",
     r"checking",
     r"looking into",
     r"one moment",
@@ -51,10 +52,11 @@ DEFERRAL_PATTERNS = [
     r"let me find",
     r"i'll find",
     r"look.{0,10}up",  # "look that up", "look it up", "look up"
+    r"pull.{0,10}(up|that)",  # "pulling that up", "pull that up"
     r"let me see",
     r"i'll see what",
-    r"i don't have.{0,30}(on hand|at the moment|right now|available)",
-    r"don't have.{0,20}information",
+    r"i don't have.{0,50}(on hand|at the moment|right now|available|yet|here|in this)",
+    r"don't have.{0,30}(information|address|number|email|calendar|your|in this|yet)",
     r"need to (check|look|find)",
     r"don't have access",
     r"can't see",
@@ -216,6 +218,9 @@ async def get_realtime_response(
             role = msg["role"]
             content = msg["content"]
 
+            # User messages use input_text, assistant messages use output_text
+            content_type = "input_text" if role == "user" else "output_text"
+
             await ws.send(
                 json.dumps(
                     {
@@ -223,7 +228,7 @@ async def get_realtime_response(
                         "item": {
                             "type": "message",
                             "role": role,
-                            "content": [{"type": "input_text", "text": content}],
+                            "content": [{"type": content_type, "text": content}],
                         },
                     },
                 ),
@@ -783,11 +788,25 @@ class TestFalseNegativeDetection:
             f"Fast brain should repeat/spell it, not 'let me check'."
         )
 
-        # Should reference the email
-        assert response_contains_data(response, "sarah") or response_contains_data(
-            response,
-            "jones",
-        ), (
+        # Should reference the email - could be:
+        # - Contiguous: "sarah.jones@company.com"
+        # - Spaced out: "s a r a h dot j o n e s"
+        # - NATO phonetic: "S as in Sam, A as in Apple..."
+        # - Contains "company" or "@" reference
+        response_lower = response.lower()
+        response_normalized = response_lower.replace(" ", "").replace("-", "")
+
+        # Check for direct name match (handles spaced out spelling)
+        has_sarah = "sarah" in response_normalized
+        has_jones = "jones" in response_normalized
+        # Check for company.com reference
+        has_company = "company" in response_lower
+        # Check for NATO phonetic spelling pattern (S as in...)
+        has_nato_spelling = "as in" in response_lower and (
+            "s as in" in response_lower or "j as in" in response_lower
+        )
+
+        assert has_sarah or has_jones or has_company or has_nato_spelling, (
             f"Fast brain ({fast_brain_model}) didn't repeat the email!\n"
             f"Response: {response}"
         )
