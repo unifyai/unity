@@ -268,6 +268,9 @@ async def _run_gui_mode_multiprocess(*, args: Any, config: dict) -> bool:
 
 
 async def _main_async() -> None:
+    # Used for best-effort executor shutdown at the end of the run.
+    main_loop = asyncio.get_running_loop()
+    inactivity_shutdown = False
 
     parser = build_cli_parser("ConversationManager sandbox")
     parser.add_argument(
@@ -370,6 +373,15 @@ async def _main_async() -> None:
         unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
     )
     LG.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    try:
+        LG.info(
+            "Sandbox starting pid=%s project=%s gui=%s",
+            os.getpid(),
+            args.project_name,
+            bool(getattr(args, "gui", False)),
+        )
+    except Exception:
+        pass
 
     # Keep sandbox logs readable by default. Full traces are still available via --debug.
     if not args.debug:
@@ -659,8 +671,8 @@ async def _main_async() -> None:
                         pass
 
                 # IMPORTANT: the sandbox can "restart" within the same Python process.
-                # If we only wrap once, the wrapper will keep capturing into the old
-                # TraceDisplay instance, and the new UI will show "(no trace entries yet)".
+                # If we only wrap once, the wrapper will keep capturing into the previous
+                # TraceDisplay instance, and the active UI will show "(no trace entries yet)".
                 # Store the original execute once and re-wrap against the current display
                 # every time we (re)initialize the sandbox.
                 orig = getattr(executor, "_cm_sandbox_execute_orig", None)
@@ -831,8 +843,8 @@ async def _main_async() -> None:
     # developer sandbox (not a long-lived service). We attempt a best-effort
     # executor shutdown and if it's still stuck, force-exit.
     try:
-        if hasattr(loop, "shutdown_default_executor"):
-            await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
+        if hasattr(main_loop, "shutdown_default_executor"):
+            await asyncio.wait_for(main_loop.shutdown_default_executor(), timeout=2.0)
     except Exception:
         if inactivity_shutdown:
             os._exit(0)
