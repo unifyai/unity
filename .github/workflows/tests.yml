@@ -488,7 +488,7 @@ jobs:
       needs.discover.outputs.delete_on_start == 'true' &&
       needs.discover.outputs.random_projects != 'true'
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
       # No fallback - if delete_on_start is enabled, ORCHESTRA_URL must be set
       ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
@@ -558,7 +558,7 @@ jobs:
       ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
       # Unify API key for _prepare_shared_project.py and tests
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
       # Ensure local unillm/unify packages are found correctly
       # The repos are cloned to ./unillm/ and ./unify/, with packages inside
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
@@ -1066,7 +1066,7 @@ jobs:
       needs.discover.outputs.random_projects != 'true' &&
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
       # No fallback - if delete_on_exit is enabled, ORCHESTRA_URL must be set
       ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
