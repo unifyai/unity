@@ -100,23 +100,22 @@ class TestSlowBrainDecisionBoundaries:
         """The boss contact (contact_id=1) who is calling."""
         return TEST_CONTACTS[1]
 
-    async def test_call_start_should_not_trigger_greeting_guidance(
+    async def test_inbound_call_start_should_not_trigger_greeting_guidance(
         self,
         initialized_cm,
         boss_contact,
     ):
         """
-        When a call starts, the slow brain should NOT run at all and should NOT
-        provide conversational guidance like 'Greet the user' or 'Say hello'.
+        When an INBOUND call starts, the slow brain should NOT run at all and
+        should NOT provide conversational guidance like 'Greet the user'.
 
-        The fast brain handles greetings and all conversational aspects autonomously.
-        The slow brain should only be triggered later when there's actual content
-        that requires its attention (user utterance, action completion, etc.).
+        The fast brain handles greetings and all conversational aspects autonomously
+        for inbound calls where the user is initiating with their own agenda.
 
         This test documents the bug reported by Ved and verifies the fix:
 
         BUG (before fix):
-        - Call starts
+        - Inbound call starts
         - Slow brain runs immediately via request_llm_run(delay=0)
         - Slow brain sees "Call started" notification
         - Slow brain outputs call_guidance: "Greet Ved warmly..."
@@ -124,11 +123,14 @@ class TestSlowBrainDecisionBoundaries:
         - Result: duplicate speech
 
         FIX:
-        - Call starts
-        - Slow brain does NOT run on call start
+        - Inbound call starts
+        - Slow brain does NOT run on call start (is_outbound=False)
         - Fast brain handles greeting autonomously
         - Slow brain only runs later when there's actual content to process
         - Result: no duplicate speech
+
+        Note: OUTBOUND calls DO trigger the slow brain to provide initial guidance
+        on what to say and why we're calling. See test_outbound_call_start_triggers_guidance.
         """
         # Track what call_guidance is published
         published_guidance: list[str] = []
@@ -157,32 +159,86 @@ class TestSlowBrainDecisionBoundaries:
             event = PhoneCallStarted(contact=boss_contact)
             result = await initialized_cm.step(event)
 
-            # The slow brain should NOT run on call start.
+            # The slow brain should NOT run on INBOUND call start.
             # The fast brain handles the greeting autonomously.
             # Triggering the slow brain here would cause unnecessary call_guidance.
             assert not result.llm_ran, (
-                "Slow brain should NOT run on PhoneCallStarted!\n"
+                "Slow brain should NOT run on PhoneCallStarted for INBOUND calls!\n"
                 "\n"
                 "The fast brain handles greetings and all conversational aspects\n"
-                "autonomously. If the slow brain runs on call start, it may provide\n"
+                "autonomously for inbound calls. If the slow brain runs, it may provide\n"
                 "call_guidance like 'Greet the user', causing duplicate speech.\n"
                 "\n"
                 "The slow brain should only be triggered by:\n"
                 "- InboundPhoneUtterance (user says something)\n"
                 "- ActorResult (action completes)\n"
                 "- NotificationInjectedEvent (cross-channel notification)\n"
-                "- SMSReceived/EmailReceived while on call"
+                "- SMSReceived/EmailReceived while on call\n"
+                "\n"
+                "Note: Outbound calls DO trigger the slow brain for initial guidance."
             )
 
             # Also verify no call_guidance was published
             assert len(published_guidance) == 0, (
-                f"call_guidance was published on call start: {published_guidance}\n"
-                "No guidance should be sent when a call starts - the fast brain\n"
+                f"call_guidance was published on inbound call start: {published_guidance}\n"
+                "No guidance should be sent when an inbound call starts - the fast brain\n"
                 "handles the initial interaction autonomously."
             )
 
         finally:
             initialized_cm.cm.event_broker.publish = original_publish
+
+    async def test_outbound_call_start_triggers_guidance(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        When an OUTBOUND call starts, the slow brain SHOULD run to provide
+        initial guidance on what to say and why we're calling.
+
+        Unlike inbound calls (where the user initiates with their own agenda),
+        outbound calls are initiated by the assistant with a specific purpose.
+        The fast brain needs context from the slow brain about:
+        - Why we're calling this contact
+        - What information to convey or gather
+        - Any relevant context from recent interactions
+
+        Flow for outbound calls:
+        1. PhoneCallSent triggers call_manager.start_call(outbound=True)
+        2. call_manager.is_outbound = True
+        3. Fast brain subprocess starts and waits for call_answered
+        4. PhoneCallStarted arrives, slow brain sees is_outbound=True
+        5. Slow brain runs immediately via request_llm_run(delay=0)
+        6. Slow brain generates call_guidance with purpose/context
+        7. Guidance is buffered by fast brain (in pending_guidance)
+        8. When call is answered, fast brain speaks with the guidance
+        """
+        cm = initialized_cm.cm
+
+        # Simulate outbound call setup - set is_outbound BEFORE PhoneCallStarted
+        # In real flow, this happens in PhoneCallSent handler calling start_call(outbound=True)
+        cm.call_manager.is_outbound = True
+
+        try:
+            # Simulate call starting (for outbound call)
+            event = PhoneCallStarted(contact=boss_contact)
+            result = await initialized_cm.step(event)
+
+            # The slow brain SHOULD run for outbound calls to provide initial guidance
+            assert result.llm_ran, (
+                "Slow brain should run on PhoneCallStarted for OUTBOUND calls!\n"
+                "\n"
+                "Outbound calls are initiated by the assistant with a purpose.\n"
+                "The slow brain must provide initial guidance so the fast brain\n"
+                "knows what to say when the call is answered.\n"
+                "\n"
+                "Check that call_manager.is_outbound is True before PhoneCallStarted."
+            )
+
+        finally:
+            # Reset outbound flag
+            cm.call_manager.is_outbound = False
 
     async def test_call_guidance_field_allows_empty_value(
         self,
