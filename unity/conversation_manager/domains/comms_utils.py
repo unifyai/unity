@@ -174,20 +174,24 @@ async def upload_unify_attachment(
 
 
 async def send_email_via_address(
-    to_email: str,
+    to: list[str],
     subject: str,
     body: str,
-    email_id: str = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    email_id: str | None = None,
     attachment: dict | None = None,
 ) -> dict:
     """
     Send an email using the email provider API.
 
     Args:
-        to_email: The email address to send the email to
-        subject: The subject of the email
-        body: The message body to send
-        email_id: The email identifier of the message to reply to (threading id)
+        to: List of recipient email addresses.
+        subject: The subject of the email.
+        body: The message body to send.
+        cc: Optional list of CC email addresses.
+        bcc: Optional list of BCC email addresses.
+        email_id: The email identifier of the message to reply to (threading id).
         attachment: Optional attachment dict with keys:
             - filename: The name of the file
             - content_base64: Base64-encoded file contents
@@ -202,17 +206,26 @@ async def send_email_via_address(
     attachment_info = (
         f" with attachment '{attachment['filename']}'" if attachment else ""
     )
+    recipients_summary = f"to={to}"
+    if cc:
+        recipients_summary += f", cc={cc}"
+    if bcc:
+        recipients_summary += f", bcc={bcc}"
     print(
-        f"Sending email from {from_email} to {to_email}: {subject}{attachment_info}",
+        f"Sending email from {from_email} ({recipients_summary}): {subject}{attachment_info}",
     )
 
     payload = {
         "from": from_email,
-        "to": to_email,
+        "to": to,
         "subject": subject,
         "body": body,
         "in_reply_to": email_id,
     }
+    if cc:
+        payload["cc"] = cc
+    if bcc:
+        payload["bcc"] = bcc
     if attachment:
         payload["attachment"] = attachment
 

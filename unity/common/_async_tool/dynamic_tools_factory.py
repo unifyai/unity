@@ -105,32 +105,6 @@ class DynamicToolFactory:
             pass
 
     @staticmethod
-    def _ensure_kwonly_param(to_wrapper, name: str, annotation, default=None) -> None:
-        """Ensure a keyword-only parameter exists on the wrapper's signature."""
-        with suppress(Exception):
-            import inspect as _inspect
-
-            sig = _inspect.signature(to_wrapper)
-            params = list(sig.parameters.values())
-            if any(p.name == name for p in params):
-                return
-            params.append(
-                _inspect.Parameter(
-                    name,
-                    kind=_inspect.Parameter.KEYWORD_ONLY,
-                    default=default,
-                    annotation=annotation,
-                ),
-            )
-            to_wrapper.__signature__ = _inspect.Signature(
-                parameters=params,
-                return_annotation=sig.return_annotation,
-            )
-            anns = dict(getattr(to_wrapper, "__annotations__", {}))
-            anns[name] = annotation
-            to_wrapper.__annotations__ = anns
-
-    @staticmethod
     def _discover_custom_public_methods(handle) -> dict[str, Callable]:
         """
         Return a mapping ``name → bound_method`` of *public* callables on *handle*:
@@ -262,8 +236,6 @@ class DynamicToolFactory:
         with suppress(Exception):
             if handle is not None and hasattr(handle, "stop"):
                 self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
-        # Ensure images kw-only param
-        self._ensure_kwonly_param(_stop, "images", Optional[ImageRefs], default=None)
         # Register after adopting signature/doc so factory falls back only when needed
         self._register_tool(
             func_name=f"stop_{tool_context.fn_name}_{tool_context.safe_call_id}",
@@ -317,26 +289,15 @@ class DynamicToolFactory:
 
             # Set fallback docstring first; _adopt_signature_and_annotations may override
             _interject.__doc__ = doc
-            # Expose the downstream handle's signature to the LLM and ensure common params
+            # Expose the downstream handle's signature to the LLM dynamically.
+            # Plumbing parameters like _parent_chat_context_cont are automatically hidden
+            # by method_to_schema (via the explicit hidden params list).
             with suppress(Exception):
                 if hasattr(handle, "interject"):
                     self._adopt_signature_and_annotations(
                         getattr(handle, "interject"),
                         _interject,
                     )
-            # Ensure `content` alias and `images` kw-only parameters exist
-            self._ensure_kwonly_param(
-                _interject,
-                "content",
-                Optional[str],
-                default=None,
-            )
-            self._ensure_kwonly_param(
-                _interject,
-                "images",
-                Optional[ImageRefs],
-                default=None,
-            )
 
         else:
 
@@ -368,38 +329,8 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_interject,
         )
-        with suppress(Exception):
-            import inspect as _inspect
-
-            _interject.__annotations__ = {
-                "content": Optional[str],
-                "message": Optional[str],
-                "images": Optional[ImageRefs],
-                "return": Dict[str, str],
-            }
-            _interject.__signature__ = _inspect.Signature(
-                parameters=[
-                    _inspect.Parameter(
-                        "content",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[str],
-                    ),
-                    _inspect.Parameter(
-                        "message",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[str],
-                    ),
-                    _inspect.Parameter(
-                        "images",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[ImageRefs],
-                    ),
-                ],
-                return_annotation=Dict[str, str],
-            )
+        # Mark as supporting context propagation so schema generation can expose include_parent_chat_context_cont
+        _interject.__supports_context_propagation__ = True  # type: ignore[attr-defined]
 
     def _create_ask_tool(
         self,
@@ -724,6 +655,10 @@ class DynamicToolFactory:
             safe_call_id=_safe_call_id,
         )
 
+        # Track context opt-in for steering methods
+        # This determines whether include_parent_chat_context_cont is exposed in schema
+        _context_opted_in = getattr(info, "context_opted_in", True)
+
         self._create_stop_tool(
             create_tool_ctx,
             task,
@@ -736,6 +671,10 @@ class DynamicToolFactory:
                 info,
                 handle,
             )
+            # Mark with context opt-in status
+            interject_key = f"interject_{_fn_name}_{_safe_call_id}"
+            if interject_key in self.dynamic_tools:
+                self.dynamic_tools[interject_key].__context_opted_in__ = _context_opted_in  # type: ignore[attr-defined]
 
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx, handle)

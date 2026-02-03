@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
 from pydantic import BaseModel
 
 from unity.common.async_tool_loop import (
+    ChatContextPropagation,
     SteerableToolHandle,
     start_async_tool_loop,
 )
@@ -49,12 +50,11 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     def __init__(
         self,
-        task_description: str,
+        task_description: str | dict | list[str | dict],
         tools: Dict[str, Callable[..., Awaitable[Any]]],
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        notification_up_q: Optional[asyncio.Queue[dict]] = None,
         call_id: Optional[str] = None,
         on_finally: Optional[Callable[[], Awaitable[None]]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
@@ -84,9 +84,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         # attempt to request clarification (the `request_clarification` tool will not be added).
         self._clar_up_q_internal: Optional[asyncio.Queue[str]] = clarification_up_q
         self._clar_down_q_internal: Optional[asyncio.Queue[str]] = clarification_down_q
-        self._notification_up_q_internal: Optional[asyncio.Queue[dict]] = (
-            notification_up_q
-        )
         self._call_id: Optional[str] = call_id
 
         self._state: _HandleState = _HandleState.IDLE
@@ -96,6 +93,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
         self._completion_event = asyncio.Event()
         self._resume_requested_event = asyncio.Event()
+        # Event signaling that _loop_handle is ready for delegation
+        self._loop_handle_ready = asyncio.Event()
 
         self._task_id = str(uuid.uuid4())
         self._main_event_loop = main_event_loop
@@ -207,7 +206,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
                 self._state = _HandleState.RUNNING
                 logger.info(
-                    f"Handle {self._task_id}: Starting/Resuming with: '{current_task_description}'",
+                    f"Handle {self._task_id}: Starting/Resuming with: {current_task_description!r}",
                 )
 
                 self._client.reset_messages()
@@ -227,7 +226,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     message=current_task_description,
                     tools=internal_tools,
                     loop_id=f"{self.__class__.__name__}.{self._manage_execution.__name__}",
-                    propagate_chat_context=True,
+                    propagate_chat_context=ChatContextPropagation.ALWAYS,
                     interrupt_llm_with_interjections=True,
                     log_steps=True,
                     max_steps=self.MAX_STEPS,
@@ -237,6 +236,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     response_format=self._response_format,
                     persist=bool(self._persist),
                 )
+                # Signal that _loop_handle is ready for delegation (e.g., next_notification)
+                self._loop_handle_ready.set()
 
                 try:
                     loop_result_str = await self._loop_handle.result()
@@ -373,32 +374,17 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         return {"question": question}
 
     async def next_notification(self) -> dict:
-        """Await the next notification from this handle or its inner tool loop."""
-        # Prefer the caller-provided notification queue when supplied.
-        if self._notification_up_q_internal is not None and self._loop_handle is None:
-            return await self._notification_up_q_internal.get()
+        """Await the next notification from the inner tool loop.
 
-        # If we have both a caller queue and an inner loop, wait on whichever fires first.
-        if (
-            self._notification_up_q_internal is not None
-            and self._loop_handle is not None
-        ):
-            loop_task = asyncio.create_task(self._loop_handle.next_notification())
-            q_task = asyncio.create_task(self._notification_up_q_internal.get())
-            done, pending = await asyncio.wait(
-                {loop_task, q_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for t in pending:
-                t.cancel()
-            # Return whichever completed first.
-            return next(iter(done)).result()
-
-        # Fall back to inner loop notifications when available.
-        if self._loop_handle is not None:
-            return await self._loop_handle.next_notification()
-
-        raise RuntimeError("Notification is disabled for this handle.")
+        Notifications bubble up from tools (like execute_code) through the async
+        tool loop's internal notification queue. This method delegates to the
+        inner loop handle once it's ready.
+        """
+        # Wait for the inner loop handle to be ready
+        await self._loop_handle_ready.wait()
+        if self._loop_handle is None:
+            raise RuntimeError("Inner loop handle not available.")
+        return await self._loop_handle.next_notification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Provide an answer to the pending clarification (call_id is ignored)."""
@@ -421,8 +407,10 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     @property
     def notification_up_q(self) -> Optional[asyncio.Queue[dict]]:
-        """Queue for sending notifications upwards (when the caller supplied one)."""
-        return self._notification_up_q_internal
+        """Queue for sending notifications upwards (delegated to inner loop)."""
+        if self._loop_handle is not None:
+            return getattr(self._loop_handle, "_notification_q", None)
+        return None
 
     def _is_valid_method(self, name: str) -> bool:
         if name == "stop":
@@ -449,8 +437,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
     async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
@@ -474,13 +460,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            try:
-                self._loop_handle.stop(
-                    reason,
-                    parent_chat_context_cont=parent_chat_context_cont,
-                )
-            except Exception:
-                self._loop_handle.stop(reason)
+            self._loop_handle.stop(reason)
         elif (
             previous_state == _HandleState.IDLE and not self._completion_event.is_set()
         ):
@@ -545,7 +525,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | None = None,
     ) -> str:
         if not self._is_valid_method("interject"):
@@ -571,7 +551,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         try:
             await self._loop_handle.interject(
                 message=message,
-                parent_chat_context_cont=parent_chat_context_cont,
+                _parent_chat_context_cont=_parent_chat_context_cont,
                 images=images,
             )
         except TypeError:
@@ -595,7 +575,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
         system_message = f"""
         You are an AI assistant in the middle of performing a task. The user has just asked a question.
-        Based on the provided context (the task history and a screenshot of your browser), give a brief, natural, first-person response.
+        Based on the provided context (the task history and a screenshot of your current computer view), give a brief, natural, first-person response.
         Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
         **Task History:**
         The task's history up to this point has been shared with you.
@@ -618,8 +598,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
 
                 system_message += (
-                    "\n**Current Browser View (Screenshot):**\n"
-                    "An image of the current browser page has also been provided."
+                    "\n**Current Computer View (Screenshot):**\n"
+                    "An image of the current computer view has also been provided."
                 )
                 messages_to_send.append(
                     {

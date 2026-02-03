@@ -25,7 +25,7 @@ This directory contains the test suite for Unity.
 tests/parallel_run.sh tests/
 
 # Run a specific folder
-tests/parallel_run.sh tests/test_contact_manager/
+tests/parallel_run.sh tests/contact_manager/
 
 # Run with a timeout (useful for CI)
 tests/parallel_run.sh --timeout 300 tests/
@@ -119,8 +119,8 @@ parallel_run [options] <targets>
 
 # Targeting
 parallel_run tests/                              # Directory
-parallel_run tests/test_foo.py                   # File
-parallel_run tests/test_foo.py::test_bar         # Specific test
+parallel_run tests/foo.py                   # File
+parallel_run tests/foo.py::test_bar         # Specific test
 
 # Common flags
 parallel_run --timeout 300 tests/                # Abort after 5 minutes
@@ -161,7 +161,7 @@ See [Parallel Runner Guide](docs/parallel-runner.md) for full documentation.
 
 ```bash
 # Terminal 1: Run tests
-parallel_run tests/test_contact_manager/
+parallel_run tests/contact_manager/
 
 # Terminal 2: Watch (optional - inline feedback is shown by default)
 watch_tests
@@ -174,11 +174,11 @@ watch_tests
 watch_tests                    # Look for f ❌ prefix
 
 # Attach to see full output
-attach 'f ❌ test_contact_manager-test_ask'
+attach 'f ❌ contact_manager-test_ask'
 
 # Or check the log file
 ls logs/pytest/*/             # Find the run directory
-cat logs/pytest/2025-12-05T14-30-22_unity_dev_ttys042/test_contact_manager-test_ask.txt
+cat logs/pytest/2025-12-05T14-30-22_unity_dev_ttys042/contact_manager-test_ask.txt
 ```
 
 ### Clean up after tests
@@ -208,7 +208,7 @@ grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" tests/
 Some test suites (ContactManager, TranscriptManager, etc.) use pre-seeded scenario data that persists between runs for speed. To delete and recreate these scenarios from scratch:
 
 ```bash
-parallel_run --overwrite-scenarios tests/test_contact_manager
+parallel_run --overwrite-scenarios tests/contact_manager
 ```
 
 Use this when scenario seed data has changed (e.g., new contacts, updated transcript exchanges) and you need to regenerate the cached scenario state.
@@ -230,7 +230,7 @@ The fastest way to run CI tests on your current code—even uncommitted changes:
 
 ```bash
 # Test current code state (handles uncommitted/unpushed automatically)
-parallel_cloud_run.sh tests/test_contact_manager
+parallel_cloud_run.sh tests/contact_manager
 
 # Run all tests
 parallel_cloud_run.sh .
@@ -266,22 +266,22 @@ Tests are **off by default** to avoid unnecessary CI costs. Trigger them explici
 git commit -m "Fix contact manager bug [run-tests]"
 
 # Run specific folder (single worker)
-git commit -m "Fix contact manager bug [parallel_run.sh tests/test_contact_manager]"
+git commit -m "Fix contact manager bug [parallel_run.sh tests/contact_manager]"
 
 # Run multiple folders (single worker, both run concurrently inside)
-git commit -m "Fix bugs [parallel_run.sh tests/test_contact_manager tests/test_transcript_manager]"
+git commit -m "Fix bugs [parallel_run.sh tests/contact_manager tests/transcript_manager]"
 
 # Run with extra args (single worker)
-git commit -m "Eval check [parallel_run.sh --eval-only tests/test_actor]"
+git commit -m "Eval check [parallel_run.sh --eval-only tests/actor]"
 
 # Run specific test file
-git commit -m "Fix test [parallel_run.sh tests/test_actor/test_code_act.py]"
+git commit -m "Fix test [parallel_run.sh tests/actor/code_act.py]"
 
 # Regular commit (no tests)
 git commit -m "Update documentation"
 ```
 
-The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything. Both `tests/test_foo` and `test_foo` work (paths are resolved relative to the `tests/` directory).
+The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything. Both `tests/foo` and `test_foo` work (paths are resolved relative to the `tests/` directory).
 
 ### CLI Trigger (`gh`)
 
@@ -297,16 +297,16 @@ gh workflow run tests.yml --repo unifyai/unity --ref main
 
 # Run specific folder
 gh workflow run tests.yml --repo unifyai/unity --ref main \
-  -f test_path="tests/test_actor"
+  -f test_path="tests/actor"
 
 # Run with extra args
 gh workflow run tests.yml --repo unifyai/unity --ref main \
-  -f test_path="tests/test_actor" \
+  -f test_path="tests/actor" \
   -f parallel_run_args="--eval-only"
 
 # Run on a different branch
 gh workflow run tests.yml --repo unifyai/unity --ref my-feature-branch \
-  -f test_path="tests/test_contact_manager"
+  -f test_path="tests/contact_manager"
 ```
 
 **Available inputs:**

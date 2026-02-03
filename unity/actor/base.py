@@ -23,7 +23,7 @@ __all__ = [
     "BaseActor",
     "BaseActorHandle",
     "PhoneCallHandle",
-    "BrowserSessionHandle",
+    "ComputerSessionHandle",
     "ComsManager",
     "BaseCodeActActor",
 ]
@@ -56,7 +56,7 @@ class BaseActor(ABC):
     Purpose and positioning
     -----------------------
     The Actor provides a direct, real-time handle to "act" in the world and
-    get things done – e.g. open a browser, click UI elements, or perform a
+    get things done – e.g. open a web page, click UI elements, or perform a
     short-lived sandbox session during a conversation.
 
     Intended use
@@ -72,7 +72,7 @@ class BaseActor(ABC):
     chat, especially when the activity involves controlling tools or a UI in
     short iterative steps. Typical phrasings include:
 
-    - "open a browser", "open a window", "navigate/click/show me"
+    - "open a web page", "open a window", "navigate/click/show me"
     - "walk me through", "let's set this up together", "guide me live"
     - "troubleshoot together", "pair on this", "step‑by‑step now"
 
@@ -94,7 +94,7 @@ class BaseActor(ABC):
         session_connect_url: Optional[str] = None,
         headless: bool = False,
         computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
         connect_now: bool = False,
         # Clarification queue params for environment wiring
@@ -105,7 +105,7 @@ class BaseActor(ABC):
         Shared initialization for concrete actor implementations.
 
         This centralizes:
-        - Environment setup with sensible defaults (browser + state managers)
+        - Environment setup with sensible defaults (computer + state managers)
         - FunctionManager resolution (registry fallback)
         - Extraction of computer primitives for backward compatibility
         """
@@ -232,7 +232,7 @@ class BaseActor(ABC):
         - **Retrieval**: Search contact records, query knowledge bases, look up past
           conversations, find calendar events, search the web, retrieve files
         - **Action**: Send communications, update records, modify spreadsheets, control
-          the desktop/browser, schedule tasks, create reminders
+          the desktop/web interface, schedule tasks, create reminders
         - **Combined**: Find information and then act on it (e.g., "find David's email
           and send him a meeting invite")
 
@@ -290,7 +290,7 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         session_connect_url: Optional[str] = None,
         headless: bool = False,
         computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
         connect_now: bool = False,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -322,7 +322,6 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
         _call_id: Optional[str] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,

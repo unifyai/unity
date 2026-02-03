@@ -22,7 +22,7 @@ unify.activate("Assistants")
 
 def fetch_nearest_recording(assistant_id: str, timestamp: datetime):
     response = requests.get(
-        f"{os.environ['UNIFY_BASE_URL']}/assistant/{assistant_id}/recordings",
+        f"{os.environ['ORCHESTRA_URL']}/assistant/{assistant_id}/recordings",
         headers={"Authorization": f"Bearer {os.environ['UNIFY_KEY']}"},
     )
     recordings = response.json()["info"]

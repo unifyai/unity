@@ -46,7 +46,6 @@ from typing import List, Set
 # Local helpers live in intranet.scripts.utils
 from utils import initialize_script_environment, activate_project
 
-
 # ---------------------------------------------------------------------------
 # Boot-strap env / PYTHONPATH before importing Unify/Unity modules
 # ---------------------------------------------------------------------------
@@ -370,21 +369,15 @@ def main() -> int:
     discovered_tables_by_file: dict[str, List[str]] = {}
     for file_path in file_paths_list:
         try:
-            overview = fm._tables_overview(file=file_path)  # type: ignore[attr-defined]
+            storage = fm.describe(file_path=file_path)
         except Exception:
-            overview = {}
+            storage = None
 
         discovered_tables: List[str] = []
-        for key, val in (overview or {}).items():
-            if key == "FileRecords" or not isinstance(val, dict):
-                continue
-            tables = val.get("Tables")
-            if not isinstance(tables, dict):
-                continue
-            for label, info in tables.items():
-                ctx = (info or {}).get("context")
-                if isinstance(ctx, str) and ctx:
-                    discovered_tables.append(ctx)
+        if storage and storage.has_tables:
+            for table_info in storage.tables:
+                if table_info.context_path:
+                    discovered_tables.append(table_info.context_path)
 
         if discovered_tables:
             discovered_tables_by_file[file_path] = discovered_tables

@@ -86,6 +86,16 @@ class ContactManager(BaseContactManager):
         "information from them."
     )
 
+    # Response policy for contacts created from unknown inbound messages.
+    # Used by CommsManager when creating contacts for unknown senders.
+    UNKNOWN_INBOUND_RESPONSE_POLICY: str = (
+        "This contact was automatically created from an unknown inbound message. "
+        "Do NOT respond to this contact yet. Use your judgement to decide the best course of action: "
+        "you may inform your boss about this new contact and ask for guidance, or if this appears to be "
+        "spam or unwanted contact, you may choose to blacklist them via the Actor. If your boss confirms "
+        "this is a legitimate contact, you should update their details (name, etc.) and set should_respond=True."
+    )
+
     # ──────────────────────────────────────────────────────────────────────
     #  Construction & tool registration
     # ──────────────────────────────────────────────────────────────────────

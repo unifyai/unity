@@ -6,7 +6,7 @@ Global pytest configuration for Unity test suite.
 
 Sections:
   1. Imports and logging guard
-  2. Test stubs (Redis, BrowserWorker, DateTime)
+  2. Test stubs (Redis, ComputerWorker, DateTime)
   3. Singleton isolation
   4. Command-line options
   5. Custom logging helpers
@@ -44,6 +44,27 @@ if not _root_logger_early.handlers:
 from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
+
+
+# --------------------------------------------------------------------------- #
+# Orchestra availability check for requires_orchestra marker                   #
+# --------------------------------------------------------------------------- #
+def _check_orchestra_available() -> bool:
+    """Check if Orchestra server is reachable. Cached after first call."""
+    if hasattr(_check_orchestra_available, "_cached"):
+        return _check_orchestra_available._cached
+
+    orchestra_url = os.environ.get("ORCHESTRA_URL", "http://localhost:8000")
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            # Check a known endpoint - /v0/projects works and 404 on root is fine
+            resp = client.get(f"{orchestra_url}/v0/projects")
+            # 200 = success, 401/403 = auth required but server is up
+            _check_orchestra_available._cached = resp.status_code in (200, 401, 403)
+    except Exception:
+        _check_orchestra_available._cached = False
+
+    return _check_orchestra_available._cached
 
 
 def _derive_test_context(item: pytest.Item) -> str:
@@ -130,13 +151,14 @@ def _unset_unify_context_for_test(item: pytest.Item) -> None:
 def pytest_report_header(config):
     settings_str = [f"{k}={v}" for k, v in SETTINGS.model_dump().items()]
     return [
-        f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
+        f"orchestra_url={os.environ.get('ORCHESTRA_URL')}",
+        f"unity_comms_url={os.environ.get('UNITY_COMMS_URL')}",
         f"unify_project={unify.active_project()}",
     ] + settings_str
 
 
 # --------------------------------------------------------------------------- #
-# 2. Test stubs (Redis, BrowserWorker, DateTime)                              #
+# 2. Test stubs (Redis, ComputerWorker, DateTime)                              #
 # --------------------------------------------------------------------------- #
 
 _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
@@ -540,6 +562,10 @@ def pytest_configure(config):
         "markers",
         "enable_eventbus: enable EventBus publishing for this test",
     )
+    config.addinivalue_line(
+        "markers",
+        "requires_orchestra: mark test as requiring a running Orchestra server",
+    )
 
     # Required to disable explicit log level if set from pytest.ini or command line options
     if os.environ.get("UNITY_TESTS_CLI_LOGGING", "true").lower() == "false":
@@ -571,9 +597,15 @@ def pytest_configure(config):
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
+# Skip tests marked with requires_orchestra when Orchestra is not available
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
     _set_unify_context_for_test(item)
+
+    # Skip requires_orchestra tests if Orchestra is not running
+    if item.get_closest_marker("requires_orchestra"):
+        if not _check_orchestra_available():
+            pytest.skip("Orchestra server not available")
 
 
 def _normalize_pytest_nodeid(nodeid):

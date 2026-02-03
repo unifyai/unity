@@ -601,7 +601,7 @@ class WebSearcher(BaseWebSearcher):
         ----------
         queries : str | list[str]
             One or more search queries to run on the target site.
-            Pass multiple queries to search for different topics in a single browser session.
+            Pass multiple queries to search for different topics in a single web session.
         website : Website | dict
             Website record containing host, credentials, actor_entrypoint, notes.
         """

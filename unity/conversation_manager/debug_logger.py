@@ -9,7 +9,6 @@ import unify
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
-
 # Track whether AssistantJobs project has been verified/created
 _project_verified = False
 
@@ -24,6 +23,14 @@ def _ensure_project_exists(api_key: str) -> None:
         _project_verified = True
     except Exception as e:
         print(f"[debug_logger] Could not verify/create AssistantJobs project: {e}")
+
+
+def _is_managed_vm() -> bool:
+    """Check if running on a managed VM.
+
+    Returns True when desktop_mode is "windows" or "ubuntu".
+    """
+    return SESSION_DETAILS.assistant.desktop_mode in ("windows", "ubuntu")
 
 
 def _calc_wait_from_ready_at(vm_ready_at: str | None) -> int:
@@ -47,8 +54,12 @@ def _calc_wait_from_ready_at(vm_ready_at: str | None) -> int:
         return 10  # Fallback on parse error
 
 
-def _resolve_windows_vm_liveview(assistant_id: str) -> str | None:
-    """Resolve liveview URL for a Windows VM by polling /infra/vm/status endpoint.
+def _resolve_vm_liveview(assistant_id: str, vm_type: str) -> str | None:
+    """Resolve liveview URL for a VM by polling /infra/vm/status endpoint.
+
+    Args:
+        assistant_id: The assistant ID to check status for.
+        vm_type: VM type ("windows" or "ubuntu").
 
     Returns the desktop_url when vm_ready=True, or None if resolution fails.
     """
@@ -61,12 +72,13 @@ def _resolve_windows_vm_liveview(assistant_id: str) -> str | None:
     max_retries = 10  # More retries for VM boot (can take longer)
     for attempt in range(max_retries):
         print(
-            f"\n\n[Liveview] Attempt {attempt + 1} to get Windows VM status "
+            f"\n\n[Liveview] Attempt {attempt + 1} to get {vm_type} VM status "
             f"for assistant {assistant_id}",
         )
         try:
             resp = requests.get(
                 f"{comms_url}/infra/vm/status/{assistant_id}",
+                params={"vm_type": vm_type},
                 headers={"Authorization": f"Bearer {admin_key}"},
                 timeout=30,
             )
@@ -80,7 +92,7 @@ def _resolve_windows_vm_liveview(assistant_id: str) -> str | None:
                 print(f"[Liveview] VM Status: {status}, Ready: {vm_ready}")
 
                 if vm_ready and desktop_url:
-                    print("[Liveview] ✅ Windows VM is ready!")
+                    print(f"[Liveview] ✅ {vm_type.capitalize()} VM is ready!")
                     print(f"[Liveview] URL: {desktop_url}/desktop/custom.html")
                     return f"{desktop_url}/desktop/custom.html"
 
@@ -102,72 +114,6 @@ def _resolve_windows_vm_liveview(assistant_id: str) -> str | None:
     return None
 
 
-def _resolve_k8s_liveview(job_name: str) -> str | None:
-    """Resolve liveview URL for a K8s job by polling /infra/job/service/ip endpoint.
-
-    Returns the liveview URL when ready, or None if resolution fails.
-    """
-    comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-    if not comms_url or not admin_key:
-        print("[Liveview] Skipping: COMMS_URL or admin key not configured")
-        return None
-
-    max_retries = 5  # Cap retries to avoid infinite loops
-    svc = f"unity-svc-{job_name}"
-    for attempt in range(max_retries):
-        print(
-            f"\n\n[Liveview] Attempt {attempt + 1} to get liveview URL for job {job_name}",
-        )
-        try:
-            resp = requests.get(
-                f"{comms_url}/infra/job/service/ip",
-                params={"service_name": svc},
-                headers={"Authorization": f"Bearer {admin_key}"},
-                timeout=30,
-            )
-            if resp.ok:
-                data = resp.json() or {}
-                external = data.get("external", {})
-                ready = external.get("ready", False)
-                checks = external.get("checks", {})
-                seconds_left = checks.get("seconds_until_ready", 0)
-
-                print(f"[Liveview] Ready: {ready}")
-                print(
-                    f"[Liveview]  - service_exists: {checks.get('service_exists')}",
-                )
-                print(
-                    f"[Liveview]  - gce_lb_wait_passed: {checks.get('gce_lb_wait_passed')}",
-                )
-                if seconds_left > 0:
-                    mins, secs = divmod(seconds_left, 60)
-                    print(f"[Liveview]  - time_until_ready: {mins}m {secs}s")
-
-                if ready:
-                    liveview_url = external.get("url")
-                    liveview_url = f"{liveview_url}/custom.html"
-                    print("[Liveview] ✅ Service is ready!")
-                    print(f"[Liveview] URL: {liveview_url}")
-                    return liveview_url
-
-                # Wait for seconds_left, minimum 5 seconds
-                wait_time = max(seconds_left - 10, 5) if seconds_left > 0 else 5
-                print(f"[Liveview] Waiting {wait_time}s...")
-                time.sleep(wait_time)
-            else:
-                print(
-                    f"[Liveview] Request failed with status {resp.status_code}: {resp.text}",
-                )
-                # Wait a bit before retrying on failure
-                time.sleep(5)
-        except Exception as e:
-            print(f"[Liveview] Error: {e}")
-            time.sleep(5)
-
-    return None
-
-
 def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     """Update the running job record with job_name and liveview_url.
 
@@ -183,15 +129,12 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
 
     # Resolve liveview URL first (this can take a while)
     try:
-        is_windows_vm = (
-            not SESSION_DETAILS.assistant.is_user_desktop
-            and SESSION_DETAILS.assistant.desktop_mode == "windows"
-        )
-
-        if is_windows_vm:
-            liveview_url = _resolve_windows_vm_liveview(assistant_id)
+        if _is_managed_vm():
+            vm_type = SESSION_DETAILS.assistant.desktop_mode
+            liveview_url = _resolve_vm_liveview(assistant_id, vm_type)
         else:
-            liveview_url = _resolve_k8s_liveview(job_name)
+            # User's own desktop - no liveview URL to resolve
+            liveview_url = None
     except Exception as e:
         print(f"[Liveview] Error resolving liveview URL: {e}")
         traceback.print_exc()
@@ -231,42 +174,46 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
         traceback.print_exc()
 
 
-def _stop_windows_vm(assistant_id: str) -> None:
-    """Stop the Windows VM for the given assistant.
+def _stop_vm(assistant_id: str, vm_type: str) -> None:
+    """Stop the VM for the given assistant.
 
     Called when a job is marked done and the assistant was running on a
-    non-user Windows VM (is_user_desktop=False and desktop_mode=windows).
+    managed VM (desktop_mode in windows/ubuntu).
+
+    Args:
+        assistant_id: The assistant ID whose VM to stop.
+        vm_type: VM type ("windows" or "ubuntu").
     """
     try:
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         if not comms_url or not admin_key:
             print(
-                "[debug_logger] Skipping Windows VM stop: "
+                "[debug_logger] Skipping VM stop: "
                 "COMMS_URL or admin key not configured",
             )
             return
 
         response = requests.post(
             f"{comms_url}/infra/vm/stop",
-            json={"assistant_id": assistant_id},
+            json={"assistant_id": assistant_id, "vm_type": vm_type},
             headers={"Authorization": f"Bearer {admin_key}"},
             timeout=60,
         )
         if response.ok:
             print(
-                f"[debug_logger] Windows VM stopped for assistant {assistant_id}: "
-                f"{response.json()}",
+                f"[debug_logger] {vm_type.capitalize()} VM stopped for assistant "
+                f"{assistant_id}: {response.json()}",
             )
         else:
             print(
-                f"[debug_logger] Failed to stop Windows VM: "
+                f"[debug_logger] Failed to stop {vm_type} VM: "
                 f"{response.status_code} {response.text}",
             )
     except requests.exceptions.Timeout:
-        print("[debug_logger] Windows VM stop request timed out")
+        print(f"[debug_logger] {vm_type.capitalize()} VM stop request timed out")
     except Exception as e:
-        print(f"[debug_logger] Error stopping Windows VM: {e}")
+        print(f"[debug_logger] Error stopping {vm_type} VM: {e}")
         traceback.print_exc()
 
 
@@ -290,27 +237,7 @@ def mark_job_done(job_name: str):
         print(f"Error finding job: {e}")
         traceback.print_exc()
 
-    # Stop Windows VM if applicable (non-user desktop running Windows)
-    if (
-        not SESSION_DETAILS.assistant.is_user_desktop
-        and SESSION_DETAILS.assistant.desktop_mode == "windows"
-    ):
-        _stop_windows_vm(SESSION_DETAILS.assistant.id)
-
-    # delete the job service
-    try:
-        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
-        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
-        svc = f"unity-svc-{job_name}"
-        response = requests.delete(
-            f"{comms_url}/infra/job/service",
-            data={"service_name": svc},
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=3,
-        )
-        print(f"Job service deleted: {response.text}")
-    except requests.exceptions.Timeout:
-        print("Job service deletion (timed out)")
-    except Exception as e:
-        print(f"Error deleting job service: {e}")
-        traceback.print_exc()
+    # Stop VM if applicable (managed VM, not user's own desktop)
+    if _is_managed_vm():
+        vm_type = SESSION_DETAILS.assistant.desktop_mode
+        _stop_vm(SESSION_DETAILS.assistant.id, vm_type)

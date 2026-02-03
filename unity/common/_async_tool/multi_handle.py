@@ -18,7 +18,7 @@ from .tagging import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from unity.image_manager.types.image_refs import ImageRefs
 
 
 class MultiHandleCoordinator:
@@ -323,8 +323,8 @@ class MultiRequestHandle:
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        images: "Optional[ImageRefs]" = None,
     ) -> "MultiRequestHandle":
         """Ask about this request's status.
 
@@ -337,8 +337,8 @@ class MultiRequestHandle:
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
+        images: "Optional[ImageRefs]" = None,
     ) -> None:
         """Inject additional context for this request."""
         self._coordinator.inject_interjection(self._request_id, message)
@@ -347,7 +347,8 @@ class MultiRequestHandle:
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
+        images: "Optional[ImageRefs]" = None,
     ) -> None:
         """Stop/cancel this specific request.
 

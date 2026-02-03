@@ -1149,7 +1149,7 @@ Examples:
     actor_group.add_argument(
         "--headless",
         action="store_true",
-        help="Run browser in headless mode (no visible window). Default: False (browser visible).",
+        help="Run web mode in headless mode (no visible window). Default: False (web visible).",
     )
 
     args = parser.parse_args()

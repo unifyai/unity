@@ -5,16 +5,24 @@ These functions encapsulate common patterns used across all metrics,
 providing a stable interface for both static and dynamic agents.
 
 DESIGN PRINCIPLES:
-1. Discovery-first: Use tables_overview and schema_explain to discover schema
+1. Discovery-first: Use describe() to discover schema and table contexts
 2. No magic globals: All filter expressions and column mappings are inline
 3. Rich return values: Discovery functions return table + description + columns
 4. Pure functions: No logging or side effects
+
+API Reconciliation (2025-01):
+- tables_overview() → describe(file_path=...) returning FileStorageMap
+- schema_explain() → list_columns(context=...) returning column info
+- reduce(table=..., keys=...) → reduce(context=..., columns=...)
+- list_columns(table=...) → list_columns(context=...)
 """
 
-from typing import Any, Callable, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Optional, TypedDict, TYPE_CHECKING
 
 from intranet.repairs_agent.metrics.types import MetricResult
 
+if TYPE_CHECKING:
+    from unity.file_manager.types.describe import FileStorageMap
 
 # =============================================================================
 # FILE PATH CONSTANTS (Data sources - these identify WHERE the data is)
@@ -59,19 +67,19 @@ def discover_repairs_table(tools: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Discover the repairs data table with full schema information.
 
-    Uses tables_overview(file=REPAIRS_FILE) to find the repairs table,
-    then schema_explain to get column details.
+    Uses describe(file_path=REPAIRS_FILE) to find the repairs table,
+    then extracts table description and column details from the FileStorageMap.
 
     Parameters
     ----------
     tools : Dict[str, Any]
-        Tools dict containing tables_overview, schema_explain callables
+        Tools dict containing describe, list_columns callables
 
     Returns
     -------
     TableInfo or None
-        Dict with 'table' (path), 'description', and 'columns' list,
-        or None if discovery fails
+        Dict with 'table' (context path), 'description', and 'columns' list,
+        or None if discovery fails. Columns include 'name' and 'description'.
 
     Example
     -------
@@ -80,67 +88,82 @@ def discover_repairs_table(tools: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     ...     print(f"Table: {info['table']}")
     ...     print(f"Description: {info['description']}")
     ...     for col in info['columns']:
-    ...         print(f"  - {col['name']}: {col.get('description', '')}")
-    ...     # Now query using the table path
-    ...     result = tools["reduce"](table=info['table'], ...)
+    ...         print(f"  - {col['name']}: {col['description']}")
+    ...     # Now query using the table context path
+    ...     result = tools["reduce"](context=info['table'], ...)
     """
-    tables_overview = tools.get("tables_overview")
-    schema_explain = tools.get("schema_explain")
+    describe = tools.get("describe")
+    list_columns = tools.get("list_columns")
 
-    if not tables_overview:
+    if not describe:
         return None
 
-    # Scope to the repairs file only
-    file_tables = tables_overview(file=REPAIRS_FILE)
+    try:
+        # Get FileStorageMap for the repairs file
+        storage: "FileStorageMap" = describe(file_path=REPAIRS_FILE)
+    except Exception:
+        return None
 
-    # Navigate the nested structure to find the repairs table
-    # Structure: {<safe_file_path>: {"Tables": {<label>: {"context": ..., "description": ...}}}}
+    # Check if file is indexed and has tables
+    if not getattr(storage, "indexed_exists", False):
+        return None
+    if not getattr(storage, "has_tables", False):
+        return None
+
+    # Find the repairs table (look for "Repairs" or "Raised" in table name)
     table_path: Optional[str] = None
-    table_desc: str = ""
+    table_description: str = ""
+    matched_table = None
+    tables = getattr(storage, "tables", [])
 
-    for file_key, file_info in file_tables.items():
-        if file_key == "FileRecords":
-            continue
-        if isinstance(file_info, dict) and "Tables" in file_info:
-            tables = file_info["Tables"]
-            for label, tinfo in tables.items():
-                if isinstance(tinfo, dict):
-                    ctx = tinfo.get("context", "")
-                    if "Repairs" in label or "Raised" in label:
-                        table_path = ctx
-                        table_desc = tinfo.get("description", "")
-                        break
+    for table_info in tables:
+        name = getattr(table_info, "name", "")
+        if "Repairs" in name or "Raised" in name:
+            table_path = getattr(table_info, "context_path", None)
+            table_description = getattr(table_info, "description", None) or ""
+            matched_table = table_info
+            break
+
+    # Fallback: use first table if no specific match
+    if not table_path and tables:
+        matched_table = tables[0]
+        table_path = getattr(matched_table, "context_path", None)
+        table_description = getattr(matched_table, "description", None) or ""
 
     if not table_path:
         return None
 
-    # Get column information via schema_explain
+    # Get column information from TableInfo.column_schema if available
     columns: List[ColumnInfo] = []
-    if schema_explain:
+    if matched_table:
+        column_schema = getattr(matched_table, "column_schema", None)
+        if column_schema:
+            schema_columns = getattr(column_schema, "columns", [])
+            for col in schema_columns:
+                col_name = getattr(col, "name", "")
+                col_desc = getattr(col, "description", None) or ""
+                if col_name:
+                    columns.append({"name": col_name, "description": col_desc})
+
+    # Fallback to list_columns if schema didn't have columns
+    if not columns and list_columns:
         try:
-            schema_text = schema_explain(table=table_path)
-            # Parse the schema_explain output to extract columns
-            # Format: "Table: ...\n\nColumns:\n  - ColName: Description\n  - ColName\n\nRow count: N"
-            in_columns = False
-            for line in schema_text.split("\n"):
-                line = line.strip()
-                if line == "Columns:":
-                    in_columns = True
-                elif in_columns and line.startswith("- "):
-                    col_part = line[2:]  # Remove "- "
-                    if ": " in col_part:
-                        name, desc = col_part.split(": ", 1)
-                        columns.append({"name": name, "description": desc})
-                    else:
-                        columns.append({"name": col_part, "description": ""})
-                elif in_columns and not line.startswith("-"):
-                    in_columns = False
+            cols_result = list_columns(context=table_path)
+            # list_columns returns Dict[str, Any] (name -> info) when include_types=True
+            if isinstance(cols_result, dict):
+                for name, info in cols_result.items():
+                    desc = ""
+                    if isinstance(info, dict):
+                        desc = info.get("description", "") or ""
+                    columns.append({"name": name, "description": desc})
+            elif isinstance(cols_result, list):
+                columns = [{"name": name, "description": ""} for name in cols_result]
         except Exception:
             pass
 
     return {
         "table": table_path,
-        "description": table_desc,
+        "description": table_description,
         "columns": columns,
     }
 
@@ -149,18 +172,18 @@ def discover_telematics_tables(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Discover telematics data tables with full schema information.
 
-    Uses tables_overview(file=TELEMATICS_FILE) to find monthly tables,
-    then schema_explain for each to get column details.
+    Uses describe(file_path=TELEMATICS_FILE) to find monthly tables,
+    then list_columns for each to get column details.
 
     Parameters
     ----------
     tools : Dict[str, Any]
-        Tools dict containing tables_overview, schema_explain callables
+        Tools dict containing describe, list_columns callables
 
     Returns
     -------
     list[TableInfo]
-        List of dicts, each with 'table', 'description', 'columns'
+        List of dicts, each with 'table' (context path), 'description', 'columns'
 
     Example
     -------
@@ -168,63 +191,74 @@ def discover_telematics_tables(tools: Dict[str, Any]) -> List[Dict[str, Any]]:
     >>> for tinfo in tables:
     ...     print(f"Table: {tinfo['table']}")
     ...     # Aggregate across all monthly tables
-    ...     result = tools["reduce"](table=tinfo['table'], ...)
+    ...     result = tools["reduce"](context=tinfo['table'], ...)
     """
-    tables_overview = tools.get("tables_overview")
-    schema_explain = tools.get("schema_explain")
+    describe = tools.get("describe")
+    list_columns = tools.get("list_columns")
 
-    if not tables_overview:
+    if not describe:
         return []
 
-    # Scope to the telematics file only
-    file_tables = tables_overview(file=TELEMATICS_FILE)
+    try:
+        # Get FileStorageMap for the telematics file
+        storage: "FileStorageMap" = describe(file_path=TELEMATICS_FILE)
+    except Exception:
+        return []
+
+    # Check if file is indexed and has tables
+    if not getattr(storage, "indexed_exists", False):
+        return []
+    if not getattr(storage, "has_tables", False):
+        return []
 
     # Collect all telematics tables
     result: List[TableInfo] = []
+    tables = getattr(storage, "tables", [])
 
-    for file_key, file_info in file_tables.items():
-        if file_key == "FileRecords":
+    for table_info in tables:
+        ctx = getattr(table_info, "context_path", "")
+        if not ctx:
             continue
-        if isinstance(file_info, dict) and "Tables" in file_info:
-            tables = file_info["Tables"]
-            for label, tinfo in tables.items():
-                if isinstance(tinfo, dict):
-                    ctx = tinfo.get("context", "")
-                    desc = tinfo.get("description", "")
 
-                    # Get column information
-                    columns: List[ColumnInfo] = []
-                    if schema_explain:
-                        try:
-                            schema_text = schema_explain(table=ctx)
-                            in_columns = False
-                            for line in schema_text.split("\n"):
-                                line = line.strip()
-                                if line == "Columns:":
-                                    in_columns = True
-                                elif in_columns and line.startswith("- "):
-                                    col_part = line[2:]
-                                    if ": " in col_part:
-                                        name, col_desc = col_part.split(": ", 1)
-                                        columns.append(
-                                            {"name": name, "description": col_desc},
-                                        )
-                                    else:
-                                        columns.append(
-                                            {"name": col_part, "description": ""},
-                                        )
-                                elif in_columns and not line.startswith("-"):
-                                    in_columns = False
-                        except Exception:
-                            pass
+        # Extract table description from TableInfo
+        table_description = getattr(table_info, "description", None) or ""
 
-                    result.append(
-                        {
-                            "table": ctx,
-                            "description": desc,
-                            "columns": columns,
-                        },
-                    )
+        # Get column information from TableInfo.column_schema if available
+        columns: List[ColumnInfo] = []
+        column_schema = getattr(table_info, "column_schema", None)
+        if column_schema:
+            schema_columns = getattr(column_schema, "columns", [])
+            for col in schema_columns:
+                col_name = getattr(col, "name", "")
+                col_desc = getattr(col, "description", None) or ""
+                if col_name:
+                    columns.append({"name": col_name, "description": col_desc})
+
+        # Fallback to list_columns if schema didn't have columns
+        if not columns and list_columns:
+            try:
+                cols_result = list_columns(context=ctx)
+                # list_columns returns Dict[str, Any] (name -> info) when include_types=True
+                if isinstance(cols_result, dict):
+                    for name, info in cols_result.items():
+                        desc = ""
+                        if isinstance(info, dict):
+                            desc = info.get("description", "") or ""
+                        columns.append({"name": name, "description": desc})
+                elif isinstance(cols_result, list):
+                    columns = [
+                        {"name": name, "description": ""} for name in cols_result
+                    ]
+            except Exception:
+                pass
+
+        result.append(
+            {
+                "table": ctx,
+                "description": table_description,
+                "columns": columns,
+            },
+        )
 
     return result
 

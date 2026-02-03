@@ -79,7 +79,7 @@ class ActorIntegrationConfig:
         connect_now: If True, connect to agent-service immediately
         mock_verification: If True, use SimpleMockVerificationClient
         mock_state_managers: If True, use simulated state managers
-        headless: If True, run browser in headless mode (no visible window)
+        headless: If True, run web in headless mode (no visible window)
     """
 
     enabled: bool = False

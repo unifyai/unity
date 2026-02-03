@@ -10,7 +10,7 @@ Run tests across all combinations of settings values. This is useful for:
 
 ```bash
 # Grid search across models
-grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/test_contact_manager/
+grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/contact_manager/
 
 # Grid search across models AND cache settings (2×2 = 4 combinations)
 grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNIFY_CACHE="true|false" tests/
@@ -105,7 +105,7 @@ grid_search.sh \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic|gemini-2.5-pro@google" \
   --env UNIFY_CACHE="false" \
   --eval-only \
-  tests/test_contact_manager/
+  tests/contact_manager/
 ```
 
 This generates 3 runs (one per model), each with fresh LLM calls.
@@ -116,7 +116,7 @@ This generates 3 runs (one per model), each with fresh LLM calls.
 grid_search.sh \
   --env FIRST_ASK_TOOL_IS_SEARCH="true|false" \
   --env FIRST_MUTATION_TOOL_IS_ASK="true|false" \
-  tests/test_actor/
+  tests/actor/
 ```
 
 This generates 4 runs (2×2 grid) testing all combinations of these two feature flags.
@@ -192,7 +192,7 @@ grid_search.sh \
   --env UNIFY_CACHE="false" \
   --eval-only \
   --repeat 5 \
-  tests/test_contact_manager/test_ask.py
+  tests/contact_manager/test_ask.py
 ```
 
 This generates 2 models × 5 repeats = 10 runs, useful for comparing pass rates across models.

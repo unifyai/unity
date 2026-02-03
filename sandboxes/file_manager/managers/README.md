@@ -80,7 +80,7 @@ Interactive commands inside the REPL
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Once the sandbox starts you will see a prompt and a small help table. The most important commands are:
 
-* `seed-sample`            Import and parse sample files from `tests/test_file_manager/sample`
+* `seed-sample`            Import and parse sample files from `tests/file_manager/sample`
 * `list`                   List files known to the adapter
 * `stat <path>`            Show unified status for a path
 * `askf <file> <question>` Ask about a specific file (uses `--schema/--model` when supplied)
@@ -145,5 +145,5 @@ Controls: /i <text>, /pause, /resume, /ask <q>, /freeform <text> (or plain text)
 
 ### Troubleshooting
 * **Deepgram / Cartesia keys** – if you use `--voice`, make sure the environment variables `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` are set.
-* **Unify backend access** – the sandbox creates contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – the sandbox creates contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **File visibility** – when running rootless, ensure you pass absolute paths and have read permissions.

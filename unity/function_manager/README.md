@@ -63,7 +63,7 @@ async def update_contacts_and_search():
 
 ## The `computer_primitives` Object
 
-When executed via an Actor, `computer_primitives` provides browser and desktop control:
+When executed via an Actor, `computer_primitives` provides web and desktop control:
 
 ```python
 async def browse_and_extract():
@@ -336,7 +336,7 @@ When functions are executed via an Actor (`HierarchicalActor`, `SingleFunctionAc
 
 | Name | Description |
 |------|-------------|
-| `computer_primitives` | Browser/desktop control (navigate, act, observe, query, reason) |
+| `computer_primitives` | Web/desktop control (navigate, act, observe, query, reason) |
 | `request_clarification` | Ask the user for clarification during execution |
 
 ---
@@ -388,7 +388,7 @@ fm.sync_primitives()
 fm.list_primitives()
 
 # Search includes primitives by default
-fm.search_functions(query="navigate browser", include_primitives=True)
+fm.search_functions(query="navigate web", include_primitives=True)
 ```
 
 ### Compositional Functions

@@ -7,13 +7,26 @@ import functools
 import json
 import os
 import re
+import traceback
 import signal
 import socket
 import sys
 import tempfile
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
+from secrets import token_hex
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+)
 import unify
 from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
@@ -40,8 +53,161 @@ from .custom_functions import (
     compute_custom_venvs_hash,
 )
 
-
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover
+    import aiohttp
+
+
+class _LineageTrackedFunction:
+    """Boundary wrapper for FunctionManager callables injected into CodeActActor sandboxes.
+
+    This wrapper preserves hierarchical lineage across mixed execution, e.g.:
+
+        CodeActActor.act -> execute_code -> <function> -> primitives.contacts.ask -> ...
+
+    It is injected into the Python namespace **in place of** the raw callable so that
+    inter-function calls (function A calling function B) still pass through a boundary that:
+    - updates `TOOL_LOOP_LINEAGE` (ContextVar)
+    - publishes ManagerMethod events with `hierarchy` + `hierarchy_label`
+    - emits a concise boundary log line for terminal debugging
+
+    Note: async functions can be awaited in a different task context than the call-site.
+    ContextVar tokens are only valid in the context they were created, so this wrapper sets
+    lineage around coroutine construction (call-site) and again inside the awaited coroutine
+    (execution-site).
+    """
+
+    def __init__(self, wrapped_callable: Callable[..., Any], function_name: str):
+        self._wrapped = wrapped_callable
+        self._function_name = function_name
+
+        # Preserve introspection attributes.
+        self.__name__ = function_name
+        self.__doc__ = getattr(wrapped_callable, "__doc__", None)
+        self.__wrapped__ = wrapped_callable
+
+    def __getattr__(self, name: str) -> Any:
+        # Preserve wrapped callable API (e.g. venv proxy state helpers).
+        return getattr(self._wrapped, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Local imports to avoid import-time cycles.
+        from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+        from unity.common.hierarchical_logger import (
+            build_hierarchy_label,
+            log_boundary_event,
+        )
+        from unity.events.manager_event_logging import (
+            new_call_id,
+            publish_manager_method_event,
+        )
+
+        suffix = token_hex(2)
+        call_id = new_call_id()
+
+        parent = TOOL_LOOP_LINEAGE.get([])
+        parent_lineage = list(parent) if isinstance(parent, list) else []
+        hierarchy = [*parent_lineage, self._function_name]
+        hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+
+        async def _publish_safe(**payload: Any) -> None:
+            try:
+                await publish_manager_method_event(
+                    call_id,
+                    "FunctionManager",
+                    self._function_name,
+                    hierarchy=hierarchy,
+                    hierarchy_label=hierarchy_label,
+                    **payload,
+                )
+            except Exception as e:
+                # Best-effort visibility; never fail execution due to event issues.
+                log_boundary_event(
+                    hierarchy_label,
+                    f"Warning: failed to publish event: {type(e).__name__}: {e}",
+                    icon="⚠️",
+                    level="warning",
+                )
+
+        # Publish incoming before running the function (best-effort).
+        try:
+            asyncio.create_task(_publish_safe(phase="incoming"))
+        except Exception:
+            pass
+        try:
+            log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
+        except Exception:
+            pass
+
+        # Ensure synchronous work at call-time (if any) happens under the lineage frame.
+        token_call = TOOL_LOOP_LINEAGE.set(hierarchy)
+        try:
+            result = self._wrapped(*args, **kwargs)
+        except Exception as e:
+            try:
+                try:
+                    asyncio.create_task(
+                        _publish_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            traceback=traceback.format_exc()[:2000],
+                        ),
+                    )
+                except Exception:
+                    pass
+            finally:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            raise
+        finally:
+            # For async results we only needed the lineage during coroutine construction.
+            # The actual awaited execution will run under a new token created in the
+            # awaiting task context below.
+            try:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            except Exception:
+                pass
+
+        if inspect.isawaitable(result):
+
+            async def _await_and_finalize():
+                token_run = TOOL_LOOP_LINEAGE.set(hierarchy)
+                try:
+                    out = await result
+                    try:
+                        await _publish_safe(phase="outgoing", status="ok")
+                    except Exception:
+                        pass
+                    return out
+                except Exception as e:
+                    try:
+                        await _publish_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            traceback=traceback.format_exc()[:2000],
+                        )
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    TOOL_LOOP_LINEAGE.reset(token_run)
+
+            return _await_and_finalize()
+
+        # Sync success path: publish outgoing best-effort and restore lineage.
+        try:
+            try:
+                asyncio.create_task(_publish_safe(phase="outgoing", status="ok"))
+            except Exception:
+                pass
+        finally:
+            # token_call already reset above; nothing to do here.
+            pass
+        return result
 
 
 class _DependencyVisitor(ast.NodeVisitor):
@@ -2464,6 +2630,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
@@ -2474,9 +2641,14 @@ class FunctionManager(BaseFunctionManager):
             preconditions: Optional preconditions for functions.
             verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
+            raise_on_error: If True (default), raise ValueError when any function
+                fails to add. If False, errors are returned in the result dict.
 
         Returns:
             Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
+
+        Raises:
+            ValueError: If raise_on_error=True and any function fails to add.
         """
 
         if preconditions is None:
@@ -2494,6 +2666,7 @@ class FunctionManager(BaseFunctionManager):
                 preconditions=preconditions,
                 verify=verify,
                 overwrite=overwrite,
+                raise_on_error=raise_on_error,
             )
 
         # Python-specific parsing and validation
@@ -2664,6 +2837,13 @@ class FunctionManager(BaseFunctionManager):
             if p is not None:
                 self._register_function_file(name, p)
 
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
+
         return results
 
     def _add_shell_functions(
@@ -2674,6 +2854,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Dict[str, Dict],
         verify: Dict[str, bool],
         overwrite: bool,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add shell script functions (bash, zsh, sh, powershell).
@@ -2838,6 +3019,13 @@ class FunctionManager(BaseFunctionManager):
             p = self._write_function_file(f"{name}{ext}", source)
             if p is not None:
                 self._register_function_file(name, p)
+
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
 
         return results
 
@@ -3115,10 +3303,12 @@ class FunctionManager(BaseFunctionManager):
 
             # Handle venv dependencies: proxy goes in namespace (only way to call them)
             if dep_data.get("venv_id") is not None:
-                namespace[dep_name] = self._create_venv_callable(
+                _venv_cb = self._create_venv_callable(
                     dep_data,
                     namespace=namespace,
                 )
+                # Wrap boundary so inter-function calls create lineage frames.
+                namespace[dep_name] = _LineageTrackedFunction(_venv_cb, dep_name)
                 # Treat venv functions as atomic; do not recurse into their deps.
                 continue
 
@@ -3130,7 +3320,16 @@ class FunctionManager(BaseFunctionManager):
                 dep_data,
                 namespace=namespace,
             )
-            # Note: proxy is discarded; namespace[dep_name] remains the raw function
+            # replace namespace[dep_name] with wrapper so inter-function calls
+            # also flow through lineage/event boundaries.
+            try:
+                raw_dep = namespace.get(dep_name)
+                if callable(raw_dep):
+                    # Avoid double-wrapping.
+                    if not isinstance(raw_dep, _LineageTrackedFunction):
+                        namespace[dep_name] = _LineageTrackedFunction(raw_dep, dep_name)
+            except Exception:
+                pass
 
             nested = dep_data.get("depends_on") or []
             if isinstance(nested, list):
@@ -3172,6 +3371,14 @@ class FunctionManager(BaseFunctionManager):
                 else:
                     raw_fn = namespace.get(name)
                     if callable(raw_fn):
+                        # If the namespace contains our wrapper, unwrap for the proxy.
+                        try:
+                            if hasattr(raw_fn, "__wrapped__"):
+                                raw_fn_for_proxy = getattr(raw_fn, "__wrapped__")
+                                if callable(raw_fn_for_proxy):
+                                    raw_fn = raw_fn_for_proxy
+                        except Exception:
+                            pass
                         fn = _InProcessFunctionProxy(
                             function_manager=self,
                             func_data=func_data,
@@ -3194,12 +3401,23 @@ class FunctionManager(BaseFunctionManager):
             if func_data.get("venv_id") is not None:
                 # Venv: proxy goes in namespace (only way to call them)
                 fn = self._create_venv_callable(func_data, namespace=namespace)
-                namespace[name] = fn
+                # Wrap boundary for lineage/events and keep proxy for return value.
+                namespace[name] = _LineageTrackedFunction(fn, name)
             else:
                 # In-process: exec puts raw function in namespace, return proxy to caller
                 # DON'T overwrite namespace - raw function stays for internal use
                 fn = self._create_in_process_callable(func_data, namespace=namespace)
-                # Note: namespace[name] remains the raw function from exec()
+                # replace namespace[name] with wrapper so inter-function calls
+                # also flow through lineage/event boundaries.
+                try:
+                    raw_root = namespace.get(name)
+                    if callable(raw_root) and not isinstance(
+                        raw_root,
+                        _LineageTrackedFunction,
+                    ):
+                        namespace[name] = _LineageTrackedFunction(raw_root, name)
+                except Exception:
+                    pass
 
             callables.append(fn)
 
@@ -4555,7 +4773,7 @@ class FunctionManager(BaseFunctionManager):
             venv_pool: VenvPool for stateful/read_only modes with Python venv functions.
             shell_pool: ShellPool for stateful/read_only modes with shell functions.
             primitives: Primitives instance for RPC access to state managers.
-            computer_primitives: ComputerPrimitives instance for browser/desktop RPC.
+            computer_primitives: ComputerPrimitives instance for web/desktop RPC.
 
         Returns:
             Dict with keys: result, error, stdout, stderr
@@ -4809,7 +5027,6 @@ class FunctionManager(BaseFunctionManager):
         Returns True when ALL of the following conditions are met:
         - Function has windows_os_required=True
         - Assistant has desktop_mode='windows'
-        - Assistant has is_user_desktop=False (managed VM, not user's machine)
 
         Args:
             func_data: Function metadata dict from the function store.
@@ -4823,11 +5040,7 @@ class FunctionManager(BaseFunctionManager):
 
         from unity.session_details import SESSION_DETAILS
 
-        assistant = SESSION_DETAILS.assistant
-        should_execute_remote = (
-            assistant.desktop_mode == "windows" and not assistant.is_user_desktop
-        )
-        return should_execute_remote
+        return SESSION_DETAILS.assistant.desktop_mode == "windows"
 
     def _calculate_wait_time_from_vm_ready_at(
         self,
@@ -4864,8 +5077,8 @@ class FunctionManager(BaseFunctionManager):
         """
         Wait for the remote Windows VM to be ready before execution.
 
-        Polls the /infra/vm/status/{assistant_id} endpoint until vm_ready=True.
-        Uses the same endpoint pattern as debug_logger._resolve_windows_vm_liveview().
+        Polls the /infra/vm/status/{assistant_id}?vm_type=windows endpoint until
+        vm_ready=True. Uses the same endpoint pattern as debug_logger._resolve_vm_liveview().
 
         Args:
             timeout: Maximum time to wait in seconds (default 5 minutes).
@@ -4907,6 +5120,7 @@ class FunctionManager(BaseFunctionManager):
                 try:
                     async with session.get(
                         f"{comms_url}/infra/vm/status/{assistant_id}",
+                        params={"vm_type": "windows"},
                         headers={"Authorization": f"Bearer {admin_key}"},
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:

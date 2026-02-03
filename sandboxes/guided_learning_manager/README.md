@@ -106,7 +106,7 @@ from unity.guided_learning_manager import GuidedLearningManager, GuidedLearningS
 | `--enable-actor` | off | Enable Actor integration for learning from demonstrations |
 | `--execute-plan` | off | Execute learned plan during each step (requires agent-service) |
 | `--debug` | off | Show full plan code instead of tree view |
-| `--headless` | off | Run browser headless (no visible window) |
+| `--headless` | off | Run web headless (no visible window) |
 
 ## Platform Setup
 
@@ -167,13 +167,13 @@ python -m sandboxes.guided_learning_manager.sandbox --enable-actor --input-liste
 ### Modes
 
 **Learning Mode (Default):**
-- Mocked primitives (no real browser/API calls)
+- Mocked primitives (no real web/API calls)
 - Fast, safe learning
 - Plan generation only
 - Each demonstration step is processed via Actor interjection
 
 **Execution Mode (`--execute-plan`):**
-- Real primitives (actual browser/API calls)
+- Real primitives (actual web/API calls)
 - Requires agent-service running
 - Plan generation + execution
 - After each interjection, the sandbox waits until the Actor returns to

@@ -257,7 +257,7 @@ _INTENT_SYS_MSG = (
     " - an instruction to begin working on a specific task ('start').\n"
     "Return ONLY JSON with this shape: {'action':'ask'|'update'|'start'}. Do not rewrite or summarize the user's input.\n"
     "Rules (disambiguation):\n"
-    "- Choose 'start' when the user asks to begin doing a task now/immediately/ASAP, or uses imperative phrasing to carry out the task (e.g., 'start', 'begin', 'execute', 'work on', 'open a browser').\n"
+    "- Choose 'start' when the user asks to begin doing a task now/immediately/ASAP, or uses imperative phrasing to carry out the task (e.g., 'start', 'begin', 'execute', 'work on', 'open a website').\n"
     "- If the input combines an immediate start request with configuration or setup details (e.g., scheduling hints, limits, simulation controls, progress-response guidance, defaults), STILL choose 'start'. Treat those details as parameters for execution rather than a separate update.\n"
     "- Choose 'update' for requests whose primary goal is to create, modify, reorder, schedule, or delete tasks/metadata (including pause/resume/cancel of tasks) without instructing immediate execution.\n"
     "- Choose 'ask' for information-only queries such as progress/status checks ('how is it going', 'any update', 'have you scheduled X yet', 'is it done', 'ETA'), or questions about tasks, schedules, priorities, or status. Polite/indirect wording that requests information only is still 'ask'.\n"

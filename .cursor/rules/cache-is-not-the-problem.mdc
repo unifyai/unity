@@ -10,7 +10,7 @@ alwaysApply: true
 
 ## 1. Tests Must Be Timing-Agnostic
 
-Tests must pass whether responses come from cache (milliseconds) or live LLM calls (seconds). Use the trigger-based helpers in `tests/test_async_tool_loop/async_helpers.py` to synchronize on observable events rather than timing assumptions.
+Tests must pass whether responses come from cache (milliseconds) or live LLM calls (seconds). Use the trigger-based helpers in `tests/async_helpers.py` to synchronize on observable events rather than timing assumptions.
 
 ## 2. Cache Keys Are the Exact LLM Input
 

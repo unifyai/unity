@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-
 logger = logging.getLogger(__name__)
 
 from ....common.context_store import TableStore
@@ -577,8 +576,17 @@ def describe_file(
             content_columns = dm.get_columns(content_ctx)
             if content_columns:
                 columns = _fields_to_column_info(content_columns)
+                # Try to get context description
+                content_description: Optional[str] = None
+                try:
+                    content_meta = dm.get_table(content_ctx)
+                    if isinstance(content_meta, dict):
+                        content_description = content_meta.get("description")
+                except Exception:
+                    pass
                 document_info = DocumentInfo(
                     context_path=content_ctx,
+                    description=content_description,
                     column_schema=ContextSchema(columns=columns),
                     row_count=None,  # Fetch on-demand with reduce()
                 )
@@ -603,6 +611,11 @@ def describe_file(
                     if not table_name:
                         continue
 
+                    # Extract table description from context info
+                    table_description: Optional[str] = None
+                    if isinstance(ctx_info, dict):
+                        table_description = ctx_info.get("description")
+
                     # Get table schema
                     try:
                         table_columns = dm.get_columns(ctx_path)
@@ -613,6 +626,7 @@ def describe_file(
                                 context_path=ctx_path,
                                 column_schema=ContextSchema(columns=columns),
                                 row_count=None,  # Fetch on-demand with reduce()
+                                description=table_description,
                             ),
                         )
                     except Exception:
@@ -623,6 +637,7 @@ def describe_file(
                                 context_path=ctx_path,
                                 column_schema=ContextSchema(columns=[]),
                                 row_count=None,
+                                description=table_description,
                             ),
                         )
         except Exception as e:

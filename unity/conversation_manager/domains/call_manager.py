@@ -1,56 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import runpy
-import threading
+import os
+import subprocess
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
+from unity.conversation_manager.domains.ipc_socket import (
+    CallEventSocketServer,
+    CM_EVENT_SOCKET_ENV,
+)
+from unity.helpers import (
+    cleanup_dangling_call_processes,
+    run_script,
+    terminate_process,
+)
 
-# Preload LiveKit plugins on the main thread.
-# LiveKit requires plugins to be registered on the main thread, but the voice
-# agent script runs in a background thread. Importing here ensures the plugin
-# registration happens before the thread is spawned.
-
-# STS mode plugins (OpenAI Realtime API)
-try:
-    from livekit.plugins.openai import (
-        realtime as _openai_realtime_preload,
-    )  # noqa: F401
-except ImportError:
-    # livekit-plugins-openai is optional; STS mode will fail at runtime if missing
-    pass
-
-# TTS mode plugins (call.py uses deepgram, elevenlabs, cartesia, silero)
-try:
-    from livekit.plugins import (
-        cartesia as _cartesia_preload,
-        deepgram as _deepgram_preload,
-        elevenlabs as _elevenlabs_preload,
-        silero as _silero_preload,
-    )  # noqa: F401
-except ImportError:
-    # These are optional; TTS mode will fail at runtime if missing
-    pass
-
-# Noise cancellation plugin (macOS only, used by call.py)
-try:
-    import sys as _sys
-
-    if _sys.platform == "darwin":
-        from livekit.plugins import noise_cancellation as _nc_preload  # noqa: F401
-except ImportError:
-    pass
-
-# Turn detector plugin (used by call.py for end-of-turn detection)
-try:
-    from livekit.plugins.turn_detector.english import (
-        EnglishModel as _turn_detector_preload,
-    )  # noqa: F401
-except ImportError:
-    pass
+if TYPE_CHECKING:
+    from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 
 @dataclass
@@ -64,15 +34,23 @@ class CallConfig:
 
 
 class LivekitCallManager:
-    def __init__(self, config: CallConfig):
+    def __init__(
+        self,
+        config: CallConfig,
+        event_broker: "InMemoryEventBroker | None" = None,
+    ):
         self.set_config(config=config)
         self.call_exchange_id = UNASSIGNED
         self.unify_meet_exchange_id = UNASSIGNED
         self.call_start_timestamp = None
         self.unify_meet_start_timestamp = None
         self.call_contact = None
-        self._call_thread: threading.Thread | None = None
+        self._call_proc: subprocess.Popen | None = None
         self.conference_name = ""
+        self._event_broker = event_broker
+        self._socket_server: CallEventSocketServer | None = None
+        # Track whether the current call is outbound (we initiated it)
+        self.is_outbound: bool = False
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -82,67 +60,39 @@ class LivekitCallManager:
         self.voice_id = config.voice_id
         self.uses_realtime_api = config.voice_mode == "sts"
 
-    def _start_script_thread(self, *, script_path: Path, argv: list[str]) -> None:
-        """
-        Run the LiveKit voice agent script *in-process* on a background thread.
+    def set_event_broker(self, event_broker: "InMemoryEventBroker") -> None:
+        """Set the event broker for socket server to publish to."""
+        self._event_broker = event_broker
 
-        This replaces the previous subprocess-based containment so the voice
-        agent can share the same in-memory event broker.
-        """
+    async def _ensure_socket_server(self) -> str | None:
+        """Start the socket server if not running, return socket path."""
+        if self._event_broker is None:
+            print(
+                "[LivekitCallManager] Warning: No event broker set, socket IPC disabled",
+            )
+            return None
 
-        def _runner() -> None:
-            import signal as _signal
-            import sys as _sys
+        if self._socket_server is None:
+            self._socket_server = CallEventSocketServer(self._event_broker)
 
-            # Monkey-patch signal.signal to handle the "main thread only" restriction.
-            # LiveKit's dev mode uses watchfiles which tries to register SIGTERM
-            # handlers, but signal handlers can only be set from the main thread.
-            # This patch ONLY applies to the LivekitVoiceAgent thread - other threads
-            # and the main thread use normal signal handling.
-            _original_signal = _signal.signal
+        if self._socket_server.socket_path is None:
+            socket_path = await self._socket_server.start()
+            return socket_path
 
-            def _thread_safe_signal(signalnum, handler):
-                current_thread = threading.current_thread()
-                # Only apply workaround for the LiveKit voice agent thread
-                if current_thread.name == "LivekitVoiceAgent":
-                    try:
-                        return _original_signal(signalnum, handler)
-                    except ValueError as e:
-                        if "signal only works in main thread" in str(e):
-                            # Silently ignore signal registration from this thread
-                            return _signal.SIG_DFL
-                        raise
-                # All other threads/main thread: normal behavior
-                return _original_signal(signalnum, handler)
+        return self._socket_server.socket_path
 
-            _signal.signal = _thread_safe_signal
-            old_argv = list(_sys.argv)
-            try:
-                _sys.argv = [str(script_path), *argv]
-                runpy.run_path(str(script_path), run_name="__main__")
-            except SystemExit:
-                # Click-based CLIs use SystemExit for normal termination.
-                pass
-            except Exception as e:
-                print(f"[LivekitCallManager] Voice agent crashed: {e}")
-            finally:
-                _sys.argv = old_argv
-                _signal.signal = _original_signal  # Restore original
+    async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
+        # Track whether this is an outbound call
+        self.is_outbound = outbound
 
-        # Best-effort: stop any previously running agent thread.
-        # (In normal operation there should only be one active call.)
-        if self._call_thread and self._call_thread.is_alive():
-            print("[LivekitCallManager] Warning: call thread already running")
+        # Start socket server and get path
+        socket_path = await self._ensure_socket_server()
 
-        t = threading.Thread(
-            target=_runner,
-            name="LivekitVoiceAgent",
-            daemon=True,
-        )
-        self._call_thread = t
-        t.start()
+        # Set socket path in environment for subprocess
+        if socket_path:
+            os.environ[CM_EVENT_SOCKET_ENV] = socket_path
+            print(f"[LivekitCallManager] Socket server at {socket_path}")
 
-    def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
@@ -162,15 +112,26 @@ class LivekitCallManager:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        self._start_script_thread(script_path=target_path, argv=["dev", *args])
+        self._call_proc = run_script(str(target_path), "dev", *args)
 
-    def start_unify_meet(
+    async def start_unify_meet(
         self,
         contact: dict,
         boss: dict,
         livekit_agent_name: str | None,
         room_name: str | None,
     ):
+        # Unify Meet is always inbound (user initiates)
+        self.is_outbound = False
+
+        # Start socket server and get path
+        socket_path = await self._ensure_socket_server()
+
+        # Set socket path in environment for subprocess
+        if socket_path:
+            os.environ[CM_EVENT_SOCKET_ENV] = socket_path
+            print(f"[LivekitCallManager] Socket server at {socket_path}")
+
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         livekit_agent_name = (
             livekit_agent_name
@@ -208,35 +169,41 @@ class LivekitCallManager:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        self._start_script_thread(script_path=target_path, argv=["dev", *args])
+        self._call_proc = run_script(str(target_path), "dev", *args)
 
-    async def cleanup_call_proc(self, *, timeout: float = 10.0) -> None:
+    async def cleanup_call_proc(self, *, timeout: float = 5.0) -> None:
         """
-        Stop any running in-process voice agent thread.
+        Stop any running voice agent subprocess and socket server.
 
-        We signal the agent via the shared event broker (app:call:status) and
-        then join the thread with a timeout.
+        Sends SIGTERM for graceful shutdown, then SIGKILL if needed.
         """
-        t = self._call_thread
-        self._call_thread = None
-        if t is None:
+        # Reset outbound tracking
+        self.is_outbound = False
+
+        # Stop socket server first
+        if self._socket_server:
+            await self._socket_server.stop()
+            self._socket_server = None
+
+        # Clean up environment variable
+        if CM_EVENT_SOCKET_ENV in os.environ:
+            del os.environ[CM_EVENT_SOCKET_ENV]
+
+        proc = self._call_proc
+        self._call_proc = None
+        if proc is None:
             return
 
-        try:
-            # Notify the voice agent to stop (handled by both TTS and STS scripts).
-            await get_event_broker().publish(
-                "app:call:status",
-                json.dumps({"type": "stop"}),
+        # Check if process is still running
+        if proc.poll() is not None:
+            print(
+                f"[LivekitCallManager] Process already exited with code {proc.returncode}",
             )
-        except Exception:
-            pass
+            return
 
-        if t.is_alive():
-            try:
-                await asyncio.to_thread(t.join, timeout)
-            except Exception:
-                pass
-            if t.is_alive():
-                print(
-                    f"[LivekitCallManager] Warning: voice agent thread did not exit within {timeout}s",
-                )
+        print(f"[LivekitCallManager] Terminating voice agent process {proc.pid}...")
+        if sys.platform.startswith("win"):
+            await asyncio.to_thread(terminate_process, proc, timeout)
+        else:
+            await asyncio.to_thread(cleanup_dangling_call_processes)
+        print("[LivekitCallManager] Voice agent process terminated")

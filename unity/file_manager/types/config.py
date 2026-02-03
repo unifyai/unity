@@ -26,7 +26,6 @@ from unity.file_manager.file_parsers.registry import (
     DEFAULT_BACKEND_CLASS_PATHS_BY_FORMAT,
 )
 
-
 # ------------------------------ Parser ------------------------------------ #
 
 
@@ -91,6 +90,13 @@ class IngestConfig(BaseModel):
     table_ingest: bool = True
     table_label_strategy: Literal["sheet_name", "section_path", "index"] = "sheet_name"
     table_rows_batch_size: int = 100
+
+    # Type inference control
+    # When True, adds infer_untyped_fields=True to each row during ingestion,
+    # instructing the backend to infer types for fields that don't have explicit
+    # type definitions. This is useful for spreadsheet data where column types
+    # may vary (e.g., dates, times, numbers stored as strings).
+    infer_untyped_fields: bool = False
 
     # Business context specifications for enriching table contexts with descriptions
     # Uses BusinessContextsConfig with global_rules, file_contexts (with file_rules), and table_contexts (with table_rules)

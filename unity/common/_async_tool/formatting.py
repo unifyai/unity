@@ -2,10 +2,41 @@ from __future__ import annotations
 
 import base64
 from contextlib import suppress
-from typing import Any, Union
+from typing import Any, List, Protocol, Union, runtime_checkable
 import json
 
 from ..llm_helpers import _dumps, _strip_image_keys, _collect_images
+
+# ---------------------------------------------------------------------------
+# Protocol for tool results that control their own LLM formatting
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class FormattedToolResult(Protocol):
+    """Protocol for tool results that provide their own LLM content formatting.
+
+    Tools can return objects implementing this protocol to take full control
+    of how their output appears in the LLM transcript, bypassing the default
+    serialization logic in serialize_tool_content.
+
+    Example:
+        class MyToolResult:
+            def to_llm_content(self) -> list[dict]:
+                return [
+                    {"type": "text", "text": "Custom formatted output"},
+                    {"type": "image_url", "image_url": {"url": "data:..."}},
+                ]
+    """
+
+    def to_llm_content(self) -> List[dict]:
+        """Convert this result to LLM content blocks.
+
+        Returns a list of content blocks, each being either:
+        - {"type": "text", "text": "..."}
+        - {"type": "image_url", "image_url": {"url": "data:mime;base64,..."}}
+        """
+        ...
 
 
 def _detect_mime_from_b64(b64_str: str) -> str:
@@ -34,7 +65,9 @@ def serialize_tool_content(
     Produce the exact content that will be inserted into the transcript for a tool message.
 
     - When is_final=True:
-      - Serialize payload and promote any embedded base64 images into image_url blocks.
+      - If payload implements FormattedToolResult protocol, delegate to its to_llm_content().
+        This gives the tool full control over how its output appears in the LLM transcript.
+      - Otherwise, serialize payload and promote any embedded base64 images into image_url blocks.
       - If there are images, the content becomes a list of blocks (text first, then image_url items).
       - If there are no images, the content is a pretty-printed JSON string.
 
@@ -54,7 +87,12 @@ def serialize_tool_content(
             context={"prune_empty": True, "shorthand": True},
         )
 
-    # Final result path – promote embedded images, keep a clean textual view without raw base64
+    # Check if payload implements FormattedToolResult protocol
+    # This gives tools full control over their LLM formatting
+    if isinstance(payload, FormattedToolResult):
+        return payload.to_llm_content()
+
+    # Legacy path: Final result – promote embedded images, keep a clean textual view without raw base64
     # Additionally, when payload is a pure string that contains JSON, parse & pretty-print it; otherwise keep as-is.
     parsed_payload = payload
     if isinstance(payload, str):

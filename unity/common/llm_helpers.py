@@ -505,8 +505,36 @@ def method_to_schema(
     bound_method,
     tool_name: Optional[str] = None,
     include_class_name: bool = True,
+    expose_context_control: bool = False,
+    has_parent_context: bool = False,
+    expose_context_cont_control: bool = False,
 ):
-    """Convert a bound method into an OpenAI-compatible function-tool schema."""
+    """Convert a bound method into an OpenAI-compatible function-tool schema.
+
+    Parameters
+    ----------
+    bound_method
+        The callable to convert.
+    tool_name : str | None
+        Override the function name in the schema.
+    include_class_name : bool
+        Whether to prefix the tool name with the class name.
+    expose_context_control : bool
+        If True and the tool accepts ``_parent_chat_context``, the schema will
+        include an ``include_parent_chat_context`` boolean parameter that lets
+        the LLM control whether parent context is passed to this tool invocation.
+        This should be True only when propagate_chat_context is LLM_DECIDES.
+    has_parent_context : bool
+        Whether the current loop has parent context. Used to build the
+        conditional docstring for ``include_parent_chat_context`` (only relevant
+        when ``expose_context_control=True``).
+    expose_context_cont_control : bool
+        If True and the method accepts ``_parent_chat_context_cont``, the schema
+        will include an ``include_parent_chat_context_cont`` boolean parameter.
+        This is for steering methods (ask, interject) on in-flight tools
+        that originally opted into context. The LLM can control whether context
+        continuations are forwarded on each steering call.
+    """
 
     sig = inspect.signature(bound_method)
     # Be robust to unresolved forward references or missing symbols in
@@ -526,6 +554,10 @@ def method_to_schema(
         p.kind == _inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
     )
 
+    # Track whether this tool accepts _parent_chat_context or _parent_chat_context_cont
+    accepts_parent_chat_context = False
+    accepts_parent_chat_context_cont = False
+
     for name, param in sig.parameters.items():
         # Skip star-args and star-kwargs – these are not expressible as fixed JSON fields
         if param.kind in (
@@ -534,16 +566,13 @@ def method_to_schema(
         ):
             continue
         # Determine whether *name* is **hidden** (never exposed to the LLM)
-        is_hidden = (
-            name.startswith("_") and param.default is not inspect._empty
-        ) or name in (
-            "_parent_chat_context",
-            "_clarification_up_q",
-            "_clarification_down_q",
-            "_notification_up_q",
-            "_pause_event",
-            "_interject_queue",
-        )
+        # Convention: parameters starting with "_" are internal plumbing
+        is_hidden = name.startswith("_")
+
+        if name == "_parent_chat_context":
+            accepts_parent_chat_context = True
+        if name == "_parent_chat_context_cont":
+            accepts_parent_chat_context_cont = True
 
         if is_hidden:
             hidden.add(name)
@@ -553,6 +582,52 @@ def method_to_schema(
         props[name] = annotation_to_schema(ann)
         if param.default is inspect._empty:
             required.append(name)
+
+    # If the tool accepts _parent_chat_context and we're in LLM_DECIDES mode,
+    # inject the visible control parameter
+    if accepts_parent_chat_context and expose_context_control:
+        # Build conditional docstring based on whether the current loop has parent context
+        if has_parent_context:
+            ctx_desc = (
+                "Whether to pass conversation context into this tool. When `true`, "
+                "the tool receives: (1) the Parent Chat Context from your system "
+                "message, and (2) your own conversation history up to this point. "
+                "This combined context helps the tool understand the broader "
+                "situation. Set `true` when context would help the tool perform "
+                "better. Set `false` when the tool's task is self-contained and "
+                "additional context would not be useful."
+            )
+        else:
+            ctx_desc = (
+                "Whether to pass conversation context into this tool. When `true`, "
+                "the tool receives your conversation history up to this point, "
+                "helping it understand the broader situation. Set `true` when "
+                "context would help the tool perform better. Set `false` when the "
+                "tool's task is self-contained and additional context would not "
+                "be useful."
+            )
+        props["include_parent_chat_context"] = {
+            "type": "boolean",
+            "description": ctx_desc,
+        }
+        # Not in required - defaults to True when omitted
+
+    # If this is a steering method that accepts _parent_chat_context_cont and we want
+    # LLM control over context continuation propagation, inject the visible control param
+    if accepts_parent_chat_context_cont and expose_context_cont_control:
+        ctx_cont_desc = (
+            "Whether to forward recent conversation updates to this running tool. "
+            "When `true`, the tool receives any new messages that have arrived in "
+            "your conversation since the tool started running. Set `true` when the "
+            "tool would benefit from knowing about these recent updates (e.g., new "
+            "instructions or context). Set `false` when this steering call is "
+            "self-contained and the tool does not need the additional context."
+        )
+        props["include_parent_chat_context_cont"] = {
+            "type": "boolean",
+            "description": ctx_cont_desc,
+        }
+        # Not in required - defaults to True when omitted
 
     # ── resolve docstring with MRO fallback, then scrub hidden args ───────────
     raw_doc = _resolve_doc_with_mro_fallback(bound_method) or ""

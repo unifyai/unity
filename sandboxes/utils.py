@@ -13,7 +13,7 @@ from __future__ import annotations
 # On some Python builds the built-in ``input()`` function lacks readline
 # capabilities, meaning arrow keys emit escape sequences like ``^[[D`` instead
 # of moving the cursor.  Simply importing the *readline* module (or its
-# platform-specific shim) activates those features globally for the current
+# platform-specific shim) activates those features globally for the active
 # process.  We do this **once**, right at the top-level of ``sandboxes.utils``
 # so that every sandbox script benefits without further changes.
 #
@@ -49,7 +49,17 @@ from av import AudioFrame
 import pyaudio
 import math
 import struct
-from deepgram import DeepgramClient
+
+try:
+    # Deepgram SDK v4+ exports these names
+    from deepgram import DeepgramClient, PrerecordedOptions, FileSource
+except Exception:  # pragma: no cover - optional dependency shape
+    from deepgram import DeepgramClient  # type: ignore
+
+    # Fallbacks to keep non-voice sandboxes working even if Deepgram SDK surface changes.
+    from typing import Any as FileSource  # type: ignore
+
+    PrerecordedOptions = object  # type: ignore
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
@@ -99,7 +109,7 @@ c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
 # ---------------------------------------------------------------------------
 
 _TTS_LOCK = threading.Lock()
-# Track the current TTS skip event to allow external cancellation
+# Track the active TTS skip event to allow external cancellation
 _CURRENT_TTS_SKIP: Optional[threading.Event] = None
 
 
@@ -278,6 +288,179 @@ def record_until_enter() -> bytes:
             return f.read()
 
 
+def record_for_seconds(seconds: float = 6.0) -> bytes:
+    """Record microphone audio for a fixed duration and return WAV bytes.
+
+    This helper is designed for GUI usage where stdin-driven start/stop prompts
+    are not appropriate. It records immediately for `seconds` and returns a WAV
+    file payload that can be passed to transcription.
+    """
+    secs = float(seconds)
+    if secs <= 0:
+        secs = 1.0
+
+    # Ensure any prior TTS playback has finished
+    _wait_for_tts_end()
+
+    with noalsaerr(), suppress_stderr_fd():
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        sample_size = pa.get_sample_size(FORMAT)
+
+    frames: List[bytes] = []
+    target_chunks = int((SAMPLE_RATE * secs) / CHUNK)
+    _beep(1000)
+    try:
+        for _ in range(max(1, target_chunks)):
+            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+    finally:
+        with suppress_stderr_fd():
+            try:
+                stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
+            try:
+                pa.terminate()
+            except Exception:
+                pass
+        _beep(500)
+
+    wav_path = "/tmp/voice_input.wav"
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(sample_size)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(b"".join(frames))
+
+    with open(wav_path, "rb") as f:
+        return f.read()
+
+
+class VoiceRecordingHandle:
+    """A simple start/stop microphone recording handle.
+
+    This is designed for GUI usage where stdin-driven prompts are not appropriate.
+    The handle starts recording immediately when created and stops when `stop()` is called.
+    """
+
+    def __init__(self) -> None:
+        # Ensure any prior TTS playback has finished before recording
+        _wait_for_tts_end()
+
+        with noalsaerr(), suppress_stderr_fd():
+            self._pa = pyaudio.PyAudio()
+            self._stream = self._pa.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK,
+            )
+            self._sample_size = self._pa.get_sample_size(FORMAT)
+
+        self._frames: List[bytes] = []
+        self._stop = threading.Event()
+
+        def _capture() -> None:
+            while not self._stop.is_set():
+                try:
+                    self._frames.append(
+                        self._stream.read(CHUNK, exception_on_overflow=False),
+                    )
+                except Exception:
+                    # If the device errors mid-stream, stop recording.
+                    self._stop.set()
+                    break
+
+        _beep(1000)
+        self._thr = threading.Thread(target=_capture, daemon=True)
+        self._thr.start()
+
+    def stop(self) -> bytes:
+        """Stop recording and return WAV bytes."""
+        self._stop.set()
+        try:
+            self._thr.join(timeout=2.0)
+        except Exception:
+            pass
+
+        with suppress_stderr_fd():
+            try:
+                self._stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+
+        _beep(500)
+
+        wav_path = "/tmp/voice_input.wav"
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(self._sample_size)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(b"".join(self._frames))
+
+        with open(wav_path, "rb") as f:
+            return f.read()
+
+
+def start_voice_recording() -> "VoiceRecordingHandle":
+    """Start recording immediately and return a stop handle."""
+    return VoiceRecordingHandle()
+
+
+def transcribe_deepgram_no_input(audio_bytes: bytes) -> str:
+    """Transcribe with Deepgram, returning '' on failure (no CLI fallback).
+
+    This is intended for GUI usage: falling back to `input()` would block the UI.
+    """
+    key = os.getenv("DEEPGRAM_API_KEY")
+    if not key:
+        return ""
+
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+
+        req = _urlreq.Request(
+            url="https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true",
+            data=audio_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Token {key}",
+                "Content-Type": "audio/wav",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+        transcript = (
+            payload.get("results", {})
+            .get("channels", [{}])[0]
+            .get("alternatives", [{}])[0]
+            .get("transcript", "")
+        )
+        return (transcript or "").strip()
+    except Exception:
+        return ""
+
+
 # New: interruptible variant used for in-flight steering
 def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
     """
@@ -397,15 +580,61 @@ def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
 
 
 def transcribe_deepgram(audio_bytes: bytes) -> str:
-    "Send *audio_bytes* to Deepgram SDK v4 and return the transcript."
+    """
+    Transcribe *audio_bytes* with Deepgram and return the transcript.
+
+    This sandbox intentionally degrades gracefully:
+    - If `DEEPGRAM_API_KEY` is missing, fall back to manual CLI text input.
+    - If Deepgram is unavailable or errors, fall back to manual CLI text input.
+
+    Implementation note:
+    We prefer calling Deepgram's HTTP API directly to avoid tight coupling to
+    a specific Deepgram Python SDK version/surface (which can drift).
+    """
     key = os.getenv("DEEPGRAM_API_KEY")
     if not key:
         print("[Voice] Deepgram key missing – fallback to CLI input.")
         return input("> ")
 
+    # Prefer the Deepgram HTTP API (SDKs have had breaking surface changes).
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+
+        req = _urlreq.Request(
+            url="https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true",
+            data=audio_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Token {key}",
+                "Content-Type": "audio/wav",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+        transcript = (
+            payload.get("results", {})
+            .get("channels", [{}])[0]
+            .get("alternatives", [{}])[0]
+            .get("transcript", "")
+        )
+        transcript = (transcript or "").strip()
+        if transcript:
+            return transcript
+        print("[Voice] Deepgram returned empty transcript – fallback to CLI input.")
+        return input("> ")
+    except Exception as exc:
+        print(f"[Voice] Deepgram HTTP error ({exc}) – fallback to CLI input.")
+        return input("> ")
+
+    # Legacy fallback: keep SDK path as a last resort if needed.
     dg = DeepgramClient(api_key=key)
-    payload: FileSource = {"buffer": audio_bytes}
-    opts = PrerecordedOptions(model="nova-3", smart_format=True, punctuate=True)
+    try:
+        payload: FileSource = {"buffer": audio_bytes}  # type: ignore[valid-type]
+        opts = PrerecordedOptions(model="nova-3", smart_format=True, punctuate=True)  # type: ignore[call-arg]
+    except Exception:
+        print("[Voice] Deepgram SDK mismatch – fallback to CLI input.")
+        return input("> ")
 
     try:
         response = dg.listen.rest.v("1").transcribe_file(payload, opts)
@@ -470,7 +699,7 @@ async def _speak_async(text: str) -> None:
                     return frame.to_pcm_bytes()
                 if hasattr(frame, "data"):  # mid-2024 builds
                     return bytes(frame.data)
-                if hasattr(frame, "to_wav_bytes"):  # old fallback → strip header
+                if hasattr(frame, "to_wav_bytes"):  # wav-bytes path → strip header
                     return cast(bytes, frame.to_wav_bytes())[44:]
                 return bytes(frame)  # last-resort
 
@@ -1524,7 +1753,7 @@ async def await_with_interrupt(  # noqa: D401 – imperative helper
             except Exception:
                 pass
 
-        txt = input_now(poll * 2)  # same cadence as old versions
+        txt = input_now(poll * 2)  # keep polling cadence stable across sandboxes
         if txt is not None and txt != "":
             # Use a left-trimmed view only for recognizing commands, but keep the original text intact
             working = txt.lstrip()
@@ -2114,10 +2343,10 @@ class TranscriptGenerator:
                 if match:
                     return match[0]
             except Exception:
-                # Any backend/cycle issues → fall through to new contact generation
+                # Any backend/cycle issues → fall through to contact generation
                 pass
 
-            # 2️⃣  No existing contact found → fabricate a new one
+            # 2️⃣  No existing contact found → fabricate a contact record
             details = details or {}
             # Robustly split *name* into first_name and (optional) surname so that
             # we never treat the full name as the first_name.  This fixes the issue
@@ -2334,7 +2563,7 @@ class TranscriptGenerator:
                         receiver_c = _others[0]
                     else:
                         # Use the existing assistant contact (id == 0) instead of
-                        # fabricating a new "Assistant" record.
+                        # fabricating an "Assistant" record.
                         receiver_c = 0
 
                 last_sender_contact = sender_c
@@ -2461,10 +2690,22 @@ class TranscriptGenerator:
         except Exception:
             existing = []  # graceful fallback
 
-        if existing:
+        # filter_contacts returns a packed dict shape {"contacts": [Contact, ...], ...}
+        # but older callers may return a raw list. Normalize to a list of contacts.
+        try:
+            if isinstance(existing, dict):
+                existing_list = existing.get("contacts", []) or []
+            else:
+                existing_list = existing or []
+        except Exception:
+            existing_list = []
+
+        if existing_list:
             lines = []
-            for c in existing:
-                full = " ".join(p for p in [c.first_name, c.surname] if p)
+            for c in existing_list:
+                first = getattr(c, "first_name", None)
+                sur = getattr(c, "surname", None)
+                full = " ".join(p for p in [first, sur] if p)
                 lines.append(f"• {full.strip()}")
 
             contact_block = (
@@ -2504,6 +2745,118 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     by EventBus) belong to that project.  Call this immediately after handling
     CLI arguments and before any manager instances are constructed.
     """
+
+    def _maybe_autostart_local_orchestra() -> None:
+        """Best-effort local Orchestra autostart for sandbox runs.
+
+        Sandboxes call `unify.activate()` during startup, which requires a reachable
+        Unify API backend. In tests, `tests/parallel_run.sh` auto-starts local
+        Orchestra when `ORCHESTRA_URL` targets localhost. Sandbox entrypoints are
+        typically run directly, so we replicate that behavior here (sandbox-only).
+
+        This helper is intentionally:
+        - **best effort**: failures are logged and ignored (the subsequent call
+          will fail with a clearer HTTP error if a backend is still unavailable).
+        - **opt-in by URL**: only triggers when `ORCHESTRA_URL` explicitly points
+          at localhost/127.0.0.1.
+        """
+        import re
+        import subprocess
+        from pathlib import Path
+        from urllib.parse import urlparse
+
+        lg = logging.getLogger(__name__)
+
+        base_url = os.environ.get("ORCHESTRA_URL")
+        if not base_url:
+            # Respect the user's environment: only autostart when explicitly configured
+            # to use localhost (mirrors the user request).
+            return
+
+        try:
+            parsed = urlparse(base_url)
+            host = parsed.hostname or ""
+        except Exception:
+            host = ""
+
+        if host not in {"localhost", "127.0.0.1"} and "localhost" not in base_url:
+            return
+
+        # Resolve orchestra repo path (default: sibling repo ../orchestra).
+        # Repo root is .../unity/ (parent of sandboxes/).
+        repo_root = Path(__file__).resolve().parents[1]
+        orchestra_repo = Path(
+            os.environ.get("ORCHESTRA_REPO_PATH", str(repo_root.parent / "orchestra")),
+        )
+        local_sh = orchestra_repo / "scripts" / "local.sh"
+
+        if not local_sh.exists():
+            lg.warning(
+                "ORCHESTRA_URL targets localhost (%s) but local orchestra script not found at %s. "
+                "Set ORCHESTRA_REPO_PATH to your orchestra repo.",
+                base_url,
+                local_sh,
+            )
+            return
+        if not os.access(local_sh, os.X_OK):
+            lg.warning(
+                "Local orchestra script exists but is not executable: %s",
+                local_sh,
+            )
+            return
+
+        def _extract_url(text: str) -> str | None:
+            # `local.sh check` usually prints the base URL; be resilient to extra logging.
+            m = re.findall(r"https?://\\S+", text or "")
+            return m[-1].rstrip("/") if m else None
+
+        def _run(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [str(local_sh), *args],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        # First, see if it's already running.
+        check = _run("check")
+        if check.returncode == 0:
+            url = _extract_url((check.stdout or "") + "\n" + (check.stderr or ""))
+            if url:
+                # Ensure Unify client points at the discovered local URL (port may differ).
+                os.environ["ORCHESTRA_URL"] = url
+                lg.info("Using local orchestra: %s", url)
+            return
+
+        lg.info(
+            "ORCHESTRA_URL targets localhost (%s); attempting to start local orchestra...",
+            base_url,
+        )
+        start = _run("start")
+        if start.returncode != 0:
+            lg.warning(
+                "Failed to start local orchestra (exit=%s). stdout=%s stderr=%s",
+                start.returncode,
+                (start.stdout or "").strip(),
+                (start.stderr or "").strip(),
+            )
+            return
+
+        check2 = _run("check")
+        if check2.returncode != 0:
+            lg.warning(
+                "Local orchestra start completed, but 'check' still fails (exit=%s). stdout=%s stderr=%s",
+                check2.returncode,
+                (check2.stdout or "").strip(),
+                (check2.stderr or "").strip(),
+            )
+            return
+
+        url2 = _extract_url((check2.stdout or "") + "\n" + (check2.stderr or ""))
+        if url2:
+            os.environ["ORCHESTRA_URL"] = url2
+            lg.info("Using local orchestra: %s", url2)
+
     import unity
     from unity.events.event_bus import EVENT_BUS
 
@@ -2512,6 +2865,8 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
         os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
     except Exception:
         pass
+
+    _maybe_autostart_local_orchestra()
 
     unity.init(
         project_name,
@@ -3140,7 +3495,7 @@ def apply_per_task_simulation_patch(
                 instance_id: Optional[int] = None,
                 scheduler: Optional["TaskScheduler"] = None,  # type: ignore[name-defined]
             ):
-                # Snapshot current per-call state without holding the lock for long
+                # Snapshot per-call state without holding the lock for long
                 try:
                     per_call = _SANDBOX_SIM_PER_CALL  # type: ignore[name-defined]
                 except Exception:

@@ -93,7 +93,9 @@ class Event:
 
     @classmethod
     def from_bus_event(cls, event):
-        event_dump = event.model_dump()
+        # Use mode="json" to ensure datetime objects are serialized to ISO strings,
+        # which from_dict() expects for the timestamp field
+        event_dump = event.model_dump(mode="json")
         data = {
             "event_name": event_dump["payload_cls"],
             "payload": event_dump["payload"],
@@ -123,6 +125,14 @@ class PhoneCallAnswered(Event):
 
 
 @dataclass
+class PhoneCallNotAnswered(Event):
+    """Outbound call was not answered (no-answer, busy, failed, etc.)."""
+
+    contact: dict
+    reason: str = "no-answer"  # Twilio status: no-answer, busy, canceled, failed
+
+
+@dataclass
 class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
@@ -138,7 +148,7 @@ class PhoneCallStarted(Event):
 
 @dataclass
 class UnifyMeetStarted(Event):
-    """A browser-based voice/video meeting session has started (no phone number).
+    """A web-based voice/video meeting session has started (no phone number).
 
     "contact" should reference the boss/user contact id (typically 1).
     """
@@ -156,7 +166,7 @@ class InboundPhoneUtterance(Event):
 
 @dataclass
 class InboundUnifyMeetUtterance(Event):
-    """Utterance received from the other party during a browser-based voice/video meeting."""
+    """Utterance received from the other party during a web-based voice/video meeting."""
 
     contact: dict
     content: str
@@ -176,7 +186,7 @@ class PhoneCallEnded(Event):
 
 @dataclass
 class UnifyMeetEnded(Event):
-    """The browser-based voice/video meeting session has ended."""
+    """The web-based voice/video meeting session has ended."""
 
     contact: dict
 
@@ -217,7 +227,7 @@ class OutboundPhoneUtterance(Event):
 
 @dataclass
 class OutboundUnifyMeetUtterance(Event):
-    """Utterance sent by the assistant during a browser-based voice/video meeting."""
+    """Utterance sent by the assistant during a web-based voice/video meeting."""
 
     contact: dict
     content: str
@@ -254,6 +264,10 @@ class EmailReceived(Event):
     email_id: Optional[str] = None
     # List of attachment filenames (actual files are saved to Downloads/).
     attachments: list[str] = field(default_factory=list)
+    # Recipients from the original email (for reply-all functionality)
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
 
 
 # assistant events
@@ -293,6 +307,31 @@ class EmailSent(Event):
     email_id_replied_to: str | None = None
     # List of attachment filenames that were sent with the email.
     attachments: list[str] = field(default_factory=list)
+    # Recipients the email was sent to
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UnknownContactCreated(Event):
+    """A new contact was automatically created from an unknown inbound message.
+
+    This event is published when an inbound SMS, email, or call arrives from
+    a sender that is not in the Contacts table and not in the BlackList.
+
+    The contact is created with:
+    - Only the medium field populated (phone_number or email_address)
+    - should_respond=False to prevent automatic responses
+    - A response_policy guiding the assistant to seek boss guidance
+
+    The ConversationManager should use this event to potentially notify the
+    boss and ask for guidance on how to handle this new contact.
+    """
+
+    contact: dict
+    medium: str  # The communication medium (e.g., "sms_message", "email", "phone_call")
+    message_preview: str = ""  # Optional preview of the initial message
 
 
 @dataclass
@@ -319,9 +358,11 @@ class _SessionConfigBase(Event):
     assistant_timezone: str = (
         ""  # IANA timezone identifier; default empty for backward compat
     )
-    is_user_desktop: bool = False
     desktop_mode: str = "ubuntu"
     desktop_url: str | None = None
+    user_desktop_mode: str | None = None
+    user_desktop_filesys_sync: bool = False
+    user_desktop_url: str | None = None
 
 
 @dataclass

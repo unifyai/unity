@@ -54,7 +54,6 @@ from .utils.storage import (
 )
 from unity.data_manager.types import PlotResult as _VizPlotResult
 
-
 if TYPE_CHECKING:
     from unity.file_manager.types.describe import FileStorageMap
     from unity.data_manager.base import BaseDataManager

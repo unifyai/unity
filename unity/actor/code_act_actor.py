@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import contextlib
 import contextvars
 import functools
 import inspect
@@ -7,12 +9,15 @@ import traceback
 import ast
 import copy
 import uuid
+import sys
 from datetime import datetime, timezone
+from secrets import token_hex as _token_hex
 import logging
-from contextlib import redirect_stdout, redirect_stderr
 from typing import (
+    Annotated,
     Any,
     Dict,
+    List,
     Optional,
     Callable,
     Awaitable,
@@ -20,8 +25,9 @@ from typing import (
     TYPE_CHECKING,
     Tuple,
     Literal,
+    Union,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from unity.actor.base import BaseCodeActActor
 from unity.actor.handle import ActorHandle
@@ -33,6 +39,15 @@ from unity.events.manager_event_logging import log_manager_call
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+from unity.common.hierarchical_logger import (
+    build_hierarchy_label,
+    log_boundary_event,
+)
+from unity.events.manager_event_logging import (
+    new_call_id,
+    publish_manager_method_event,
+)
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
@@ -46,6 +61,414 @@ _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Structured output types for sandbox execution (Pydantic discriminated union)
+# ---------------------------------------------------------------------------
+
+
+class TextPart(BaseModel):
+    """A text output part from sandbox execution."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+    def to_llm_content(self) -> dict:
+        """Convert to LLM content block format."""
+        return {"type": "text", "text": self.text}
+
+
+class ImagePart(BaseModel):
+    """An image output part from sandbox execution (e.g., from display())."""
+
+    type: Literal["image"] = "image"
+    mime: str = "image/png"
+    data: str  # base64 encoded
+
+    def to_llm_content(self) -> dict:
+        """Convert to LLM content block format."""
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{self.mime};base64,{self.data}"},
+        }
+
+
+# Discriminated union - Pydantic auto-parses based on `type` field
+OutputPart = Annotated[Union[TextPart, ImagePart], Field(discriminator="type")]
+
+
+def _detect_image_mime_from_b64(b64_str: str) -> str:
+    """Detect an image MIME type by inspecting decoded header bytes.
+
+    Returns "image/jpeg" for JPEG, "image/png" for PNG, or "image/png" as fallback.
+    """
+    try:
+        raw = base64.b64decode(b64_str[:32])
+        if raw[:2] == b"\xff\xd8":
+            return "image/jpeg"
+        if raw[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+    except Exception:
+        pass
+    return "image/png"
+
+
+def parts_to_text(parts: List[Union[TextPart, ImagePart]]) -> str:
+    """Convert a list of OutputPart to a plain text string.
+
+    Useful for backward compatibility and simple text extraction.
+    Only TextPart parts are included; ImagePart parts are skipped.
+    """
+    return "".join(p.text for p in parts if isinstance(p, TextPart))
+
+
+def parts_to_llm_content(parts: List[Union[TextPart, ImagePart]]) -> List[dict]:
+    """Convert a list of OutputParts to LLM content blocks, preserving order.
+
+    This function maintains the original interleaving of text and images,
+    unlike the legacy approach which collected all images at the end.
+
+    Adjacent TextParts are merged into a single text block for cleaner output.
+    """
+    if not parts:
+        return []
+
+    blocks: List[dict] = []
+    pending_text = ""
+
+    for part in parts:
+        if isinstance(part, TextPart):
+            pending_text += part.text
+        elif isinstance(part, ImagePart):
+            # Flush any pending text before the image
+            if pending_text:
+                blocks.append({"type": "text", "text": pending_text})
+                pending_text = ""
+            blocks.append(part.to_llm_content())
+
+    # Flush any remaining text
+    if pending_text:
+        blocks.append({"type": "text", "text": pending_text})
+
+    return blocks
+
+
+class ExecutionResult(BaseModel):
+    """Result from sandbox code execution, implementing FormattedToolResult protocol.
+
+    This model gives the sandbox full control over how its output is formatted
+    for the LLM, preserving the original interleaving of text and images from
+    print() and display() calls.
+    """
+
+    stdout: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
+    stderr: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
+    result: Any = None
+    error: Optional[str] = None
+    computer_used: bool = False
+    computer_state: Optional[Dict[str, Any]] = None
+    language: Optional[str] = None
+    state_mode: Optional[str] = None
+    session_id: Optional[int] = None
+    session_name: Optional[str] = None
+    venv_id: Optional[int] = None
+    session_created: Optional[bool] = None
+    duration_ms: Optional[int] = None
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    def to_llm_content(self) -> List[dict]:
+        """Format this execution result for the LLM, preserving output order.
+
+        Implements the FormattedToolResult protocol, giving the sandbox full
+        control over how its output appears in the LLM transcript.
+        """
+        blocks: List[dict] = []
+
+        # Build metadata section (non-stdout/stderr fields)
+        meta: Dict[str, Any] = {}
+        computer_screenshot_b64: Optional[str] = None
+        if self.result is not None:
+            meta["result"] = self.result
+        if self.error is not None:
+            meta["error"] = self.error
+        if self.language is not None:
+            meta["language"] = self.language
+        if self.state_mode is not None:
+            meta["state_mode"] = self.state_mode
+        if self.session_id is not None:
+            meta["session_id"] = self.session_id
+        if self.session_name is not None:
+            meta["session_name"] = self.session_name
+        if self.venv_id is not None:
+            meta["venv_id"] = self.venv_id
+        if self.session_created is not None:
+            meta["session_created"] = self.session_created
+        if self.duration_ms is not None:
+            meta["duration_ms"] = self.duration_ms
+        if self.computer_used:
+            meta["computer_used"] = True
+        if self.computer_state is not None:
+            # Keep computer state lightweight in the JSON text block.
+            # Large binary payloads (e.g., screenshots) are represented as image blocks
+            # rather than embedded directly into JSON.
+            if isinstance(self.computer_state, dict):
+                cs_url = self.computer_state.get("url")
+                cs_error = self.computer_state.get("error")
+                cs_screenshot = self.computer_state.get("screenshot")
+                if isinstance(cs_screenshot, str) and cs_screenshot.strip():
+                    computer_screenshot_b64 = cs_screenshot
+
+                cs_meta: Dict[str, Any] = {}
+                if cs_url is not None:
+                    cs_meta["url"] = cs_url
+                if cs_error is not None:
+                    cs_meta["error"] = cs_error
+                if cs_meta:
+                    meta["computer_state"] = cs_meta
+            else:
+                meta["computer_state"] = self.computer_state
+
+        # Add metadata block if present
+        if meta:
+            import json
+
+            meta_text = json.dumps(meta, indent=2, default=str)
+            blocks.append({"type": "text", "text": meta_text})
+
+        # Add computer screenshot (if present) as an image block rather than JSON text.
+        if computer_screenshot_b64 is not None:
+            if blocks:
+                blocks.append(
+                    {"type": "text", "text": "\n--- computer screenshot ---\n"},
+                )
+            mime = _detect_image_mime_from_b64(computer_screenshot_b64)
+            blocks.append(
+                ImagePart(
+                    data=computer_screenshot_b64,
+                    mime=mime,
+                ).to_llm_content(),
+            )
+
+        # Add stdout with preserved ordering (interleaved text/images)
+        if self.stdout:
+            has_content = any(
+                (isinstance(p, TextPart) and p.text.strip()) or isinstance(p, ImagePart)
+                for p in self.stdout
+            )
+            if has_content:
+                if blocks:  # Add separator if we have metadata
+                    blocks.append({"type": "text", "text": "\n--- stdout ---\n"})
+                blocks.extend(parts_to_llm_content(self.stdout))
+
+        # Add stderr with preserved ordering (if non-empty)
+        if self.stderr:
+            has_content = any(
+                (isinstance(p, TextPart) and p.text.strip()) or isinstance(p, ImagePart)
+                for p in self.stderr
+            )
+            if has_content:
+                blocks.append({"type": "text", "text": "\n--- stderr ---\n"})
+                blocks.extend(parts_to_llm_content(self.stderr))
+
+        # Ensure we always return at least something
+        if not blocks:
+            blocks.append({"type": "text", "text": "(no output)"})
+
+        return blocks
+
+
+# ---------------------------------------------------------------------------
+# ContextVars for per-execution stream isolation
+# ---------------------------------------------------------------------------
+_stdout_parts: contextvars.ContextVar[List[Union[TextPart, ImagePart]]] = (
+    contextvars.ContextVar(
+        "sandbox_stdout_parts",
+    )
+)
+_stderr_parts: contextvars.ContextVar[List[Union[TextPart, ImagePart]]] = (
+    contextvars.ContextVar(
+        "sandbox_stderr_parts",
+    )
+)
+_current_stdout: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "sandbox_current_stdout",
+)
+_current_stderr: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "sandbox_current_stderr",
+)
+
+
+# ---------------------------------------------------------------------------
+# Stream capture classes
+# ---------------------------------------------------------------------------
+class StreamLike:
+    """Captures output to a parts list, supporting text and images."""
+
+    def __init__(
+        self,
+        parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
+    ):
+        self._parts_var = parts_var
+
+    def write(self, obj: str) -> int:
+        parts = self._parts_var.get()
+        # Merge consecutive text writes into a single TextPart
+        if parts and isinstance(parts[-1], TextPart):
+            # TextPart is immutable (Pydantic), so we need to replace it
+            last = parts[-1]
+            parts[-1] = TextPart(text=last.text + obj)
+        else:
+            parts.append(TextPart(text=obj))
+        return len(obj)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+
+class StreamRouter:
+    """Routes writes to the current context's stream, falls back to original stream.
+
+    Uses __getattr__ to forward ALL unknown attributes/methods to the current stream,
+    ensuring compatibility with Jupyter's introspection (e.g., _ipython_* methods),
+    and any future stream methods we haven't explicitly handled.
+    """
+
+    def __init__(
+        self,
+        context_var: contextvars.ContextVar[Any],
+        fallback: Any,
+    ):
+        # Use object.__setattr__ to avoid triggering our __getattr__
+        object.__setattr__(self, "_context_var", context_var)
+        object.__setattr__(self, "_fallback", fallback)
+
+    def _get_stream(self) -> Any:
+        try:
+            return self._context_var.get()
+        except LookupError:
+            return self._fallback
+
+    def write(self, s: str) -> int:
+        return self._get_stream().write(s)
+
+    def flush(self) -> None:
+        return self._get_stream().flush()
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward any unknown attribute to the current stream."""
+        return getattr(self._get_stream(), name)
+
+
+# ---------------------------------------------------------------------------
+# Lazy StreamRouter installation (installed on first sandbox use)
+# ---------------------------------------------------------------------------
+# We install the StreamRouter lazily (on first sandbox use) rather than at
+# module load to avoid conflicts with pytest and other test frameworks that
+# replace sys.stdout after imports. By installing on first use, we capture
+# whatever stdout is current at that moment (e.g., pytest's capture) as our
+# fallback, ensuring proper output routing.
+_stream_router_installed = False
+_original_stdout: Any = None
+_original_stderr: Any = None
+
+
+def _ensure_stream_router_installed() -> None:
+    """Install StreamRouters for sys.stdout/stderr if not already installed.
+
+    This is called at the start of each sandbox execution. We check if
+    sys.stdout is actually a StreamRouter (not just a flag) because pytest
+    and other frameworks may replace sys.stdout between tests.
+    """
+    global _stream_router_installed, _original_stdout, _original_stderr
+
+    # Check if sys.stdout is still our StreamRouter (pytest may have replaced it)
+    if isinstance(sys.stdout, StreamRouter):
+        return  # Already installed
+
+    # Install StreamRouter, capturing current stdout as fallback
+    _original_stdout = sys.stdout
+    _original_stderr = sys.stderr
+    sys.stdout = StreamRouter(_current_stdout, _original_stdout)  # type: ignore[assignment]
+    sys.stderr = StreamRouter(_current_stderr, _original_stderr)  # type: ignore[assignment]
+    _stream_router_installed = True
+
+
+# ---------------------------------------------------------------------------
+# Display function for rich output (images, etc.)
+# ---------------------------------------------------------------------------
+def _make_display(
+    parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
+) -> Callable[[Any], None]:
+    """Create a display function that adds images to output parts."""
+
+    def display(obj: Any) -> None:
+        try:
+            from PIL import Image
+        except ImportError:
+            Image = None  # type: ignore[misc, assignment]
+
+        parts = parts_var.get()
+
+        if Image is not None and isinstance(obj, Image.Image):
+            buf = io.BytesIO()
+            obj.save(buf, format="PNG")
+            b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
+            parts.append(ImagePart(mime="image/png", data=b64_data))
+        elif isinstance(obj, str):
+            parts.append(TextPart(text=obj + "\n"))
+        else:
+            # Fallback: convert to string
+            parts.append(TextPart(text=str(obj) + "\n"))
+
+    return display
+
+
+# ---------------------------------------------------------------------------
+# Context manager for sandbox output capture
+# ---------------------------------------------------------------------------
+@contextlib.contextmanager
+def capture_sandbox_output():
+    """Context manager that sets up stream capture for a sandbox execution.
+
+    Yields (stdout_parts, stderr_parts, display_fn) tuple.
+    All ContextVars are properly reset on exit.
+
+    The StreamRouter is installed lazily on first use (not at module load)
+    to avoid conflicts with pytest and other test frameworks that replace
+    sys.stdout after imports.
+    """
+    # Ensure StreamRouter is installed (lazy, once per process)
+    _ensure_stream_router_installed()
+
+    stdout_parts: List[Union[TextPart, ImagePart]] = []
+    stderr_parts: List[Union[TextPart, ImagePart]] = []
+
+    # Set up ContextVars
+    stdout_token = _stdout_parts.set(stdout_parts)
+    stderr_token = _stderr_parts.set(stderr_parts)
+
+    # Create StreamLike instances for this execution
+    stdout_stream = StreamLike(_stdout_parts)
+    stderr_stream = StreamLike(_stderr_parts)
+
+    stdout_stream_token = _current_stdout.set(stdout_stream)
+    stderr_stream_token = _current_stderr.set(stderr_stream)
+
+    display_fn = _make_display(_stdout_parts)
+
+    try:
+        yield stdout_parts, stderr_parts, display_fn
+    finally:
+        _stdout_parts.reset(stdout_token)
+        _stderr_parts.reset(stderr_token)
+        _current_stdout.reset(stdout_stream_token)
+        _current_stderr.reset(stderr_stream_token)
+
 
 SupportedShellLanguage = Literal["bash", "zsh", "sh", "powershell"]
 SupportedLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
@@ -229,12 +652,19 @@ def _validate_execution_params(
             )
 
     # Optional: enforce a global session cap (actor-owned pools, so this is per-actor).
+    # Note: `stateful` with no session specified means "use the default session" (session_id=0),
+    # so it does NOT create a new session and should not be rejected by the global cap here.
+    #
+    # We only apply the cap when the call would CREATE a new stateful session:
+    # - session_name is provided but does not resolve (new session would be allocated)
     if (
         max_sessions_total is not None
         and active_session_count is not None
         and state_mode == "stateful"
         and session_id is None
-        and session_name is None
+        and session_name is not None
+        and resolve_session_name is not None
+        and resolve_session_name(session_name) is None
         and active_session_count >= max_sessions_total
     ):
         return _validation_error(
@@ -344,7 +774,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> SteerableToolHandle:
         status = "completed" if self.done() else "still running"
@@ -370,7 +800,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
     ) -> Optional[str]:
         # No-op for non-LLM entrypoint execution.
@@ -379,8 +809,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
     async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> Optional[str]:
         if self._completion_event.is_set():
             return self._result_str
@@ -445,7 +873,7 @@ class PythonExecutionSession:
 
         Args:
             computer_primitives: An instance of ComputerPrimitives to be injected into the
-                             global state, making browser tools available.
+                             global state, making computer tools available.
             environments: Optional mapping of environment namespaces to environments. If
                 provided, each environment instance is injected into globals.
             venv_pool: Optional VenvPool for persistent Python venv connections.
@@ -458,17 +886,19 @@ class PythonExecutionSession:
 
         self.id: str = str(uuid.uuid4())
         self.global_state: Dict[str, Any] = create_execution_globals()
-        self._browser_used: bool = False
+        self._computer_used: bool = False
 
         # Expose sandbox metadata to user code (best-effort; callers may ignore).
         self.global_state["__sandbox_id__"] = self.id
 
-        # Notification queue is injected per-call by CodeActActor via:
+        # Notification queue is injected dynamically by execute_code when it
+        # receives a _notification_up_q from the async tool loop:
         # sandbox.global_state["__notification_up_q__"] = <asyncio.Queue>
         #
         # Provide a user-driven progress helper:
         #   notify({"type": "...", ...})
         # This helper is intentionally synchronous; it uses put_nowait.
+        # Notifications bubble up through the async tool loop to the outer handle.
         def notify(payload: dict) -> None:
             try:
                 q = self.global_state.get("__notification_up_q__")
@@ -513,8 +943,8 @@ class PythonExecutionSession:
                     return _sync_wrapper
                 return attr
 
-        def _mark_browser_used() -> None:
-            self._browser_used = True
+        def _mark_computer_used() -> None:
+            self._computer_used = True
 
         if environments:
             for namespace, env in environments.items():
@@ -526,7 +956,7 @@ class PythonExecutionSession:
                     else:
                         instance = env.get_instance()
                     if namespace == "computer_primitives":
-                        instance = _UsageTrackingProxy(instance, _mark_browser_used)
+                        instance = _UsageTrackingProxy(instance, _mark_computer_used)
                     self.global_state[namespace] = instance
                 except Exception:
                     # Keep sandbox usable even if a non-critical environment fails to inject.
@@ -536,7 +966,7 @@ class PythonExecutionSession:
         if computer_primitives and "computer_primitives" not in self.global_state:
             self.global_state["computer_primitives"] = _UsageTrackingProxy(
                 computer_primitives,
-                _mark_browser_used,
+                _mark_computer_used,
             )
 
     async def close(self) -> None:
@@ -559,146 +989,185 @@ class PythonExecutionSession:
             except Exception:
                 pass
 
-    async def execute(self, code: str) -> Dict[str, Any]:
+    async def execute(self, code: str) -> dict:
         """
         Executes a string of Python code within the sandbox's stateful environment.
+
+        Returns a dict with:
+            stdout: list[OutputPart] - structured output parts (TextPart, ImagePart)
+            stderr: list[OutputPart] - structured error output parts
+            result: Any - return value of the last expression
+            error: str | None - traceback if an exception occurred
+            computer_used: bool - whether computer primitives were accessed
         """
         # Reset per-execution usage flags.
-        self._browser_used = False
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
+        self._computer_used = False
         result = None
         error = None
-        builtins_dict: Any = None
-        original_print: Any = None
-        print_patched = False
 
-        try:
-            is_empty_or_comment_only = all(
-                line.strip() == "" or line.strip().startswith("#")
-                for line in code.splitlines()
-            )
-            if is_empty_or_comment_only:
-                code += "\npass"
+        with capture_sandbox_output() as (stdout_parts, stderr_parts, display_fn):
+            # Inject display function into globals
+            self.global_state["display"] = display_fn
 
-            tree = ast.parse(code)
-            top_level_assign_targets = set()
-            for node in tree.body:
-                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                    targets = []
-                    if isinstance(node, ast.Assign):
-                        targets.extend(node.targets)
-                    else:
-                        targets.append(node.target)
-
-                    for target in targets:
-                        if isinstance(target, ast.Name):
-                            top_level_assign_targets.add(target.id)
-                        elif isinstance(target, ast.Tuple):
-                            for elt in target.elts:
-                                if isinstance(elt, ast.Name):
-                                    top_level_assign_targets.add(elt.id)
-
-                elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                    for alias in node.names:
-                        top_level_assign_targets.add(
-                            alias.asname or alias.name.split(".")[0],
-                        )
-
-                elif isinstance(
-                    node,
-                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                ):
-                    top_level_assign_targets.add(node.name)
-
-            async_code = "async def __exec_wrapper():\n"
-            if top_level_assign_targets:
-                async_code += (
-                    f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
-                )
-
-            async_code += "".join(f"    {line}\n" for line in code.splitlines())
-
-            exec(async_code, self.global_state)
-
-            # Robust stdout capture for agent code:
-            #
-            # In practice, some nested tool loops may temporarily replace `sys.stdout`
-            # (e.g. for their own logging/capture), which can bypass `redirect_stdout`
-            # and cause `print(...)` output to leak to the outer process instead of
-            # appearing in the tool result.
-            #
-            # To keep CodeAct reliable, we patch the sandbox built-in `print` so that
-            # it always writes to our per-execution `stdout_capture`, regardless of
-            # any temporary `sys.stdout` replacements inside awaited tool calls.
             try:
-                builtins_dict = self.global_state.get("__builtins__")
-                if (
-                    isinstance(builtins_dict, dict)
-                    and builtins_dict.get("print") is not None
-                ):
-                    original_print = builtins_dict.get("print")
+                # Guardrails: prevent agent code from accidentally shadowing critical
+                # injected environment globals (common failure mode in LLM-generated code).
+                #
+                # We do this via an AST rewrite (not brittle string heuristics):
+                # rewrite any assignment targets named `primitives` / `computer_primitives`
+                # to `_primitives_local` / `_computer_primitives_local`.
+                #
+                # This preserves the injected globals for the rest of the session.
+                try:
 
-                    def _captured_print(
-                        *args: Any,
-                        sep: str = " ",
-                        end: str = "\n",
-                        file: Any = None,
-                        flush: bool = False,
-                    ) -> None:
-                        text = sep.join(str(a) for a in args) + end
-                        if file is None:
-                            stdout_capture.write(text)
-                            if flush:
-                                try:
-                                    stdout_capture.flush()
-                                except Exception:
-                                    pass
+                    class _ShadowingGuard(ast.NodeTransformer):
+                        _REMAP = {
+                            "primitives": "_primitives_local",
+                            "computer_primitives": "_computer_primitives_local",
+                        }
+
+                        def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
+                            # Only rewrite *assignments* (Store context). Loads are preserved.
+                            if (
+                                isinstance(node.ctx, ast.Store)
+                                and node.id in self._REMAP
+                            ):
+                                return ast.copy_location(
+                                    ast.Name(id=self._REMAP[node.id], ctx=node.ctx),
+                                    node,
+                                )
+                            return node
+
+                        def visit_Global(
+                            self,
+                            node: ast.Global,
+                        ) -> ast.AST:  # noqa: N802
+                            node.names = [self._REMAP.get(n, n) for n in node.names]
+                            return node
+
+                        def visit_Nonlocal(
+                            self,
+                            node: ast.Nonlocal,
+                        ) -> ast.AST:  # noqa: N802
+                            node.names = [self._REMAP.get(n, n) for n in node.names]
+                            return node
+
+                    tree = ast.parse(code)
+                    tree = _ShadowingGuard().visit(tree)  # type: ignore[assignment]
+                    ast.fix_missing_locations(tree)
+                    code = ast.unparse(tree)
+                except Exception:
+                    # Best-effort only; if rewriting fails, proceed with original code.
+                    pass
+
+                is_empty_or_comment_only = all(
+                    line.strip() == "" or line.strip().startswith("#")
+                    for line in code.splitlines()
+                )
+                if is_empty_or_comment_only:
+                    code += "\npass"
+
+                tree = ast.parse(code)
+                top_level_assign_targets = set()
+                for node in tree.body:
+                    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                        targets = []
+                        if isinstance(node, ast.Assign):
+                            targets.extend(node.targets)
+                        else:
+                            targets.append(node.target)
+
+                        for target in targets:
+                            if isinstance(target, ast.Name):
+                                top_level_assign_targets.add(target.id)
+                            elif isinstance(target, ast.Tuple):
+                                for elt in target.elts:
+                                    if isinstance(elt, ast.Name):
+                                        top_level_assign_targets.add(elt.id)
+
+                    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                        for alias in node.names:
+                            top_level_assign_targets.add(
+                                alias.asname or alias.name.split(".")[0],
+                            )
+
+                    elif isinstance(
+                        node,
+                        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                    ):
+                        top_level_assign_targets.add(node.name)
+
+                async_code = "async def __exec_wrapper():\n"
+                if top_level_assign_targets:
+                    async_code += f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
+
+                async_code += "".join(f"    {line}\n" for line in code.splitlines())
+
+                # Inject a custom print function that writes directly to our capture
+                # list via ContextVar, bypassing sys.stdout entirely. This is
+                # necessary because pytest's live logging feature can replace
+                # sys.stdout during LOGGER.info() calls, breaking our StreamRouter.
+                _gs_builtins = self.global_state.get("__builtins__", {})
+                if isinstance(_gs_builtins, dict):
+                    _original_print = _gs_builtins.get("print")
+
+                    def _sandbox_print(
+                        *args,
+                        sep=" ",
+                        end="\n",
+                        file=None,
+                        flush=False,
+                    ):
+                        # If file is explicitly specified, use the original print
+                        if file is not None:
+                            if _original_print:
+                                return _original_print(
+                                    *args,
+                                    sep=sep,
+                                    end=end,
+                                    file=file,
+                                    flush=flush,
+                                )
                             return
-
-                        # Respect explicit `file=` when possible, but fall back to
-                        # stdout_capture to avoid losing output.
+                        # Otherwise, write directly to our capture list via ContextVar
                         try:
-                            file.write(text)
-                            if flush:
-                                try:
-                                    file.flush()
-                                except Exception:
-                                    pass
-                        except Exception:
-                            stdout_capture.write(text)
-                            if flush:
-                                try:
-                                    stdout_capture.flush()
-                                except Exception:
-                                    pass
+                            parts = _stdout_parts.get()
+                        except LookupError:
+                            # No capture context - fall back to original print
+                            if _original_print:
+                                return _original_print(
+                                    *args,
+                                    sep=sep,
+                                    end=end,
+                                    flush=flush,
+                                )
+                            return
+                        # Format the output like standard print
+                        output = sep.join(str(arg) for arg in args) + end
+                        # Merge consecutive text writes into a single TextPart
+                        if parts and isinstance(parts[-1], TextPart):
+                            last = parts[-1]
+                            parts[-1] = TextPart(text=last.text + output)
+                        else:
+                            parts.append(TextPart(text=output))
 
-                    builtins_dict["print"] = _captured_print
-                    print_patched = True
-            except Exception:
-                # Best-effort: if patching fails, keep executing.
-                print_patched = False
+                    self.global_state["__builtins__"]["print"] = _sandbox_print
 
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                exec(async_code, self.global_state)
                 result = await self.global_state["__exec_wrapper"]()
 
-        except Exception:
-            error = traceback.format_exc()
-        finally:
-            if print_patched and isinstance(builtins_dict, dict):
-                try:
-                    builtins_dict["print"] = original_print
-                except Exception:
-                    pass
-            if "__exec_wrapper" in self.global_state:
-                del self.global_state["__exec_wrapper"]
+            except Exception:
+                error = traceback.format_exc()
+            finally:
+                if "__exec_wrapper" in self.global_state:
+                    del self.global_state["__exec_wrapper"]
 
         return {
-            "stdout": stdout_capture.getvalue(),
-            "stderr": stderr_capture.getvalue(),
+            "stdout": stdout_parts,
+            "stderr": stderr_parts,
             "result": result,
             "error": error,
-            "browser_used": self._browser_used,
+            "computer_used": self._computer_used,
         }
 
 
@@ -1044,7 +1513,7 @@ class SessionExecutor:
                 "stderr": res.stderr,
                 "result": res.exit_code,
                 "error": res.error,
-                "browser_used": False,
+                "computer_used": False,
                 "language": language,
                 "state_mode": state_mode,
                 "session_id": session_id,
@@ -1074,7 +1543,7 @@ class SessionExecutor:
                         "stderr": restore_res.stderr,
                         "result": restore_res.exit_code,
                         "error": restore_res.error,
-                        "browser_used": False,
+                        "computer_used": False,
                         "language": language,
                         "state_mode": state_mode,
                         "session_id": session_id,
@@ -1090,7 +1559,7 @@ class SessionExecutor:
                     "stderr": res.stderr,
                     "result": res.exit_code,
                     "error": res.error,
-                    "browser_used": False,
+                    "computer_used": False,
                     "language": language,
                     "state_mode": state_mode,
                     "session_id": session_id,
@@ -1160,7 +1629,7 @@ async def _execute_shell_stateless(
             "stderr": (stderr_b or b"").decode(errors="replace"),
             "result": int(proc.returncode or 0),
             "error": None,
-            "browser_used": False,
+            "computer_used": False,
         }
     except Exception as e:
         return {
@@ -1168,7 +1637,7 @@ async def _execute_shell_stateless(
             "stderr": "",
             "result": None,
             "error": f"{type(e).__name__}: {e}",
-            "browser_used": False,
+            "computer_used": False,
         }
 
 
@@ -1184,7 +1653,7 @@ class CodeActActor(BaseCodeActActor):
         headless: bool = False,
         computer_mode: str = "magnitude",
         timeout: float = 1000,
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
         computer_primitives: Optional["ComputerPrimitives"] = None,
         environments: Optional[list["BaseEnvironment"]] = None,
@@ -1197,12 +1666,14 @@ class CodeActActor(BaseCodeActActor):
 
         Args:
             computer_primitives: Optional existing ComputerPrimitives instance to reuse.
-                           If provided, other browser-related params are ignored.
+                           If provided, other computer-related params are ignored.
             environments: Optional list of execution environments. If None, defaults to
                 [ComputerEnvironment, StateManagerEnvironment].
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
+            agent_server_url: URL for the agent server. For desktop mode, pass the
+                external VM's URL.
         """
         super().__init__(
             environments=environments,
@@ -1241,7 +1712,7 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
-        self._browser_tools = self._get_browser_tools()
+        self._computer_tools = self._get_computer_tools()
         # Register stable tools once; per-call sandboxes are bound via _CURRENT_SANDBOX.
         self.add_tools("act", self._build_tools())
 
@@ -1387,8 +1858,8 @@ class CodeActActor(BaseCodeActActor):
             active_session_count=self._count_active_sessions_total(),
         )
 
-    def _get_browser_tools(self) -> Dict[str, Callable]:
-        """Extracts browser-related methods from the ComputerPrimitives."""
+    def _get_computer_tools(self) -> Dict[str, Callable]:
+        """Extracts computer-related methods from the ComputerPrimitives."""
         if not self._computer_primitives:
             return {}
         return {
@@ -1409,6 +1880,7 @@ class CodeActActor(BaseCodeActActor):
             session_id: int | None = None,
             session_name: str | None = None,
             venv_id: int | None = None,
+            _notification_up_q: asyncio.Queue[dict] | None = None,
         ) -> Any:
             """
             Execute code in a specified language and state mode, optionally within a session.
@@ -1425,7 +1897,9 @@ class CodeActActor(BaseCodeActActor):
               - "read_only": reads from an existing session but does not persist changes
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
-              - for stateful: if omitted, a new session_id is allocated automatically
+              - for stateful: if omitted, defaults to **session_id=0** (the default session)
+              - to create an additional stateful session, provide a fresh `session_name` (recommended)
+                or an explicit `session_id` > 0
               - **Python session_id=0** is special:
                 - If this tool is called from inside a running CodeAct `act()` loop, session 0 maps to the
                   **current per-call Python sandbox** (shared via the ContextVar binding).
@@ -1441,13 +1915,29 @@ class CodeActActor(BaseCodeActActor):
 
             Output
             ------
-            Returns a structured dict with at least:
-            - stdout, stderr, result, error
-            - language, state_mode, session_id, session_name, venv_id
-            - session_created, duration_ms, browser_used
+            Returns either a dict or an ExecutionResult object with the following fields:
 
-            If browser tools were used during Python execution and a browser environment
-            is available, the response may also include `browser_state` with URL/screenshot.
+            - **stdout**: For in-process Python, a List[TextPart | ImagePart] preserving
+              rich output (text and images from print()/display()). For shell or venv
+              execution, a plain string.
+            - **stderr**: Same format as stdout (list for in-process Python, string otherwise).
+            - **result**: The evaluated result of the last expression (Any), or None.
+            - **error**: Error message string if execution failed, otherwise None.
+            - **language**: The language used for execution.
+            - **state_mode**: The state mode used ("stateless", "stateful", or "read_only").
+            - **session_id**: The session ID (int) if stateful/read_only, otherwise None.
+            - **session_name**: The session name alias if one was assigned, otherwise None.
+            - **venv_id**: The virtual environment ID if applicable, otherwise None.
+            - **session_created**: True if a new session was created by this call.
+            - **duration_ms**: Execution duration in milliseconds.
+            - **computer_used**: True if computer primitives were invoked during execution.
+            - **computer_state** (optional): Only present when computer_used is True and a
+              computer environment is available. The textual metadata includes the URL
+              and any error details. A screenshot, when available, is returned as an
+              image block in the formatted tool output rather than embedded into JSON.
+
+            For in-process Python execution with rich output, the result is wrapped in an
+            ExecutionResult object (a Pydantic model implementing FormattedToolResult).
             """
             _ = thought  # Thought is logged by the LLM; not used programmatically.
             if code is None or code.strip() == "":
@@ -1463,178 +1953,261 @@ class CodeActActor(BaseCodeActActor):
                     "venv_id": venv_id,
                     "session_created": False,
                     "duration_ms": 0,
-                    "browser_used": False,
+                    "computer_used": False,
                 }
 
-            # Resolve / allocate sessions for stateful.
-            if state_mode == "stateful":
-                if session_name:
-                    resolved = self._resolve_session_name(session_name)
-                    if resolved is not None:
-                        language, venv_id, session_id = resolved
+            # ──────────────────────────────────────────────────────────────
+            # Boundary wrapper: execute_code (lineage + events + terminal log)
+            # ──────────────────────────────────────────────────────────────
+
+            _suffix = _token_hex(2)
+            _call_id = new_call_id()
+            _parent = TOOL_LOOP_LINEAGE.get([])
+            _parent_lineage = list(_parent) if isinstance(_parent, list) else []
+            _hierarchy = [*_parent_lineage, "execute_code"]
+            _hierarchy_label = build_hierarchy_label(_hierarchy, _suffix)
+            # Establish a boundary lineage frame so nested calls (e.g., FunctionManager-injected
+            # functions calling state managers) keep a consistent parent->child chain.
+            _lineage_token = TOOL_LOOP_LINEAGE.set(_hierarchy)
+
+            async def _pub_safe(**payload: Any) -> None:
+                try:
+                    await publish_manager_method_event(
+                        _call_id,
+                        "CodeActActor",
+                        "execute_code",
+                        hierarchy=_hierarchy,
+                        hierarchy_label=_hierarchy_label,
+                        **payload,
+                    )
+                except Exception as e:
+                    log_boundary_event(
+                        _hierarchy_label,
+                        f"Warning: failed to publish event: {type(e).__name__}: {e}",
+                        icon="⚠️",
+                        level="warning",
+                    )
+
+            try:
+                await _pub_safe(phase="incoming")
+            except Exception:
+                pass
+            log_boundary_event(_hierarchy_label, "Executing code...", icon="🛠️")
+
+            out: dict[str, Any] | None = None
+            tb_str: str | None = None
+            exec_exc: Exception | None = None
+
+            notification_q = _notification_up_q
+            sandbox_id = None
+            try:
+                # Resolve / allocate sessions for stateful.
+                if state_mode == "stateful":
+                    if session_name:
+                        resolved = self._resolve_session_name(session_name)
+                        if resolved is not None:
+                            language, venv_id, session_id = resolved
+                        elif session_id is None:
+                            # Allocate a new session id (reserve 0 for default sandbox).
+                            key = (
+                                str(language),
+                                int(venv_id) if venv_id is not None else None,
+                            )
+                            next_id = self._next_session_id.get(key, 1)
+                            session_id = next_id
+                            self._next_session_id[key] = next_id + 1
+                            self._register_session_name(
+                                name=session_name,
+                                language=str(language),
+                                venv_id=venv_id,
+                                session_id=int(session_id),
+                            )
                     elif session_id is None:
-                        # Allocate a new session id (reserve 0 for default sandbox).
-                        key = (
-                            str(language),
-                            int(venv_id) if venv_id is not None else None,
-                        )
-                        next_id = self._next_session_id.get(key, 1)
-                        session_id = next_id
-                        self._next_session_id[key] = next_id + 1
+                        # Default stateful session for each language/venv is session_id=0.
+                        # This is especially important for Python because FunctionManager-injected
+                        # callables are available in the default/bound Python sandbox (session 0).
+                        session_id = 0
+
+                # If name + id are both set but not registered yet, register alias.
+                if state_mode == "stateful" and session_name and session_id is not None:
+                    if self._resolve_session_name(session_name) is None:
                         self._register_session_name(
                             name=session_name,
                             language=str(language),
                             venv_id=venv_id,
                             session_id=int(session_id),
                         )
-                elif session_id is None:
-                    key = (str(language), int(venv_id) if venv_id is not None else None)
-                    next_id = self._next_session_id.get(key, 1)
-                    session_id = next_id
-                    self._next_session_id[key] = next_id + 1
 
-            # If name + id are both set but not registered yet, register alias.
-            if state_mode == "stateful" and session_name and session_id is not None:
-                if self._resolve_session_name(session_name) is None:
-                    self._register_session_name(
-                        name=session_name,
-                        language=str(language),
-                        venv_id=venv_id,
-                        session_id=int(session_id),
-                    )
+                # Validate.
+                err = self._validate_execution_params(
+                    state_mode=state_mode,
+                    session_id=session_id,
+                    session_name=session_name,
+                    language=str(language),
+                    venv_id=venv_id,
+                )
+                if err is not None:
+                    out = err
+                    return out
 
-            # Validate.
-            err = self._validate_execution_params(
-                state_mode=state_mode,
-                session_id=session_id,
-                session_name=session_name,
-                language=str(language),
-                venv_id=venv_id,
-            )
-            if err is not None:
-                return err
-
-            # Emit notifications for Python execution when a notification queue is attached
-            # to the currently-bound sandbox.
-            notification_q = None
-            sandbox_id = None
-            try:
-                sb_for_notifs = _CURRENT_SANDBOX.get()
-                notification_q = sb_for_notifs.global_state.get("__notification_up_q__")
-                sandbox_id = getattr(sb_for_notifs, "id", None)
-            except Exception:
-                pass
-
-            if notification_q is not None and str(language) == "python":
+                # Inject per-tool notification queue into bound sandbox so notify() works.
                 try:
-                    await notification_q.put(
-                        {
-                            "type": "execution_started",
-                            "sandbox_id": sandbox_id,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        },
-                    )
+                    sb_for_notifs = _CURRENT_SANDBOX.get()
+                    sandbox_id = getattr(sb_for_notifs, "id", None)
+                    if notification_q is not None:
+                        sb_for_notifs.global_state["__notification_up_q__"] = (
+                            notification_q
+                        )
                 except Exception:
                     pass
 
-            # Execute via SessionExecutor. Route primitives if available in current sandbox.
-            primitives = None
-            computer_primitives = self._computer_primitives
-            try:
-                sb = _CURRENT_SANDBOX.get()
-                primitives = sb.global_state.get("primitives")
-                computer_primitives = sb.global_state.get(
-                    "computer_primitives",
-                    computer_primitives,
-                )
-            except Exception:
-                pass
-
-            try:
-                out = await self._session_executor.execute(
-                    code=code,
-                    language=str(language),  # type: ignore[arg-type]
-                    state_mode=state_mode,  # type: ignore[arg-type]
-                    session_id=session_id,
-                    venv_id=venv_id,
-                    primitives=primitives,
-                    computer_primitives=computer_primitives,
-                )
-            except Exception:
-                tb = traceback.format_exc()
                 if notification_q is not None and str(language) == "python":
                     try:
                         await notification_q.put(
                             {
-                                "type": "execution_error",
+                                "type": "execution_started",
+                                "message": "execution_started",
                                 "sandbox_id": sandbox_id,
-                                "error_kind": "exception",
-                                "traceback_preview": tb[:2000],
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )
                     except Exception:
                         pass
-                return {
-                    "stdout": "",
-                    "stderr": "",
-                    "result": None,
-                    "error": tb,
-                    "language": language,
-                    "state_mode": state_mode,
-                    "session_id": session_id,
-                    "session_name": session_name,
-                    "venv_id": venv_id,
-                    "session_created": False,
-                    "duration_ms": 0,
-                    "browser_used": False,
-                }
 
-            # Enrich with session name.
-            if out.get("session_id") is not None:
-                out["session_name"] = self._get_session_name(
-                    language=str(out.get("language")),
-                    venv_id=out.get("venv_id"),
-                    session_id=int(out["session_id"]),
-                )
-            else:
-                out["session_name"] = None
-
-            # Attach browser state for Python runs when browser tools were used.
-            if (
-                str(out.get("language")) == "python"
-                and out.get("browser_used")
-                and self._computer_primitives is not None
-            ):
+                # Execute via SessionExecutor. Route primitives if available in current sandbox.
+                primitives = None
+                computer_primitives = self._computer_primitives
                 try:
-                    url = await self._computer_primitives.computer.get_current_url()
-                    screenshot_b64 = (
-                        await self._computer_primitives.computer.get_screenshot()
-                    )
-                    out["browser_state"] = {
-                        "url": url,
-                        "screenshot": screenshot_b64,
-                    }
-                except Exception as e:
-                    out["browser_state"] = {"error": str(e)}
-
-            if notification_q is not None and str(language) == "python":
-                try:
-                    await notification_q.put(
-                        {
-                            "type": "execution_finished",
-                            "sandbox_id": sandbox_id,
-                            "status": ("ok" if not out.get("error") else "error"),
-                            "stdout_len": len(out.get("stdout") or ""),
-                            "stderr_len": len(out.get("stderr") or ""),
-                            "browser_used": bool(out.get("browser_used")),
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        },
+                    sb = _CURRENT_SANDBOX.get()
+                    primitives = sb.global_state.get("primitives")
+                    computer_primitives = sb.global_state.get(
+                        "computer_primitives",
+                        computer_primitives,
                     )
                 except Exception:
                     pass
 
-            return out
+                try:
+                    out = await self._session_executor.execute(
+                        code=code,
+                        language=str(language),  # type: ignore[arg-type]
+                        state_mode=state_mode,  # type: ignore[arg-type]
+                        session_id=session_id,
+                        venv_id=venv_id,
+                        primitives=primitives,
+                        computer_primitives=computer_primitives,
+                    )
+                except Exception as e:
+                    exec_exc = e
+                    tb = traceback.format_exc()
+                    tb_str = tb
+                    if notification_q is not None and str(language) == "python":
+                        try:
+                            await notification_q.put(
+                                {
+                                    "type": "execution_error",
+                                    "message": "execution_error",
+                                    "sandbox_id": sandbox_id,
+                                    "error_kind": "exception",
+                                    "traceback_preview": tb[:2000],
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                },
+                            )
+                        except Exception:
+                            pass
+                    out = {
+                        "stdout": "",
+                        "stderr": "",
+                        "result": None,
+                        "error": tb,
+                        "language": language,
+                        "state_mode": state_mode,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                        "venv_id": venv_id,
+                        "session_created": False,
+                        "duration_ms": 0,
+                        "computer_used": False,
+                    }
+
+                # Enrich with session name.
+                if out.get("session_id") is not None:
+                    out["session_name"] = self._get_session_name(
+                        language=str(out.get("language")),
+                        venv_id=out.get("venv_id"),
+                        session_id=int(out["session_id"]),
+                    )
+                else:
+                    out["session_name"] = None
+
+                # Attach computer state for Python runs when computer primitives were used.
+                if (
+                    str(out.get("language")) == "python"
+                    and out.get("computer_used")
+                    and self._computer_primitives is not None
+                ):
+                    try:
+                        url = await self._computer_primitives.computer.get_current_url()
+                        screenshot_b64 = (
+                            await self._computer_primitives.computer.get_screenshot()
+                        )
+                        out["computer_state"] = {
+                            "url": url,
+                            "screenshot": screenshot_b64,
+                        }
+                    except Exception as e:
+                        out["computer_state"] = {"error": str(e)}
+
+                if notification_q is not None and str(language) == "python":
+                    try:
+                        _status = "ok" if not out.get("error") else "error"
+                        await notification_q.put(
+                            {
+                                "type": "execution_finished",
+                                "sandbox_id": sandbox_id,
+                                "status": _status,
+                                "message": f"execution_finished:{_status}",
+                                "stdout_len": len(out.get("stdout") or ""),
+                                "stderr_len": len(out.get("stderr") or ""),
+                                "computer_used": bool(out.get("computer_used")),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
+                    except Exception:
+                        pass
+
+                # Wrap in-process Python results in ExecutionResult for proper LLM
+                # image formatting. In-process Python has stdout as List[OutputPart];
+                # venv/shell have strings.
+                if out.get("language") == "python" and isinstance(
+                    out.get("stdout"),
+                    list,
+                ):
+                    out = ExecutionResult(**out)
+
+                return out
+            finally:
+                try:
+                    if out is not None and out.get("error"):
+                        await _pub_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(out.get("error")),
+                            error_type=(
+                                type(exec_exc).__name__
+                                if exec_exc is not None
+                                else "Error"
+                            ),
+                            traceback=(tb_str or "")[:2000],
+                        )
+                    else:
+                        await _pub_safe(phase="outgoing", status="ok")
+                except Exception:
+                    pass
+                try:
+                    TOOL_LOOP_LINEAGE.reset(_lineage_token)
+                except Exception:
+                    pass
 
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
             "execute_code": execute_code,
@@ -2217,14 +2790,13 @@ class CodeActActor(BaseCodeActActor):
     @log_manager_call("CodeActActor", "act", payload_key="description")
     async def act(
         self,
-        description: str,
+        description: str | dict | list[str | dict],
         *,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        _notification_up_q: Optional[asyncio.Queue[dict]] = None,
         _call_id: Optional[str] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
@@ -2246,6 +2818,14 @@ class CodeActActor(BaseCodeActActor):
         # can_compose=False mode: do not run an LLM tool loop or allow arbitrary code execution.
         # Instead, semantic-search for a stored function and execute it directly.
         if entrypoint is None and not effective_can_compose:
+            # Validate description is a string for can_compose=False mode
+            # (semantic search and SingleFunctionActorHandle require string input)
+            if not isinstance(description, str):
+                raise TypeError(
+                    "can_compose=False requires description to be a string, "
+                    f"got {type(description).__name__}",
+                )
+
             from unity.actor.single_function_actor import SingleFunctionActorHandle
 
             fm = self.function_manager
@@ -2405,8 +2985,8 @@ class CodeActActor(BaseCodeActActor):
             venv_pool=self._venv_pool,
             shell_pool=self._shell_pool,
         )
-        if _notification_up_q is not None:
-            sandbox.global_state["__notification_up_q__"] = _notification_up_q
+        # Note: __notification_up_q__ is injected dynamically by execute_code
+        # when it receives a _notification_up_q from the async tool loop.
         token = _CURRENT_SANDBOX.set(sandbox)
 
         async def _cleanup() -> None:
@@ -2524,7 +3104,6 @@ class CodeActActor(BaseCodeActActor):
             parent_chat_context=_parent_chat_context,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
-            notification_up_q=_notification_up_q,
             call_id=_call_id,
             on_finally=_cleanup,
             main_event_loop=self._main_event_loop,

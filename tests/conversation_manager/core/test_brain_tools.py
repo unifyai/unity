@@ -1,0 +1,1533 @@
+"""
+tests/conversation_manager/test_brain_tools.py
+====================================================
+
+Unit tests for ConversationManager brain tools.
+
+Tests cover:
+- ConversationManagerBrainTools (read-only inspection tools)
+- ConversationManagerBrainActionTools (side-effecting action tools)
+
+These tests verify the tool implementations directly, testing:
+- Tool method signatures and return types
+- Tool docstrings (important for LLM understanding)
+- Dynamic tool generation for action steering
+- Integration with ConversationManager state
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from unity.contact_manager.simulated import SimulatedContactManager
+from unity.conversation_manager.domains.brain_tools import (
+    ConversationManagerBrainTools,
+)
+from unity.conversation_manager.domains.brain_action_tools import (
+    ConversationManagerBrainActionTools,
+    _get_or_create_contact,
+)
+from unity.conversation_manager.domains.notifications import (
+    NotificationBar,
+)
+from unity.conversation_manager.domains.contact_index import (
+    ContactIndex,
+)
+from unity.conversation_manager.task_actions import (
+    STEERING_OPERATIONS,
+    parse_action_name,
+)
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+def _setup_mock_contacts(
+    contact_index,
+    contacts: list[dict],
+) -> SimulatedContactManager:
+    """
+    Set up a SimulatedContactManager with the given contacts on a ContactIndex.
+
+    Returns the SimulatedContactManager for additional inspection if needed.
+    """
+    contact_manager = SimulatedContactManager()
+
+    # Populate contacts - update system contacts (0, 1) and create others
+    for contact_data in contacts:
+        contact_id = contact_data["contact_id"]
+        contact_manager.update_contact(
+            contact_id=contact_id,
+            first_name=contact_data.get("first_name"),
+            surname=contact_data.get("surname"),
+            email_address=contact_data.get("email_address"),
+            phone_number=contact_data.get("phone_number"),
+            should_respond=contact_data.get("should_respond", True),
+        )
+
+    contact_index.set_contact_manager(contact_manager)
+    return contact_manager
+
+
+@pytest.fixture
+def mock_cm():
+    """Create a minimal mock ConversationManager for testing."""
+    cm = MagicMock()
+    cm.mode = "text"
+    cm.contact_index = ContactIndex()
+    cm.in_flight_actions = {}
+    cm.notifications_bar = NotificationBar()
+    cm.chat_history = []
+    cm.assistant_number = "+15555550000"
+    cm.assistant_email = "assistant@test.com"
+    # Set up SimulatedContactManager (starts with system contacts 0 and 1)
+    cm.contact_manager = _setup_mock_contacts(cm.contact_index, [])
+    return cm
+
+
+@pytest.fixture
+def brain_tools(mock_cm):
+    """Create ConversationManagerBrainTools instance."""
+    return ConversationManagerBrainTools(mock_cm)
+
+
+@pytest.fixture
+def brain_action_tools(mock_cm):
+    """Create ConversationManagerBrainActionTools instance."""
+    # Patch the event broker to avoid actual pubsub
+    with patch(
+        "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+    ) as mock_broker:
+        mock_broker.return_value = MagicMock()
+        mock_broker.return_value.publish = AsyncMock()
+        tools = ConversationManagerBrainActionTools(mock_cm)
+        yield tools
+
+
+@pytest.fixture
+def sample_contacts():
+    """Sample contacts for testing."""
+    return [
+        {
+            "contact_id": 1,
+            "first_name": "Alice",
+            "surname": "Smith",
+            "phone_number": "+15551111111",
+            "email_address": "alice@example.com",
+            "should_respond": True,
+        },
+        {
+            "contact_id": 2,
+            "first_name": "Bob",
+            "surname": "Johnson",
+            "phone_number": "+15552222222",
+            "email_address": "bob@example.com",
+            "should_respond": True,
+        },
+    ]
+
+
+# =============================================================================
+# ConversationManagerBrainTools Tests
+# =============================================================================
+
+
+class TestCmGetMode:
+    """Tests for cm_get_mode tool."""
+
+    def test_returns_text_mode(self, brain_tools, mock_cm):
+        """Returns 'text' when CM is in text mode."""
+        mock_cm.mode = "text"
+        assert brain_tools.cm_get_mode() == "text"
+
+    def test_returns_call_mode(self, brain_tools, mock_cm):
+        """Returns 'call' when CM is in call mode."""
+        mock_cm.mode = "call"
+        assert brain_tools.cm_get_mode() == "call"
+
+    def test_returns_meet_mode(self, brain_tools, mock_cm):
+        """Returns 'meet' when CM is in meet mode."""
+        mock_cm.mode = "meet"
+        assert brain_tools.cm_get_mode() == "meet"
+
+    def test_converts_mode_to_string(self, brain_tools, mock_cm):
+        """Converts mode to string regardless of type."""
+        # Mode could be an enum or other type
+        mock_cm.mode = MagicMock(__str__=lambda self: "custom_mode")
+        result = brain_tools.cm_get_mode()
+        assert isinstance(result, str)
+
+
+class TestCmGetContact:
+    """Tests for cm_get_contact tool."""
+
+    def test_returns_contact_by_id(self, brain_tools, mock_cm, sample_contacts):
+        """Returns contact when found by ID."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+        result = brain_tools.cm_get_contact(1)
+        assert result is not None
+        assert result["contact_id"] == 1
+        assert result["first_name"] == "Alice"
+
+    def test_returns_none_for_unknown_id(self, brain_tools, mock_cm, sample_contacts):
+        """Returns None when contact not found."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+        result = brain_tools.cm_get_contact(999)
+        assert result is None
+
+    def test_excludes_threads_from_contact(self, brain_tools, mock_cm, sample_contacts):
+        """Contact summary excludes thread data for efficiency."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+        result = brain_tools.cm_get_contact(1)
+        # get_contact uses model_dump(exclude={"threads", "global_thread"})
+        assert "threads" not in result
+        assert "global_thread" not in result
+
+
+class TestCmListInFlightActions:
+    """Tests for cm_list_in_flight_actions tool."""
+
+    def test_returns_empty_list_when_no_actions(self, brain_tools, mock_cm):
+        """Returns empty list when no in-flight actions."""
+        mock_cm.in_flight_actions = {}
+        result = brain_tools.cm_list_in_flight_actions()
+        assert result == []
+
+    def test_returns_action_summary(self, brain_tools, mock_cm):
+        """Returns summary for each in-flight action."""
+        mock_cm.in_flight_actions = {
+            0: {"query": "Search for contacts", "handle_actions": []},
+            1: {"query": "Send an email", "handle_actions": [{"action": "test"}]},
+        }
+        result = brain_tools.cm_list_in_flight_actions()
+        assert len(result) == 2
+        assert result[0]["handle_id"] == 0
+        assert result[0]["query"] == "Search for contacts"
+        assert result[0]["num_handle_actions"] == 0
+        assert result[1]["handle_id"] == 1
+        assert result[1]["query"] == "Send an email"
+        assert result[1]["num_handle_actions"] == 1
+
+    def test_handles_none_in_flight_actions(self, brain_tools, mock_cm):
+        """Handles None in-flight actions gracefully."""
+        mock_cm.in_flight_actions = None
+        result = brain_tools.cm_list_in_flight_actions()
+        assert result == []
+
+    def test_handles_none_handle_actions(self, brain_tools, mock_cm):
+        """Handles None handle_actions in action data."""
+        mock_cm.in_flight_actions = {
+            0: {"query": "Action", "handle_actions": None},
+        }
+        result = brain_tools.cm_list_in_flight_actions()
+        assert result[0]["num_handle_actions"] == 0
+
+
+class TestCmListNotifications:
+    """Tests for cm_list_notifications tool."""
+
+    def test_returns_empty_list_when_no_notifications(self, brain_tools, mock_cm):
+        """Returns empty list when no notifications."""
+        result = brain_tools.cm_list_notifications()
+        assert result == []
+
+    def test_returns_all_notifications(self, brain_tools, mock_cm, static_now):
+        """Returns all notifications when pinned_only=False."""
+        ts = static_now
+        mock_cm.notifications_bar.push_notif("Type1", "Content1", ts)
+        mock_cm.notifications_bar.push_notif("Type2", "Content2", ts, pinned=True)
+        result = brain_tools.cm_list_notifications()
+        assert len(result) == 2
+
+    def test_filters_pinned_only(self, brain_tools, mock_cm, static_now):
+        """Returns only pinned notifications when pinned_only=True."""
+        ts = static_now
+        mock_cm.notifications_bar.push_notif("Regular", "Not pinned", ts)
+        mock_cm.notifications_bar.push_notif("Pinned", "Important", ts, pinned=True)
+        result = brain_tools.cm_list_notifications(pinned_only=True)
+        assert len(result) == 1
+        assert result[0]["content"] == "Important"
+
+    def test_converts_timestamp_to_isoformat(self, brain_tools, mock_cm):
+        """Converts datetime timestamps to ISO format strings."""
+        ts = datetime(2024, 1, 15, 10, 30, 0)
+        mock_cm.notifications_bar.push_notif("Test", "Content", ts)
+        result = brain_tools.cm_list_notifications()
+        assert result[0]["timestamp"] == "2024-01-15T10:30:00"
+
+
+class TestBrainToolsAsTools:
+    """Tests for as_tools method."""
+
+    def test_returns_dict_of_callables(self, brain_tools):
+        """Returns dictionary mapping names to callable methods."""
+        tools = brain_tools.as_tools()
+        assert isinstance(tools, dict)
+        assert all(callable(fn) for fn in tools.values())
+
+    def test_contains_all_brain_tools(self, brain_tools):
+        """Contains all expected brain tools."""
+        tools = brain_tools.as_tools()
+        expected = {
+            "cm_get_mode",
+            "cm_get_contact",
+            "cm_list_in_flight_actions",
+            "cm_list_notifications",
+        }
+        assert set(tools.keys()) == expected
+
+    def test_tools_are_bound_methods(self, brain_tools):
+        """Tools are bound to the BrainTools instance."""
+        tools = brain_tools.as_tools()
+        # Calling through the dict should work
+        assert tools["cm_get_mode"]() == "text"
+
+
+# =============================================================================
+# ConversationManagerBrainActionTools Tests
+# =============================================================================
+
+
+class TestActionToolsAsTools:
+    """Tests for action tools as_tools method."""
+
+    def test_returns_dict_of_callables(self, brain_action_tools):
+        """Returns dictionary mapping names to callable methods."""
+        tools = brain_action_tools.as_tools()
+        assert isinstance(tools, dict)
+        assert all(callable(fn) for fn in tools.values())
+
+    def test_contains_all_action_tools(self, brain_action_tools):
+        """Contains all expected action tools."""
+        tools = brain_action_tools.as_tools()
+        expected = {
+            "send_sms",
+            "send_unify_message",
+            "send_email",
+            "make_call",
+            "act",
+            "wait",
+        }
+        assert set(tools.keys()) == expected
+
+
+class TestWaitTool:
+    """Tests for wait tool."""
+
+    @pytest.mark.asyncio
+    async def test_returns_waiting_status(self, brain_action_tools):
+        """Wait tool returns waiting status."""
+        result = await brain_action_tools.wait()
+        assert result == {"status": "waiting"}
+
+    def test_has_docstring(self, brain_action_tools):
+        """Wait tool has descriptive docstring."""
+        assert brain_action_tools.wait.__doc__ is not None
+        assert "Wait" in brain_action_tools.wait.__doc__
+
+
+class TestSendSmsTool:
+    """Tests for send_sms tool."""
+
+    @pytest.mark.asyncio
+    async def test_requires_recipient(self, brain_action_tools):
+        """Raises TypeError if recipient not provided."""
+        with pytest.raises(TypeError):
+            await brain_action_tools.send_sms(content="Hello")
+
+    @pytest.mark.asyncio
+    async def test_has_docstring(self, brain_action_tools):
+        """Send SMS tool has descriptive docstring."""
+        assert brain_action_tools.send_sms.__doc__ is not None
+        assert "SMS" in brain_action_tools.send_sms.__doc__
+
+    @pytest.mark.asyncio
+    async def test_accepts_contact_id_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts integer contact_id as recipient."""
+        contact = {
+            "contact_id": 5,
+            "first_name": "Test",
+            "surname": "Person",
+            "phone_number": "+1234567890",
+            "should_respond": True,
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact])
+
+        result = await brain_action_tools.send_sms(
+            recipient=5,
+            content="Hello",
+        )
+
+        assert result["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_accepts_phone_number_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts phone number string as recipient."""
+        # SimulatedContactManager will create the contact automatically
+        # when _get_or_create_contact is called with a phone number
+        result = await brain_action_tools.send_sms(
+            recipient="+1987654321",
+            content="Hello",
+        )
+
+        assert result["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_contact_without_phone(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns error when contact has no phone number."""
+        # Set up contact without phone number
+        contact_without_phone = {
+            "contact_id": 5,
+            "first_name": "NoPhone",
+            "surname": "Person",
+            "email_address": "nophone@example.com",
+            "should_respond": True,
+            # No phone_number field
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
+
+        result = await brain_action_tools.send_sms(
+            recipient=5,
+            content="Hello",
+        )
+
+        assert result["status"] == "error"
+        assert "does not have" in result["error"]
+        assert "phone" in result["error"].lower()
+
+
+class TestSendUnifyMessageTool:
+    """Tests for send_unify_message tool."""
+
+    def test_has_docstring(self, brain_action_tools):
+        """Send Unify message tool has descriptive docstring."""
+        assert brain_action_tools.send_unify_message.__doc__ is not None
+        assert "Unify" in brain_action_tools.send_unify_message.__doc__
+
+    def test_docstring_mentions_attachment(self, brain_action_tools):
+        """Send Unify message docstring mentions attachment parameter."""
+        doc = brain_action_tools.send_unify_message.__doc__
+        assert "attachment" in doc.lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_not_found(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Returns error when attachment file not found."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        result = await brain_action_tools.send_unify_message(
+            content="Here's the file",
+            contact_id=1,
+            attachment_filepath="/nonexistent/file.pdf",
+        )
+
+        assert result["status"] == "error"
+        assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_too_large(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Returns error when attachment exceeds size limit."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # Create a file larger than 25MB
+        large_file = tmp_path / "large_file.bin"
+        large_file.write_bytes(b"x" * (26 * 1024 * 1024))
+
+        result = await brain_action_tools.send_unify_message(
+            content="Here's the file",
+            contact_id=1,
+            attachment_filepath=str(large_file),
+        )
+
+        assert result["status"] == "error"
+        assert "too large" in result["error"].lower()
+        assert "25MB" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_send_with_attachment_success(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Successfully sends message with attachment when file exists and upload succeeds."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # Create a small test file
+        test_file = tmp_path / "test_document.pdf"
+        test_file.write_bytes(b"PDF content here")
+
+        # Mock the upload and send functions
+        with (
+            patch(
+                "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+            ) as mock_upload,
+            patch(
+                "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_unify_message",
+            ) as mock_send,
+        ):
+            # Configure mocks
+            mock_upload.return_value = {
+                "id": "test-uuid",
+                "filename": "test_document.pdf",
+                "url": "https://storage.googleapis.com/signed-url",
+            }
+            mock_send.return_value = {"success": True}
+
+            result = await brain_action_tools.send_unify_message(
+                content="Here's the document",
+                contact_id=1,
+                attachment_filepath=str(test_file),
+            )
+
+            assert result["status"] == "ok"
+
+            # Verify upload was called with correct args
+            mock_upload.assert_called_once()
+            call_args = mock_upload.call_args
+            assert call_args.kwargs["filename"] == "test_document.pdf"
+            assert b"PDF content here" in call_args.kwargs["file_content"]
+
+            # Verify send was called with the attachment
+            mock_send.assert_called_once()
+            send_args = mock_send.call_args
+            assert send_args.kwargs["content"] == "Here's the document"
+            assert send_args.kwargs["attachment"]["id"] == "test-uuid"
+            assert send_args.kwargs["attachment"]["filename"] == "test_document.pdf"
+
+    @pytest.mark.asyncio
+    async def test_returns_error_when_upload_fails(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Returns error when attachment upload fails."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # Create a small test file
+        test_file = tmp_path / "test_document.pdf"
+        test_file.write_bytes(b"PDF content")
+
+        # Mock upload to fail
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+        ) as mock_upload:
+            mock_upload.return_value = {
+                "success": False,
+                "error": "Storage service unavailable",
+            }
+
+            result = await brain_action_tools.send_unify_message(
+                content="Here's the document",
+                contact_id=1,
+                attachment_filepath=str(test_file),
+            )
+
+            assert result["status"] == "error"
+            assert "upload" in result["error"].lower()
+
+
+class TestSendEmailTool:
+    """Tests for send_email tool."""
+
+    @pytest.mark.asyncio
+    async def test_requires_at_least_one_recipient(self, brain_action_tools):
+        """Returns error if no recipients provided."""
+        result = await brain_action_tools.send_email(subject="Test", body="Body")
+        assert result["status"] == "error"
+        assert "at least one recipient" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_reply_all_mutually_exclusive_with_recipients(
+        self,
+        brain_action_tools,
+    ):
+        """Returns error if reply_all=True and to/cc/bcc are also provided."""
+        result = await brain_action_tools.send_email(
+            to=[1],
+            reply_all=True,
+            subject="Test",
+            body="Body",
+        )
+        assert result["status"] == "error"
+        assert "mutually exclusive" in result["error"].lower()
+
+    def test_has_docstring(self, brain_action_tools):
+        """Send email tool has descriptive docstring."""
+        assert brain_action_tools.send_email.__doc__ is not None
+        assert "email" in brain_action_tools.send_email.__doc__.lower()
+
+    def test_docstring_mentions_attachment(self, brain_action_tools):
+        """Send email docstring mentions attachment parameter."""
+        doc = brain_action_tools.send_email.__doc__
+        assert "attachment" in doc.lower()
+
+    def test_docstring_mentions_recipients(self, brain_action_tools):
+        """Send email docstring mentions to/cc/bcc parameters."""
+        doc = brain_action_tools.send_email.__doc__
+        assert "to" in doc.lower()
+        assert "cc" in doc.lower()
+        assert "bcc" in doc.lower()
+
+    @pytest.mark.asyncio
+    async def test_resolves_contact_id_to_email(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Resolves contact_id in to list to email address."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                to=[1],  # contact_id
+                subject="Test",
+                body="Hello",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            # Should resolve contact_id 1 to alice@example.com
+            assert mock_send.call_args.kwargs["to"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_accepts_email_address_directly(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Accepts email address strings directly in to list."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                to=["external@example.com"],
+                subject="Test",
+                body="Hello",
+            )
+
+            assert result["status"] == "ok"
+            assert mock_send.call_args.kwargs["to"] == ["external@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_not_found(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Returns error when attachment file not found."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        result = await brain_action_tools.send_email(
+            to=[1],
+            subject="Test",
+            body="Hello",
+            attachment_filepath="/nonexistent/file.pdf",
+        )
+
+        assert result["status"] == "error"
+        assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_file_too_large(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Returns error when attachment exceeds size limit."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # Create a file larger than 25MB (use a sparse approach for speed)
+        large_file = tmp_path / "large_file.bin"
+        # Write 26MB of data
+        large_file.write_bytes(b"x" * (26 * 1024 * 1024))
+
+        result = await brain_action_tools.send_email(
+            to=[1],
+            subject="Test",
+            body="Hello",
+            attachment_filepath=str(large_file),
+        )
+
+        assert result["status"] == "error"
+        assert "too large" in result["error"].lower()
+        assert "25MB" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_send_with_attachment_success(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+        tmp_path,
+    ):
+        """Successfully sends email with attachment when file exists."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # Create a small test file
+        test_file = tmp_path / "report.pdf"
+        test_file.write_bytes(b"PDF report content")
+
+        # Mock the send function
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                to=[1],
+                subject="Quarterly Report",
+                body="Please find the report attached.",
+                attachment_filepath=str(test_file),
+            )
+
+            assert result["status"] == "ok"
+
+            # Verify send was called with attachment
+            mock_send.assert_called_once()
+            call_args = mock_send.call_args
+            assert call_args.kwargs["subject"] == "Quarterly Report"
+            assert call_args.kwargs["attachment"] is not None
+            assert call_args.kwargs["attachment"]["filename"] == "report.pdf"
+            # Verify base64 content
+            import base64
+
+            decoded = base64.b64decode(call_args.kwargs["attachment"]["content_base64"])
+            assert decoded == b"PDF report content"
+
+    @pytest.mark.asyncio
+    async def test_cc_only_email_valid(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Accepts email with only CC recipients (empty TO is valid)."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                cc=[1],  # Only CC, no TO
+                subject="FYI",
+                body="Just keeping you in the loop.",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            assert mock_send.call_args.kwargs["to"] == []
+            assert mock_send.call_args.kwargs["cc"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_bcc_only_email_valid(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Accepts email with only BCC recipients."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                bcc=[1],  # Only BCC
+                subject="Private",
+                body="Confidential message.",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            assert mock_send.call_args.kwargs["to"] == []
+            assert mock_send.call_args.kwargs["bcc"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_recipients(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Deduplicates when same recipient appears in multiple fields or formats."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            # Provide same recipient as both contact_id and email string
+            result = await brain_action_tools.send_email(
+                to=[1, "alice@example.com"],  # Both resolve to alice@example.com
+                subject="Test",
+                body="Hello",
+            )
+
+            assert result["status"] == "ok"
+            # Should deduplicate to single recipient
+            assert len(mock_send.call_args.kwargs["to"]) == 1
+            assert mock_send.call_args.kwargs["to"] == ["alice@example.com"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_recipients_all_fields(
+        self,
+        brain_action_tools,
+        mock_cm,
+        sample_contacts,
+    ):
+        """Handles multiple recipients in to, cc, and bcc simultaneously."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+
+        # SimulatedContactManager will create contacts for external email addresses
+        # when _get_or_create_contact is called with emails not in the store
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+        ) as mock_send:
+            mock_send.return_value = {"success": True, "id": "sent-email-123"}
+
+            result = await brain_action_tools.send_email(
+                to=[1, "external1@example.com"],
+                cc=[2, "external2@example.com"],
+                bcc=["external3@example.com", "external4@example.com"],
+                subject="Team Update",
+                body="Update for everyone.",
+            )
+
+            assert result["status"] == "ok"
+            mock_send.assert_called_once()
+            # Verify all fields populated
+            assert len(mock_send.call_args.kwargs["to"]) == 2
+            assert len(mock_send.call_args.kwargs["cc"]) == 2
+            assert len(mock_send.call_args.kwargs["bcc"]) == 2
+
+
+class TestMakeCallTool:
+    """Tests for make_call tool."""
+
+    @pytest.mark.asyncio
+    async def test_requires_recipient(self, brain_action_tools):
+        """Raises TypeError if recipient not provided."""
+        with pytest.raises(TypeError):
+            await brain_action_tools.make_call()
+
+    def test_has_docstring(self, brain_action_tools):
+        """Make call tool has descriptive docstring."""
+        assert brain_action_tools.make_call.__doc__ is not None
+        assert "call" in brain_action_tools.make_call.__doc__.lower()
+
+    @pytest.mark.asyncio
+    async def test_accepts_contact_id_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts integer contact_id as recipient."""
+        contact = {
+            "contact_id": 5,
+            "first_name": "Test",
+            "surname": "Person",
+            "phone_number": "+1234567890",
+            "should_respond": True,
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact])
+
+        result = await brain_action_tools.make_call(recipient=5)
+
+        assert result["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_accepts_phone_number_as_recipient(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Accepts phone number string as recipient."""
+        # SimulatedContactManager will create the contact automatically
+        # when _get_or_create_contact is called with a phone number
+        result = await brain_action_tools.make_call(recipient="+1987654321")
+
+        assert result["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_returns_error_for_contact_without_phone(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns error when contact has no phone number."""
+        # Set up contact without phone number
+        contact_without_phone = {
+            "contact_id": 5,
+            "first_name": "NoPhone",
+            "surname": "Person",
+            "email_address": "nophone@example.com",
+            "should_respond": True,
+            # No phone_number field
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
+
+        result = await brain_action_tools.make_call(recipient=5)
+
+        assert result["status"] == "error"
+        assert "does not have" in result["error"]
+        assert "phone" in result["error"].lower()
+
+
+class TestActTool:
+    """Tests for act tool."""
+
+    def test_has_docstring(self, brain_action_tools):
+        """Act tool has descriptive docstring."""
+        assert brain_action_tools.act.__doc__ is not None
+        assert len(brain_action_tools.act.__doc__) > 10
+
+
+# =============================================================================
+# Dynamic Action Steering Tools Tests
+# =============================================================================
+
+
+class TestBuildActionSteeringTools:
+    """Tests for build_action_steering_tools method."""
+
+    def test_returns_empty_dict_when_no_in_flight_actions(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Returns empty dict when no in-flight actions."""
+        mock_cm.in_flight_actions = {}
+        tools = brain_action_tools.build_action_steering_tools()
+        assert tools == {}
+
+    def test_generates_tools_for_in_flight_action(self, brain_action_tools, mock_cm):
+        """Generates steering tools for each in-flight action.
+
+        Note: With pause/resume flipping, only ONE of pause/resume is generated
+        depending on the handle's pause state. For a running action (default),
+        only pause is available.
+        """
+        # Create a mock handle that appears to be running (not paused)
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Running (not paused)
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "List all contacts",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+
+        # Should have tools for ask, stop, interject, pause (NOT resume when running)
+        # (but NOT answer_clarification without pending clarifications)
+        tool_names = list(tools.keys())
+
+        # Should have pause but NOT resume when running
+        assert any(
+            "pause_" in n for n in tool_names
+        ), "Should have pause tool when running"
+        assert not any(
+            "resume_" in n for n in tool_names
+        ), "Should NOT have resume tool when running"
+
+        # Other steering tools should be present
+        assert any("ask_" in n for n in tool_names)
+        assert any("stop_" in n for n in tool_names)
+        assert any("interject_" in n for n in tool_names)
+
+    def test_tool_names_follow_expected_format(self, brain_action_tools, mock_cm):
+        """Tool names follow the build_action_name format."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Search web",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        for name in tools.keys():
+            # Should be parseable
+            parsed = parse_action_name(name)
+            assert parsed.operation in [op.name for op in STEERING_OPERATIONS]
+            assert parsed.handle_id == 0
+
+    def test_generates_answer_clarification_when_pending(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Generates answer_clarification tool when pending clarifications exist."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Do something",
+                "handle": MagicMock(),
+                "handle_actions": [
+                    {
+                        "action_name": "clarification_request",
+                        "query": "Need more info?",
+                        "call_id": "call_123",
+                    },
+                ],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        answer_tools = [n for n in tools.keys() if "answer_clarification" in n]
+        assert len(answer_tools) == 1
+
+    def test_no_answer_clarification_without_pending(self, brain_action_tools, mock_cm):
+        """No answer_clarification tool when no pending clarifications."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Do something",
+                "handle": MagicMock(),
+                "handle_actions": [],  # No pending clarifications
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        answer_tools = [n for n in tools.keys() if "answer_clarification" in n]
+        assert len(answer_tools) == 0
+
+    def test_skips_answered_clarifications(self, brain_action_tools, mock_cm):
+        """Does not generate tool for already answered clarifications."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Do something",
+                "handle": MagicMock(),
+                "handle_actions": [
+                    {
+                        "action_name": "clarification_request",
+                        "query": "Need info?",
+                        "call_id": "call_answered",
+                        "response": "Here's the answer",  # Already answered
+                    },
+                ],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        answer_tools = [n for n in tools.keys() if "answer_clarification" in n]
+        assert len(answer_tools) == 0
+
+    def test_handles_multiple_actions(self, brain_action_tools, mock_cm):
+        """Generates tools for multiple in-flight actions."""
+        # Create mock handles
+        mock_handle1 = MagicMock()
+        mock_handle1._pause_event = MagicMock()
+        mock_handle1._pause_event.is_set.return_value = True  # Running
+
+        mock_handle2 = MagicMock()
+        mock_handle2._pause_event = MagicMock()
+        mock_handle2._pause_event.is_set.return_value = True  # Running
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Action one",
+                "handle": mock_handle1,
+                "handle_actions": [],
+            },
+            1: {
+                "query": "Action two",
+                "handle": mock_handle2,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        # Should have steering tools for both actions
+        action0_tools = [n for n in tools.keys() if "__0" in n]
+        action1_tools = [n for n in tools.keys() if "__1" in n]
+        assert len(action0_tools) > 0
+        assert len(action1_tools) > 0
+
+    def test_paused_handle_only_shows_resume(self, brain_action_tools, mock_cm):
+        """When handle is paused, only resume_* is generated (not pause_*)."""
+        # Create a paused handle (pause_event is cleared)
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = False  # Paused
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Paused action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        tool_names = list(tools.keys())
+
+        # Should have resume but NOT pause when paused
+        assert any(
+            "resume_" in n for n in tool_names
+        ), "Should have resume tool when paused"
+        assert not any(
+            "pause_" in n for n in tool_names
+        ), "Should NOT have pause tool when paused"
+
+    def test_running_handle_only_shows_pause(self, brain_action_tools, mock_cm):
+        """When handle is running, only pause_* is generated (not resume_*)."""
+        # Create a running handle (pause_event is set)
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True  # Running
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Running action",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        tool_names = list(tools.keys())
+
+        # Should have pause but NOT resume when running
+        assert any(
+            "pause_" in n for n in tool_names
+        ), "Should have pause tool when running"
+        assert not any(
+            "resume_" in n for n in tool_names
+        ), "Should NOT have resume tool when running"
+
+    def test_handle_without_pause_event_shows_pause(self, brain_action_tools, mock_cm):
+        """When handle has no _pause_event (unknown state), defaults to pause_*."""
+        # Create a handle without _pause_event
+        mock_handle = MagicMock(spec=[])  # No attributes
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Action with unknown state",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        tool_names = list(tools.keys())
+
+        # Should default to showing pause (assume running) when state unknown
+        assert any("pause_" in n for n in tool_names), "Should default to pause tool"
+        assert not any(
+            "resume_" in n for n in tool_names
+        ), "Should NOT have resume tool when state unknown"
+
+    def test_steering_tools_have_docstrings(self, brain_action_tools, mock_cm):
+        """Generated steering tools have docstrings."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test action",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+        tools = brain_action_tools.build_action_steering_tools()
+        for name, fn in tools.items():
+            assert fn.__doc__ is not None, f"{name} should have docstring"
+            assert (
+                "Test action" in fn.__doc__
+            ), f"{name} docstring should mention action"
+
+    def test_handles_none_in_flight_actions(self, brain_action_tools, mock_cm):
+        """Handles None in_flight_actions gracefully."""
+        mock_cm.in_flight_actions = None
+        tools = brain_action_tools.build_action_steering_tools()
+        assert tools == {}
+
+
+class TestMakeSteeringTool:
+    """Tests for _make_steering_tool method."""
+
+    @pytest.mark.asyncio
+    async def test_ask_operation_calls_handle_ask(self, brain_action_tools, mock_cm):
+        """Ask operation calls handle.ask with parameter."""
+        mock_handle = MagicMock()
+        mock_ask_handle = MagicMock()
+        mock_ask_handle.result = AsyncMock(return_value="Answer")
+        mock_handle.ask = AsyncMock(return_value=mock_ask_handle)
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="ask",
+            param_name="query",
+            docstring="Ask a question",
+            query="Test",
+        )
+        result = await tool(query="What is the status?")
+
+        # The ask operation spawns a background task, so we need to
+        # yield control to let it run before asserting
+        await asyncio.sleep(0)
+
+        mock_handle.ask.assert_called_once()
+        assert result["status"] == "ok"
+        assert result["operation"] == "ask"
+
+    @pytest.mark.asyncio
+    async def test_stop_operation_calls_handle_stop(self, brain_action_tools, mock_cm):
+        """Stop operation calls handle.stop and removes action."""
+        mock_handle = MagicMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="stop",
+            param_name="reason",
+            docstring="Stop the action",
+            query="Test",
+        )
+        result = await tool(reason="No longer needed")
+        mock_handle.stop.assert_called_once_with(reason="No longer needed")
+        assert result["operation"] == "stop"
+        assert 0 not in mock_cm.in_flight_actions  # Action should be removed
+
+    @pytest.mark.asyncio
+    async def test_interject_operation_calls_handle_interject(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Interject operation calls handle.interject."""
+        mock_handle = MagicMock()
+        mock_handle.interject = AsyncMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="interject",
+            param_name="message",
+            docstring="Interject a message",
+            query="Test",
+        )
+        result = await tool(message="Important update")
+        mock_handle.interject.assert_called_once()
+        assert result["operation"] == "interject"
+
+    @pytest.mark.asyncio
+    async def test_pause_operation_calls_handle_pause(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Pause operation calls handle.pause."""
+        mock_handle = MagicMock()
+        mock_handle.pause = AsyncMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="pause",
+            param_name="",
+            docstring="Pause the action",
+            query="Test",
+        )
+        result = await tool()
+        mock_handle.pause.assert_called_once()
+        assert result["operation"] == "pause"
+
+    @pytest.mark.asyncio
+    async def test_resume_operation_calls_handle_resume(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Resume operation calls handle.resume."""
+        mock_handle = MagicMock()
+        mock_handle.resume = AsyncMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="resume",
+            param_name="",
+            docstring="Resume the action",
+            query="Test",
+        )
+        result = await tool()
+        mock_handle.resume.assert_called_once()
+        assert result["operation"] == "resume"
+
+    @pytest.mark.asyncio
+    async def test_answer_clarification_calls_handle_method(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Answer clarification calls handle.answer_clarification."""
+        mock_handle = MagicMock()
+        mock_handle.answer_clarification = AsyncMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="answer_clarification",
+            param_name="answer",
+            docstring="Answer clarification",
+            query="Test",
+            call_id="call_123",
+        )
+        result = await tool(answer="Here is the answer")
+        mock_handle.answer_clarification.assert_called_once_with(
+            "call_123",
+            "Here is the answer",
+        )
+        assert result["operation"] == "answer_clarification"
+
+    @pytest.mark.asyncio
+    async def test_records_intervention_in_handle_actions(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Steering operations record intervention in handle_actions."""
+        mock_handle = MagicMock()
+        mock_handle.pause = AsyncMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="pause",
+            param_name="",
+            docstring="Pause",
+            query="Test",
+        )
+        await tool()
+
+        actions = mock_cm.in_flight_actions[0]["handle_actions"]
+        assert len(actions) == 1
+        assert actions[0]["action_name"] == "pause_0"
+
+    @pytest.mark.asyncio
+    async def test_handles_operation_errors(self, brain_action_tools, mock_cm):
+        """Handles errors in steering operations gracefully."""
+        mock_handle = MagicMock()
+        mock_handle.pause = AsyncMock(side_effect=RuntimeError("Test error"))
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="pause",
+            param_name="",
+            docstring="Pause",
+            query="Test",
+        )
+        result = await tool()
+        assert "Error" in result["result"]
+
+
+# =============================================================================
+# _get_or_create_contact Helper Tests
+# =============================================================================
+
+
+class TestGetOrCreateContact:
+    """Tests for _get_or_create_contact helper function."""
+
+    @pytest.mark.asyncio
+    async def test_raises_without_contact_id_or_details(self, mock_cm):
+        """Raises ValueError if neither contact_id nor details provided."""
+        with pytest.raises(ValueError, match="Either contact_id or details"):
+            await _get_or_create_contact(mock_cm)
+
+    @pytest.mark.asyncio
+    async def test_retrieves_by_contact_id(self, mock_cm, sample_contacts):
+        """Retrieves contact by ID when provided."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+        result = await _get_or_create_contact(mock_cm, contact_id=1)
+        assert result is not None
+        assert result["contact_id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_unknown_contact_id(self, mock_cm, sample_contacts):
+        """Returns None when contact_id not found."""
+        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
+        result = await _get_or_create_contact(mock_cm, contact_id=999)
+        assert result is None
+
+
+# =============================================================================
+# Tool Docstring Quality Tests
+# =============================================================================
+
+
+class TestToolDocstrings:
+    """Tests verifying tool docstrings are informative for LLM usage."""
+
+    def test_brain_tools_have_docstrings(self, brain_tools):
+        """All brain tools have docstrings."""
+        tools = brain_tools.as_tools()
+        for name, fn in tools.items():
+            assert fn.__doc__ is not None, f"{name} missing docstring"
+            assert len(fn.__doc__) > 10, f"{name} docstring too short"
+
+    def test_action_tools_have_docstrings(self, brain_action_tools):
+        """All action tools have docstrings."""
+        tools = brain_action_tools.as_tools()
+        for name, fn in tools.items():
+            assert fn.__doc__ is not None, f"{name} missing docstring"
+            assert len(fn.__doc__) > 10, f"{name} docstring too short"
+
+    def test_send_email_docstring_mentions_parameters(self, brain_action_tools):
+        """send_email docstring mentions recipients, subject and body."""
+        doc = brain_action_tools.send_email.__doc__
+        assert "to" in doc.lower()
+        assert "cc" in doc.lower()
+        assert "subject" in doc.lower()
+        assert "body" in doc.lower()
+
+    def test_act_docstring_is_comprehensive(self, brain_action_tools):
+        """act tool has comprehensive docstring explaining capabilities."""
+        doc = brain_action_tools.act.__doc__
+        assert len(doc) > 100, "act docstring should be comprehensive"
+
+
+# =============================================================================
+# Integration Tests
+# =============================================================================
+
+
+class TestBrainToolsIntegration:
+    """Integration tests for brain tools working together."""
+
+    def test_brain_and_action_tools_have_distinct_names(
+        self,
+        brain_tools,
+        brain_action_tools,
+    ):
+        """Brain tools and action tools have non-overlapping names."""
+        brain_names = set(brain_tools.as_tools().keys())
+        action_names = set(brain_action_tools.as_tools().keys())
+        overlap = brain_names & action_names
+        assert len(overlap) == 0, f"Overlapping tool names: {overlap}"
+
+    def test_steering_tools_distinct_from_static_tools(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Dynamic steering tools don't overlap with static action tools."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+        static_names = set(brain_action_tools.as_tools().keys())
+        steering_names = set(brain_action_tools.build_action_steering_tools().keys())
+        overlap = static_names & steering_names
+        assert len(overlap) == 0, f"Overlapping tool names: {overlap}"

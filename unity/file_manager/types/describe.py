@@ -90,6 +90,10 @@ class DocumentInfo(BaseModel):
             "Use this exact path with filter/search/reduce operations."
         ),
     )
+    description: Optional[str] = Field(
+        default=None,
+        description="Human-readable description of the document content context.",
+    )
     column_schema: ContextSchema = Field(
         default_factory=ContextSchema,
         description="Schema with columns, types, and searchability info.",
@@ -118,6 +122,10 @@ class TableInfo(BaseModel):
             "Full Unify context path for this table. "
             "Use this exact path with filter/search/reduce operations."
         ),
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Human-readable description of the table's contents and purpose.",
     )
     column_schema: ContextSchema = Field(
         default_factory=ContextSchema,

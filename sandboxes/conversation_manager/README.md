@@ -1,96 +1,194 @@
-Conversation Manager Sandbox
-===========================
+ConversationManager Sandbox
+==========================
 
-This folder contains an **interactive playground** for the `ConversationManager` component that lives in `unity/conversation_manager/`. The goal of the sandbox is to let you experiment with the manager in isolation – simulate user interactions (phone calls, SMS, email), observe how events flow through the EventBus, prompt construction, STT/LLM/TTS chains, and tool loops before integrating into a larger system.
+This folder contains an **interactive playground** for the `ConversationManager` component (`unity/conversation_manager/`). The sandbox is designed to let you test the CM “brain” locally, in isolation, with simulated comms by default — plus an optional **real-comms mode** with explicit safety confirmations.
 
-Prefer a quick demo? Watch this [video walkthrough](https://www.loom.com/share/f8a87d725e074eaa960c5021164dc3cd?sid=98fc555f-5ca4-47f0-838c-50eadba08d48)
-
-For understanding how natural conversations are, users can also be simulated. Watch this [video walkthrough](https://www.loom.com/share/9a2f1c0655af46c883bf5edb19f90dca?sid=74b9b39d-88e0-4748-b036-b4577144e84e)
-
-What is the `ConversationManager`?
--------------------------------
-`ConversationManager` orchestrates real-time conversational flows, handling speech-to-text, LLM interactions, text-to-speech, and event dispatch (e.g. phone calls, SMS, email). It wires up the shared `EventBus`, manages prompt builders, and auto-pins relevant events while streaming audio.
-
-Running the sandbox
--------------------
-The entry-point lives at `sandboxes/conversation_manager/sandbox.py` and can be executed directly or via Python’s `-m` switch:
+## Quick start
 
 ```bash
-# Default (local GUI mode)
-python -m sandboxes.conversation_manager.sandbox
+# REPL (default) — prompts for actor config; no external infrastructure needed for mode 1/2
+python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
 
-# Full non-GUI mode (real comms only)
-python -m sandboxes.conversation_manager.sandbox --full
+# REPL + voice (optional) — enables `sayv` (voice phone utterances) and TTS for phone responses
+python -m sandboxes.conversation_manager.sandbox --voice --project_name Sandbox --overwrite
 
-# Specify which tools to enable (choices: actor, contact, transcript, knowledge, scheduler, comms)
-python -m sandboxes.conversation_manager.sandbox --enabled_tools comms,actor
+# GUI (optional) — Textual, same process/event loop as CM
+python -m sandboxes.conversation_manager.sandbox --gui --project_name Sandbox --overwrite
+
+# Real-comms (optional, requires infra) — REPL only
+python -m sandboxes.conversation_manager.sandbox --real-comms --project_name Sandbox --overwrite
 ```
 
-CLI flags
-~~~~~~~~~
-Run `python -m sandboxes.conversation_manager.sandbox --help` to see additional flags:
-* `--local` (default): Enable local GUI mode.
-* `--full`         : Disable local GUI mode (real comms and no GUI).
-* `--enabled_tools`: Comma-separated list of enabled tools (choices: actor, contact, transcript, knowledge, scheduler, comms). Default: None (all tools enabled).
+## Loom walkthrough
 
-Standard flags:
-* `--voice` / `-v`            – enable voice input/output (scenario seeding and TTS)
-* `--project_name` / `-p`     – Unify project/context name
-* `--overwrite` / `-o`        – delete existing data for the project before start
-* `--project_version`         – load a specific saved version (index)
-* `--debug` / `-d`            – show verbose tool logs (reasoning steps)
+https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab
 
-Local GUI usage (default)
--------------------------
-When you run the sandbox with no flags (or with `--local`), a local Textual-based GUI opens  in a separate terminal. Use:
+## Actor configurations (modes)
 
-* Arrow keys or Tab to navigate the menu.
-* Press Enter on a menu item to choose:
-  - **Send SMS**: Enter a text message and press Enter to simulate an incoming SMS.
-  - **Send Email**: Enter a text message and press Enter to simulate an email.
-  - **Send Call**: Fill in task name, description, and purpose, then press **Call** to initiate a phone call; use **End Call** to stop.
-  - **Quit**: Exit the sandbox.
+On startup, the sandbox prompts you to select one of three configurations (and remembers the last-used choice in a project-local file):
 
-Full comms mode (`--full`)
----------------------------
-In this mode the ConversationManager service runs without the GUI, handling real incoming SMS, Email, and phone calls. It starts up a LiveKit server locally, thus no scenario seeding in this mode.
+- **Mode 1 — `SandboxSimulatedActor`**: simulated managers, **no computer interface**
+- **Mode 2 — `CodeActActor + simulated managers`**: mock computer backend (no agent-service)
+- **Mode 3 — `CodeActActor + real managers + real computer interface`**: uses **agent-service** (Magnitude) + real state managers
 
-To start:
+Configuration persistence:
+- Saved to **`.cm_sandbox_config`** in the repo root (gitignored).
+- You can switch configs at runtime via the `config` command (restarts sandbox).
+
+### Real-comms mode (`--real-comms`)
+- Comms are **real** (SMS/email/calls) via `CommsManager`
+- Sandbox applies a **confirmation prompt** before any outbound action
+- Requires backend infrastructure + correct session/env configuration
+- **REPL only** (GUI is simulated-only)
+
+## Computer integration (Mode 3)
+
+- The Magnitude agent runs in a **separate Chromium instance** (agent-service).
+- The GUI “Computer” tab shows:
+  - last known URL (best-effort)
+  - recent computer actions (navigate/act/observe/query)
+
+Relevant flags:
+- `--agent-server-url http://localhost:3000`
+- `--agent-mode web` (or `desktop`)
+- `--headless` (launch Chromium headless)
+- `--agent-service-bootstrap guide|auto` (help with setup; `auto` can install/build/start best-effort)
+
+## Command reference (REPL + GUI command bar)
+
+### Meta
+- `help` / `h` / `?`: show help
+- `quit` / `exit`: exit sandbox
+- `reset`: clear sandbox + CM state (best-effort)
+- `save_project` / `sp`: snapshot the Unify project
+- `config`: switch actor configuration (restarts sandbox; state is reset)
+
+### Event simulation (inbound → CM)
+- `sms <message>`
+- `email <subject> | <body>`
+- `call`
+- `say <text>` (during a call)
+- `sayv` (during a call, requires `--voice`)
+- `end_call`
+
+During a call, any non-command text is treated as an utterance.
+
+### Steering (only while active)
+Steering is available whenever **either**:
+- an Actor handle exists (full steering), **or**
+- a brain run is in-flight (best-effort steering)
+
+Commands:
+- `/pause`
+- `/resume`
+- `/i <msg>`
+- `/ask <q>`
+- `/stop [reason]`
+
+**Actor handle mode**: forwards to `SteerableToolHandle` methods.
+
+**Brain-run mode (best-effort)**:
+- `/pause` queues events until `/resume`
+- `/resume` flushes queued events
+- `/i <msg>` publishes an inbound event to trigger a fresh brain run
+- `/ask <q>` prints a state snapshot
+- `/stop` returns to idle immediately (does not cancel mid-generation)
+
+### Scenario seeding (idle-only)
+- `us <description>`: generate a synthetic transcript and publish inbound events into CM
+- `usv`: voice scenario seeding (requires `--voice`)
+
+Scenario seeding is disabled while active; use `/stop` or wait.
+
+## Voice mode (`--voice`)
+
+When enabled:
+- `sayv` records microphone audio, transcribes via Deepgram (STT), and sends the transcript as a phone utterance.
+- Assistant phone-call responses (`[Phone → User] ...`) are also spoken via TTS (Cartesia) on a best-effort basis.
+
+## Real-comms safety confirmations
+
+In `--real-comms` mode, outbound actions are intercepted and require confirmation (default: **N**):
+- SMS (`send_sms_message_via_number`)
+- Email (`send_email_via_address`)
+- Unify message (`send_unify_message`)
+- Phone call (`start_call`)
+
+You can bypass prompts with `--auto-confirm` (dangerous; use only for controlled testing).
+
+## Examples
+
+See `sandboxes/conversation_manager/examples.md`.
+
+## Trace / tree / logs (CodeAct UX helpers)
+
+These are intended for debugging and “execution visibility” in Mode 2/3:
+
+- `trace [N]`: show last N CodeAct execution turns (default 3)
+- `tree`: show the current manager call hierarchy (EventBus `ManagerMethod` events)
+- `show_logs <cm|actor|manager|all>` / `collapse_logs <...>`: expand/collapse log categories
+
+CLI:
+- `--show-trace`: auto-print trace after each CodeAct code turn (REPL only)
+
+## Troubleshooting
+
+### “(no active conversation) Steering commands…”
+Steering commands only work while CM is processing (active handle or brain run in-flight). Send an event (`sms ...`, `call`, etc.) first.
+
+### “Scenario seeding is disabled while active”
+Scenario seeding is idle-only. Use `/stop` or wait for the active action to complete.
+
+### Real-comms mode fails to start
+Real-comms requires backend infrastructure and correct env/session configuration. Check your `.env` / `SESSION_DETAILS` settings and comms deployment.
+
+### Mode 3 fails validation (“agent-service is not running or unreachable”)
+Mode 3 requires:
+- `agent-service` running and reachable at `--agent-server-url`
+- `UNIFY_KEY` set (agent-service uses it for auth)
+
+If you’re on a fresh install and don’t have Magnitude set up yet:
+- See `sandboxes/actor/README.md` → “Magnitude Agent Service Setup” (step-by-step)
+- The sandbox can also print setup instructions (default) and can *attempt* auto-bootstrap with:
+  - `--agent-service-bootstrap auto`
+
+## Other entrypoints
+
+**Alternate (GUI-only module)**:
 ```bash
-python -m sandboxes.conversation_manager.sandbox --full
+python -m sandboxes.conversation_manager.gui
 ```
 
-Real incoming events and calls are processed by the live service; phone calls require a running LiveKit server and properly configured environment variables.
-
-Two-agent simulation mode
--------------------------
-Alternatively, you can simulate two agents (user & assistant) interacting in-process without spinning up LiveKit or handling real events.
-
-Entry-point: `sandboxes/conversation_manager/simulated.py`
-
-To start the simulation:
+**Recommended (GUI mode)**:
 ```bash
-python -m sandboxes.conversation_manager.simulated [--voice] [--project_name NAME] [--overwrite] [--num_turns N]
+python -m sandboxes.conversation_manager.sandbox --gui
 ```
 
-Accepted commands in simulation:
-- `start` / `s`     : begin the first user turn.
-- `continue` / `c`  : run the next round of back-and-forth (default N turns).
-- `medium` / `m`    : change communication medium (`phone`, `sms`, `email`), resets history.
-- `help` / `h`      : show this help menu.
-- `exit` / `quit`   : terminate the simulation.
+This sandbox provides:
+- A unified entrypoint (`sandbox.py`)
+- REPL-first UX + optional in-process GUI
+- Dual-mode steering (Actor handle + brain-run best-effort)
+- Scenario seeding (`us`, `usv`)
+- Real-comms mode with safety prompts (`--real-comms`)
 
-CLI flags for simulation (in addition to sandbox flags above):
-- `--num_turns` / `-n` : number of back-and-forth turns per cycle (default: 5).
+## Example: CodeAct + real managers + browser (GUI)
 
-Troubleshooting
----------------
-Required environment variables (in addition to those in the root `README.md`):
-* UNIFY_KEY
-* USER_NAME
-* USER_EMAIL
-* USER_PHONE_NUMBER
-* ASSISTANT_NAME
-* ASSISTANT_NUMBER
-* ASSISTANT_EMAIL
-* OPENAI_API_KEY
+Start the sandbox in GUI mode with agent-service wired up:
+
+```bash
+python -m sandboxes.conversation_manager.sandbox \
+  --gui \
+  --voice \
+  --project_name Sandbox \
+  --overwrite \
+  --agent-server-url http://localhost:3000 \
+  --agent-mode web
+```
+
+Then, in the command bar, try an end-to-end request (Mode 3):
+
+```text
+sms Can you find OpenAI's careers page, check if there’s a “Backend Engineer” role open, and if so create a task for me called “Apply to OpenAI” with the role URL in the description?
+```
+
+Tip: add `--headless` if you don’t want a visible Chromium window.

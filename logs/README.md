@@ -46,7 +46,7 @@ logs/ci/
 │       ├── pytest/
 │       │   └── 2026-01-10T18-32-52_unitypid7578/
 │       │       ├── duration_summary.txt
-│       │       ├── test_function_manager-test_basics-test_add_single_success.txt
+│       │       ├── function_manager-test_basics-test_add_single_success.txt
 │       │       └── ...
 │       ├── unity/
 │       ├── unify/
@@ -146,9 +146,9 @@ All log files use **semantic naming** within datetime-prefixed directories:
 
 | Command | Log File |
 |---------|----------|
-| `pytest tests/test_contact_manager/test_ask.py` | `test_contact_manager-test_ask.txt` |
-| `pytest tests/test_contact_manager/test_ask.py::test_foo` | `test_contact_manager-test_ask--test_foo.txt` |
-| `pytest tests/test_contact_manager/` | `test_contact_manager.txt` |
+| `pytest tests/contact_manager/test_ask.py` | `contact_manager-test_ask.txt` |
+| `pytest tests/contact_manager/test_ask.py::test_foo` | `contact_manager-test_ask--test_foo.txt` |
+| `pytest tests/contact_manager/` | `contact_manager.txt` |
 | `pytest tests/` | `tests.txt` |
 | `pytest` (no args) | `all.txt` |
 
@@ -283,7 +283,7 @@ Each test decorated with `@_handle_project` gets its own isolated context. Withi
 **Context hierarchy example:**
 
 ```
-tests/test_contact_manager/test_basic/test_create          # Root test context
+tests/contact_manager/test_basic/test_create          # Root test context
 ├── Contacts                                                # ContactManager data
 ├── Transcripts                                             # TranscriptManager data
 ├── Knowledge                                               # KnowledgeManager data
@@ -295,7 +295,7 @@ tests/test_contact_manager/test_basic/test_create          # Root test context
 **How it works:**
 
 1. The `@_handle_project` decorator (in `tests/helpers.py`) creates a unique context path derived from the test's file path and function name:
-   - `tests/test_contact_manager/test_basic.py::test_create` → `tests/test_contact_manager/test_basic/test_create`
+   - `tests/contact_manager/test_basic.py::test_create` → `tests/contact_manager/test_basic/test_create`
 
 2. Before the test runs, the decorator:
    - Sets this as the active Unify context
@@ -337,13 +337,13 @@ async def test_async_operation():
 
 Some test suites use session-scoped fixtures to create shared seed data once, then reset to that state before each test. This is more efficient than recreating data for every test.
 
-**Example from `test_contact_manager/conftest.py`:**
+**Example from `contact_manager/conftest.py`:**
 
 ```python
 @pytest_asyncio.fixture(scope="session")
 async def contact_scenario(request):
     """Create seeded contacts once per session."""
-    ctx = "tests/test_contact/Scenario"
+    ctx = "tests/contact/Scenario"
     unify.set_context(ctx, relative=False)
 
     # Seed data (idempotent - skips if already exists)
@@ -379,7 +379,7 @@ def contact_manager_scenario(contact_scenario):
 
 Browse to the `UnityTests` project and explore:
 - `Combined` context for summary records
-- Individual test contexts (e.g., `tests/test_contact_manager/test_basic/test_create`) for detailed state
+- Individual test contexts (e.g., `tests/contact_manager/test_basic/test_create`) for detailed state
 
 **Via Python:**
 
@@ -394,7 +394,7 @@ for log in logs:
     print(f"{log['test_fpath']}: {log['duration']:.2f}s")
 
 # Query a specific test's contacts
-unify.set_context("tests/test_contact_manager/test_basic/test_create/Contacts")
+unify.set_context("tests/contact_manager/test_basic/test_create/Contacts")
 contacts = unify.get_logs()
 ```
 
@@ -604,7 +604,7 @@ Each test logs its trace_id to stdout:
 
 Or grep the log file:
 ```bash
-grep "TRACE_ID=" logs/pytest/2025-12-30T18-30-00_unity_dev_ttys042/test_contact_manager-test_ask.txt
+grep "TRACE_ID=" logs/pytest/2025-12-30T18-30-00_unity_dev_ttys042/contact_manager-test_ask.txt
 ```
 
 **Step 2: Find matching Unify HTTP traces**
@@ -635,7 +635,7 @@ cat logs/orchestra/2025-12-30T18-27-43/requests/*7be454fc*.json | jq .
 
 ```bash
 # 1. Test fails - check pytest log for trace_id
-grep TRACE_ID logs/pytest/2025-12-30T18-30-00_unity_dev/test_contact_manager-test_ask.txt
+grep TRACE_ID logs/pytest/2025-12-30T18-30-00_unity_dev/contact_manager-test_ask.txt
 # Found: [TRACE] TRACE_ID=099b207f89222185695d25977be454fc test=test_ask
 
 # 2. Check Unity LOGGER output for the session
@@ -670,7 +670,7 @@ At the end of each test, OTEL spans are automatically uploaded to a `Trace` chil
 ### Where Traces Go
 
 ```
-tests/test_contact_manager/test_ask/test_ask_time_check/DefaultUser/DefaultAssistant/
+tests/contact_manager/test_ask/test_ask_time_check/DefaultUser/DefaultAssistant/
 ├── Contacts          # ContactManager data
 ├── Transcripts       # TranscriptManager data
 ├── Trace             # ← OTEL spans uploaded here
@@ -745,7 +745,7 @@ import unify
 unify.activate("UnityTests")
 
 # Get trace spans for a specific test
-trace_ctx = "tests/test_contact_manager/test_ask/test_ask_time_check/DefaultUser/DefaultAssistant/Trace"
+trace_ctx = "tests/contact_manager/test_ask/test_ask_time_check/DefaultUser/DefaultAssistant/Trace"
 logs = unify.get_logs(context=trace_ctx, limit=100)
 
 # Filter by service

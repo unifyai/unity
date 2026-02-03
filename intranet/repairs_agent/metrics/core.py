@@ -36,7 +36,6 @@ from typing import Callable, Dict, List, Optional
 
 from intranet.repairs_agent.static.registry import register
 
-
 # =============================================================================
 # @skip Decorator for Placeholder Metrics
 # =============================================================================
@@ -91,7 +90,6 @@ from .helpers import (
     resolve_group_by,
 )
 
-
 # =============================================================================
 # 1. Jobs Completed
 # =============================================================================
@@ -119,12 +117,12 @@ async def jobs_completed(
     Discovery Pattern
     -----------------
     table_info = discover_repairs_table(tools)
-    # Returns: {"table": "<path>", "description": "...", "columns": [...]}
+    # Returns: {"table": "<context_path>", "description": "<desc>", "columns": [...]}
     repairs_table = table_info["table"]
 
     Tool Chain
     ----------
-    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    1. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter="`WorksOrderStatusDescription` in ['Complete', 'Closed']",
               group_by="OperativeWhoCompletedJob")
        → Returns: {"John Smith": 150, "Jane Doe": 120, ...}
@@ -143,7 +141,7 @@ async def jobs_completed(
     Parameters
     ----------
     tools : FileTools
-        Tools from FileManager (reduce, filter_files, visualize, tables_overview, schema_explain)
+        Tools from FileManager (reduce, filter_files, visualize, describe, list_columns)
     group_by : GroupBy | str
         "operative", "patch", "region", "day", or None for total
     start_date : str, optional
@@ -179,9 +177,9 @@ async def jobs_completed(
 
     # Query: count completed jobs
     raw_result = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=filter_expr,
         group_by=group_by_field,
     )
@@ -269,14 +267,14 @@ async def no_access_rate(
     Discovery Pattern
     -----------------
     repairs_table = discover_repairs_table(tools)
-    columns = tools["list_columns"](table=repairs_table)
+    columns = tools["list_columns"](context=repairs_table)
     # Required: NoAccess, JobTicketReference
 
     Tool Chain
     ----------
-    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    1. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter="`NoAccess` != 'None' and `NoAccess` != ''", group_by=...)
-    2. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    2. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter=COMPLETED_FILTER, group_by=...) for percentage
     3. Python: percentage = (no_access / total) * 100
 
@@ -318,9 +316,9 @@ async def no_access_rate(
         end_date,
     )
     raw_no_access = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=no_access_filter,
         group_by=group_by_field,
     )
@@ -347,9 +345,9 @@ async def no_access_rate(
             end_date,
         )
         raw_total = reduce_tool(
-            table=repairs_table,
+            context=repairs_table,
             metric="count",
-            keys="JobTicketReference",
+            columns="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
@@ -465,14 +463,14 @@ async def first_time_fix_rate(
     Discovery Pattern
     -----------------
     repairs_table = discover_repairs_table(tools)
-    columns = tools["list_columns"](table=repairs_table)
+    columns = tools["list_columns"](context=repairs_table)
     # Required: FirstTimeFix, JobTicketReference, WorksOrderStatusDescription
 
     Tool Chain
     ----------
-    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    1. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter="`FirstTimeFix` == 'Yes'", group_by=...)
-    2. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    2. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter=COMPLETED_FILTER, group_by=...) for percentage
     3. Python: percentage = (ftf / total) * 100
 
@@ -510,9 +508,9 @@ async def first_time_fix_rate(
     # Query: count first-time-fix jobs
     ftf_filter = build_filter(["`FirstTimeFix` == 'Yes'"], start_date, end_date)
     raw_ftf = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=ftf_filter,
         group_by=group_by_field,
     )
@@ -538,9 +536,9 @@ async def first_time_fix_rate(
             end_date,
         )
         raw_total = reduce_tool(
-            table=repairs_table,
+            context=repairs_table,
             metric="count",
-            keys="JobTicketReference",
+            columns="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
@@ -656,12 +654,12 @@ async def follow_on_required_rate(
     Discovery Pattern
     -----------------
     repairs_table = discover_repairs_table(tools)
-    columns = tools["list_columns"](table=repairs_table)
+    columns = tools["list_columns"](context=repairs_table)
     # Required: FollowOn, JobTicketReference, WorksOrderStatusDescription
 
     Tool Chain
     ----------
-    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    1. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter="`FollowOn` == 'Yes'", group_by=...)
     2. reduce(..., filter=COMPLETED_FILTER, ...) for percentage
     3. Python: percentage = (follow_on / total) * 100
@@ -698,9 +696,9 @@ async def follow_on_required_rate(
         end_date,
     )
     raw_fo = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=fo_filter,
         group_by=group_by_field,
     )
@@ -726,9 +724,9 @@ async def follow_on_required_rate(
             end_date,
         )
         raw_total = reduce_tool(
-            table=repairs_table,
+            context=repairs_table,
             metric="count",
-            keys="JobTicketReference",
+            columns="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
@@ -876,9 +874,9 @@ async def follow_on_materials_rate(
     # Count total follow-on jobs
     fo_filter = build_filter(["`FollowOn` == 'Yes'"], start_date, end_date)
     raw_total_fo = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=fo_filter,
         group_by=group_by_field,
     )
@@ -896,9 +894,9 @@ async def follow_on_materials_rate(
         end_date,
     )
     raw_materials_fo = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=materials_filter,
         group_by=group_by_field,
     )
@@ -1059,9 +1057,9 @@ async def job_completed_on_time_rate(
     )
     on_time_filter = build_filter([on_time_condition], start_date, end_date)
     raw_on_time = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=on_time_filter,
         group_by=group_by_field,
     )
@@ -1086,9 +1084,9 @@ async def job_completed_on_time_rate(
             end_date,
         )
         raw_total = reduce_tool(
-            table=repairs_table,
+            context=repairs_table,
             metric="count",
-            keys="JobTicketReference",
+            columns="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
@@ -1267,7 +1265,7 @@ async def total_distance_travelled(
 
     Tool Chain
     ----------
-    1. reduce(table=telematics_table, metric="sum", keys="Business distance", group_by="Vehicle")
+    1. reduce(context=telematics_table, metric="sum", columns="Business distance", group_by="Vehicle")
     2. Python: Aggregate across monthly tables
 
     Column Mappings
@@ -1296,9 +1294,9 @@ async def total_distance_travelled(
 
     for table in telematics_tables:
         raw_result = reduce_tool(
-            table=table,
+            context=table,
             metric="sum",
-            keys="Business distance",
+            columns="Business distance",
             filter=base_filter,
             group_by=group_by_field,
         )
@@ -1426,7 +1424,7 @@ async def jobs_issued(
 
     Tool Chain
     ----------
-    1. reduce(table=repairs_table, metric="count", keys="JobTicketReference",
+    1. reduce(context=repairs_table, metric="count", columns="JobTicketReference",
               filter=ISSUED_FILTER, group_by=...)
 
     Filter Expressions
@@ -1463,9 +1461,9 @@ async def jobs_issued(
     )
 
     raw_result = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=filter_expr,
         group_by=group_by_field,
     )
@@ -1590,9 +1588,9 @@ async def jobs_requiring_materials_rate(
     )
     materials_filter = build_filter([materials_condition], start_date, end_date)
     raw_materials = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=materials_filter,
         group_by=group_by_field,
     )
@@ -1616,9 +1614,9 @@ async def jobs_requiring_materials_rate(
             end_date,
         )
         raw_total = reduce_tool(
-            table=repairs_table,
+            context=repairs_table,
             metric="count",
-            keys="JobTicketReference",
+            columns="JobTicketReference",
             filter=completed_filter,
             group_by=group_by_field,
         )
@@ -1760,9 +1758,9 @@ async def avg_repairs_per_property(
 
     # Group by FullAddress to count repairs per property
     raw_property_counts = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=filter_expr,
         group_by="FullAddress",
     )
@@ -1877,7 +1875,7 @@ async def appointment_adherence_rate(
     Discovery Pattern
     -----------------
     repairs_table = discover_repairs_table(tools)
-    columns = tools["list_columns"](table=repairs_table)
+    columns = tools["list_columns"](context=repairs_table)
     # Required: ArrivedOnSite, ScheduledAppointmentStart, ScheduledAppointmentEnd
 
     Tool Chain
@@ -1914,7 +1912,7 @@ async def appointment_adherence_rate(
     list_columns_tool = tools.get("list_columns")
     if list_columns_tool:
         try:
-            columns = list_columns_tool(table=repairs_table)
+            columns = list_columns_tool(context=repairs_table)
             required_cols = [
                 "ScheduledAppointmentStart",
                 "ScheduledAppointmentEnd",
@@ -1958,9 +1956,9 @@ async def appointment_adherence_rate(
 
     # Count total scheduled appointments
     raw_total = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=base_filter,
         group_by=group_by_field,
     )
@@ -1968,9 +1966,9 @@ async def appointment_adherence_rate(
     # Count on-time arrivals
     on_time_filter = f"({base_filter}) and `ArrivedOnSite` <= `ScheduledAppointmentEnd`"
     raw_on_time = reduce_tool(
-        table=repairs_table,
+        context=repairs_table,
         metric="count",
-        keys="JobTicketReference",
+        columns="JobTicketReference",
         filter=on_time_filter,
         group_by=group_by_field,
     )

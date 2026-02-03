@@ -15,7 +15,7 @@ from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
 )
-from unity.conversation_manager.domains.contact_index import ContactIndex
+from unity.conversation_manager.domains.contact_index import ContactIndex, CommsMessage
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
@@ -37,6 +37,10 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
+from unity.conversation_manager.domains.guidance_filter import (
+    GuidanceFilter,
+    ConversationMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +128,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
-        # call manager
-        self.call_manager = LivekitCallManager(self.get_call_config())
+        # call manager - pass event_broker for socket IPC with voice agent subprocess
+        self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -145,6 +149,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = prompt_now(as_string=False)
         self._current_snapshot = None
+        self._current_state_snapshot = (
+            None  # Fresh rendered state for tools during _run_llm
+        )
+        self._current_snapshot_state = (
+            None  # SnapshotState with element tracking for incremental diff computation
+        )
         self.is_summarizing = None
         self.max_messages = 30
 
@@ -168,12 +178,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     def snapshot(self):
         self._current_snapshot = prompt_now(as_string=False)
+        # Track how many notifications were present at snapshot time.
+        # Any notifications appended while the LLM is running (e.g., an action that
+        # completes very quickly) must remain visible for at least the NEXT LLM run.
+        # Otherwise, `commit()` would immediately drop them and the LLM would never
+        # see the result, which can cause repeated duplicate actions.
+        self._snapshot_notif_count = len(self.notifications_bar.notifications)
         return self._current_snapshot
 
     def commit(self):
         self.last_snapshot = self._current_snapshot
         notifs = self.notifications_bar.notifications
-        self.notifications_bar.notifications = [n for n in notifs if n.pinned]
+        snap_n = int(getattr(self, "_snapshot_notif_count", 0) or 0)
+        # Keep:
+        # - pinned notifications
+        # - notifications that were appended AFTER the last snapshot was taken
+        #   (these arrived during the LLM run and must be shown next turn)
+        self.notifications_bar.notifications = [
+            n for i, n in enumerate(notifs) if n.pinned or i >= snap_n
+        ]
 
     @property
     def session_logger(self) -> SessionLogger:
@@ -281,7 +304,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             global_thread = global_thread[-max_messages:]
 
         for msg in global_thread:
-            role = "assistant" if msg.name == "You" else "user"
+            # Skip non-communication messages (e.g., GuidanceMessage for internal orchestration)
+            if not isinstance(msg, CommsMessage):
+                continue
+
             # Handle both Message and EmailMessage types
             if hasattr(msg, "content"):
                 content = (msg.content or "").strip()
@@ -294,7 +320,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if content.startswith("<") and content.endswith(">"):
                 continue
 
-            conversation_turns.append({"role": role, "content": content})
+            conversation_turns.append({"role": msg.role, "content": content})
 
             if hasattr(msg, "timestamp") and msg.timestamp:
                 last_message_timestamp = msg.timestamp
@@ -345,6 +371,107 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
+    async def _check_guidance_relevance(
+        self,
+        guidance_content: str,
+        slow_brain_start_time: "datetime",
+    ) -> bool:
+        """
+        Check if guidance is still relevant given conversation changes since slow brain started.
+
+        The slow brain takes 10-20 seconds to think. During this time, the user may change
+        topics, the fast brain may respond, etc. This method uses a fast LLM filter to
+        determine if the guidance is still relevant or if it's stale.
+
+        Args:
+            guidance_content: The guidance text from the slow brain.
+            slow_brain_start_time: When the slow brain started thinking.
+
+        Returns:
+            True if guidance should be sent, False if it's stale and should be blocked.
+        """
+        from datetime import datetime, timezone
+
+        try:
+            # Get the current voice conversation
+            contact = self.get_active_contact()
+            if not contact:
+                return True  # No contact context, send guidance
+
+            contact_id = contact.get("contact_id")
+            conv_state = self.contact_index.get_conversation_state(contact_id)
+            if not conv_state:
+                return True  # No conversation state, send guidance
+
+            # Get the voice thread
+            voice_medium = (
+                Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
+            )
+            voice_thread = list(conv_state.threads.get(voice_medium, []))
+
+            if not voice_thread:
+                return True  # No messages to compare, send guidance
+
+            # Convert to ConversationMessage format with is_new flag
+            conversation_messages = []
+            for msg in voice_thread:
+                content = (msg.content or "").strip()
+
+                # Skip system messages (e.g., "<Call Started>")
+                if content.startswith("<") and content.endswith(">"):
+                    continue
+
+                # Determine role
+                if hasattr(msg, "role"):
+                    role = msg.role
+                else:
+                    role = "assistant" if msg.name == "You" else "user"
+
+                # Check if this message arrived AFTER slow brain started
+                msg_time = getattr(msg, "timestamp", None)
+                is_new = False
+                if msg_time is not None:
+                    # Ensure timezone-aware comparison
+                    if msg_time.tzinfo is None:
+                        msg_time = msg_time.replace(tzinfo=timezone.utc)
+                    is_new = msg_time > slow_brain_start_time
+
+                conversation_messages.append(
+                    ConversationMessage(
+                        role=role,
+                        content=content,
+                        timestamp=msg_time or datetime.now(timezone.utc),
+                        is_new=is_new,
+                    ),
+                )
+
+            # If no new messages, guidance is definitely still relevant
+            if not any(m.is_new for m in conversation_messages):
+                return True
+
+            # Use the GuidanceFilter to make the decision
+            guidance_filter = GuidanceFilter()
+            decision = await guidance_filter.should_send_guidance(
+                guidance_content,
+                conversation_messages,
+            )
+
+            self._session_logger.debug(
+                "guidance_filter",
+                f"Filter decision: send={decision.send_guidance}, "
+                f"thoughts={decision.thoughts[:100]}...",
+            )
+
+            return decision.send_guidance
+
+        except Exception as e:
+            # On error, default to sending guidance (fail-open)
+            self._session_logger.error(
+                "guidance_filter",
+                f"Error in guidance filter, defaulting to send: {e}",
+            )
+            return True
+
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
@@ -391,6 +518,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     async def _run_llm(self) -> str | None:
         """Run a single LLM decision and return the tool name that was called."""
+        # Capture when slow brain starts thinking (for guidance staleness detection)
+        from datetime import datetime, timezone
+
+        slow_brain_start_time = datetime.now(timezone.utc)
+
         self.snapshot()
         brain_spec = build_brain_spec(self)
         self._session_logger.debug(
@@ -399,6 +531,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
         input_message = brain_spec.state_message()
         system_prompt = brain_spec.system_prompt
+
+        # Store current state snapshot for tools to access during execution.
+        # Tools (act, steering) need the fresh rendered state, not the stale chat_history.
+        self._current_state_snapshot = input_message
+
+        # Also capture the structured snapshot state for incremental diff computation.
+        # This enables interject operations to send only changes since the initial act().
+        self._current_snapshot_state = self.prompt_renderer.render_state_with_tracking(
+            self.contact_index,
+            self.notifications_bar,
+            self.in_flight_actions,
+            self.last_snapshot,
+        )
 
         # Log LLM thinking start
         self._session_logger.log_llm_thinking(f"mode={self.mode}")
@@ -437,16 +582,28 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if self.mode.is_voice:
                 call_guidance = getattr(structured, "call_guidance", "")
                 if call_guidance:
-                    contact = self.get_active_contact()
-                    event = CallGuidance(contact, call_guidance)
-                    await self.event_broker.publish(
-                        "app:call:call_guidance",
-                        event.to_json(),
+                    # Check if guidance is still relevant (conversation may have moved on)
+                    should_send = await self._check_guidance_relevance(
+                        call_guidance,
+                        slow_brain_start_time,
                     )
-                    await self.event_broker.publish(
-                        "app:comms:assistant_call_guidance",
-                        event.to_json(),
-                    )
+
+                    if should_send:
+                        contact = self.get_active_contact()
+                        event = CallGuidance(contact, call_guidance)
+                        await self.event_broker.publish(
+                            "app:call:call_guidance",
+                            event.to_json(),
+                        )
+                        await self.event_broker.publish(
+                            "app:comms:assistant_call_guidance",
+                            event.to_json(),
+                        )
+                    else:
+                        self._session_logger.info(
+                            "guidance_filtered",
+                            f"Stale guidance blocked: {call_guidance[:50]}...",
+                        )
 
         # Log LLM response
         self._session_logger.log_llm_response(
@@ -460,6 +617,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         self.commit()
         self._session_logger.debug("state_update", "Committing state")
+
+        # Clear the temporary state snapshots now that tools have executed
+        self._current_state_snapshot = None
+        self._current_snapshot_state = None
 
         # Build assistant message for chat history
         assistant_content = (
@@ -524,6 +685,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
+                break  # Exit the loop after triggering shutdown
 
     def set_details(self, payload: dict):
         """Populate assistant/user/voice details into SESSION_DETAILS."""
@@ -542,9 +704,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.voice_mode = payload["voice_mode"]
-        self.is_user_desktop = payload.get("is_user_desktop", False)
         self.desktop_mode = payload.get("desktop_mode", "ubuntu")
         self.desktop_url = payload.get("desktop_url")
+        self.user_desktop_mode = payload.get("user_desktop_mode")
+        self.user_desktop_filesys_sync = payload.get("user_desktop_filesys_sync", False)
+        self.user_desktop_url = payload.get("user_desktop_url")
         # Set API key on SESSION_DETAILS for runtime access
         if payload.get("api_key"):
             SESSION_DETAILS.unify_key = payload["api_key"]
@@ -565,9 +729,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_provider=self.voice_provider,
             voice_id=self.voice_id,
             voice_mode=self.voice_mode,
-            is_user_desktop=self.is_user_desktop,
             desktop_mode=self.desktop_mode,
             desktop_url=self.desktop_url,
+            user_desktop_mode=self.user_desktop_mode,
+            user_desktop_filesys_sync=self.user_desktop_filesys_sync,
+            user_desktop_url=self.user_desktop_url,
         )
         # Export to env vars for subprocess inheritance
         SESSION_DETAILS.export_to_env()
@@ -604,7 +770,27 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(2)
 
     async def cleanup(self):
-        """Clean up any running call processes"""
+        """Clean up any running call processes.
+
+        Always updates rolling summaries before shutdown, regardless of message count,
+        to ensure conversation context is persisted for the next session.
+        """
+        # Import inline to avoid potential circular import issues with type checkers
+        from unity.conversation_manager.domains import managers_utils
+
+        # Always update rolling summaries before shutdown
+        self._session_logger.info(
+            "cleanup",
+            "Updating rolling summaries before shutdown",
+        )
+        try:
+            await managers_utils.update_rolling_summaries(self)
+        except Exception as e:
+            self._session_logger.error(
+                "cleanup",
+                f"Failed to update rolling summaries: {e}",
+            )
+
         await self.store_chat_history()
         await self.call_manager.cleanup_call_proc()
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
