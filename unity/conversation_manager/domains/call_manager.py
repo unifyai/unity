@@ -49,6 +49,8 @@ class LivekitCallManager:
         self.conference_name = ""
         self._event_broker = event_broker
         self._socket_server: CallEventSocketServer | None = None
+        # Track whether the current call is outbound (we initiated it)
+        self.is_outbound: bool = False
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -80,6 +82,9 @@ class LivekitCallManager:
         return self._socket_server.socket_path
 
     async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
+        # Track whether this is an outbound call
+        self.is_outbound = outbound
+
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
@@ -116,6 +121,9 @@ class LivekitCallManager:
         livekit_agent_name: str | None,
         room_name: str | None,
     ):
+        # Unify Meet is always inbound (user initiates)
+        self.is_outbound = False
+
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
@@ -169,6 +177,9 @@ class LivekitCallManager:
 
         Sends SIGTERM for graceful shutdown, then SIGKILL if needed.
         """
+        # Reset outbound tracking
+        self.is_outbound = False
+
         # Stop socket server first
         if self._socket_server:
             await self._socket_server.stop()
