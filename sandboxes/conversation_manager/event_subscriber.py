@@ -520,13 +520,13 @@ async def _ensure_manager_method_subscription(
             # Append manager-method logs (these back the GUI "Manager Logs" pane).
             try:
                 if isinstance(logs, LogAggregator):
-                    phase = (payload.phase or "").strip().lower()
+                    direction = (payload.phase or "").strip().lower()
                     # Include hierarchy_label when present (it’s the most informative),
                     # but keep it short for the log pane.
                     label = (payload.hierarchy_label or "").strip()
                     msg = f"{payload.manager}.{payload.method}"
-                    if phase:
-                        msg += f" [{phase}]"
+                    if direction:
+                        msg += f" [{direction}]"
                     if label:
                         msg += f" — {label}"
                     logs.handle_structured_event(category="manager", message=msg)
