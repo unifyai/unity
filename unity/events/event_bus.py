@@ -315,11 +315,25 @@ class Subscription(BaseModel):
 class EventBus:
     _LOGGER = unify.AsyncLoggerManager(name="EventBus", num_consumers=16)
 
-    # Class-level flag to control event publishing. Defaults to True for production.
-    # Tests disable this by default and opt-in via @pytest.mark.enable_eventbus.
-    _publishing_enabled: bool = True
+    # Class-level flag to control event publishing. Initialized from SETTINGS on
+    # first EventBus instantiation. Can be overridden (e.g., tests use markers).
+    _publishing_enabled: bool | None = None
+
+    @classmethod
+    def _init_publishing_enabled(cls) -> None:
+        """Initialize _publishing_enabled from settings if not already set."""
+        if cls._publishing_enabled is None:
+            try:
+                from ..settings import SETTINGS
+
+                cls._publishing_enabled = SETTINGS.EVENTBUS_PUBLISHING_ENABLED
+            except Exception:
+                # Fallback to disabled if settings can't be loaded
+                cls._publishing_enabled = False
 
     def __init__(self):
+        # Initialize publishing flag from settings (once, on first instantiation)
+        EventBus._init_publishing_enabled()
 
         # private attributes
         self._deques: Dict[str, Deque[Event]] = {}
@@ -764,7 +778,10 @@ class EventBus:
             self._next_row_ids.setdefault(event_type, 0)
 
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
-        # Skip publishing if disabled (e.g., during tests)
+        # Initialize publishing flag from settings if not already done
+        if EventBus._publishing_enabled is None:
+            EventBus._init_publishing_enabled()
+        # Skip publishing if disabled (e.g., during local dev or tests)
         if not EventBus._publishing_enabled:
             return
 
