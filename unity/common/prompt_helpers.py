@@ -375,7 +375,8 @@ class PromptParts:
             self._parts[-1]["content"] += joiner + part
         else:
             # Different static - add new block
-            self._parts.append({"type": "text", "content": part, "static": static})
+            content = ("\n\n" + part) if separator else "\n" + part
+            self._parts.append({"type": "text", "content": content, "static": static})
 
     def to_list(self) -> List[Dict[str, Any]]:
         """Return the internal structured parts."""
