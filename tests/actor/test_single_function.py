@@ -1315,3 +1315,69 @@ async def codeact_workflow(goal: str):
 
     # Clean up
     await handle.stop("test cleanup")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_codeact_compositional_search_no_primitives_with_interjection():
+    """Search for CodeActActor compositional function (no primitives) and test interjection passthrough."""
+    from unity.common.async_tool_loop import SteerableHandle
+
+    fm = FunctionManager()
+
+    # Create a compositional function that wraps CodeActActor
+    codeact_impl = '''
+async def counting_workflow(target: int):
+    """A workflow that counts numbers slowly using CodeActActor.
+
+    This function uses an AI agent to count from 1 to the target number,
+    announcing each number one at a time.
+    """
+    from unity.actor.code_act_actor import CodeActActor
+
+    actor = CodeActActor()
+    handle = await actor.act(
+        description=f"Count from 1 to {target}, saying each number one at a time. Take your time.",
+        clarification_enabled=False,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[codeact_impl])
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    # Search by description with primitives EXCLUDED
+    handle = await actor.act(
+        description="count numbers slowly",
+        include_primitives=False,  # Explicitly exclude primitives
+        call_kwargs={"target": 10},
+        verify=False,
+    )
+
+    # Wait for inner handle detection
+    await handle._function_returned.wait()
+
+    # Should be steerable
+    assert handle.is_steerable, "Handle should be steerable"
+    assert handle.inner_handle is not None, "Inner handle should be available"
+    assert isinstance(
+        handle.inner_handle,
+        SteerableHandle,
+    ), "Inner handle should be SteerableHandle"
+
+    # Test interjection passthrough - this should forward to the inner CodeActActor
+    interjection_result = await handle.interject(
+        "Actually, skip ahead and just say the final number directly.",
+    )
+
+    # Interjection should have been processed (not a no-op message)
+    assert interjection_result is not None
+    assert (
+        "no effect" not in interjection_result.lower()
+    ), f"Interjection should pass through to inner handle, got: {interjection_result}"
+
+    # Clean up
+    await handle.stop("test cleanup")
