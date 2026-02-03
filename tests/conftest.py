@@ -151,7 +151,7 @@ def _unset_unify_context_for_test(item: pytest.Item) -> None:
 def pytest_report_header(config):
     settings_str = [f"{k}={v}" for k, v in SETTINGS.model_dump().items()]
     return [
-        f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
+        f"orchestra_url={os.environ.get('ORCHESTRA_URL')}",
         f"unity_comms_url={os.environ.get('UNITY_COMMS_URL')}",
         f"unify_project={unify.active_project()}",
     ] + settings_str

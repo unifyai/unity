@@ -5,7 +5,7 @@ set -euo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # Optionally source environment from the repo root's .env
-# Useful to provide UNIFY_KEY, UNIFY_BASE_URL, etc. from the repo root `.env` (not committed).
+# Useful to provide UNIFY_KEY, ORCHESTRA_URL, etc. from the repo root `.env` (not committed).
 _ENV_FILE="$_SCRIPT_DIR/../.env"
 if [ -f "$_ENV_FILE" ]; then
   # shellcheck disable=SC1090
@@ -48,7 +48,7 @@ projects are deleted. Use --shared-only or --random-only to limit scope.
 
 Environment:
   UNIFY_KEY           Required. API key for https://api.unify.ai
-  UNIFY_BASE_URL      Optional. Full base URL including /v0; if set, skips env prompt
+  ORCHESTRA_URL      Optional. Full base URL including /v0; if set, skips env prompt
 USAGE
 }
 
@@ -115,8 +115,8 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # Resolve API base URL
-if [[ -n "${UNIFY_BASE_URL:-}" ]]; then
-  API_BASE="$UNIFY_BASE_URL"
+if [[ -n "${ORCHESTRA_URL:-}" ]]; then
+  API_BASE="$ORCHESTRA_URL"
 else
   if [[ -z "$EXPLICIT_ENV" ]]; then
     read -r -p "Select Unify environment: [s]taging or [p]roduction? (default: p) " env_ans

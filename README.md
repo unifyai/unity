@@ -179,7 +179,7 @@ Create a `.env` file in the project root:
 ```bash
 # Required
 UNIFY_KEY=<your-unify-api-key>
-UNIFY_BASE_URL=https://api.unify.ai/v0
+ORCHESTRA_URL=https://api.unify.ai/v0
 
 # LLM Providers
 OPENAI_API_KEY=<your-openai-key>

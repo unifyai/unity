@@ -24,7 +24,7 @@ This Node.js service acts as an HTTP wrapper for the CodeSandbox SDK, exposing f
     CODESANDBOX_SERVICE_PORT="3100"     # Optional: service port (defaults to 3100)
 
     # Auth verification against Unify
-    UNIFY_BASE_URL="..."
+    ORCHESTRA_URL="..."
     UNIFY_KEY="..."
     ```
 
@@ -72,6 +72,6 @@ High-level file endpoints (project/filename semantics, mirrors our Next.js refer
 
 ## Notes
 
-- Authentication is verified against `UNIFY_BASE_URL` using the `Authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>` header, mirroring our agent-service scheme.
+- Authentication is verified against `ORCHESTRA_URL` using the `Authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>` header, mirroring our agent-service scheme.
 - For recursive delete and move/rename, the service uses `sandbox.shells.run("rm -rf ..." | "mv ...")` to match the proven reference behavior.
 - If you see type/module resolution errors locally, ensure `npm install` has run; the Docker build also runs `npm ci` for this service.

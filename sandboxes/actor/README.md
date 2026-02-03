@@ -57,7 +57,7 @@ Create a `.env` file in the `agent-service` directory:
 ```bash
 # agent-service/.env
 ANTHROPIC_API_KEY="sk-ant-..."
-UNIFY_BASE_URL="..."
+ORCHESTRA_URL="..."
 UNIFY_KEY="..."
 # Optional depending on configured LLM clients in magnitude-core (BAML)
 GOOGLE_API_KEY="..."
@@ -262,7 +262,7 @@ The actor sandbox supports full project lifecycle management through Unify's ver
 * **TTS playback issues** – If voice output is garbled, try restarting the sandbox or checking your system audio settings.
 
 **Project & Authentication:**
-* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **Project version errors** – If `--project_version N` fails, check available commits with `unify.get_project_commits()` in a Python shell.
 * **Permission issues** – Make sure your Unify account has access to create/modify projects.
 
@@ -271,7 +271,7 @@ The actor sandbox supports full project lifecycle management through Unify's ver
 * **Web automation** – For actors that use web control, ensure Playwright is properly installed with `playwright install`.
 * **Agent service connection** – If using `--agent-url`, verify the service is running and accessible at `http://localhost:3000/health`.
 * **Agent service not running** – Many actors require the Magnitude service. Start it with `cd agent-service && npx ts-node src/index.ts`.
-* **Agent service environment** – Ensure `.env` file in `agent-service/` has valid `ANTHROPIC_API_KEY`, `UNIFY_BASE_URL`, and `UNIFY_KEY`.
+* **Agent service environment** – Ensure `.env` file in `agent-service/` has valid `ANTHROPIC_API_KEY`, `ORCHESTRA_URL`, and `UNIFY_KEY`.
 * **Magnitude branch** – Ensure you're on the `unity-modifications` branch in the `magnitude/` directory for Unity-specific enhancements.
 * **Magnitude clone fails** – The magnitude repo is private; ensure `CLONE_TOKEN` is set or use `gh repo clone unifyai/magnitude` with authenticated gh CLI.
 * **Headless mode issues** – Try running without `--headless` first to see if web automation is working.

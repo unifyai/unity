@@ -21,7 +21,7 @@ _log = logging.getLogger(__name__)
 
 def _get_base_url() -> str | None:
     """Return base URL or None if not configured."""
-    url = SETTINGS.UNIFY_BASE_URL
+    url = SETTINGS.ORCHESTRA_URL
     return url
 
 

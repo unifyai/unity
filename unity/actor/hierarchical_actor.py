@@ -5882,13 +5882,13 @@ class HierarchicalActor(BaseActor):
         Resolve desktop_url from the orchestrator by assistant full name.
 
         Steps:
-        - GET <UNIFY_BASE_URL>/assistant with Authorization: Bearer <UNIFY_KEY>
+        - GET <ORCHESTRA_URL>/assistant with Authorization: Bearer <UNIFY_KEY>
         - Match the assistant whose full name matches env ASSISTANT_NAME as "<first> <last>"
         - Return its "desktop_url" field
 
         Falls back to the provided agent_server_url on any failure.
         """
-        orchestra_url = SETTINGS.UNIFY_BASE_URL
+        orchestra_url = SETTINGS.ORCHESTRA_URL
         unify_key = SESSION_DETAILS.unify_key
         assistant_name = SESSION_DETAILS.assistant.name.strip()
 
