@@ -292,6 +292,14 @@ async def entrypoint(ctx: JobContext) -> None:
     # Get realtime session (only available after session.start())
     rt = agent.realtime_llm_session
 
+    # For outbound calls, wait for call_answered before generating reply.
+    # Unlike TTS mode (call.py), the Realtime API doesn't go through llm_node,
+    # so we must gate the initial reply here instead.
+    if outbound and not agent.call_received:
+        print("Outbound call: waiting for call_answered before speaking...")
+        await call_answered_flag.wait()
+        print("Outbound call: call answered, proceeding to speak")
+
     await session.generate_reply(allow_interruptions=True)
 
     # Session is now ready - process buffered guidance and mark ready for future
