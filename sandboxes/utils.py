@@ -644,7 +644,7 @@ def transcribe_deepgram(audio_bytes: bytes) -> str:
         return input("> ")
 
 
-async def _speak_async(text: str) -> None:
+async def _speak_async(text: str, *, enable_skip: bool = True) -> None:
     """
     Stream-out Cartesia audio as it is generated so playback starts almost
     immediately.  ↵ while speaking still skips the rest.
@@ -653,23 +653,28 @@ async def _speak_async(text: str) -> None:
         return
 
     # ─────────────── enter-to-skip listener ────────────────
+    # NOTE: In Textual/TUI apps, reading stdin in a background thread can interfere
+    # with the UI's input handling and make typing feel laggy. Allow disabling.
     skip = threading.Event()  # raised when user hits ↵
     listener_done = threading.Event()  # tells the listener to exit
-    # expose skip globally so other parts can cancel speech immediately
-    global _CURRENT_TTS_SKIP
-    _CURRENT_TTS_SKIP = skip
+    listener: threading.Thread | None = None
 
-    def _listen_enter():
-        """Poll stdin so we can shut the thread down cleanly."""
-        while not listener_done.is_set():
-            r, _, _ = select.select([sys.stdin], [], [], 0.05)
-            if r:
-                sys.stdin.readline()
-                skip.set()
-                break
+    if enable_skip:
+        # expose skip globally so other parts can cancel speech immediately
+        global _CURRENT_TTS_SKIP
+        _CURRENT_TTS_SKIP = skip
 
-    listener = threading.Thread(target=_listen_enter, daemon=True)
-    listener.start()
+        def _listen_enter():
+            """Poll stdin so we can shut the thread down cleanly."""
+            while not listener_done.is_set():
+                r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if r:
+                    sys.stdin.readline()
+                    skip.set()
+                    break
+
+        listener = threading.Thread(target=_listen_enter, daemon=True)
+        listener.start()
 
     try:
         # ─────────────── streaming TTS ────────────────
@@ -691,7 +696,8 @@ async def _speak_async(text: str) -> None:
             # skip hint so that it appears **after** those warnings.
             await asyncio.sleep(1.0)
             print(f'🗣️ Assistant speaking…\n"{text}"')
-            print("🔇 Press ↵ to skip playback")
+            if enable_skip:
+                print("🔇 Press ↵ to skip playback")
 
             def _frame_to_pcm(frame: "AudioFrame") -> bytes:
                 """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
@@ -715,21 +721,26 @@ async def _speak_async(text: str) -> None:
     finally:
         # ─────────────── clean-up ───────────────
         listener_done.set()
-        listener.join(timeout=0.1)
-        # clear global skip handle now that we're done
-        _CURRENT_TTS_SKIP = None
+        try:
+            if listener is not None:
+                listener.join(timeout=0.1)
+        except Exception:
+            pass
+        if enable_skip:
+            # clear global skip handle now that we're done
+            _CURRENT_TTS_SKIP = None
 
-        if skip.is_set():  # flush the newline the user pressed
-            try:
-                import termios
+            if skip.is_set():  # flush the newline the user pressed
+                try:
+                    import termios
 
-                termios.tcflush(sys.stdin, termios.TCIFLUSH)
-            except Exception:
-                pass
+                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                except Exception:
+                    pass
 
 
 # ────────────────────────────── public shim ────────────────────────────────
-def speak(text: str) -> None:
+def speak(text: str, *, enable_skip: bool = True) -> None:
     """
     Thread-safe synchronous wrapper around :pyfunc:`_speak_async`.
 
@@ -752,7 +763,7 @@ def speak(text: str) -> None:
 
     def _run_in_thread() -> None:
         try:
-            asyncio.run(_speak_async(text))
+            asyncio.run(_speak_async(text, enable_skip=enable_skip))
         finally:
             _TTS_LOCK.release()
 
@@ -761,7 +772,7 @@ def speak(text: str) -> None:
         asyncio.get_running_loop()
     except RuntimeError:
         # No → safe to run the coroutine synchronously here
-        asyncio.run(_speak_async(text))
+        asyncio.run(_speak_async(text, enable_skip=enable_skip))
     else:
         # Yes → grab the lock *now* to freeze call order and then start
         # a worker that will release it when done.
@@ -777,6 +788,17 @@ def speak_and_wait(text: str) -> None:
     """
     speak(text)
     _wait_for_tts_end()
+
+
+def speak_no_stdin(text: str) -> None:
+    """
+    Speak `text` without touching stdin (safe for Textual/TUI apps).
+
+    This disables the enter-to-skip listener which would otherwise compete with
+    the UI's input handling.
+    """
+
+    speak(text, enable_skip=False)
 
 
 def stop_speaking() -> None:
@@ -1073,13 +1095,14 @@ class _BroadcastLogHandler(logging.Handler):
 def configure_sandbox_logging(
     log_in_terminal: bool = False,
     log_file: Optional[str] = ".logs_main.txt",
+    log_file_mode: str = "w",
     tcp_port: int = 0,
     http_tcp_port: int = 0,
     unify_requests_log_file: Optional[str] = ".logs_unify_requests.txt",
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
-    - Overwrites the given log_file on each run.
+    - Uses `log_file_mode` for the main log file (default: overwrite each run).
     - Adds a StreamHandler to stdout when log_in_terminal is True.
     - Optionally serves logs over TCP on localhost:tcp_port for external viewing.
     - Supports a dedicated Unify Request log stream/file that captures only the 'unify_requests' logger.
@@ -1109,7 +1132,10 @@ def configure_sandbox_logging(
             _abs_main_log = log_file
 
     if _abs_main_log:
-        _fh = _logging.FileHandler(_abs_main_log, mode="w", encoding="utf-8")
+        _mode = str(log_file_mode or "w")
+        if _mode not in {"w", "a"}:
+            _mode = "w"
+        _fh = _logging.FileHandler(_abs_main_log, mode=_mode, encoding="utf-8")
         _fh.setFormatter(_fmt)
 
         # Exclude Unify Request logs from the main log file to keep it high-level
