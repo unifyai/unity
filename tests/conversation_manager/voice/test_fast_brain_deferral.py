@@ -9,17 +9,29 @@ slow brain for data lookups instead of hallucinating answers.
 
 This file tests "false positive" prevention - scenarios where the fast brain
 might be tempted to hallucinate but should defer with natural language.
+
+Tests are parameterized to run against both:
+- gpt-5-nano@openai (TTS mode fast brain, via UnifyLLM)
+- gpt-realtime (STS mode fast brain, via OpenAI Realtime API with text modality)
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 import re
 import pytest
+import websockets
 
 from livekit.agents import llm
 
 from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+
+# Model identifiers
+MODEL_GPT5_NANO = "gpt-5-nano@openai"
+MODEL_GPT_REALTIME = "gpt-realtime"
 
 # Patterns indicating proper deferral (case-insensitive)
 # These patterns indicate the assistant is either:
@@ -113,43 +125,34 @@ def voice_agent_prompt():
     )
 
 
-async def get_fast_brain_response(
+async def get_unify_llm_response(
     system_prompt: str,
     conversation: list[dict[str, str]],
     model: str = "gpt-5-nano@openai",
 ) -> str:
     """
-    Simulate the fast brain responding to a conversation.
+    Get response from UnifyLLM (for gpt-5-nano TTS mode).
 
     Uses the same UnifyLLM adapter that production call.py uses, with streaming
     to collect the full response (matching real-world behavior).
     """
-    # Use the same adapter as production fast brain (call.py)
     llm_instance = UnifyLLM(model=model, reasoning_effort="minimal")
 
-    # Build chat context with system prompt and conversation
     chat_ctx = llm.ChatContext()
     chat_ctx.add_message(role="system", content=system_prompt)
 
-    # Add conversation history
     for msg in conversation:
-        role = msg["role"]
-        content = msg["content"]
-        chat_ctx.add_message(role=role, content=content)
+        chat_ctx.add_message(role=msg["role"], content=msg["content"])
 
-    # Add the instruction to respond
     chat_ctx.add_message(
         role="user",
         content="Respond as the assistant. Keep it concise and conversational (voice call).",
     )
 
-    # Stream the response and collect the full text
-    # The UnifyLLMStream yields ChatChunk objects with delta.content
     stream = llm_instance.chat(chat_ctx=chat_ctx)
     response_parts = []
     try:
         async for chunk in stream:
-            # ChatChunk has delta.content (from ChoiceDelta)
             if hasattr(chunk, "delta") and chunk.delta:
                 content = getattr(chunk.delta, "content", None)
                 if content:
@@ -158,6 +161,153 @@ async def get_fast_brain_response(
         await stream.aclose()
 
     return "".join(response_parts)
+
+
+async def get_realtime_response(
+    system_prompt: str,
+    conversation: list[dict[str, str]],
+    model: str = "gpt-realtime",
+    timeout: float = 30.0,
+) -> str:
+    """
+    Get response from OpenAI Realtime API with text modality.
+
+    Uses WebSocket connection to OpenAI's Realtime API, matching the
+    production sts_call.py architecture but with text-only mode for testing.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY not set - skipping realtime model test")
+
+    url = f"wss://api.openai.com/v1/realtime?model={model}"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    response_text = ""
+
+    async with websockets.connect(
+        url,
+        additional_headers=headers,
+        close_timeout=5,
+    ) as ws:
+        # Configure session with instructions (no modalities in session.update)
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "session.update",
+                    "session": {
+                        "type": "realtime",
+                        "instructions": system_prompt,
+                    },
+                },
+            ),
+        )
+
+        # Wait for session.updated confirmation
+        while True:
+            msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            event = json.loads(msg)
+            if event.get("type") == "session.updated":
+                break
+            if event.get("type") == "error":
+                raise RuntimeError(f"Session update error: {event}")
+
+        # Add conversation items
+        for msg in conversation:
+            role = msg["role"]
+            content = msg["content"]
+
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": role,
+                            "content": [{"type": "input_text", "text": content}],
+                        },
+                    },
+                ),
+            )
+
+            # Wait for item created confirmation
+            while True:
+                item_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                item_event = json.loads(item_msg)
+                if item_event.get("type") in (
+                    "conversation.item.created",
+                    "conversation.item.added",
+                ):
+                    break
+                if item_event.get("type") == "error":
+                    raise RuntimeError(f"Conversation item error: {item_event}")
+
+        # Request response generation with text-only output modality
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {
+                        "output_modalities": ["text"],
+                    },
+                },
+            ),
+        )
+
+        # Collect response text
+        response_parts = []
+        while True:
+            resp_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            resp_event = json.loads(resp_msg)
+            event_type = resp_event.get("type", "")
+
+            # Collect text deltas (GA API uses response.output_text.delta)
+            if event_type in ("response.text.delta", "response.output_text.delta"):
+                delta = resp_event.get("delta", "")
+                response_parts.append(delta)
+            # Response complete
+            elif event_type == "response.done":
+                break
+            elif event_type == "error":
+                raise RuntimeError(f"Response error: {resp_event}")
+
+        response_text = "".join(response_parts)
+
+    return response_text
+
+
+async def get_fast_brain_response(
+    system_prompt: str,
+    conversation: list[dict[str, str]],
+    model: str = MODEL_GPT5_NANO,
+) -> str:
+    """
+    Get response from the fast brain model.
+
+    Dispatches to the appropriate backend based on model:
+    - gpt-5-nano@openai: Uses UnifyLLM (TTS mode)
+    - gpt-realtime: Uses OpenAI Realtime WebSocket API (STS mode)
+    """
+    if model == MODEL_GPT_REALTIME:
+        return await get_realtime_response(system_prompt, conversation, model)
+    else:
+        return await get_unify_llm_response(system_prompt, conversation, model)
+
+
+# =============================================================================
+# Model Parameterization
+# =============================================================================
+
+# List of models to test
+FAST_BRAIN_MODELS = [
+    pytest.param(MODEL_GPT5_NANO, id="tts-gpt5nano"),
+    pytest.param(MODEL_GPT_REALTIME, id="sts-realtime"),
+]
+
+
+@pytest.fixture(params=FAST_BRAIN_MODELS)
+def fast_brain_model(request):
+    """Parameterized fixture for fast brain model selection."""
+    return request.param
 
 
 # =============================================================================
@@ -175,17 +325,25 @@ class TestContactInformationDeferral:
     brain which can look up this information.
     """
 
-    async def test_defers_phone_number_query(self, voice_agent_prompt):
+    async def test_defers_phone_number_query(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
         """Fast brain should defer when asked for someone's phone number."""
         conversation = [
             {"role": "user", "content": "Hey, what's David's phone number?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         # Should have deferral language
         assert has_deferral_language(response), (
-            f"Fast brain should defer phone number queries!\n"
+            f"Fast brain ({fast_brain_model}) should defer phone number queries!\n"
             f"Response: {response}\n\n"
             f"Expected deferral language like 'let me check' or 'I'll look that up'.\n"
             f"The fast brain doesn't have access to contact data."
@@ -194,46 +352,56 @@ class TestContactInformationDeferral:
         # Should NOT have a hallucinated phone number
         hallucinations = has_hallucinated_data(response, ["phone_number"])
         assert not hallucinations, (
-            f"Fast brain hallucinated a phone number!\n"
+            f"Fast brain ({fast_brain_model}) hallucinated a phone number!\n"
             f"Response: {response}\n"
             f"Hallucinated data: {hallucinations}\n\n"
             f"The fast brain should NEVER make up contact information."
         )
 
-    async def test_defers_email_query(self, voice_agent_prompt):
+    async def test_defers_email_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked for someone's email address."""
         conversation = [
             {"role": "user", "content": "Can you give me Sarah's email address?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer email queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer email queries!\n"
+            f"Response: {response}"
         )
 
         hallucinations = has_hallucinated_data(response, ["email"])
         assert not hallucinations, (
-            f"Fast brain hallucinated an email address!\n"
+            f"Fast brain ({fast_brain_model}) hallucinated an email address!\n"
             f"Response: {response}\n"
             f"Hallucinated data: {hallucinations}"
         )
 
-    async def test_defers_address_query(self, voice_agent_prompt):
+    async def test_defers_address_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked for someone's address."""
         conversation = [
             {"role": "user", "content": "What's the address for Bob's office?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer address queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer address queries!\n"
+            f"Response: {response}"
         )
 
         hallucinations = has_hallucinated_data(response, ["address"])
         assert not hallucinations, (
-            f"Fast brain hallucinated an address!\n"
+            f"Fast brain ({fast_brain_model}) hallucinated an address!\n"
             f"Response: {response}\n"
             f"Hallucinated data: {hallucinations}"
         )
@@ -253,48 +421,75 @@ class TestCalendarScheduleDeferral:
     times, appointments, or schedule, it should defer to the slow brain.
     """
 
-    async def test_defers_meeting_time_query(self, voice_agent_prompt):
+    async def test_defers_meeting_time_query(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
         """Fast brain should defer when asked about meeting times."""
         conversation = [
             {"role": "user", "content": "What time is my meeting with Alice tomorrow?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer meeting time queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer meeting time queries!\n"
+            f"Response: {response}"
         )
 
         hallucinations = has_hallucinated_data(response, ["time"])
         assert not hallucinations, (
-            f"Fast brain hallucinated a meeting time!\n"
+            f"Fast brain ({fast_brain_model}) hallucinated a meeting time!\n"
             f"Response: {response}\n"
             f"Hallucinated data: {hallucinations}\n\n"
             f"The fast brain should NEVER guess at meeting times."
         )
 
-    async def test_defers_schedule_overview_query(self, voice_agent_prompt):
+    async def test_defers_schedule_overview_query(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
         """Fast brain should defer when asked for schedule overview."""
         conversation = [
             {"role": "user", "content": "What's on my calendar for today?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
-
-        assert has_deferral_language(response), (
-            f"Fast brain should defer schedule queries!\n" f"Response: {response}"
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
         )
 
-    async def test_defers_availability_query(self, voice_agent_prompt):
+        assert has_deferral_language(response), (
+            f"Fast brain ({fast_brain_model}) should defer schedule queries!\n"
+            f"Response: {response}"
+        )
+
+    async def test_defers_availability_query(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
         """Fast brain should defer when asked about availability."""
         conversation = [
             {"role": "user", "content": "Am I free at 3pm on Friday?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer availability queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer availability queries!\n"
+            f"Response: {response}"
         )
 
         # Should not claim to know availability
@@ -303,7 +498,7 @@ class TestCalendarScheduleDeferral:
             phrase in response_lower
             for phrase in ["you're free", "you are free", "yes, you're", "yes you are"]
         ), (
-            f"Fast brain claimed to know availability without checking!\n"
+            f"Fast brain ({fast_brain_model}) claimed to know availability without checking!\n"
             f"Response: {response}"
         )
 
@@ -321,47 +516,66 @@ class TestSpecificFactsDeferral:
     Questions about budgets, deadlines, project details, etc. require data lookup.
     """
 
-    async def test_defers_budget_query(self, voice_agent_prompt):
+    async def test_defers_budget_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked about budget amounts."""
         conversation = [
             {"role": "user", "content": "What's the budget for the Henderson project?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer budget queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer budget queries!\n"
+            f"Response: {response}"
         )
 
         hallucinations = has_hallucinated_data(response, ["money"])
         assert not hallucinations, (
-            f"Fast brain hallucinated a budget amount!\n"
+            f"Fast brain ({fast_brain_model}) hallucinated a budget amount!\n"
             f"Response: {response}\n"
             f"Hallucinated data: {hallucinations}"
         )
 
-    async def test_defers_deadline_query(self, voice_agent_prompt):
+    async def test_defers_deadline_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked about deadlines."""
         conversation = [
             {"role": "user", "content": "When is the proposal deadline?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
-
-        assert has_deferral_language(response), (
-            f"Fast brain should defer deadline queries!\n" f"Response: {response}"
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
         )
 
-    async def test_defers_email_content_query(self, voice_agent_prompt):
+        assert has_deferral_language(response), (
+            f"Fast brain ({fast_brain_model}) should defer deadline queries!\n"
+            f"Response: {response}"
+        )
+
+    async def test_defers_email_content_query(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
         """Fast brain should defer when asked about email contents."""
         conversation = [
             {"role": "user", "content": "What did the client say in their last email?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer email content queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer email content queries!\n"
+            f"Response: {response}"
         )
 
         # Should not claim to know email content (making up quotes or specific claims)
@@ -381,7 +595,8 @@ class TestSpecificFactsDeferral:
             pattern in response_lower for pattern in claimed_knowledge_patterns
         )
         assert not claimed_knowledge or has_deferral_language(response), (
-            f"Fast brain may have hallucinated email content!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) may have hallucinated email content!\n"
+            f"Response: {response}"
         )
 
 
@@ -396,16 +611,21 @@ class TestRealTimeDataDeferral:
     Tests that the fast brain defers queries requiring real-time data lookup.
     """
 
-    async def test_defers_weather_query(self, voice_agent_prompt):
+    async def test_defers_weather_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked about weather."""
         conversation = [
             {"role": "user", "content": "What's the weather like today?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer weather queries!\n" f"Response: {response}"
+            f"Fast brain ({fast_brain_model}) should defer weather queries!\n"
+            f"Response: {response}"
         )
 
         # Should not make up weather data
@@ -415,19 +635,28 @@ class TestRealTimeDataDeferral:
         # Allow deferral phrases that mention weather conceptually
         if not has_deferral_language(response):
             assert not any(term in response_lower for term in weather_terms), (
-                f"Fast brain hallucinated weather data!\n" f"Response: {response}"
+                f"Fast brain ({fast_brain_model}) hallucinated weather data!\n"
+                f"Response: {response}"
             )
 
-    async def test_defers_unread_messages_query(self, voice_agent_prompt):
+    async def test_defers_unread_messages_query(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
         """Fast brain should defer when asked about unread messages."""
         conversation = [
             {"role": "user", "content": "Do I have any new emails?"},
         ]
 
-        response = await get_fast_brain_response(voice_agent_prompt, conversation)
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
 
         assert has_deferral_language(response), (
-            f"Fast brain should defer unread messages queries!\n"
+            f"Fast brain ({fast_brain_model}) should defer unread messages queries!\n"
             f"Response: {response}"
         )
 
@@ -440,6 +669,6 @@ class TestRealTimeDataDeferral:
             )
             or "let me" in response_lower
         ), (
-            f"Fast brain claimed to know email status without checking!\n"
+            f"Fast brain ({fast_brain_model}) claimed to know email status without checking!\n"
             f"Response: {response}"
         )
