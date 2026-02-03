@@ -298,7 +298,7 @@ async def test_stop():
     handle = await tm.ask(
         "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done()
 

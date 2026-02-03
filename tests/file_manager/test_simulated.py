@@ -136,9 +136,9 @@ async def test_interject(monkeypatch, simulated_file_manager):
     orig = sim_mod._SimulatedFileHandle.interject
 
     @functools.wraps(orig)
-    def wrapped(self, msg: str) -> str:  # type: ignore[override]
+    async def wrapped(self, msg: str, **kwargs) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return orig(self, msg)
+        return await orig(self, msg, **kwargs)
 
     monkeypatch.setattr(
         sim_mod._SimulatedFileHandle,
@@ -158,7 +158,7 @@ async def test_interject(monkeypatch, simulated_file_manager):
     instruction = "Summarize the key points of the report.txt file."
     handle = await fm.ask_about_file("report.txt", instruction)
     await asyncio.sleep(0.05)
-    reply = handle.interject("Focus on financial metrics.")
+    reply = await handle.interject("Focus on financial metrics.")
     assert _ack_ok(reply)
     final_answer = await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
@@ -196,7 +196,7 @@ async def test_stop(simulated_file_manager):
         "Generate a detailed analysis of the large.txt file.",
     )
     await asyncio.sleep(0.05)
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
@@ -340,7 +340,7 @@ async def test_handle_ask(simulated_file_manager):
     handle = await fm.ask_about_file("business.txt", instruction1)
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on European market opportunities.")
+    await handle.interject("Focus on European market opportunities.")
 
     # Invoke the dynamic ask on the running handle
     instruction2 = "What is the key opportunity mentioned?"

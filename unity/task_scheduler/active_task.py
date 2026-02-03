@@ -303,11 +303,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(
+    async def stop(
         self,
         *,
         cancel: bool = False,
         reason: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Stop the running activity with explicit intent.
 
@@ -317,17 +318,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         """
         # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
         try:
-            # Some actor handles implement stop() as async. We must not drop the coroutine.
             # Prefer passing cancel/reason when supported, but fall back for compatibility.
             try:
-                ret = self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
+                ret = await self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
             except TypeError:
                 # Legacy signature: stop(reason: str | None = None)
-                ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
-
-            if asyncio.iscoroutine(ret):
-                asyncio.create_task(ret)
-                ret = "Stopping."
+                ret = await self._actor_handle.stop(reason)  # type: ignore[call-arg]
         except Exception:
             ret = "Stopped."
         self._was_stopped = True

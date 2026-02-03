@@ -270,7 +270,7 @@ class TestSendNotification:
             contact_id=1,
             conversation_manager=mock_cm,
         )
-        handle.stop(reason="test")
+        await handle.stop(reason="test")
 
         result = await handle.send_notification("Should fail")
 
@@ -314,7 +314,8 @@ class TestInterject:
 class TestHandleLifecycle:
     """Tests for handle lifecycle methods (stop, done, result)."""
 
-    def test_stop_marks_handle_done(self):
+    @pytest.mark.asyncio
+    async def test_stop_marks_handle_done(self):
         """stop() marks the handle as done."""
         mock_broker = MagicMock()
         mock_cm = MagicMock()
@@ -329,10 +330,11 @@ class TestHandleLifecycle:
         )
 
         assert handle.done() is False
-        handle.stop(reason="user cancelled")
+        await handle.stop(reason="user cancelled")
         assert handle.done() is True
 
-    def test_stop_returns_reason(self):
+    @pytest.mark.asyncio
+    async def test_stop_returns_reason(self):
         """stop() returns message with reason."""
         mock_broker = MagicMock()
         mock_cm = MagicMock()
@@ -346,10 +348,11 @@ class TestHandleLifecycle:
             conversation_manager=mock_cm,
         )
 
-        result = handle.stop(reason="task completed")
+        result = await handle.stop(reason="task completed")
         assert "task completed" in result
 
-    def test_stop_idempotent(self):
+    @pytest.mark.asyncio
+    async def test_stop_idempotent(self):
         """Calling stop() multiple times is safe."""
         mock_broker = MagicMock()
         mock_cm = MagicMock()
@@ -363,8 +366,8 @@ class TestHandleLifecycle:
             conversation_manager=mock_cm,
         )
 
-        handle.stop(reason="first")
-        result = handle.stop(reason="second")
+        await handle.stop(reason="first")
+        result = await handle.stop(reason="second")
         assert "already stopped" in result.lower()
 
     @pytest.mark.asyncio
@@ -390,7 +393,7 @@ class TestHandleLifecycle:
         assert not result_task.done()
 
         # Stop the handle
-        handle.stop(reason="completed")
+        await handle.stop(reason="completed")
 
         # Result should now complete
         result = await asyncio.wait_for(result_task, timeout=1.0)
@@ -925,7 +928,7 @@ async def test_intercepting_handle_delegates_lifecycle_methods(initialized_cm):
     assert ask_handle.done() is False
 
     # stop() tells the inner loop to cancel - this is non-blocking
-    ask_handle.stop(reason="cancelled by test")
+    await ask_handle.stop(reason="cancelled by test")
 
     # Following standard pattern: await result() for clean completion
     # When stopped, result() returns None
@@ -1195,7 +1198,7 @@ async def test_ask_raises_when_handle_stopped(initialized_cm):
         conversation_manager=cm.cm,
     )
 
-    handle.stop(reason="already done")
+    await handle.stop(reason="already done")
 
     with pytest.raises(RuntimeError, match="stopped"):
         await handle.ask("This should fail")
@@ -1311,7 +1314,7 @@ async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
     assert cm.cm.active_ask_handle is ask_handle_1
 
     # Stop first handle before starting second (clean replacement)
-    ask_handle_1.stop(reason="replaced by new ask")
+    await ask_handle_1.stop(reason="replaced by new ask")
 
     # Start second ask (should replace first)
     ask_handle_2 = await handle.ask("What is the user's favorite food?")

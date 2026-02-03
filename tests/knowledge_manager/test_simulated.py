@@ -149,16 +149,16 @@ async def test_interject_simulated_km(monkeypatch):
     orig = _SimulatedKnowledgeHandle.interject
 
     @functools.wraps(orig)
-    def wrapped(self, msg: str) -> str:  # type: ignore[override]
+    async def wrapped(self, msg: str, **kwargs) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return orig(self, msg)
+        return await orig(self, msg, **kwargs)
 
     monkeypatch.setattr(_SimulatedKnowledgeHandle, "interject", wrapped, raising=True)
 
     km = SimulatedKnowledgeManager()
     handle = await km.ask("Show me all facts about Zebulon.")
     await asyncio.sleep(0.05)
-    reply = handle.interject("Only include historical facts.")
+    reply = await handle.interject("Only include historical facts.")
     assert _ack_ok(reply)
     await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
@@ -173,7 +173,7 @@ async def test_stop_simulated_km():
     km = SimulatedKnowledgeManager()
     handle = await km.ask("Generate a 100-page report of all knowledge.")
     await asyncio.sleep(0.05)
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
@@ -285,7 +285,7 @@ async def test_handle_ask():
     handle = await km.ask("Summarize all relevant knowledge this quarter.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on European enterprise accounts.")
+    await handle.interject("Focus on European enterprise accounts.")
 
     # Invoke the dynamic ask on the running handle
     nested = await handle.ask("What is the key point to emphasize?")
@@ -361,7 +361,7 @@ async def test_stop_while_paused_finishes_immediately():
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
-    h.stop("cancelled by user")
+    await h.stop("cancelled by user")
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()
@@ -384,7 +384,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     )
     q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in q.lower()
-    h.stop("no longer needed")
+    await h.stop("no longer needed")
     out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()

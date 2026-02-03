@@ -936,7 +936,7 @@ async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch
     ), "newly scheduled tool did not start paused"
 
     # Cleanup: stop the loop and restore original LLM generator
-    h.stop("test cleanup")
+    await h.stop("test cleanup")
     await h.result()
     monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
 
@@ -1055,7 +1055,7 @@ async def test_resume_unblocks_base_tool(client, monkeypatch):
     ), "LLM should not need to call resume_… helper for base tools"
 
     # Cleanup – stop the loop and restore generator
-    h.stop("cleanup")
+    await h.stop("cleanup")
     # Await result; outer handle returns a standardized notice on stop
     await asyncio.wait_for(asyncio.shield(h.result()), timeout=60)
     monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)

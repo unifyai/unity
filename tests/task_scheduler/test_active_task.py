@@ -58,7 +58,7 @@ async def test_ask(monkeypatch):
     await task.ask("Do we have any early metrics?")
     # Give the background worker a beat and then stop explicitly.
     await asyncio.sleep(0.2)
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert calls["ask"] == 1, "ask must be called exactly once"
@@ -96,7 +96,7 @@ async def test_interject(monkeypatch):
     # Give the background thread one beat to process the step counter.
     await asyncio.sleep(0.2)
     # Gracefully stop to avoid leaking the background thread.
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert calls["interject"] == 1, "interject must be called exactly once"
@@ -141,7 +141,7 @@ async def test_pause_resume(monkeypatch):
     await asyncio.sleep(0.1)
     await task.resume()
     # Stop the task to finish quickly and collect counts.
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert counts == {"pause": 1, "resume": 1}, "pause/resume each called once"
@@ -177,7 +177,7 @@ async def test_stop(monkeypatch):
         actor,
         task_description="Extract sentiment from reviews.",
     )
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     result = await task.result()
 
     assert called["stop"] == 1, "stop must be invoked exactly once"
@@ -204,7 +204,7 @@ async def test_result_and_done():
 
     # Perform one interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     result = await task.result()
 
     assert "stopped" in result.lower()
@@ -319,7 +319,7 @@ def simulate_linkedin_sales_leads() -> str:
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
 
     # Ensure clean shutdown to avoid relying on natural step completion
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
 
@@ -379,5 +379,5 @@ async def test_interject_image_guides_simulation_to_spreadsheet(
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
     # Ensure clean shutdown to avoid relying on natural step completion
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()

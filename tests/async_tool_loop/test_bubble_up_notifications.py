@@ -181,7 +181,7 @@ async def test_notification_bubbles_up_two_tiers(model) -> None:
     finally:
         # Ensure loop teardown even if assertions/timeouts fail
         try:
-            outer_handle.stop("test cleanup")
+            await outer_handle.stop("test cleanup")
         except Exception:
             pass
 
@@ -298,6 +298,6 @@ async def test_notification_bubbles_through_returned_handle(model) -> None:
         assert result is not None, "Loop should complete with a response"
     finally:
         try:
-            handle.stop("test cleanup")
+            await handle.stop("test cleanup")
         except Exception:
             pass

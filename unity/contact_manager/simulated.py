@@ -325,7 +325,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
@@ -347,11 +347,12 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._extra_msgs.append(message)
         return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: str | None = None,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
+        **kwargs,
     ) -> str:
         """Stop the in-flight handle.
 

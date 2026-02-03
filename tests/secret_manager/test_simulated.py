@@ -104,16 +104,16 @@ async def test_handle_interject(monkeypatch):
     orig = _SimulatedSecretHandle.interject
 
     @functools.wraps(orig)
-    def wrapped(self, msg: str) -> str:  # type: ignore[override]
+    async def wrapped(self, msg: str, **kwargs) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return orig(self, msg)
+        return await orig(self, msg, **kwargs)
 
     monkeypatch.setattr(_SimulatedSecretHandle, "interject", wrapped, raising=True)
 
     sm = SimulatedSecretManager()
     h = await sm.ask("Show me recent secret activity.")
     await asyncio.sleep(0.05)
-    reply = h.interject("Also mention any new keys created today.")
+    reply = await h.interject("Also mention any new keys created today.")
     assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1
@@ -126,7 +126,7 @@ async def test_handle_stop():
     sm = SimulatedSecretManager()
     h = await sm.ask("Generate a summary of configured secrets.")
     await asyncio.sleep(0.05)
-    h.stop()
+    await h.stop()
     with pytest.raises(asyncio.CancelledError):
         await h.result()
     assert h.done(), "Handle should report done after stop()"
@@ -224,7 +224,7 @@ async def test_handle_ask_nested():
     handle = await sm.ask("Summarize current secret placeholders used in the system.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on API and database related placeholders.")
+    await handle.interject("Focus on API and database related placeholders.")
 
     # Invoke the dynamic ask on the running handle
     nested = await handle.ask("Which placeholders are most critical to rotate?")
@@ -289,7 +289,7 @@ async def test_stop_while_paused_finishes_immediately():
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
-    h.stop("cancelled by user")
+    await h.stop("cancelled by user")
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert h.done()
@@ -310,7 +310,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     )
     q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in q.lower()
-    h.stop("no longer needed")
+    await h.stop("no longer needed")
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert h.done()

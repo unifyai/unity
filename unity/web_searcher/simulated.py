@@ -155,7 +155,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
@@ -177,9 +177,10 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._extra_msgs.append(message)
         return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: str | None = None,
+        **kwargs,
     ) -> str:
         """Stop the in-flight handle.
 
