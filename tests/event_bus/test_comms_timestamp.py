@@ -20,7 +20,6 @@ from unity.conversation_manager.events import (
     Event as CommsEvent,
 )
 
-
 # -------------------------------------------------------------------
 #  CommsPayload timestamp type tests
 # -------------------------------------------------------------------
