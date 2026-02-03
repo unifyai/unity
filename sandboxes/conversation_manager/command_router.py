@@ -476,7 +476,12 @@ class CommandRouter:
             return RouterResult(lines=[])
         if cmd.name == "call":
             await self.publisher.publish_call_start()
-            return RouterResult(lines=[])
+            return RouterResult(
+                lines=[
+                    "📞 Call started.",
+                    "Tip: use `say <text>` to speak, and `end_call` to finish.",
+                ],
+            )
         if cmd.name == "say":
             if not getattr(st, "in_call", False):
                 return RouterResult(lines=["⚠️ No active call. Use `call` first."])
@@ -530,7 +535,7 @@ class CommandRouter:
             return RouterResult(lines=[f"▶️ {text}"])
         if cmd.name == "end_call":
             await self.publisher.publish_call_end()
-            return RouterResult(lines=[])
+            return RouterResult(lines=["📞 Call ended."])
 
         return RouterResult(lines=[f"⚠️ Unknown event command: {cmd.name}"])
 
