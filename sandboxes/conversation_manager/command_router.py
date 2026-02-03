@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
@@ -32,6 +34,9 @@ from sandboxes.conversation_manager.config_manager import (
 from sandboxes.conversation_manager.trace_display import TraceDisplay
 from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
 from sandboxes.conversation_manager.log_aggregator import LogAggregator
+from sandboxes.conversation_manager.agent_service_bootstrap import (
+    get_agent_service_log_path,
+)
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -157,6 +162,8 @@ class CommandRouter:
             return await self._handle_log_expansion(cmd.args, expand=True)
         if cmd.kind == "collapse_logs":
             return await self._handle_log_expansion(cmd.args, expand=False)
+        if cmd.kind == "agent_logs":
+            return await self._handle_agent_logs(cmd.args)
 
         # Scenario seeding
         if cmd.kind in {"scenario_seed", "scenario_seed_voice"}:
@@ -234,6 +241,76 @@ class CommandRouter:
         for c in cats:
             lg.collapse(c)  # type: ignore[arg-type]
         return RouterResult(lines=[lg.render_summary()])
+
+    def _tail_text_file(self, path: Path, *, max_lines: int = 80) -> str:
+        """
+        Return the last N lines of a text file, best-effort.
+
+        This is a sandbox UX helper; we keep it safe and bounded.
+        """
+        max_lines = int(max_lines)
+        if max_lines <= 0:
+            max_lines = 80
+        if max_lines > 400:
+            max_lines = 400
+        try:
+            if not path.exists():
+                return ""
+        except Exception:
+            return ""
+        try:
+            # Bounded approach: keep only the last N lines without loading everything into memory.
+            dq: deque[str] = deque(maxlen=max_lines)
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    dq.append(line.rstrip("\n"))
+            return "\n".join(dq).rstrip()
+        except Exception:
+            return ""
+
+    async def _handle_agent_logs(self, args: str) -> RouterResult:
+        n = 80
+        try:
+            if (args or "").strip():
+                n = int((args or "").strip())
+        except Exception:
+            n = 80
+
+        # Determine repo root (same strategy as the sandbox entrypoint).
+        repo_root = Path(__file__).resolve().parents[2]
+        agent_server_url = getattr(
+            self.args,
+            "agent_server_url",
+            "http://localhost:3000",
+        )
+        log_path = None
+        try:
+            lp = getattr(self.args, "_agent_service_log_path", None)
+            if isinstance(lp, str) and lp.strip():
+                log_path = Path(lp.strip())
+        except Exception:
+            log_path = None
+        if log_path is None:
+            log_path = get_agent_service_log_path(
+                repo_root=repo_root,
+                agent_server_url=str(agent_server_url),
+            )
+
+        tail = self._tail_text_file(log_path, max_lines=n)
+        if not tail:
+            return RouterResult(
+                lines=[
+                    f"agent-service log: {log_path}",
+                    "⚠️ No log output yet (or file does not exist).",
+                ],
+            )
+        return RouterResult(
+            lines=[
+                f"agent-service log: {log_path}",
+                "",
+                tail,
+            ],
+        )
 
     async def _handle_config_switch(
         self,
