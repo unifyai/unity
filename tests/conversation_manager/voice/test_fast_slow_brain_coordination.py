@@ -1306,3 +1306,231 @@ class TestUserCorrectionsAndRestatements:
         finally:
             cm.event_broker.publish = original_publish
             cm._run_llm = original_run_llm
+
+
+# =============================================================================
+# Test: Fast brain incorrect information - slow brain correction should be sent
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestFastBrainIncorrectInformation:
+    """
+    Tests for when the fast brain provides incorrect information and the slow
+    brain has the correct answer.
+
+    The fast brain is a lightweight model optimized for responsiveness. It may
+    sometimes guess or hallucinate an answer while the slow brain is looking up
+    the actual data. When the slow brain returns with the correct information,
+    that guidance should be SENT even though the fast brain already "answered".
+
+    This tests the OPPOSITE failure mode from topic changes:
+    - Topic change tests: guidance should be BLOCKED (stale)
+    - This test: guidance should be SENT (correction/accurate data)
+
+    The risk is that the guidance filter sees "fast brain already answered" and
+    incorrectly blocks the slow brain's correction per Example 4 in the prompt.
+    """
+
+    @pytest.fixture
+    def boss_contact(self):
+        """The boss contact (contact_id=1) who is on the call."""
+        return TEST_CONTACTS[1]
+
+    async def test_slow_brain_correction_should_override_fast_brain_guess(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        When fast brain guesses wrong and slow brain has correct data, the
+        slow brain's guidance should be SENT (not blocked as "redundant").
+
+        Scenario:
+            User: "What time is the meeting with Alice?"
+            Fast brain: "I believe that's at 2pm!"  ← WRONG (guess/hallucination)
+            (slow brain actually checks calendar)
+            Slow brain: "The meeting with Alice is at 4pm"  ← CORRECT
+
+        The guidance filter might see:
+        - Fast brain mentioned a meeting time (2pm)
+        - Slow brain guidance also mentions meeting time (4pm)
+        - Example 4 in prompt: "BLOCK when fast brain already handled it"
+
+        But the CORRECT behavior is:
+        - The fast brain GUESSED (2pm) - this is wrong
+        - The slow brain has ACTUAL DATA (4pm) - this is correct
+        - The correction MUST be sent to avoid giving user wrong information
+
+        The filter should recognize that different times = correction, not redundancy.
+        """
+        cm = initialized_cm.cm
+
+        # Start a call
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        assert cm.mode == Mode.CALL, "Should be in CALL mode"
+
+        # Track published guidance
+        published_guidance: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_guidance(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                try:
+                    data = json.loads(message)
+                    if "payload" in data:
+                        content = data["payload"].get("content", "")
+                    else:
+                        content = data.get("content", "")
+                    if content:
+                        published_guidance.append({"content": content})
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_guidance
+
+        try:
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 1: User asks about meeting time
+            # ─────────────────────────────────────────────────────────────────
+            user_question = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="What time is the meeting with Alice?",
+            )
+            await EventHandler.handle_event(
+                user_question,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Mock slow brain
+            original_run_llm = cm._run_llm
+            slow_brain_started = asyncio.Event()
+            slow_brain_can_finish = asyncio.Event()
+
+            async def slow_brain_with_correct_meeting_time():
+                """
+                Simulates slow brain that:
+                1. Started looking up the actual meeting time
+                2. Returns the CORRECT time (4pm)
+                3. But fast brain already guessed WRONG (2pm)
+                """
+                from unity.common.prompt_helpers import now as prompt_now
+
+                contact_id = boss_contact["contact_id"]
+                conv_state = cm.contact_index.get_conversation_state(contact_id)
+                voice_medium = Medium.PHONE_CALL
+                voice_thread = list(conv_state.threads.get(voice_medium, []))
+
+                if voice_thread:
+                    last_msg = voice_thread[-1]
+                    slow_brain_start_time = last_msg.timestamp
+                else:
+                    slow_brain_start_time = prompt_now(as_string=False)
+
+                slow_brain_started.set()
+                await slow_brain_can_finish.wait()
+                await asyncio.sleep(0.1)
+
+                # Slow brain has the CORRECT information from calendar lookup
+                correct_guidance = (
+                    "The meeting with Alice is at 4pm in the East Wing conference room. "
+                    "She confirmed attendance this morning."
+                )
+
+                should_send = await cm._check_guidance_relevance(
+                    correct_guidance,
+                    slow_brain_start_time,
+                )
+
+                if should_send:
+                    guidance_event = CallGuidance(
+                        contact=boss_contact,
+                        content=correct_guidance,
+                    )
+                    await cm.event_broker.publish(
+                        "app:call:call_guidance",
+                        guidance_event.to_json(),
+                    )
+
+                return None
+
+            cm._run_llm = slow_brain_with_correct_meeting_time
+            await cm.flush_llm_requests()
+            await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 2: Fast brain CONFIDENTLY states wrong info (hallucination)
+            # No hedging language - this makes it harder for the filter
+            # because it looks like a definitive answer, not a guess
+            # ─────────────────────────────────────────────────────────────────
+            await asyncio.sleep(0.2)
+            fast_brain_wrong_guess = OutboundPhoneUtterance(
+                contact=boss_contact,
+                content="The meeting with Alice is at 2pm.",
+            )
+            await EventHandler.handle_event(
+                fast_brain_wrong_guess,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 3: Let slow brain finish with CORRECT time
+            # ─────────────────────────────────────────────────────────────────
+            slow_brain_can_finish.set()
+
+            # Wait for guidance filter (LLM call)
+            await asyncio.sleep(10.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 4: Verify CORRECT guidance was sent (not blocked)
+            # ─────────────────────────────────────────────────────────────────
+            correct_time_guidance = [
+                g
+                for g in published_guidance
+                if "4pm" in g["content"].lower() or "east wing" in g["content"].lower()
+            ]
+
+            # THE KEY ASSERTION: Correction guidance should be SENT
+            #
+            # This test may FAIL because:
+            # - Filter sees fast brain already mentioned meeting time
+            # - Example 4 in prompt says to block "already answered"
+            # - Filter might think "meeting with Alice" is same info
+            #
+            # But the slow brain's guidance is a CORRECTION:
+            # - Fast brain said 2pm (WRONG)
+            # - Slow brain says 4pm (CORRECT)
+            # - This is NOT redundancy, it's correction!
+            assert len(correct_time_guidance) >= 1, (
+                f"Slow brain's CORRECT guidance was blocked!\n"
+                f"\n"
+                f"Fast brain guessed: 'meeting at 2pm' (WRONG)\n"
+                f"Slow brain had: 'meeting at 4pm' (CORRECT)\n"
+                f"\n"
+                f"Published guidance: {[g['content'] for g in published_guidance]}\n"
+                f"\n"
+                f"Conversation flow:\n"
+                f"  1. User: 'What time is the meeting with Alice?'\n"
+                f"  2. (slow brain starts looking up actual time)\n"
+                f"  3. Fast brain: 'I believe it's at 2pm'  ← WRONG GUESS\n"
+                f"  4. Slow brain: 'Meeting is at 4pm'  ← CORRECT, should be sent!\n"
+                f"\n"
+                f"The filter incorrectly blocked the correction.\n"
+                f"It saw 'fast brain already answered about meeting time' and\n"
+                f"applied Example 4 (block redundant info). But 2pm ≠ 4pm!\n"
+                f"\n"
+                f"The filter needs to recognize CORRECTIONS vs REDUNDANCY:\n"
+                f"  - Redundancy: same information repeated\n"
+                f"  - Correction: different/conflicting information (should be sent!)\n"
+            )
+
+        finally:
+            cm.event_broker.publish = original_publish
+            cm._run_llm = original_run_llm
