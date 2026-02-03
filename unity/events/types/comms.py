@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,7 +27,7 @@ class CommsPayload(BaseModel):
         default=None,
         description="Message content if applicable",
     )
-    timestamp: Optional[str] = Field(
+    timestamp: Optional[datetime] = Field(
         default=None,
-        description="Event timestamp in ISO format",
+        description="Event timestamp",
     )

@@ -93,7 +93,9 @@ class Event:
 
     @classmethod
     def from_bus_event(cls, event):
-        event_dump = event.model_dump()
+        # Use mode="json" to ensure datetime objects are serialized to ISO strings,
+        # which from_dict() expects for the timestamp field
+        event_dump = event.model_dump(mode="json")
         data = {
             "event_name": event_dump["payload_cls"],
             "payload": event_dump["payload"],
