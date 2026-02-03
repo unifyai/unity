@@ -311,7 +311,7 @@ app.use(express.json({ limit: '100mb' }));
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const url = new URL(`${process.env.UNIFY_BASE_URL}/user/basic-info`);
+    const url = new URL(`${process.env.ORCHESTRA_URL}/user/basic-info`);
     const options = {
       method: 'GET',
       hostname: url.hostname,

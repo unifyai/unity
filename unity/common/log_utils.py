@@ -379,7 +379,7 @@ async def atomic_upsert(
 
     # Get API credentials
     api_key = SESSION_DETAILS.unify_key
-    base_url = SETTINGS.UNIFY_BASE_URL
+    base_url = SETTINGS.ORCHESTRA_URL
 
     # Make the HTTP request to Orchestra
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -438,7 +438,7 @@ def atomic_upsert_sync(
 
     # Get API credentials
     api_key = SESSION_DETAILS.unify_key
-    base_url = SETTINGS.UNIFY_BASE_URL
+    base_url = SETTINGS.ORCHESTRA_URL
 
     # Make the HTTP request to Orchestra
     with httpx.Client(timeout=30.0) as client:

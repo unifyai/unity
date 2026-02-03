@@ -295,7 +295,7 @@ jobs:
 
         # CI defaults for project management (can be overridden)
         # With local orchestra (default), these are ignored - each job has fresh DB
-        # Only relevant when UNIFY_BASE_URL is set to a non-local URL (staging/production)
+        # Only relevant when ORCHESTRA_URL is set to a non-local URL (staging/production)
         DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
@@ -488,9 +488,9 @@ jobs:
       needs.discover.outputs.delete_on_start == 'true' &&
       needs.discover.outputs.random_projects != 'true'
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
-      # No fallback - if delete_on_start is enabled, UNIFY_BASE_URL must be set
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # No fallback - if delete_on_start is enabled, ORCHESTRA_URL must be set
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
     - uses: actions/checkout@v2
 
@@ -542,8 +542,8 @@ jobs:
       # Local orchestra path (cloned into workspace, not sibling directory)
       ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
       # API credentials
-      # UNIFY_BASE_URL: if repo variable set, use remote; otherwise local orchestra sets it
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      # ORCHESTRA_URL: if repo variable set, use remote; otherwise local orchestra sets it
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       # Communication service URL (auto-selected based on branch: main→production, else→staging)
@@ -558,7 +558,7 @@ jobs:
       ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
       # Unify API key for _prepare_shared_project.py and tests
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
       # Ensure local unillm/unify packages are found correctly
       # The repos are cloned to ./unillm/ and ./unify/, with packages inside
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
@@ -1066,9 +1066,9 @@ jobs:
       needs.discover.outputs.random_projects != 'true' &&
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
-      # No fallback - if delete_on_exit is enabled, UNIFY_BASE_URL must be set
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # No fallback - if delete_on_exit is enabled, ORCHESTRA_URL must be set
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
     - uses: actions/checkout@v2
 

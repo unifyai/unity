@@ -144,7 +144,7 @@ This means CI runs use your personal settings without exposing secrets:
 
 - `UNIFY_KEY` — your API key (masked)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. (masked)
-- `UNIFY_BASE_URL`, `UNIFY_CACHE`, etc. (visible, non-sensitive)
+- `ORCHESTRA_URL`, `UNIFY_CACHE`, etc. (visible, non-sensitive)
 
 **What appears in logs:**
 - ✅ Explicit `--env` overrides you pass on the command line

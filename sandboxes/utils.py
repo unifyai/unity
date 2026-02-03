@@ -2751,13 +2751,13 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
 
         Sandboxes call `unify.activate()` during startup, which requires a reachable
         Unify API backend. In tests, `tests/parallel_run.sh` auto-starts local
-        Orchestra when `UNIFY_BASE_URL` targets localhost. Sandbox entrypoints are
+        Orchestra when `ORCHESTRA_URL` targets localhost. Sandbox entrypoints are
         typically run directly, so we replicate that behavior here (sandbox-only).
 
         This helper is intentionally:
         - **best effort**: failures are logged and ignored (the subsequent call
           will fail with a clearer HTTP error if a backend is still unavailable).
-        - **opt-in by URL**: only triggers when `UNIFY_BASE_URL` explicitly points
+        - **opt-in by URL**: only triggers when `ORCHESTRA_URL` explicitly points
           at localhost/127.0.0.1.
         """
         import re
@@ -2767,7 +2767,7 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
 
         lg = logging.getLogger(__name__)
 
-        base_url = os.environ.get("UNIFY_BASE_URL")
+        base_url = os.environ.get("ORCHESTRA_URL")
         if not base_url:
             # Respect the user's environment: only autostart when explicitly configured
             # to use localhost (mirrors the user request).
@@ -2792,7 +2792,7 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
 
         if not local_sh.exists():
             lg.warning(
-                "UNIFY_BASE_URL targets localhost (%s) but local orchestra script not found at %s. "
+                "ORCHESTRA_URL targets localhost (%s) but local orchestra script not found at %s. "
                 "Set ORCHESTRA_REPO_PATH to your orchestra repo.",
                 base_url,
                 local_sh,
@@ -2824,12 +2824,12 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
             url = _extract_url((check.stdout or "") + "\n" + (check.stderr or ""))
             if url:
                 # Ensure Unify client points at the discovered local URL (port may differ).
-                os.environ["UNIFY_BASE_URL"] = url
+                os.environ["ORCHESTRA_URL"] = url
                 lg.info("Using local orchestra: %s", url)
             return
 
         lg.info(
-            "UNIFY_BASE_URL targets localhost (%s); attempting to start local orchestra...",
+            "ORCHESTRA_URL targets localhost (%s); attempting to start local orchestra...",
             base_url,
         )
         start = _run("start")
@@ -2854,7 +2854,7 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
 
         url2 = _extract_url((check2.stdout or "") + "\n" + (check2.stderr or ""))
         if url2:
-            os.environ["UNIFY_BASE_URL"] = url2
+            os.environ["ORCHESTRA_URL"] = url2
             lg.info("Using local orchestra: %s", url2)
 
     import unity
