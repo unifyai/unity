@@ -122,7 +122,7 @@ Troubleshooting
 ---------------
 * Ensure the environment variable `UNITY_WEB_TAVILY_API_KEY` is set.
 * If voice mode is enabled, ensure `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` are set.
-* The sandbox uses your configured Unify credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`). Missing or invalid credentials may cause HTTP errors.
+* The sandbox uses your configured Unify credentials (`UNIFY_KEY`, `ORCHESTRA_URL`). Missing or invalid credentials may cause HTTP errors.
 * If the loop appears to stall on tools, enable `-d` to inspect the decision policy and prompts.
 
 Happy researching! 🎉

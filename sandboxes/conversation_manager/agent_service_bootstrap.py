@@ -193,7 +193,7 @@ def _wait_for_ready_or_explain_auth(
                     ok=False,
                     summary=(
                         "agent-service is running but authentication failed "
-                        "(check UNIFY_KEY + UNIFY_BASE_URL reachability)"
+                        "(check UNIFY_KEY + ORCHESTRA_URL reachability)"
                     ),
                     process=proc,
                 )
@@ -285,7 +285,7 @@ def diagnose_agent_service_setup(
     """
     try:
         unify_key = os.environ.get("UNIFY_KEY") or ""
-        unify_base_url = os.environ.get("UNIFY_BASE_URL") or ""
+        orchestra_url = os.environ.get("ORCHESTRA_URL") or ""
         if not unify_key:
             return AgentServiceDiagnosis(
                 ok=False,
@@ -296,18 +296,18 @@ def diagnose_agent_service_setup(
                     "- Add `UNIFY_KEY=...` to your repo `.env`, or export it in your shell.\n"
                     "- Then re-run the sandbox.\n\n"
                     "Notes:\n"
-                    "- `agent-service` also verifies keys against Unify; ensure `UNIFY_BASE_URL` is set if your setup requires it.\n\n"
+                    "- `agent-service` also verifies keys against Unify; ensure `ORCHESTRA_URL` is set if your setup requires it.\n\n"
                     "Docs:\n"
                     "- `sandboxes/conversation_manager/README.md` (Mode 3)\n"
                     "- `sandboxes/actor/README.md` (Magnitude agent-service setup)\n"
                 ),
             )
-        unify_base_url_hint = ""
-        if not unify_base_url:
-            unify_base_url_hint = (
-                "Note: `UNIFY_BASE_URL` is not set. agent-service verifies the key via "
-                "`$UNIFY_BASE_URL/user/basic-info`, so a missing/incorrect/unreachable "
-                "`UNIFY_BASE_URL` can cause authentication failures."
+        orchestra_url_hint = ""
+        if not orchestra_url:
+            orchestra_url_hint = (
+                "Note: `ORCHESTRA_URL` is not set. agent-service verifies the key via "
+                "`$ORCHESTRA_URL/user/basic-info`, so a missing/incorrect/unreachable "
+                "`ORCHESTRA_URL` can cause authentication failures."
             )
 
         if _validate_agent_service(
@@ -338,7 +338,7 @@ def diagnose_agent_service_setup(
         if service_up:
             lines.append(
                 "agent-service appears to be running, but authentication failed. "
-                "This usually means `UNIFY_KEY` is invalid, or `UNIFY_BASE_URL` is missing/incorrect "
+                "This usually means `UNIFY_KEY` is invalid, or `ORCHESTRA_URL` is missing/incorrect "
                 "(agent-service verifies keys against Unify).",
             )
             lines.append("")
@@ -348,8 +348,8 @@ def diagnose_agent_service_setup(
                 f"`{agent_server_url}`.",
             )
             lines.append("")
-        if unify_base_url_hint:
-            lines.append(unify_base_url_hint)
+        if orchestra_url_hint:
+            lines.append(orchestra_url_hint)
             lines.append("")
 
         if missing_bits:
@@ -429,9 +429,9 @@ def try_auto_bootstrap_agent_service(
             summary="UNIFY_KEY is not set (required for agent-service auth)",
             process=None,
         )
-    if not (os.environ.get("UNIFY_BASE_URL") or ""):
+    if not (os.environ.get("ORCHESTRA_URL") or ""):
         progress(
-            "[agent-service] Note: UNIFY_BASE_URL is not set. "
+            "[agent-service] Note: ORCHESTRA_URL is not set. "
             "agent-service verifies keys via Unify, so auth may fail until it is configured.",
         )
 

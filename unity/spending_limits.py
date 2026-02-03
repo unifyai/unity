@@ -55,7 +55,7 @@ def _get_api_key() -> Optional[str]:
 
 def _get_base_url() -> str:
     """Get the Orchestra API base URL."""
-    return os.getenv("UNIFY_BASE_URL", "https://api.unify.ai/v0")
+    return os.getenv("ORCHESTRA_URL", "https://api.unify.ai/v0")
 
 
 def _get_current_month(timezone: str = "UTC") -> str:
