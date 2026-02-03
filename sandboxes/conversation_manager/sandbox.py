@@ -30,6 +30,8 @@ from sandboxes.conversation_manager.config_manager import (
     ConfigurationManager,
 )
 from sandboxes.conversation_manager.agent_service_bootstrap import (
+    free_agent_service_port,
+    get_agent_service_log_path,
     try_start_agent_service_direct,
     try_auto_bootstrap_agent_service,
 )
@@ -262,8 +264,28 @@ async def _main_async() -> None:
                     "agent_server_url",
                     "http://localhost:3000",
                 )
+                try:
+                    setattr(
+                        args,
+                        "_agent_service_log_path",
+                        str(
+                            get_agent_service_log_path(
+                                repo_root=project_root,
+                                agent_server_url=str(agent_server_url),
+                            ),
+                        ),
+                    )
+                except Exception:
+                    pass
 
                 try:
+                    # Best-effort port cleanup before attempting a restart.
+                    await asyncio.to_thread(
+                        free_agent_service_port,
+                        repo_root=project_root,
+                        agent_server_url=agent_server_url,
+                        progress=(lambda m: print(m)),
+                    )
                     print("\n[agent-service] Attempting to start (direct)...\n")
                     res1 = await asyncio.to_thread(
                         try_start_agent_service_direct,
@@ -568,6 +590,21 @@ async def _main_async() -> None:
                             proc.kill()
                         except Exception:
                             pass
+            except Exception:
+                pass
+            # Best-effort: ensure the configured port isn't left bound by a sandbox-started
+            # agent-service instance (or a stale previous one from this repo).
+            try:
+                await asyncio.to_thread(
+                    free_agent_service_port,
+                    repo_root=project_root,
+                    agent_server_url=getattr(
+                        args,
+                        "agent_server_url",
+                        "http://localhost:3000",
+                    ),
+                    progress=(lambda _m: None),
+                )
             except Exception:
                 pass
 
