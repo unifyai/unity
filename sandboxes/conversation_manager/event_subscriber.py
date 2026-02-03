@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from unity.conversation_manager.events import (
     CallGuidance,
@@ -36,6 +36,10 @@ from unity.events.types.manager_method import ManagerMethodPayload
 LG = logging.getLogger("conversation_manager_sandbox")
 
 DisplayCallback = Callable[[str], Awaitable[None]] | Callable[[str], None]
+EventCallback = (
+    Callable[[str, dict[str, Any]], Awaitable[None]]
+    | Callable[[str, dict[str, Any]], None]
+)
 
 
 def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[str]:
@@ -102,6 +106,7 @@ async def subscribe_to_responses(
     cm: object,
     sandbox_state: object,
     display_callback: DisplayCallback,
+    event_callback: EventCallback | None = None,
     include_call_guidance: bool = False,
     voice_enabled: bool = False,
     stop_event: asyncio.Event | None = None,
@@ -214,6 +219,21 @@ async def subscribe_to_responses(
                         event = Event.from_json(msg["data"])
                     except Exception:
                         continue
+
+                    # Optional raw event callback (used by IPC UIs to build their own panes).
+                    try:
+                        if event_callback is not None:
+                            ch_raw = msg.get("channel") or ""
+                            if isinstance(ch_raw, (bytes, bytearray)):
+                                ch = ch_raw.decode("utf-8", "ignore")
+                            else:
+                                ch = str(ch_raw)
+                            d = event.to_dict()
+                            ret = event_callback(ch, d)
+                            if asyncio.iscoroutine(ret):
+                                await ret  # type: ignore[misc]
+                    except Exception:
+                        pass
 
                     # Categorized logs (structured, high-signal) from broker channels.
                     try:
@@ -338,6 +358,16 @@ async def subscribe_to_responses(
                                 actor_waiting_clarification_ids.discard(hid)
                                 actor_completed_ids.add(hid)
                             last_actor_event_at = now
+                    except Exception:
+                        pass
+
+                    # Surface clarification-waiting state to the sandbox UI when supported.
+                    try:
+                        setattr(
+                            sandbox_state,
+                            "pending_clarification",
+                            bool(actor_waiting_clarification_ids),
+                        )
                     except Exception:
                         pass
 
