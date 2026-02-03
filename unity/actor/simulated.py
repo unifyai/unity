@@ -30,7 +30,6 @@ class _StaticAnswerHandle(SteerableToolHandle):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: object | None = None,
     ) -> "SteerableToolHandle":
         return self
 
@@ -39,7 +38,6 @@ class _StaticAnswerHandle(SteerableToolHandle):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
     ) -> Optional[str]:
         return None
 
@@ -377,7 +375,6 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
     ) -> None:
         if not self._description:
             raise Exception("No actions are currently being performed.")
@@ -386,168 +383,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         # Human-facing interject log (lineage-aligned)
         self._log_interject(message)
 
-        # Build a content list for a user message that includes the instruction and any attached images.
-        # Images are resolved to handles and added as image_url blocks (data URLs or signed URLs where available).
+        # Build a content list for a user message with the instruction
         content_blocks: list[dict] = [{"type": "text", "text": str(message)}]
 
-        # Best-effort image resolution and block construction
-        if images is not None:
-            try:
-                # Support ImageRefs containers (duck-typed via .root) and plain lists
-                items = list(getattr(images, "root", images) or [])
-            except Exception:
-                items = []
-
-            # Collect candidate handles by id or direct handle objects
-            handles: list[object] = []
-            ids_to_fetch: list[int] = []
-
-            # Local imports to avoid module import cycles
-            try:
-                from unity.image_manager.types import (
-                    RawImageRef as _RawImageRef,
-                    AnnotatedImageRef as _AnnotatedImageRef,
-                )
-            except Exception:  # pragma: no cover - robustness
-                _RawImageRef = object  # type: ignore
-                _AnnotatedImageRef = object  # type: ignore
-
-            for ref in items:
-                try:
-                    # Direct handle case (has raw() method and image_id attr)
-                    if hasattr(ref, "raw") and hasattr(ref, "image_id"):
-                        handles.append(ref)
-                        continue
-                    # Typed refs
-                    if isinstance(ref, _AnnotatedImageRef):
-                        ids_to_fetch.append(int(ref.raw_image_ref.image_id))
-                    elif isinstance(ref, _RawImageRef):
-                        ids_to_fetch.append(int(ref.image_id))
-                    # Primitive id
-                    elif isinstance(ref, int):
-                        ids_to_fetch.append(int(ref))
-                except Exception:
-                    continue
-
-            # Resolve any remaining ids to handles via ManagerRegistry
-            if ids_to_fetch:
-                try:
-                    mgr = ManagerRegistry.get_image_manager()
-                    fetched = mgr.get_images(ids_to_fetch)
-                    for h in fetched:
-                        if h is not None:
-                            handles.append(h)
-                except Exception:
-                    pass
-
-            # Convert handles to content blocks and append
-            for ih in handles:
-                try:
-                    # Prefer direct URLs when present on the underlying image record
-                    data_str = getattr(getattr(ih, "_image", object), "data", None)
-                    content_block: dict
-                    if isinstance(data_str, str) and (
-                        data_str.startswith("http://")
-                        or data_str.startswith("https://")
-                        or data_str.startswith("data:image/")
-                        or data_str.startswith("gs://")
-                    ):
-                        # Best-effort: sign GCS URLs if a storage client is available, else fall back to raw bytes
-                        if data_str.startswith("gs://") or data_str.startswith(
-                            "https://storage.googleapis.com/",
-                        ):
-                            try:
-                                from datetime import timedelta as _timedelta
-
-                                storage_client = getattr(
-                                    getattr(ih, "_manager", object),
-                                    "storage_client",
-                                    None,
-                                )
-                                if storage_client is not None:
-                                    from urllib.parse import urlparse as _urlparse
-
-                                    parsed_url = _urlparse(data_str)
-                                    bucket_name = ""
-                                    object_path = ""
-                                    if parsed_url.scheme == "gs":
-                                        bucket_name = parsed_url.netloc
-                                        object_path = parsed_url.path.lstrip("/")
-                                    elif (
-                                        parsed_url.hostname == "storage.googleapis.com"
-                                    ):
-                                        parts = parsed_url.path.lstrip("/").split(
-                                            "/",
-                                            1,
-                                        )
-                                        if len(parts) == 2:
-                                            bucket_name, object_path = parts
-                                    bucket = storage_client.bucket(bucket_name)
-                                    blob = bucket.blob(object_path)
-                                    signed_url = blob.generate_signed_url(
-                                        version="v4",
-                                        expiration=_timedelta(hours=1),
-                                        method="GET",
-                                    )
-                                    content_block = {
-                                        "type": "image_url",
-                                        "image_url": {"url": signed_url},
-                                    }
-                                else:
-                                    raise RuntimeError("no storage client")
-                            except Exception:
-                                raw = ih.raw()  # type: ignore[attr-defined]
-                                import base64 as _b64  # local import
-
-                                head = (
-                                    bytes(raw[:10])
-                                    if isinstance(raw, (bytes, bytearray))
-                                    else b""
-                                )
-                                if head.startswith(b"\xff\xd8"):
-                                    mime = "image/jpeg"
-                                elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-                                    mime = "image/png"
-                                else:
-                                    mime = "image/png"
-                                b64 = _b64.b64encode(raw).decode("ascii")
-                                content_block = {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                                }
-                        else:
-                            content_block = {
-                                "type": "image_url",
-                                "image_url": {"url": data_str},
-                            }
-                    else:
-                        # Fallback to raw bytes from handle
-                        raw = ih.raw()  # type: ignore[attr-defined]
-                        import base64 as _b64  # local import
-
-                        head = (
-                            bytes(raw[:10])
-                            if isinstance(raw, (bytes, bytearray))
-                            else b""
-                        )
-                        if head.startswith(b"\xff\xd8"):
-                            mime = "image/jpeg"
-                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-                            mime = "image/png"
-                        else:
-                            mime = "image/png"
-                        b64 = _b64.b64encode(raw).decode("ascii")
-                        content_block = {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime};base64,{b64}"},
-                        }
-
-                    content_blocks.append(content_block)
-                except Exception:
-                    # Skip malformed handle entries; continue attaching the rest
-                    continue
-
-        # Append a single composite user message so the vision model can "see" the images with the instruction
+        # Append a single composite user message
         try:
             self._llm.messages.append({"role": "user", "content": content_blocks})
         except Exception:
@@ -561,13 +400,9 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 f"Task: {self._description}\n"
                 f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
                 f"Docstring:\n{fn.get('docstring','')}\n\n"
-                "Use any images attached in the most recent user message as ground truth for visual details."
             )
         else:
-            prompt = (
-                f"Current simulated actions:\n{self._description}\n\n"
-                "Use any images attached in the most recent user message as ground truth for visual details."
-            )
+            prompt = f"Current simulated actions:\n{self._description}\n\n"
         # Unified LLM roundtrip (includes timing, gated body, and optional dumps)
         try:
             _sys = getattr(self._llm, "system_message", None)
@@ -614,7 +449,6 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: object | None = None,
     ) -> SteerableToolHandle:
         """Ask a question about the current state.
 
@@ -622,8 +456,6 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             question: The question to ask.
             _parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
 
         Returns:
             A SteerableToolHandle whose result() returns the answer string.

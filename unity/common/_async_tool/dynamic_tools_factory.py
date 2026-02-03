@@ -9,11 +9,7 @@ from contextlib import suppress
 from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
-from .images import (
-    append_images_with_source,
-)
 from .utils import get_handle_paused_state, maybe_await
-from unity.image_manager.types.image_refs import ImageRefs
 
 
 class DynamicToolFactory:
@@ -194,16 +190,13 @@ class DynamicToolFactory:
             "Parameters\n"
             "----------\n"
             "reason : str | None\n"
-            "    Optional human‑readable reason for stopping the running tool call.\n"
-            "images : ImageRefs | None\n"
-            "    Optional image references to append at the time of this command (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
+            "    Optional human‑readable reason for stopping the running tool call.\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
             "    Status acknowledgement including the underlying call id.\n\n"
             "Notes\n"
             "-----\n"
-            "- Images are appended to the live images log immediately.\n"
             "- The stop request is forwarded to the underlying handle when available."
         )
 
@@ -216,18 +209,13 @@ class DynamicToolFactory:
                     _kw,
                     fallback_positional_keys=["reason"],
                 )
-            # Append any provided images into the live registry/log
-            try:
-                append_images_with_source(_kw.get("images"))
-            except Exception:
-                pass
             if not task.done():
                 task.cancel()  # kill the waiter coroutine
             self.tools_data.pop_task(task)
             return {
                 "status": "stopped",
                 "call_id": tool_context.call_id,
-                **{k: v for k, v in _kw.items() if k != "images"},
+                **_kw,
             }
 
         # Set fallback docstring first; _adopt_signature_and_annotations may override
@@ -256,9 +244,7 @@ class DynamicToolFactory:
             "content : str | None\n"
             "    Interjection text. When omitted, `message` may be used as a synonym.\n"
             "message : str | None\n"
-            "    Synonym for `content`. If both are provided, `content` takes precedence.\n"
-            "images : ImageRefs | None\n"
-            "    Optional image references to append at the time of this interjection (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
+            "    Synonym for `content`. If both are provided, `content` takes precedence.\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
@@ -276,15 +262,10 @@ class DynamicToolFactory:
                         _kw,
                         fallback_positional_keys=["content", "message"],
                     )
-                # Append any provided images into the live registry/log
-                try:
-                    append_images_with_source(_kw.get("images"))
-                except Exception:
-                    pass
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
-                    **{k: v for k, v in _kw.items() if k != "images"},
+                    **_kw,
                 }
 
             # Set fallback docstring first; _adopt_signature_and_annotations may override
@@ -305,16 +286,10 @@ class DynamicToolFactory:
                 *,
                 content: Optional[str] = None,
                 message: Optional[str] = None,
-                images: ImageRefs | None = None,
             ) -> Dict[str, str]:
                 # regular tool: push onto its private queue
                 actual = content if content is not None else (message or "")
                 await task_info.interject_queue.put(actual)
-                # Append any provided images into the live registry/log
-                try:
-                    append_images_with_source(images)
-                except Exception:
-                    pass
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
@@ -385,20 +360,14 @@ class DynamicToolFactory:
             "Parameters\n"
             "----------\n"
             "answer : str\n"
-            "    The answer text.\n"
-            "images : ImageRefs | None\n"
-            "    Optional image references to append alongside this answer (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
+            "    The answer text.\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
             "    Status acknowledgement including the underlying call id.\n"
         )
 
-        async def _clarify(answer: str, images: ImageRefs | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
-            try:
-                append_images_with_source(images)
-            except Exception:
-                pass
+        async def _clarify(answer: str) -> Dict[str, str]:
             return {
                 "status": "clar_answer",
                 "call_id": tool_context.call_id,

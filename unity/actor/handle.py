@@ -526,7 +526,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | None = None,
     ) -> str:
         if not self._is_valid_method("interject"):
             if self.done():
@@ -552,7 +551,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             await self._loop_handle.interject(
                 message=message,
                 _parent_chat_context_cont=_parent_chat_context_cont,
-                images=images,
             )
         except TypeError:
             await self._loop_handle.interject(message)

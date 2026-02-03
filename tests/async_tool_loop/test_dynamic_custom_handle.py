@@ -612,10 +612,10 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
         def set_value(self, task_id: int, note: str | None = None) -> str:
             return f"set:{task_id}:{note or ''}"
 
-        async def ask(self, question: str, *, images=None):  # type: ignore[override]
+        async def ask(self, question: str):  # type: ignore[override]
             return self
 
-        async def interject(self, message: str, *, images=None):  # type: ignore[override]
+        async def interject(self, message: str):  # type: ignore[override]
             return None
 
         def stop(self, reason: str | None = None):  # type: ignore[override]

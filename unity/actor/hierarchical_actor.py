@@ -4468,7 +4468,6 @@ async def main_plan():
     async def interject(
         self,
         message: str,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> str:
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
@@ -4543,7 +4542,6 @@ async def main_plan():
                         idempotency_cache=self.idempotency_cache,
                         tools=self.actor.tools,
                         environments=self.actor.environments,
-                        images=images,
                         pane_snapshot=pane_snapshot,
                     )
                 )
@@ -4554,7 +4552,6 @@ async def main_plan():
                         self.modification_client,
                         dynamic_prompt,
                         static_prompt=static_prompt,
-                        images=images,
                     )
                     decision = InterjectionDecision.model_validate_json(decision_str)
                     logger.debug(
@@ -4573,7 +4570,6 @@ async def main_plan():
                 routing_status = await self._apply_interjection_routing(
                     decision=decision,
                     original_message=message,
-                    images=images,
                 )
                 status_message = await self._execute_interjection_decision(decision)
                 if routing_status:
@@ -4607,7 +4603,6 @@ async def main_plan():
         *,
         decision: InterjectionDecision,
         original_message: str,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> str:
         """Apply routing from an interjection decision to in-flight handles via the pane.
 
@@ -4688,7 +4683,6 @@ async def main_plan():
                         resolved_hid,
                         routed_message,
                         _parent_chat_context_cont=self.parent_chat_context,
-                        images=images,
                     )
                     st = known.get(resolved_hid)
                     if st is None:
@@ -4756,7 +4750,6 @@ async def main_plan():
                     routed_message,
                     filter=bfilter,
                     _parent_chat_context_cont=self.parent_chat_context,
-                    images=images,
                 )
                 status = f"Broadcast interjection to {int(result.get('count') or 0)} handle(s)"
                 self.action_log.append(f"ROUTING: {status}")

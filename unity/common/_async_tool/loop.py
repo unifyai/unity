@@ -33,17 +33,6 @@ from .tools_utils import (
     create_tool_call_message,
     ToolCallMetadata,
 )
-from .images import (
-    set_live_images_context,
-    reset_live_images_context,
-    build_live_image_tools,
-    append_images_with_source,
-    get_image_log_entries,
-    has_live_images_context,
-    LIVE_IMAGES_REGISTRY,
-    LIVE_IMAGES_LOG,
-    build_live_images_overview_msgs,
-)
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
     LoopConfig,
@@ -61,7 +50,6 @@ from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 
 if TYPE_CHECKING:
-    from ...image_manager.types.image_refs import ImageRefs
     from .multi_handle import MultiHandleCoordinator
 
 
@@ -223,7 +211,6 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    images: "ImageRefs | None" = None,
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
 ) -> str:
@@ -379,54 +366,6 @@ async def async_tool_loop_inner(
         # All provider-specific compliance is handled by unillm's preprocessing.
         return preprocess_msgs
 
-    _img_token = None
-    _imglog_token = None
-    # Track already-logged image entries to avoid repeated 🖼️ spam
-    image_log_last_len: int = 0
-
-    # Helper: append image refs (if any) and log only newly appended entries
-    def _append_and_log_images_safely(images_any) -> bool:
-        nonlocal image_log_last_len
-        with suppress(Exception):
-            prev_len = image_log_last_len
-            append_images_with_source(images_any)
-            try:
-                _logs = get_image_log_entries()
-                for _iid, _annotation in _logs[image_log_last_len:]:
-                    logger.info(
-                        f"Image id={_iid}, annotation={_annotation!r}",
-                        prefix="🖼️",
-                    )
-                image_log_last_len = len(_logs)
-                return image_log_last_len > prev_len
-            except Exception:
-                pass
-        return False
-
-    # Helper moved to images.py: build_live_images_overview_msgs(reason)
-
-    # If explicit images are provided, seed them; otherwise, isolate this loop
-    # from any parent images by setting an empty images context.
-    _img_token, _imglog_token = None, None
-    try:
-        if images is not None:
-            if images:
-                _img_token, _imglog_token = set_live_images_context(
-                    images,
-                    message,
-                )
-            else:
-                # Explicitly provided empty images → isolate
-                _img_token = LIVE_IMAGES_REGISTRY.set({})
-                _imglog_token = LIVE_IMAGES_LOG.set([])
-        else:
-            # No images provided → do not inherit parent loop images
-            _img_token = LIVE_IMAGES_REGISTRY.set({})
-            _imglog_token = LIVE_IMAGES_LOG.set([])
-    except Exception:
-        _img_token = None
-        _imglog_token = None
-
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
 
@@ -498,25 +437,9 @@ async def async_tool_loop_inner(
                     prefix="⬇️",
                 )
             logger.info(f"System Message: {client.system_message}", prefix="📋")
-        # Combine user message + any aligned images into a single log entry
-        try:
-            # Avoid dumping a whole list when resuming with a seeded batch; per-item logs are emitted below.
-            if isinstance(message, list):
-                pass
-            else:
-                combined_lines = [f"User Message: {message}"]
-                logs = get_image_log_entries()
-                if logs:
-                    for _iid, _annotation in logs:
-                        combined_lines.append(
-                            f"🖼️ Image id={_iid}, annotation={_annotation!r}",
-                        )
-                    # mark images up to current length as already logged
-                    image_log_last_len = len(logs)
-                logger.info("\n".join(combined_lines), prefix="🧑‍💻")
-        except Exception:
-            if not isinstance(message, list):
-                logger.info(f"User Message: {message}", prefix="🧑‍💻")
+        # Log user message (skip if seeding with a batch - per-item logs are emitted below)
+        if not isinstance(message, list):
+            logger.info(f"User Message: {message}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
@@ -623,23 +546,6 @@ async def async_tool_loop_inner(
 
         await _msg_dispatcher.append_msgs(seeded_batch)
 
-        # Inject an initial snapshot of live images (if any) immediately by
-        # appending assistant→tool messages directly to the client transcript.
-        try:
-            if has_live_images_context():
-                asst_msg, tool_msg = build_live_images_overview_msgs("initial_images")
-                try:
-                    client.append_messages([asst_msg, tool_msg])
-                    try:
-                        await to_event_bus(asst_msg, cfg)
-                        await to_event_bus(tool_msg, cfg)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
     #
@@ -648,25 +554,6 @@ async def async_tool_loop_inner(
     # • helper that answers "may we launch / advertise *this* tool right now?"
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
-
-    # ── Live image helpers (optional) ─────────────────────────────────────────
-    # Build live image helpers when any image context is present. Expose only
-    # actionable helpers to the LLM; the dummy overview tool is no longer exposed.
-    live_image_tools: Dict[str, Callable] = {}
-    if has_live_images_context():
-        live_image_tools = build_live_image_tools(
-            reference_message=message,
-            append_user_messages=_msg_dispatcher.append_msgs,
-            client=client,
-            parent_chat_context=parent_chat_context,
-            propagate_chat_context=propagate_chat_context,
-        )
-        # Remove the dummy overview helper; image overview is injected synthetically
-        with suppress(Exception):
-            live_image_tools.pop("live_images_overview", None)
-
-    # Merge helpers (if any) with base tools before normalisation
-    tools = {**tools, **(live_image_tools or {})}
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
@@ -687,8 +574,6 @@ async def async_tool_loop_inner(
                 "clarification_channels",
                 tools_data.clarification_channels,
             )
-
-    # (Initial live-images overview already injected directly when seeding messages.)
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
@@ -720,67 +605,6 @@ async def async_tool_loop_inner(
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
                 )
-
-    # Helper: inject a synthetic image-overview tool call/result so the full
-    # set of live images persists in the transcript (independent of tool policy).
-    async def _inject_live_images_overview(reason: str = "") -> None:
-        try:
-            asst_msg, tool_msg = build_live_images_overview_msgs(reason)
-
-            await _msg_dispatcher.append_msgs([asst_msg])
-            try:
-                await to_event_bus(asst_msg, cfg)
-            except Exception:
-                pass
-
-            # Ensure assistant_meta bookkeeping before inserting tool result
-            assistant_meta[id(asst_msg)] = {"results_count": 0}
-            await insert_tool_message_after_assistant(
-                assistant_meta,
-                asst_msg,
-                tool_msg,
-                client,
-                _msg_dispatcher,
-            )
-            try:
-                await to_event_bus(tool_msg, cfg)
-            except Exception:
-                pass
-
-            if log_steps:
-                try:
-                    # Log the synthetic assistant tool selection in the same style as real LLM output
-                    from .utils import (
-                        try_parse_json as _try_parse_json,
-                    )  # local import to avoid cycles
-
-                    _msg_for_logging = copy.deepcopy(asst_msg)
-                    _tcs = _msg_for_logging.get("tool_calls") or []
-                    for _tc in _tcs:
-                        _fn = _tc.get("function", {})
-                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
-                    logger.info(
-                        f"{json.dumps(_msg_for_logging, indent=4)}",
-                        prefix="🤖",
-                    )
-
-                    # Log the synthetic tool response to mirror a normal tool result (pretty content)
-                    _tool_for_logging = copy.deepcopy(tool_msg)
-                    try:
-                        _tool_for_logging["content"] = _try_parse_json(
-                            _tool_for_logging.get("content"),
-                        )
-                    except Exception:
-                        pass
-                    logger.info(
-                        f"{json.dumps(_tool_for_logging, indent=4)}",
-                        prefix=f"✅  ToolCall Completed [0.00s]",
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            # Never let synthetic injection crash the loop
-            pass
 
     # ── helper: synthesize mirrored helper tool_calls (no LLM step) ───────────
     # Centralized steering: target selection + per-child dispatcher
@@ -1050,8 +874,6 @@ async def async_tool_loop_inner(
                         msg = payload.get("message") or payload.get("content")
                         if msg is not None:
                             args_json["content"] = msg
-                        if "images" in payload:
-                            args_json["images_present"] = True
                     elif base == "stop" and "reason" in payload:
                         args_json["reason"] = payload.get("reason")
                 except Exception:
@@ -1120,14 +942,10 @@ async def async_tool_loop_inner(
                     msg = payload.get("message") or payload.get("content")
                     if msg is not None:
                         args_json["content"] = msg
-                    if "images" in payload:
-                        args_json["images_present"] = True
                 elif base == "ask":
                     q = payload.get("question")
                     if q is not None:
                         args_json["question"] = q
-                    if "images" in payload:
-                        args_json["images_present"] = True
                 elif base == "stop":
                     if "reason" in payload:
                         args_json["reason"] = payload.get("reason")
@@ -1159,12 +977,6 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             await to_event_bus(assistant_msg, cfg)
         assistant_meta[id(assistant_msg)] = {"results_count": 0}
-
-        # If images accompany interject/ask, append to live registry and inject overview
-        with suppress(Exception):
-            imgs = payload.get("images")
-            if imgs is not None and append_images_with_source(imgs):
-                await _inject_live_images_overview(f"{method}_helper_images")
 
         # Insert ack tool messages and forward steering immediately to target handles
         for call in tool_calls:
@@ -1201,12 +1013,6 @@ async def async_tool_loop_inner(
         else:
             initial_user_msg = {"role": "user", "content": message}
         await _msg_dispatcher.append_msgs([initial_user_msg])
-        # Inject an initial snapshot of live images (if any)
-        try:
-            if has_live_images_context():
-                await _inject_live_images_overview("initial_images")
-        except Exception:
-            pass
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
@@ -1244,11 +1050,9 @@ async def async_tool_loop_inner(
         src_task: asyncio.Task,
         question_payload: Any,
     ) -> None:
-        images_from_child = None
         question_text = ""
         try:
             if isinstance(question_payload, dict):
-                images_from_child = question_payload.get("images")
                 question_text = question_payload.get("question", "")
             else:
                 question_text = str(question_payload)
@@ -1306,10 +1110,6 @@ async def async_tool_loop_inner(
                     },
                 )
 
-        # Append any images sent alongside the clarification request
-        if _append_and_log_images_safely(images_from_child):
-            await _inject_live_images_overview("clarification_images")
-
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
         call_id = tools_data.info[src_task].call_id
         tool_name = tools_data.info[src_task].name
@@ -1364,14 +1164,6 @@ async def async_tool_loop_inner(
                         **event_payload,
                     },
                 )
-
-        # Append images provided with the notification payload
-        with suppress(Exception):
-            images_from_child = None
-            if isinstance(payload, dict):
-                images_from_child = payload.get("images", payload.get("images"))
-            if _append_and_log_images_safely(images_from_child):
-                await _inject_live_images_overview("notification_images")
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -1715,11 +1507,9 @@ async def async_tool_loop_inner(
                     ) or extra.get(
                         "_parent_chat_context_continuted",  # legacy typo support
                     )
-                    _incoming_images = extra.get("images")
                 else:
                     _msg_text = str(extra)
                     _ctx_cont = None
-                    _incoming_images = None
 
                 # Log a single concise interjection line
                 try:
@@ -1795,10 +1585,6 @@ async def async_tool_loop_inner(
                 # Update history only if there was user message content
                 if _msg_text:
                     last_valid_user_history = history_lines + [f"user: {_msg_text}"]
-
-                # If images accompany this interjection, accept source-scoped keys and append
-                if _append_and_log_images_safely(_incoming_images):
-                    await _inject_live_images_overview("interjection_images")
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -2017,8 +1803,6 @@ async def async_tool_loop_inner(
             _has_pending_tools = bool(tools_data.pending)
             if _has_pending_tools and tool_choice_mode != "required":
                 tool_choice_mode = "required"
-
-            # No-op: overview is now injected synthetically when images change
 
             visible_base_tools_schema = [
                 method_to_schema(
@@ -2897,7 +2681,6 @@ async def async_tool_loop_inner(
                         if task_to_cancel:
                             tools_data.pop_task(task_to_cancel)
 
-                    # Record any images provided with the stop helper and capture reason text
                     # Acknowledge only when a live target was actually affected
                     if lname_cf.startswith("stop_") and task_to_cancel:
                         with suppress(Exception):
@@ -2905,10 +2688,6 @@ async def async_tool_loop_inner(
                                 reason_txt = payload.get("reason")
                             except Exception:
                                 reason_txt = ""
-                            if _append_and_log_images_safely(
-                                payload.get("images", payload.get("images")),
-                            ):
-                                await _inject_live_images_overview("stop_helper_images")
 
                             tool_msg = create_tool_call_message(
                                 name=pretty_name,
@@ -3058,24 +2837,6 @@ async def async_tool_loop_inner(
                                         break
 
                         if tgt_task:
-                            # Record any images provided with the clarification answer
-                            with suppress(Exception):
-                                if _append_and_log_images_safely(
-                                    (
-                                        args.get("images")
-                                        if isinstance(args, dict)
-                                        else None
-                                    )
-                                    or (
-                                        args.get("images")
-                                        if isinstance(args, dict)
-                                        else None
-                                    ),
-                                ):
-                                    await _inject_live_images_overview(
-                                        "clarify_helper_images",
-                                    )
-
                             # Always publish a tool reply acknowledging the clarify helper
                             tool_reply_msg = create_tool_call_message(
                                 name=name,
@@ -3139,14 +2900,6 @@ async def async_tool_loop_inner(
                                     tools_data.info[tgt_task],
                                 )
 
-                            # Record any images provided with the interjection helper
-                            with suppress(Exception):
-                                if _append_and_log_images_safely(
-                                    payload.get("images", payload.get("images")),
-                                ):
-                                    await _inject_live_images_overview(
-                                        "interject_helper_images",
-                                    )
                             # ― emit a tool message so the chat log stays tidy ---
                             tool_msg = create_tool_call_message(
                                 name=pretty_name,
@@ -3585,4 +3338,3 @@ async def async_tool_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
-        reset_live_images_context(_img_token, _imglog_token)

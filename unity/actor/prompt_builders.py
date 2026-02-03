@@ -2841,7 +2841,6 @@ def build_interjection_prompt(
     *,
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
-    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     pane_snapshot: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
     """
@@ -2852,7 +2851,7 @@ def build_interjection_prompt(
     while the dynamic content contains the interjection and current execution state.
     """
     cache_summary = _format_cache_summary(idempotency_cache)
-    image_context_str = _format_images_for_prompt(images)
+    image_context_str = ""
     pane_context_str = ""
     if pane_snapshot and pane_snapshot.get("active_handles"):
         handles = pane_snapshot.get("active_handles") or []

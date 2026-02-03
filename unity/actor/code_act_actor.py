@@ -775,7 +775,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> SteerableToolHandle:
         status = "completed" if self.done() else "still running"
         client = new_llm_client()
@@ -801,7 +800,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> Optional[str]:
         # No-op for non-LLM entrypoint execution.
         return None
