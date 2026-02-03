@@ -672,3 +672,274 @@ class TestRealTimeDataDeferral:
             f"Fast brain ({fast_brain_model}) claimed to know email status without checking!\n"
             f"Response: {response}"
         )
+
+
+# =============================================================================
+# Test Class: False Negative Detection (Should NOT Defer)
+# =============================================================================
+
+
+def response_contains_data(response: str, expected_data: str) -> bool:
+    """Check if response contains the expected data (case-insensitive)."""
+    return expected_data.lower() in response.lower()
+
+
+def response_is_incorrect_deferral(response: str) -> bool:
+    """
+    Check if response incorrectly defers when it should answer directly.
+
+    A false negative is when the fast brain says "let me check" for information
+    that was ALREADY provided in the conversation.
+    """
+    return has_deferral_language(response)
+
+
+@pytest.mark.asyncio
+class TestFalseNegativeDetection:
+    """
+    Tests that the fast brain does NOT defer when it should answer directly.
+
+    These are "false negative" scenarios where:
+    1. The answer was already provided in the conversation
+    2. The user is asking for clarification/repetition
+    3. Deferring would be incorrect and frustrating
+
+    The fast brain should recognize these cases and respond directly.
+    """
+
+    async def test_repeats_phone_number_when_asked(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """Fast brain should repeat a phone number that was just provided."""
+        conversation = [
+            {"role": "user", "content": "What's David's phone number?"},
+            {
+                "role": "assistant",
+                "content": "[notification] David's phone number is 555-123-4567",
+            },
+            {
+                "role": "assistant",
+                "content": "David's number is 555-123-4567.",
+            },
+            {"role": "user", "content": "Sorry, what was that number again?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        # Should NOT defer - the number was just provided
+        assert not response_is_incorrect_deferral(response), (
+            f"Fast brain ({fast_brain_model}) incorrectly deferred!\n"
+            f"Response: {response}\n\n"
+            f"The phone number was just provided. User asked to repeat it.\n"
+            f"Fast brain should say the number again, not 'let me check'."
+        )
+
+        # Should contain the phone number
+        assert response_contains_data(response, "555") or response_contains_data(
+            response,
+            "123",
+        ), (
+            f"Fast brain ({fast_brain_model}) didn't repeat the number!\n"
+            f"Response: {response}\n\n"
+            f"Expected the response to contain the phone number 555-123-4567."
+        )
+
+    async def test_repeats_email_when_asked(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """Fast brain should repeat an email that was just provided."""
+        conversation = [
+            {"role": "user", "content": "What's Sarah's email?"},
+            {
+                "role": "assistant",
+                "content": "[notification] Sarah's email is sarah.jones@company.com",
+            },
+            {
+                "role": "assistant",
+                "content": "Sarah's email is sarah.jones@company.com.",
+            },
+            {"role": "user", "content": "Could you spell that out for me?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        # Should NOT defer
+        assert not response_is_incorrect_deferral(response), (
+            f"Fast brain ({fast_brain_model}) incorrectly deferred!\n"
+            f"Response: {response}\n\n"
+            f"The email was just provided. User asked to spell it out.\n"
+            f"Fast brain should repeat/spell it, not 'let me check'."
+        )
+
+        # Should reference the email
+        assert response_contains_data(response, "sarah") or response_contains_data(
+            response,
+            "jones",
+        ), (
+            f"Fast brain ({fast_brain_model}) didn't repeat the email!\n"
+            f"Response: {response}"
+        )
+
+    async def test_repeats_meeting_time_when_asked(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """Fast brain should repeat a meeting time that was just provided."""
+        conversation = [
+            {"role": "user", "content": "When's my meeting with Alice?"},
+            {
+                "role": "assistant",
+                "content": "[notification] Meeting with Alice is at 3:30 PM tomorrow",
+            },
+            {
+                "role": "assistant",
+                "content": "Your meeting with Alice is at 3:30 PM tomorrow.",
+            },
+            {"role": "user", "content": "Sorry, what time was that?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        # Should NOT defer
+        assert not response_is_incorrect_deferral(response), (
+            f"Fast brain ({fast_brain_model}) incorrectly deferred!\n"
+            f"Response: {response}\n\n"
+            f"The meeting time was just provided. User asked to repeat it.\n"
+            f"Fast brain should say '3:30 PM', not 'let me check'."
+        )
+
+        # Should contain the time
+        assert response_contains_data(response, "3:30") or response_contains_data(
+            response,
+            "330",
+        ), (
+            f"Fast brain ({fast_brain_model}) didn't repeat the time!\n"
+            f"Response: {response}"
+        )
+
+    async def test_repeats_address_when_asked(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """Fast brain should repeat an address that was just provided."""
+        conversation = [
+            {"role": "user", "content": "What's the address for the client meeting?"},
+            {
+                "role": "assistant",
+                "content": "[notification] The meeting is at 742 Evergreen Terrace, Suite 400",
+            },
+            {
+                "role": "assistant",
+                "content": "The meeting is at 742 Evergreen Terrace, Suite 400.",
+            },
+            {"role": "user", "content": "Wait, what was the street name?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        # Should NOT defer
+        assert not response_is_incorrect_deferral(response), (
+            f"Fast brain ({fast_brain_model}) incorrectly deferred!\n"
+            f"Response: {response}\n\n"
+            f"The address was just provided. User asked for the street name.\n"
+            f"Fast brain should say 'Evergreen Terrace', not 'let me check'."
+        )
+
+        # Should contain the street name
+        assert response_contains_data(response, "evergreen"), (
+            f"Fast brain ({fast_brain_model}) didn't repeat the street name!\n"
+            f"Response: {response}"
+        )
+
+    async def test_confirms_info_user_just_provided(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """Fast brain should confirm info the user just stated, not defer."""
+        conversation = [
+            {
+                "role": "user",
+                "content": "I need to schedule a meeting for 2pm on Tuesday.",
+            },
+            {"role": "assistant", "content": "Got it, I'll schedule that for you."},
+            {"role": "user", "content": "So that's Tuesday at 2, right?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        # Should NOT defer - user is confirming what THEY said
+        assert not response_is_incorrect_deferral(response), (
+            f"Fast brain ({fast_brain_model}) incorrectly deferred!\n"
+            f"Response: {response}\n\n"
+            f"User is confirming info they just provided (Tuesday at 2pm).\n"
+            f"Fast brain should confirm, not 'let me check'."
+        )
+
+    async def test_repeats_name_when_asked(
+        self,
+        voice_agent_prompt,
+        fast_brain_model,
+    ):
+        """Fast brain should repeat a name that was just mentioned."""
+        conversation = [
+            {"role": "user", "content": "Who should I contact about the invoice?"},
+            {
+                "role": "assistant",
+                "content": "[notification] Contact Jennifer Martinez in accounting",
+            },
+            {
+                "role": "assistant",
+                "content": "You should contact Jennifer Martinez in accounting.",
+            },
+            {"role": "user", "content": "Sorry, what was her name again?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=fast_brain_model,
+        )
+
+        # Should NOT defer
+        assert not response_is_incorrect_deferral(response), (
+            f"Fast brain ({fast_brain_model}) incorrectly deferred!\n"
+            f"Response: {response}\n\n"
+            f"The name was just provided. User asked to repeat it.\n"
+            f"Fast brain should say 'Jennifer Martinez', not 'let me check'."
+        )
+
+        # Should contain the name
+        assert response_contains_data(response, "jennifer") or response_contains_data(
+            response,
+            "martinez",
+        ), (
+            f"Fast brain ({fast_brain_model}) didn't repeat the name!\n"
+            f"Response: {response}"
+        )
