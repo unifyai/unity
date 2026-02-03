@@ -663,6 +663,22 @@ class CommsManager:
                                     message_preview="Incoming phone call",
                                 ).to_json(),
                             )
+                    elif thread == "call_not_answered":
+                        # Outbound call was not answered (no-answer, busy, canceled, failed)
+                        number = event.get("user_number")
+                        call_status = event.get("call_status", "no-answer")
+                        contact = next(
+                            (c for c in contacts if c["phone_number"] == number),
+                            None,
+                        )
+                        if contact is None:
+                            # Fallback to boss contact
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = PhoneCallNotAnswered(
+                            contact=contact,
+                            reason=call_status,
+                        )
+                        topic = "app:comms:call_not_answered"
                     else:
                         # call_answered - typically from known contacts initiating outbound
                         number = event.get("user_number")

@@ -123,6 +123,14 @@ class PhoneCallAnswered(Event):
 
 
 @dataclass
+class PhoneCallNotAnswered(Event):
+    """Outbound call was not answered (no-answer, busy, failed, etc.)."""
+
+    contact: dict
+    reason: str = "no-answer"  # Twilio status: no-answer, busy, canceled, failed
+
+
+@dataclass
 class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
