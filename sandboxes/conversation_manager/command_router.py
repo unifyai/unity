@@ -37,6 +37,11 @@ from sandboxes.conversation_manager.log_aggregator import LogAggregator
 from sandboxes.conversation_manager.agent_service_bootstrap import (
     get_agent_service_log_path,
 )
+from sandboxes.conversation_manager.state_snapshot import (
+    capture_snapshot,
+    save_snapshot,
+    render_snapshot_text,
+)
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -148,6 +153,8 @@ class CommandRouter:
             except Exception as exc:
                 LG.error("save_project failed: %s", exc, exc_info=True)
                 return RouterResult(lines=[f"❌ Failed to save project: {exc}"])
+        if cmd.kind == "save_state":
+            return await self._handle_save_state(cmd.args)
 
         # Configuration
         if cmd.kind == "config":
@@ -211,6 +218,57 @@ class CommandRouter:
         if tree is None:
             return RouterResult(lines=["⚠️ Event tree display is not initialized."])
         return RouterResult(lines=[tree.render_tree()])
+
+    async def _handle_save_state(self, args: str) -> RouterResult:
+        """Save structured state snapshot to a file."""
+        # Capture the snapshot
+        snapshot = capture_snapshot(
+            log_aggregator=self.log_aggregator,
+            event_tree_display=self.event_tree_display,
+            trace_display=self.trace_display,
+        )
+
+        # Determine output path
+        if args and args.strip():
+            json_path = Path(args.strip())
+        else:
+            # Auto-generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+            json_path = Path(f".sandbox_state_{timestamp}.json")
+
+        # Save JSON
+        try:
+            save_snapshot(snapshot, json_path)
+        except Exception as exc:
+            LG.error("save_state failed: %s", exc, exc_info=True)
+            return RouterResult(lines=[f"❌ Failed to save state: {exc}"])
+
+        # Also save human-readable text version
+        try:
+            text_path = json_path.with_suffix(".txt")
+            text_content = render_snapshot_text(snapshot)
+            with open(text_path, "w") as f:
+                f.write(text_content)
+        except Exception as exc:
+            LG.warning("Failed to save text snapshot: %s", exc)
+            return RouterResult(
+                lines=[
+                    f"💾 State saved to: {json_path}",
+                    f"⚠️ Failed to save text version: {exc}",
+                ],
+            )
+
+        return RouterResult(
+            lines=[
+                f"💾 State saved:",
+                f"   JSON: {json_path}",
+                f"   Text: {text_path}",
+                f"   Summary: {snapshot.summary['total_actor_logs']} actor logs, "
+                f"{snapshot.summary['total_manager_logs']} manager logs, "
+                f"{snapshot.summary['total_traces']} traces, "
+                f"{snapshot.summary['total_event_trees']} trees",
+            ],
+        )
 
     async def _handle_log_expansion(self, args: str, *, expand: bool) -> RouterResult:
         lg = self.log_aggregator

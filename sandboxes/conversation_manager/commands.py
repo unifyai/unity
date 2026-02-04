@@ -21,6 +21,7 @@ CommandKind = Literal[
     "quit",
     "reset",
     "save_project",
+    "save_state",
     # Configuration + display (REPL/GUI surfaces)
     "config",
     "trace",
@@ -61,6 +62,7 @@ Meta commands:
   quit | exit         Exit the sandbox
   reset               Reset sandbox session state
   save_project | sp   Save a Unify project snapshot
+  save_state [path]   Save structured state snapshot (logs, tree, traces) to JSON file
 
 Configuration:
   config              Switch actor configuration (restarts sandbox; state is reset)
@@ -119,6 +121,15 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         return ParsedCommand(kind="reset", raw=raw, name="reset")
     if lower in {"save_project", "sp"}:
         return ParsedCommand(kind="save_project", raw=raw, name="save_project")
+    if lower == "save_state":
+        return ParsedCommand(kind="save_state", raw=raw, name="save_state", args="")
+    if lower.startswith("save_state "):
+        return ParsedCommand(
+            kind="save_state",
+            raw=raw,
+            name="save_state",
+            args=trimmed[len("save_state ") :].strip(),
+        )
     if lower in {"config", "switch_actor"}:
         if active:
             return ParsedCommand(
