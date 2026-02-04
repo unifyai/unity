@@ -619,31 +619,50 @@ if _TEXTUAL_AVAILABLE:
                     tree_disp = getattr(rt.args, "_event_tree_display", None)
                     if tree_disp is None:
                         return
-                    root = tree_disp.get_tree_data()
-                    if root is None:
-                        return
+
                     widget = self.query_one("#event_tree", Tree)
 
-                    # If a new execution started, reset expansion state.
-                    root_key = str(
-                        getattr(root, "call_id", None)
-                        or getattr(root, "label", "")
-                        or "",
-                    )
-                    if root_key and root_key != getattr(
+                    # Get all active trees (for concurrent Actor handles)
+                    all_trees = []
+                    try:
+                        all_trees = tree_disp.get_all_trees() or []
+                    except Exception:
+                        pass
+
+                    # Fall back to legacy single-tree if get_all_trees fails
+                    if not all_trees:
+                        root = tree_disp.get_tree_data()
+                        if root is None:
+                            return
+                        all_trees = [root]
+
+                    # Build a unique key for the current set of trees
+                    tree_keys = []
+                    for t in all_trees:
+                        key = str(
+                            getattr(t, "call_id", None)
+                            or getattr(t, "label", "")
+                            or ""
+                        )
+                        hid = getattr(t, "handle_id", None)
+                        if hid is not None:
+                            key = f"H{hid}:{key}"
+                        tree_keys.append(key)
+                    combined_key = "|".join(tree_keys)
+
+                    if combined_key and combined_key != getattr(
                         self,
                         "_last_tree_root_key",
                         "",
                     ):
                         self._tree_expanded_paths.clear()
-                        self._last_tree_root_key = root_key
+                        self._last_tree_root_key = combined_key
 
-                    # Rebuild tree (simple and robust).
-                    widget.root.label = str(root.label)
-                    try:
-                        widget.root.data = root  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
+                    # Set root label to show number of concurrent executions
+                    if len(all_trees) > 1:
+                        widget.root.label = f"📊 Event Tree ({len(all_trees)} concurrent)"
+                    else:
+                        widget.root.label = "📊 Event Tree"
 
                     # Textual's TreeNodes doesn't implement list.clear(); remove nodes instead.
                     try:
@@ -655,7 +674,7 @@ if _TEXTUAL_AVAILABLE:
                     except Exception:
                         pass
 
-                    def _add(parent, node):
+                    def _add(parent, node, *, show_handle: bool = False):
                         icon = {
                             "completed": "✓",
                             "in_progress": "⏳",
@@ -664,7 +683,12 @@ if _TEXTUAL_AVAILABLE:
                             getattr(node, "status", "in_progress"),
                             "•",
                         )
-                        label = f"{icon} {getattr(node, 'label', '')}"
+                        node_label = getattr(node, "label", "")
+                        hid = getattr(node, "handle_id", None)
+                        if show_handle and hid is not None:
+                            label = f"{icon} [H{hid}] {node_label}"
+                        else:
+                            label = f"{icon} {node_label}"
                         child = parent.add(label)
                         try:
                             child.data = node  # type: ignore[attr-defined]
@@ -677,10 +701,12 @@ if _TEXTUAL_AVAILABLE:
                         except Exception:
                             pass
                         for c in getattr(node, "children", []) or []:
-                            _add(child, c)
+                            _add(child, c, show_handle=False)
 
-                    for c in getattr(root, "children", []) or []:
-                        _add(widget.root, c)
+                    # Add each tree as a top-level node (show handle ID for concurrent)
+                    show_handles = len(all_trees) > 1
+                    for tree_root in all_trees:
+                        _add(widget.root, tree_root, show_handle=show_handles)
 
                     widget.root.expand()
                 except Exception:
@@ -706,10 +732,24 @@ if _TEXTUAL_AVAILABLE:
                     mgr_log.clear()  # type: ignore[attr-defined]
                 except Exception:
                     pass
+
+                # Check if there are multiple handles to decide whether to group
+                try:
+                    actor_handles = lg.get_active_handles("actor")
+                    group_actor = len(actor_handles) > 1
+                except Exception:
+                    group_actor = False
+
+                try:
+                    mgr_handles = lg.get_active_handles("manager")
+                    group_mgr = len(mgr_handles) > 1
+                except Exception:
+                    group_mgr = False
+
                 try:
                     cm_log.write(lg.render_expanded("cm"))
-                    actor_log.write(lg.render_expanded("actor"))
-                    mgr_log.write(lg.render_expanded("manager"))
+                    actor_log.write(lg.render_expanded("actor", group_by_handle=group_actor))
+                    mgr_log.write(lg.render_expanded("manager", group_by_handle=group_mgr))
                 except Exception:
                     pass
 
@@ -736,11 +776,19 @@ if _TEXTUAL_AVAILABLE:
                                 pass
                             tr.write(msg)
                         else:
+                            # Check if there are multiple handles to decide whether to group
+                            group_traces = False
+                            try:
+                                trace_handles = td.get_active_handles()
+                                group_traces = len(trace_handles) > 1
+                            except Exception:
+                                pass
+
                             # Show the full trajectory across the session so earlier turns
                             # remain visible even after the sandbox starts a new ActorHandle
                             # (which resets per-event turn numbering).
                             try:
-                                tr.write(td.render_all())
+                                tr.write(td.render_all(group_by_handle=group_traces))
                             except Exception:
                                 tr.write(td.render_current_event())
                 except Exception:
@@ -1427,7 +1475,19 @@ if _TEXTUAL_AVAILABLE:
                         if isinstance(event.get("result"), dict)
                         else {}
                     )
-                    rt.trace_display.capture_execution(code=code, result=res)
+                    # Extract handle_id if present in the event
+                    trace_hid: int | None = None
+                    try:
+                        hid_val = event.get("handle_id", -1)
+                        if hid_val is not None:
+                            trace_hid = int(hid_val)
+                            if trace_hid < 0:
+                                trace_hid = None
+                    except Exception:
+                        trace_hid = None
+                    rt.trace_display.capture_execution(
+                        code=code, result=res, handle_id=trace_hid
+                    )
                 except Exception:
                     return
                 try:
@@ -1469,44 +1529,156 @@ if _TEXTUAL_AVAILABLE:
             if str(channel).startswith("app:actor:"):
                 cat = "actor"
 
+            # Extract handle_id for concurrent tracking
+            actor_hid: int | None = None
+            try:
+                hid_val = payload.get("handle_id", -1)
+                if hid_val is not None:
+                    actor_hid = int(hid_val)
+                    if actor_hid < 0:
+                        actor_hid = None
+            except Exception:
+                actor_hid = None
+
+            # NOTE: Store full message; truncation happens at render time in log_aggregator.
             msg = name or "Event"
             try:
+                # SMS events
                 if name == "SMSReceived":
                     content = str(payload.get("content") or "").strip()
                     if content:
-                        msg = f"SMSReceived: {content[:120]}"
+                        msg = f"SMSReceived: {content}"
                 elif name == "SMSSent":
                     content = str(payload.get("content") or "").strip()
                     if content:
-                        msg = f"SMSSent: {content[:120]}"
+                        msg = f"SMSSent: {content}"
+                # Unify console message events
+                elif name == "UnifyMessageReceived":
+                    content = str(payload.get("content") or "").strip()
+                    attachments = payload.get("attachments") or []
+                    if attachments:
+                        msg = f"UnifyMessageReceived: {content} [+{len(attachments)} files]"
+                    elif content:
+                        msg = f"UnifyMessageReceived: {content}"
+                elif name == "UnifyMessageSent":
+                    content = str(payload.get("content") or "").strip()
+                    attachments = payload.get("attachments") or []
+                    if attachments:
+                        msg = f"UnifyMessageSent: {content} [+{len(attachments)} files]"
+                    elif content:
+                        msg = f"UnifyMessageSent: {content}"
+                # Email events
                 elif name == "EmailSent":
                     subj = str(payload.get("subject") or "").strip()
                     if subj:
-                        msg = f"EmailSent: {subj[:120]}"
+                        msg = f"EmailSent: {subj}"
                 elif name == "EmailReceived":
                     subj = str(payload.get("subject") or "").strip()
-                    if subj:
-                        msg = f"EmailReceived: {subj[:120]}"
-                elif name in {"InboundPhoneUtterance", "OutboundPhoneUtterance"}:
+                    attachments = payload.get("attachments") or []
+                    if attachments:
+                        msg = f"EmailReceived: {subj} [+{len(attachments)} files]"
+                    elif subj:
+                        msg = f"EmailReceived: {subj}"
+                # Phone call state events
+                elif name == "PhoneCallReceived":
+                    msg = "PhoneCallReceived"
+                elif name == "PhoneCallStarted":
+                    msg = "PhoneCallStarted"
+                elif name == "PhoneCallAnswered":
+                    msg = "PhoneCallAnswered"
+                elif name == "PhoneCallNotAnswered":
+                    reason = str(payload.get("reason") or "").strip()
+                    msg = f"PhoneCallNotAnswered: {reason}" if reason else "PhoneCallNotAnswered"
+                elif name == "PhoneCallEnded":
+                    msg = "PhoneCallEnded"
+                # Unify Meet state events
+                elif name == "UnifyMeetReceived":
+                    msg = "UnifyMeetReceived"
+                elif name == "UnifyMeetStarted":
+                    msg = "UnifyMeetStarted"
+                elif name == "UnifyMeetEnded":
+                    msg = "UnifyMeetEnded"
+                # Phone/meeting utterance events
+                elif name in {"InboundPhoneUtterance", "OutboundPhoneUtterance",
+                              "InboundUnifyMeetUtterance", "OutboundUnifyMeetUtterance"}:
                     content = str(payload.get("content") or "").strip()
                     if content:
-                        msg = f"{name}: {content[:160]}"
+                        msg = f"{name}: {content}"
+                # Voice interrupt
+                elif name == "VoiceInterrupt":
+                    msg = "VoiceInterrupt"
+                # Call guidance
                 elif name == "CallGuidance":
                     content = str(payload.get("content") or "").strip()
                     if content:
-                        msg = f"CallGuidance: {content[:160]}"
+                        msg = f"CallGuidance: {content}"
+                # Other useful events
+                elif name == "UnknownContactCreated":
+                    medium = str(payload.get("medium") or "").strip()
+                    preview = str(payload.get("message_preview") or "").strip()
+                    if preview:
+                        msg = f"UnknownContactCreated ({medium}): {preview}"
+                    else:
+                        msg = f"UnknownContactCreated ({medium})"
+                elif name == "DirectMessageEvent":
+                    content = str(payload.get("content") or "").strip()
+                    source = str(payload.get("source") or "").strip()
+                    if content:
+                        msg = f"DirectMessage [{source}]: {content}"
+                elif name == "Error":
+                    message = str(payload.get("message") or "").strip()
+                    if message:
+                        msg = f"Error: {message}"
+                # Actor events
                 elif name == "ActorHandleStarted":
                     q = str(payload.get("query") or "").strip()
                     if q:
-                        msg = f"ActorHandleStarted: {q[:160]}"
+                        msg = f"ActorHandleStarted: {q}"
+                    # Set handle context for subsequent events
+                    if actor_hid is not None:
+                        try:
+                            rt.event_tree_display.set_handle_context(handle_id=actor_hid)
+                        except Exception:
+                            pass
+                        try:
+                            rt.trace_display.set_event_context(
+                                event_id=f"handle-{actor_hid}",
+                                handle_id=actor_hid,
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            rt.log_aggregator.set_handle_context(handle_id=actor_hid)
+                        except Exception:
+                            pass
+                elif name == "ActorClarificationRequest":
+                    q = str(payload.get("query") or "").strip()
+                    if q:
+                        msg = f"ActorClarificationRequest: {q}"
+                elif name == "ActorClarificationResponse":
+                    r = str(payload.get("response") or "").strip()
+                    if r:
+                        msg = f"ActorClarificationResponse: {r}"
                 elif name == "ActorNotification":
                     r = str(payload.get("response") or "").strip()
                     if r:
-                        msg = f"ActorNotification: {r[:160]}"
+                        msg = f"ActorNotification: {r}"
                 elif name == "ActorResult":
                     r = str(payload.get("result") or "").strip()
                     if r:
-                        msg = f"ActorResult: {r[:160]}"
+                        msg = f"ActorResult: {r}"
+                    # Mark handle tree as completed
+                    if actor_hid is not None:
+                        try:
+                            rt.event_tree_display.mark_handle_completed(actor_hid)
+                        except Exception:
+                            pass
+                elif name == "ActorPause":
+                    reason = str(payload.get("reason") or "").strip()
+                    msg = f"ActorPause: {reason}" if reason else "ActorPause"
+                elif name == "ActorResume":
+                    reason = str(payload.get("reason") or "").strip()
+                    msg = f"ActorResume: {reason}" if reason else "ActorResume"
             except Exception:
                 pass
 
@@ -1514,6 +1686,7 @@ if _TEXTUAL_AVAILABLE:
                 rt.log_aggregator.handle_structured_event(
                     category=cat,  # type: ignore[arg-type]
                     message=msg,
+                    handle_id=actor_hid,
                 )
             except Exception:
                 pass
