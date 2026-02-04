@@ -642,7 +642,7 @@ if _TEXTUAL_AVAILABLE:
                         key = str(
                             getattr(t, "call_id", None)
                             or getattr(t, "label", "")
-                            or ""
+                            or "",
                         )
                         hid = getattr(t, "handle_id", None)
                         if hid is not None:
@@ -660,7 +660,9 @@ if _TEXTUAL_AVAILABLE:
 
                     # Set root label to show number of concurrent executions
                     if len(all_trees) > 1:
-                        widget.root.label = f"📊 Event Tree ({len(all_trees)} concurrent)"
+                        widget.root.label = (
+                            f"📊 Event Tree ({len(all_trees)} concurrent)"
+                        )
                     else:
                         widget.root.label = "📊 Event Tree"
 
@@ -748,8 +750,12 @@ if _TEXTUAL_AVAILABLE:
 
                 try:
                     cm_log.write(lg.render_expanded("cm"))
-                    actor_log.write(lg.render_expanded("actor", group_by_handle=group_actor))
-                    mgr_log.write(lg.render_expanded("manager", group_by_handle=group_mgr))
+                    actor_log.write(
+                        lg.render_expanded("actor", group_by_handle=group_actor),
+                    )
+                    mgr_log.write(
+                        lg.render_expanded("manager", group_by_handle=group_mgr),
+                    )
                 except Exception:
                     pass
 
@@ -1486,7 +1492,9 @@ if _TEXTUAL_AVAILABLE:
                     except Exception:
                         trace_hid = None
                     rt.trace_display.capture_execution(
-                        code=code, result=res, handle_id=trace_hid
+                        code=code,
+                        result=res,
+                        handle_id=trace_hid,
                     )
                 except Exception:
                     return
@@ -1588,7 +1596,11 @@ if _TEXTUAL_AVAILABLE:
                     msg = "PhoneCallAnswered"
                 elif name == "PhoneCallNotAnswered":
                     reason = str(payload.get("reason") or "").strip()
-                    msg = f"PhoneCallNotAnswered: {reason}" if reason else "PhoneCallNotAnswered"
+                    msg = (
+                        f"PhoneCallNotAnswered: {reason}"
+                        if reason
+                        else "PhoneCallNotAnswered"
+                    )
                 elif name == "PhoneCallEnded":
                     msg = "PhoneCallEnded"
                 # Unify Meet state events
@@ -1599,8 +1611,12 @@ if _TEXTUAL_AVAILABLE:
                 elif name == "UnifyMeetEnded":
                     msg = "UnifyMeetEnded"
                 # Phone/meeting utterance events
-                elif name in {"InboundPhoneUtterance", "OutboundPhoneUtterance",
-                              "InboundUnifyMeetUtterance", "OutboundUnifyMeetUtterance"}:
+                elif name in {
+                    "InboundPhoneUtterance",
+                    "OutboundPhoneUtterance",
+                    "InboundUnifyMeetUtterance",
+                    "OutboundUnifyMeetUtterance",
+                }:
                     content = str(payload.get("content") or "").strip()
                     if content:
                         msg = f"{name}: {content}"
@@ -1637,7 +1653,9 @@ if _TEXTUAL_AVAILABLE:
                     # Set handle context for subsequent events
                     if actor_hid is not None:
                         try:
-                            rt.event_tree_display.set_handle_context(handle_id=actor_hid)
+                            rt.event_tree_display.set_handle_context(
+                                handle_id=actor_hid,
+                            )
                         except Exception:
                             pass
                         try:
