@@ -188,7 +188,7 @@ class WebSearcher(BaseWebSearcher):
             )
 
         client.set_system_message(
-            prompt_builders.build_ask_prompt(tools=tools),
+            prompt_builders.build_ask_prompt(tools=tools).to_list(),
         )
 
         handle = start_async_tool_loop(
@@ -353,7 +353,7 @@ class WebSearcher(BaseWebSearcher):
             )
 
         client.set_system_message(
-            prompt_builders.build_update_prompt(tools=tools),
+            prompt_builders.build_update_prompt(tools=tools).to_list(),
         )
 
         handle = start_async_tool_loop(

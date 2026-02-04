@@ -482,7 +482,7 @@ class TaskScheduler(BaseTaskScheduler):
                 num_tasks=self._num_tasks(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # Prepare effective tool_policy
@@ -574,7 +574,7 @@ class TaskScheduler(BaseTaskScheduler):
                 num_tasks=self._num_tasks(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # Prepare effective tool_policy

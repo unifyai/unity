@@ -35,7 +35,7 @@ def test_ask_system_prompt_formatting(contact_manager_scenario):
         tools=tools,
         num_contacts=num_contacts,
         columns=cm._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -108,7 +108,7 @@ def test_update_system_prompt_formatting(contact_manager_scenario):
         tools=tools,
         num_contacts=num_contacts,
         columns=cm._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -206,7 +206,7 @@ def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
         from unity.contact_manager.prompt_builders import build_ask_prompt, build_update_prompt
         cm = ContactManager()
         tools = dict(cm.get_tools("{method}"))
-        prompt = build_{method}_prompt(tools=tools, num_contacts=cm._num_contacts(), columns=cm._list_columns())
+        prompt = build_{method}_prompt(tools=tools, num_contacts=cm._num_contacts(), columns=cm._list_columns()).flatten()
         sys.stdout.write(prompt)
         """,
     )

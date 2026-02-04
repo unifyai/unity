@@ -20,6 +20,7 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # Standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
 
@@ -131,7 +132,7 @@ def build_ask_prompt(
     columns: Union[List[Dict[str, str]], List[str], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *ask* using the shared composer."""
     # Extract custom columns (not in Guidance model)
     custom_cols = get_custom_columns(Guidance, columns)
@@ -277,7 +278,7 @@ def build_update_prompt(
     columns: Union[List[Dict[str, str]], List[str], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *update* using schema-first approach."""
     # Extract custom columns (not in Guidance model)
     custom_cols = get_custom_columns(Guidance, columns)

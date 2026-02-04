@@ -20,6 +20,7 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
 
@@ -38,7 +39,7 @@ def build_ask_prompt(
     columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """
     Build the **system** prompt for the `ask` method using the shared composer.
 
@@ -202,7 +203,7 @@ def build_update_prompt(
     columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """
     Build the **system** prompt for the `update` method using schema-first approach.
     """

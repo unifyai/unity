@@ -19,6 +19,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
 
@@ -82,7 +83,7 @@ def build_refactor_prompt(
     table_schemas_json: str,
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
-) -> str:
+) -> PromptParts:
     """
     Construct the system-prompt for :pymeth:`KnowledgeManager.refactor`.
 
@@ -304,7 +305,7 @@ def build_update_prompt(
     table_schemas_json: str,
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
-) -> str:
+) -> PromptParts:
     """
     Build the **system message** for `KnowledgeManager.update`.
 
@@ -535,7 +536,7 @@ def build_ask_prompt(
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
     include_join_info: bool | None = None,
-) -> str:
+) -> PromptParts:
     """
     Build the **system message** for `KnowledgeManager.retrieve`.
     """
