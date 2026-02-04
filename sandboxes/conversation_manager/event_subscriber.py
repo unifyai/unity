@@ -14,17 +14,37 @@ import time
 from typing import Any, Awaitable, Callable, Optional
 
 from unity.conversation_manager.events import (
-    CallGuidance,
+    ActorClarificationRequest,
+    ActorClarificationResponse,
     ActorHandleStarted,
     ActorNotification,
+    ActorPause,
     ActorResult,
-    ActorClarificationRequest,
+    ActorResume,
+    CallGuidance,
+    DirectMessageEvent,
+    EmailReceived,
     EmailSent,
     Error,
     Event,
+    InboundPhoneUtterance,
+    InboundUnifyMeetUtterance,
     OutboundPhoneUtterance,
+    OutboundUnifyMeetUtterance,
+    PhoneCallAnswered,
+    PhoneCallEnded,
+    PhoneCallNotAnswered,
+    PhoneCallReceived,
+    PhoneCallStarted,
     SMSReceived,
     SMSSent,
+    UnifyMeetEnded,
+    UnifyMeetReceived,
+    UnifyMeetStarted,
+    UnifyMessageReceived,
+    UnifyMessageSent,
+    UnknownContactCreated,
+    VoiceInterrupt,
 )
 
 from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
@@ -249,6 +269,7 @@ async def subscribe_to_responses(
                                 # NOTE: Store full message; truncation happens at render time.
                                 m = event.__class__.__name__
                                 try:
+                                    # SMS events
                                     if isinstance(event, SMSReceived):
                                         content = str(
                                             getattr(event, "content", "") or "",
@@ -261,12 +282,135 @@ async def subscribe_to_responses(
                                         ).strip()
                                         if content:
                                             m = f"SMSSent: {content}"
+                                    # Unify console message events
+                                    elif isinstance(event, UnifyMessageReceived):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        attachments = (
+                                            getattr(event, "attachments", []) or []
+                                        )
+                                        if attachments:
+                                            m = f"UnifyMessageReceived: {content} [+{len(attachments)} files]"
+                                        elif content:
+                                            m = f"UnifyMessageReceived: {content}"
+                                    elif isinstance(event, UnifyMessageSent):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        attachments = (
+                                            getattr(event, "attachments", []) or []
+                                        )
+                                        if attachments:
+                                            m = f"UnifyMessageSent: {content} [+{len(attachments)} files]"
+                                        elif content:
+                                            m = f"UnifyMessageSent: {content}"
+                                    # Email events
                                     elif isinstance(event, EmailSent):
                                         subj = str(
                                             getattr(event, "subject", "") or "",
                                         ).strip()
                                         if subj:
                                             m = f"EmailSent: {subj}"
+                                    elif isinstance(event, EmailReceived):
+                                        subj = str(
+                                            getattr(event, "subject", "") or "",
+                                        ).strip()
+                                        attachments = (
+                                            getattr(event, "attachments", []) or []
+                                        )
+                                        if attachments:
+                                            m = f"EmailReceived: {subj} [+{len(attachments)} files]"
+                                        elif subj:
+                                            m = f"EmailReceived: {subj}"
+                                    # Phone call state events
+                                    elif isinstance(event, PhoneCallReceived):
+                                        m = "PhoneCallReceived"
+                                    elif isinstance(event, PhoneCallStarted):
+                                        m = "PhoneCallStarted"
+                                    elif isinstance(event, PhoneCallAnswered):
+                                        m = "PhoneCallAnswered"
+                                    elif isinstance(event, PhoneCallNotAnswered):
+                                        reason = str(
+                                            getattr(event, "reason", "") or "",
+                                        ).strip()
+                                        m = (
+                                            f"PhoneCallNotAnswered: {reason}"
+                                            if reason
+                                            else "PhoneCallNotAnswered"
+                                        )
+                                    elif isinstance(event, PhoneCallEnded):
+                                        m = "PhoneCallEnded"
+                                    # Unify Meet state events
+                                    elif isinstance(event, UnifyMeetReceived):
+                                        m = "UnifyMeetReceived"
+                                    elif isinstance(event, UnifyMeetStarted):
+                                        m = "UnifyMeetStarted"
+                                    elif isinstance(event, UnifyMeetEnded):
+                                        m = "UnifyMeetEnded"
+                                    # Phone utterance events
+                                    elif isinstance(event, InboundPhoneUtterance):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        if content:
+                                            m = f"InboundPhoneUtterance: {content}"
+                                    elif isinstance(event, OutboundPhoneUtterance):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        if content:
+                                            m = f"OutboundPhoneUtterance: {content}"
+                                    # Unify Meet utterance events
+                                    elif isinstance(event, InboundUnifyMeetUtterance):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        if content:
+                                            m = f"InboundUnifyMeetUtterance: {content}"
+                                    elif isinstance(event, OutboundUnifyMeetUtterance):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        if content:
+                                            m = f"OutboundUnifyMeetUtterance: {content}"
+                                    # Voice interrupt
+                                    elif isinstance(event, VoiceInterrupt):
+                                        m = "VoiceInterrupt"
+                                    # Call guidance
+                                    elif isinstance(event, CallGuidance):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        if content:
+                                            m = f"CallGuidance: {content}"
+                                    # Other useful events
+                                    elif isinstance(event, UnknownContactCreated):
+                                        medium = str(
+                                            getattr(event, "medium", "") or "",
+                                        ).strip()
+                                        preview = str(
+                                            getattr(event, "message_preview", "") or "",
+                                        ).strip()
+                                        if preview:
+                                            m = f"UnknownContactCreated ({medium}): {preview}"
+                                        else:
+                                            m = f"UnknownContactCreated ({medium})"
+                                    elif isinstance(event, DirectMessageEvent):
+                                        content = str(
+                                            getattr(event, "content", "") or "",
+                                        ).strip()
+                                        source = str(
+                                            getattr(event, "source", "") or "",
+                                        ).strip()
+                                        if content:
+                                            m = f"DirectMessage [{source}]: {content}"
+                                    elif isinstance(event, Error):
+                                        message = str(
+                                            getattr(event, "message", "") or "",
+                                        ).strip()
+                                        if message:
+                                            m = f"Error: {message}"
                                 except Exception:
                                     pass
                                 log_aggregator.handle_structured_event(
@@ -278,6 +422,13 @@ async def subscribe_to_responses(
                                 # is not very informative).
                                 # NOTE: Store full message; truncation happens at render time.
                                 msg = event.__class__.__name__
+                                actor_hid: int | None = None
+                                try:
+                                    actor_hid = int(getattr(event, "handle_id", -1))
+                                    if actor_hid < 0:
+                                        actor_hid = None
+                                except Exception:
+                                    actor_hid = None
                                 try:
                                     if isinstance(event, ActorHandleStarted):
                                         q = str(
@@ -285,6 +436,18 @@ async def subscribe_to_responses(
                                         ).strip()
                                         if q:
                                             msg = f"ActorHandleStarted: {q}"
+                                    elif isinstance(event, ActorClarificationRequest):
+                                        q = str(
+                                            getattr(event, "query", "") or "",
+                                        ).strip()
+                                        if q:
+                                            msg = f"ActorClarificationRequest: {q}"
+                                    elif isinstance(event, ActorClarificationResponse):
+                                        r = str(
+                                            getattr(event, "response", "") or "",
+                                        ).strip()
+                                        if r:
+                                            msg = f"ActorClarificationResponse: {r}"
                                     elif isinstance(event, ActorNotification):
                                         r = str(
                                             getattr(event, "response", "") or "",
@@ -297,11 +460,30 @@ async def subscribe_to_responses(
                                         ).strip()
                                         if r:
                                             msg = f"ActorResult: {r}"
+                                    elif isinstance(event, ActorPause):
+                                        reason = str(
+                                            getattr(event, "reason", "") or "",
+                                        ).strip()
+                                        msg = (
+                                            f"ActorPause: {reason}"
+                                            if reason
+                                            else "ActorPause"
+                                        )
+                                    elif isinstance(event, ActorResume):
+                                        reason = str(
+                                            getattr(event, "reason", "") or "",
+                                        ).strip()
+                                        msg = (
+                                            f"ActorResume: {reason}"
+                                            if reason
+                                            else "ActorResume"
+                                        )
                                 except Exception:
                                     pass
                                 log_aggregator.handle_structured_event(
                                     category="actor",
                                     message=msg,
+                                    handle_id=actor_hid,
                                 )
                     except Exception:
                         pass
