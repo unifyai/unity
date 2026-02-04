@@ -35,6 +35,7 @@ class RcloneSync:
         self.config = config
         self._config_path: Optional[str] = None
         self._setup_done = False
+        self._op_lock = asyncio.Lock()  # Serializes all rclone operations
 
     async def setup(self, ssh_private_key: str) -> bool:
         """Setup rclone config and SSH key file.
@@ -45,49 +46,50 @@ class RcloneSync:
         Returns:
             True if setup successful, False otherwise
         """
-        print("[FileSync] Setting up rclone...")
+        async with self._op_lock:
+            print("[FileSync] Setting up rclone...")
 
-        try:
-            # 1. Write SSH private key to temp file with secure permissions
-            key_path = Path(self.config.ssh_key_path)
-            key_path.parent.mkdir(parents=True, exist_ok=True)
-            key_path.write_text(ssh_private_key)
-            os.chmod(key_path, 0o600)
-            print(f"[FileSync] SSH key written to {key_path}")
+            try:
+                # 1. Write SSH private key to temp file with secure permissions
+                key_path = Path(self.config.ssh_key_path)
+                key_path.parent.mkdir(parents=True, exist_ok=True)
+                key_path.write_text(ssh_private_key)
+                os.chmod(key_path, 0o600)
+                print(f"[FileSync] SSH key written to {key_path}")
 
-            # 2. Ensure local root exists with standard subdirectories
-            local_root = Path(self.config.local_root).expanduser()
-            local_root.mkdir(parents=True, exist_ok=True)
-            print(f"[FileSync] Local root: {local_root}")
+                # 2. Ensure local root exists with standard subdirectories
+                local_root = Path(self.config.local_root).expanduser()
+                local_root.mkdir(parents=True, exist_ok=True)
+                print(f"[FileSync] Local root: {local_root}")
 
-            # 3. Create rclone config file
-            self._config_path = tempfile.mktemp(suffix=".conf", prefix="rclone_")
-            rclone_config = f"""[{self.REMOTE_NAME}]
+                # 3. Create rclone config file
+                self._config_path = tempfile.mktemp(suffix=".conf", prefix="rclone_")
+                rclone_config = f"""[{self.REMOTE_NAME}]
 type = sftp
 host = {self.config.ssh_host}
 port = {self.config.ssh_port}
 user = {self.config.ssh_user}
 key_file = {self.config.ssh_key_path}
 """
-            Path(self._config_path).write_text(rclone_config)
-            print(f"[FileSync] Rclone config written to {self._config_path}")
+                Path(self._config_path).write_text(rclone_config)
+                print(f"[FileSync] Rclone config written to {self._config_path}")
 
-            # 4. Test connection
-            success = await self._test_connection()
-            if success:
-                self._setup_done = True
-                print("[FileSync] Setup complete, connection verified")
-            else:
-                print("[FileSync] Setup failed: connection test failed")
+                # 4. Test connection
+                success = await self._test_connection()
+                if success:
+                    self._setup_done = True
+                    print("[FileSync] Setup complete, connection verified")
+                else:
+                    print("[FileSync] Setup failed: connection test failed")
 
-            return success
+                return success
 
-        except Exception as e:
-            print(f"[FileSync] Setup failed: {e}")
-            import traceback
+            except Exception as e:
+                print(f"[FileSync] Setup failed: {e}")
+                import traceback
 
-            traceback.print_exc()
-            return False
+                traceback.print_exc()
+                return False
 
     async def _test_connection(self) -> bool:
         """Test SFTP connection to VM."""
@@ -100,54 +102,56 @@ key_file = {self.config.ssh_key_path}
 
         Called on job start to sync initial state.
         """
-        remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
-        local = str(Path(self.config.local_root).expanduser())
+        async with self._op_lock:
+            remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
+            local = str(Path(self.config.local_root).expanduser())
 
-        if subpath:
-            remote = f"{remote}/{subpath}"
-            local = f"{local}/{subpath}"
+            if subpath:
+                remote = f"{remote}/{subpath}"
+                local = f"{local}/{subpath}"
 
-        print(f"[FileSync] Syncing from remote: {remote} → {local}")
+            print(f"[FileSync] Syncing from remote: {remote} → {local}")
 
-        cmd = self._build_cmd(
-            [
-                "sync",
-                remote,
-                local,
-                "--update",  # Skip files that are newer on destination
-                *self._exclude_args(),
-                "-v",
-            ],
-        )
+            cmd = self._build_cmd(
+                [
+                    "sync",
+                    remote,
+                    local,
+                    "--update",  # Skip files that are newer on destination
+                    *self._exclude_args(),
+                    "-v",
+                ],
+            )
 
-        return await self._run_with_retry(cmd, operation="sync from remote")
+            return await self._run_with_retry(cmd, operation="sync from remote")
 
     async def sync_to_remote(self, subpath: str = "") -> SyncResult:
         """Push files from local to VM (local → remote).
 
         Called on file writes and job completion.
         """
-        remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
-        local = str(Path(self.config.local_root).expanduser())
+        async with self._op_lock:
+            remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
+            local = str(Path(self.config.local_root).expanduser())
 
-        if subpath:
-            remote = f"{remote}/{subpath}"
-            local = f"{local}/{subpath}"
+            if subpath:
+                remote = f"{remote}/{subpath}"
+                local = f"{local}/{subpath}"
 
-        print(f"[FileSync] Syncing to remote: {local} → {remote}")
+            print(f"[FileSync] Syncing to remote: {local} → {remote}")
 
-        cmd = self._build_cmd(
-            [
-                "sync",
-                local,
-                remote,
-                "--update",  # Skip files that are newer on destination
-                *self._exclude_args(),
-                "-v",
-            ],
-        )
+            cmd = self._build_cmd(
+                [
+                    "sync",
+                    local,
+                    remote,
+                    "--update",  # Skip files that are newer on destination
+                    *self._exclude_args(),
+                    "-v",
+                ],
+            )
 
-        return await self._run_with_retry(cmd, operation="sync to remote")
+            return await self._run_with_retry(cmd, operation="sync to remote")
 
     async def bisync(self, force_resync: bool = False) -> SyncResult:
         """Bidirectional sync with 'latest wins' conflict resolution.
@@ -159,42 +163,43 @@ key_file = {self.config.ssh_key_path}
         Args:
             force_resync: If True, always use --resync flag (for initialization)
         """
-        remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
-        local = str(Path(self.config.local_root).expanduser())
+        async with self._op_lock:
+            remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
+            local = str(Path(self.config.local_root).expanduser())
 
-        print(f"[FileSync] Bisync: {local} ↔ {remote}")
+            print(f"[FileSync] Bisync: {local} ↔ {remote}")
 
-        base_args = [
-            "bisync",
-            local,
-            remote,
-            "--conflict-resolve",
-            "newer",  # Latest wins
-            *self._exclude_args(),
-            "-v",
-        ]
+            base_args = [
+                "bisync",
+                local,
+                remote,
+                "--conflict-resolve",
+                "newer",  # Latest wins
+                *self._exclude_args(),
+                "-v",
+            ]
 
-        if force_resync:
-            print("[FileSync] Using --resync for bisync initialization")
-            return await self._run_with_retry(
-                self._build_cmd([*base_args, "--resync"]),
+            if force_resync:
+                print("[FileSync] Using --resync for bisync initialization")
+                return await self._run_with_retry(
+                    self._build_cmd([*base_args, "--resync"]),
+                    operation="bisync",
+                )
+
+            # Try without --resync, auto-recover if rclone says it needs it
+            result = await self._run_with_retry(
+                self._build_cmd(base_args),
                 operation="bisync",
             )
 
-        # Try without --resync, auto-recover if rclone says it needs it
-        result = await self._run_with_retry(
-            self._build_cmd(base_args),
-            operation="bisync",
-        )
+            if not result.success and self._needs_resync_recovery(result.errors):
+                print("[FileSync] Bisync state corrupted, recovering with --resync...")
+                result = await self._run_with_retry(
+                    self._build_cmd([*base_args, "--resync"]),
+                    operation="bisync (recovery)",
+                )
 
-        if not result.success and self._needs_resync_recovery(result.errors):
-            print("[FileSync] Bisync state corrupted, recovering with --resync...")
-            result = await self._run_with_retry(
-                self._build_cmd([*base_args, "--resync"]),
-                operation="bisync (recovery)",
-            )
-
-        return result
+            return result
 
     def _needs_resync_recovery(self, errors: List[str]) -> bool:
         """Check if bisync failure requires --resync recovery."""
@@ -213,25 +218,26 @@ key_file = {self.config.ssh_key_path}
         Args:
             local_path: Absolute path to the local file
         """
-        local_root = Path(self.config.local_root).expanduser()
-        local_file = Path(local_path)
+        async with self._op_lock:
+            local_root = Path(self.config.local_root).expanduser()
+            local_file = Path(local_path)
 
-        # Expand user paths
-        if str(local_file).startswith("~"):
-            local_file = local_file.expanduser()
+            # Expand user paths
+            if str(local_file).startswith("~"):
+                local_file = local_file.expanduser()
 
-        try:
-            rel_path = local_file.relative_to(local_root)
-        except ValueError:
-            print(f"[FileSync] File {local_path} is outside sync root, skipping")
-            return SyncResult(success=True)
+            try:
+                rel_path = local_file.relative_to(local_root)
+            except ValueError:
+                print(f"[FileSync] File {local_path} is outside sync root, skipping")
+                return SyncResult(success=True)
 
-        remote_path = f"{self.REMOTE_NAME}:{self.config.remote_root}/{rel_path}"
+            remote_path = f"{self.REMOTE_NAME}:{self.config.remote_root}/{rel_path}"
 
-        print(f"[FileSync] Copying file: {local_file} → {remote_path}")
+            print(f"[FileSync] Copying file: {local_file} → {remote_path}")
 
-        cmd = self._build_cmd(["copyto", str(local_file), remote_path, "-v"])
-        return await self._run_with_retry(cmd, operation=f"copy {rel_path}")
+            cmd = self._build_cmd(["copyto", str(local_file), remote_path, "-v"])
+            return await self._run_with_retry(cmd, operation=f"copy {rel_path}")
 
     async def delete_remote_file(self, local_path: str) -> SyncResult:
         """Delete a file from remote (for on-delete sync).
@@ -239,23 +245,24 @@ key_file = {self.config.ssh_key_path}
         Args:
             local_path: Absolute path to the (deleted) local file
         """
-        local_root = Path(self.config.local_root).expanduser()
-        local_file = Path(local_path)
+        async with self._op_lock:
+            local_root = Path(self.config.local_root).expanduser()
+            local_file = Path(local_path)
 
-        if str(local_file).startswith("~"):
-            local_file = local_file.expanduser()
+            if str(local_file).startswith("~"):
+                local_file = local_file.expanduser()
 
-        try:
-            rel_path = local_file.relative_to(local_root)
-        except ValueError:
-            return SyncResult(success=True)
+            try:
+                rel_path = local_file.relative_to(local_root)
+            except ValueError:
+                return SyncResult(success=True)
 
-        remote_path = f"{self.REMOTE_NAME}:{self.config.remote_root}/{rel_path}"
+            remote_path = f"{self.REMOTE_NAME}:{self.config.remote_root}/{rel_path}"
 
-        print(f"[FileSync] Deleting remote: {remote_path}")
+            print(f"[FileSync] Deleting remote: {remote_path}")
 
-        cmd = self._build_cmd(["deletefile", remote_path, "-v"])
-        return await self._run_with_retry(cmd, operation=f"delete {rel_path}")
+            cmd = self._build_cmd(["deletefile", remote_path, "-v"])
+            return await self._run_with_retry(cmd, operation=f"delete {rel_path}")
 
     def _build_cmd(self, args: List[str]) -> List[str]:
         """Build rclone command with config."""
