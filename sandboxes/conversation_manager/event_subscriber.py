@@ -329,6 +329,21 @@ async def subscribe_to_responses(
                                 if trace_display is not None:
                                     trace_display.set_event_context(
                                         event_id=f"handle-{hid}",
+                                        handle_id=hid if hid >= 0 else None,
+                                    )
+                            except Exception:
+                                pass
+                            try:
+                                if event_tree_display is not None:
+                                    event_tree_display.set_handle_context(
+                                        handle_id=hid if hid >= 0 else None,
+                                    )
+                            except Exception:
+                                pass
+                            try:
+                                if log_aggregator is not None:
+                                    log_aggregator.set_handle_context(
+                                        handle_id=hid if hid >= 0 else None,
                                     )
                             except Exception:
                                 pass
