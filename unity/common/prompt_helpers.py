@@ -368,15 +368,15 @@ class PromptParts:
 
         if not self._parts:
             # First item - add directly without separator
-            self._parts.append({"type": "text", "content": part, "static": static})
-        elif self._parts[-1]["static"] == static:
+            self._parts.append({"type": "text", "content": part, "_static": static})
+        elif self._parts[-1]["_static"] == static:
             # Same static - merge with previous content
             joiner = "\n\n" if separator else "\n"
             self._parts[-1]["content"] += joiner + part
         else:
             # Different static - add new block
             content = ("\n\n" + part) if separator else "\n" + part
-            self._parts.append({"type": "text", "content": content, "static": static})
+            self._parts.append({"type": "text", "content": content, "_static": static})
 
     def to_list(self) -> List[Dict[str, Any]]:
         """Return the internal structured parts."""
