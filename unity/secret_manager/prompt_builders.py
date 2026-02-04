@@ -19,6 +19,7 @@ from ..common.prompt_helpers import (
     require_tools as _shared_require_tools,
     # Standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
 
@@ -47,7 +48,7 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
+def build_ask_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     """Return the system prompt used by SecretManager.ask using the shared composer.
 
     Emphasises: never reveal raw secret values; reference via ${name};
@@ -171,7 +172,7 @@ Anti‑patterns to avoid
     return compose_system_prompt(spec)
 
 
-def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
+def build_update_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     """Return the system prompt used by SecretManager.update using the shared composer.
 
     Emphasises mutation rules and strict non-disclosure of raw values.

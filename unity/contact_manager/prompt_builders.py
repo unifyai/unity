@@ -13,6 +13,7 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
     special_contacts_block as _special_contacts_block,
 )
@@ -61,7 +62,7 @@ def build_ask_prompt(
     columns: Union[List[Dict[str, str]], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *ask* using the shared composer."""
     # Extract custom columns (not in Contact model)
     custom_cols = get_custom_columns(Contact, columns)
@@ -209,7 +210,7 @@ def build_update_prompt(
     columns: Union[List[Dict[str, str]], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *update* using the shared composer."""
     # Extract custom columns (not in Contact model)
     custom_cols = get_custom_columns(Contact, columns)

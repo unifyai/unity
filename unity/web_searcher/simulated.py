@@ -303,7 +303,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self._llm = new_llm_client(stateful=True)
 
         # Reference the real prompt as context (no real tools here)
-        ask_msg = build_ask_prompt(tools=self._ask_tools)
+        ask_msg = build_ask_prompt(tools=self._ask_tools).flatten()
         self._llm.set_system_message(
             "You are a simulated web-search assistant. There is no real web client or API – "
             "invent plausible sources and keep your narrative consistent.\n\n"
@@ -353,7 +353,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
                 schema_llm.set_system_message(getattr(self._llm, "system_message"))
             except Exception:
                 # Fallback: rebuild a fresh prompt equivalent
-                ask_msg = build_ask_prompt(tools=self._ask_tools)
+                ask_msg = build_ask_prompt(tools=self._ask_tools).flatten()
                 schema_llm.set_system_message(
                     "You are a simulated web-search assistant. There is no real web client or API – "
                     "invent plausible sources and keep your narrative consistent.\n\n"

@@ -1517,7 +1517,7 @@ class FileManager(BaseFileManager):
         system_msg = build_file_manager_ask_about_file_prompt(
             tools=tools,
             include_activity=include_activity,
-        )
+        ).to_list()
         client.set_system_message(system_msg)
         # Use filesystem type without exposing absolute paths to LLM
         user_blob = json.dumps(

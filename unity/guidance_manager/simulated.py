@@ -334,13 +334,13 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
             10,
             columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         upd_msg = build_update_prompt(
             upd_tools,
             10,
             columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         sys_parts = [
             "You are a *simulated* guidance-manager assistant. ",

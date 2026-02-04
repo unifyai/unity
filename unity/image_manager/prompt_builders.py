@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from ..common.prompt_helpers import now
+from ..common.prompt_helpers import now, PromptParts
 
 
 import textwrap
 
 
-def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -> str:
+def build_image_ask_prompt(
+    *,
+    caption: str | None,
+    timestamp: datetime | None,
+) -> PromptParts:
     """
     Return a concise system message for image Q&A.
 
@@ -21,15 +25,24 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
     ts = timestamp.isoformat() if timestamp else "unknown-time"
     cap = caption or "(no caption provided)"
 
-    msg = textwrap.dedent(
-        f"""
-        You are a helpful vision assistant. An image will be provided in the next user message.
+    parts = PromptParts()
 
-        Context
-        -------
-        • Timestamp: {ts}
-        • Caption: {cap}
+    parts.add(
+        "You are a helpful vision assistant. An image will be provided in the next user message.",
+    )
 
+    context_block = "\n".join(
+        [
+            "Context",
+            "-------",
+            f"• Timestamp: {ts}",
+            f"• Caption: {cap}",
+        ],
+    )
+    parts.add(context_block)
+
+    requirements_block = textwrap.dedent(
+        """
         Requirements
         -----------
         • Look at the provided image and answer the user's question clearly and concisely.
@@ -42,6 +55,9 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
           state that they are not visible and describe what is visible instead.
         """,
     ).strip()
-    # Append current time for reproducibility
-    msg = f"{msg}\n\nCurrent UTC time is {now()}."
-    return msg
+    parts.add(requirements_block)
+
+    # Append current time for reproducibility (dynamic content)
+    parts.add(f"Current UTC time is {now()}.", static=False)
+
+    return parts

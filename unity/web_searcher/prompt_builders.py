@@ -16,6 +16,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
 
@@ -235,7 +236,7 @@ def _build_update_tools_documentation(tools: Dict[str, Callable]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
+def build_ask_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     """Return the system prompt used by WebSearcher.ask using the shared composer."""
     request_clar_fname = _tool_name(tools, "request_clarification")
 
@@ -329,7 +330,7 @@ Anti‑patterns to avoid
     return compose_system_prompt(spec)
 
 
-def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
+def build_update_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     """Return the system prompt used by WebSearcher.update using the shared composer."""
     ask_fname = _tool_name(tools, "ask")
     request_clar_fname = _tool_name(tools, "request_clarification")

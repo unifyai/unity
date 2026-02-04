@@ -135,7 +135,7 @@ def test_file_manager_ask_about_file_system_prompt_formatting():
     tools = _make_mock_tools()
     prompt = build_file_manager_ask_about_file_prompt(
         tools=tools,
-    )
+    ).flatten()
 
     # Check key structural elements
     tools_json = extract_tools_dict(prompt)
@@ -219,7 +219,7 @@ def _build_prompt_in_subprocess(method: str) -> str:
 
         prompt = build_file_manager_ask_about_file_prompt(
             tools=tools,
-        )
+        ).flatten()
         sys.stdout.write(prompt)
         """,
     )

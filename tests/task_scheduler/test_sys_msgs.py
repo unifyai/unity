@@ -34,7 +34,7 @@ def test_ask_system_prompt_formatting(task_scheduler_read_scenario):
         tools=tools,
         num_tasks=num_tasks,
         columns=ts._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -95,7 +95,7 @@ def test_update_system_prompt_formatting(task_scheduler_read_scenario):
         tools=tools,
         num_tasks=num_tasks,
         columns=ts._list_columns(),
-    )
+    ).flatten()
 
     # Verify tools match what's in the prompt
     tools_json = extract_tools_dict(prompt)
@@ -178,7 +178,7 @@ def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
         from unity.task_scheduler.prompt_builders import build_ask_prompt, build_update_prompt
         ts = TaskScheduler()
         tools = dict(ts.get_tools("{method}"))
-        prompt = build_{method}_prompt(tools=tools, num_tasks=ts._num_tasks(), columns=ts._list_columns())
+        prompt = build_{method}_prompt(tools=tools, num_tasks=ts._num_tasks(), columns=ts._list_columns()).flatten()
         sys.stdout.write(prompt)
         """,
     )

@@ -61,10 +61,10 @@ def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
         sm = SecretManager()
         if "{method}" == "ask":
             tools = dict(sm.get_tools("ask"))
-            prompt = build_ask_prompt(tools=tools)
+            prompt = build_ask_prompt(tools=tools).flatten()
         else:
             tools = dict(sm.get_tools("update"))
-            prompt = build_update_prompt(tools=tools)
+            prompt = build_update_prompt(tools=tools).flatten()
         sys.stdout.write(prompt)
         """,
     )
@@ -85,7 +85,7 @@ def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
 def test_ask_system_prompt_formatting():
     sm = SecretManager()
     tools = dict(sm.get_tools("ask"))
-    prompt = build_ask_prompt(tools=tools)
+    prompt = build_ask_prompt(tools=tools).flatten()
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
@@ -133,7 +133,7 @@ def test_ask_system_prompt_formatting():
 def test_update_system_prompt_formatting():
     sm = SecretManager()
     tools = dict(sm.get_tools("update"))
-    prompt = build_update_prompt(tools=tools)
+    prompt = build_update_prompt(tools=tools).flatten()
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
