@@ -328,7 +328,7 @@ class ImageHandle:
             build_image_ask_prompt(
                 caption=self._image.caption,
                 timestamp=self._image.timestamp,
-            ),
+            ).to_list(),
         )
 
         # Provide the image as a user content block (vision input).

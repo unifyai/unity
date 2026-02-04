@@ -369,7 +369,7 @@ class SimulatedFileManager(BaseFileManager):
         about_msg = build_file_manager_ask_about_file_prompt(
             ask_about_file_tools,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* file manager assistant. "
