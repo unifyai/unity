@@ -61,6 +61,7 @@ Relevant flags:
 - `quit` / `exit`: exit sandbox
 - `reset`: clear sandbox + CM state (best-effort)
 - `save_project` / `sp`: snapshot the Unify project
+- `save_state [path]`: save structured state snapshot (logs, tree, traces) to JSON file
 - `config`: switch actor configuration (restarts sandbox; state is reset)
 
 ### Event simulation (inbound → CM)
@@ -127,11 +128,53 @@ These are intended for debugging and “execution visibility” in Mode 2/3:
 - `trace [N]`: show last N CodeAct execution turns (default 3)
 - `tree`: show the current manager call hierarchy (EventBus `ManagerMethod` events)
 - `show_logs <cm|actor|manager|all>` / `collapse_logs <...>`: expand/collapse log categories
+- `save_state [path]`: save structured state snapshot to file (see below)
 
 CLI:
 - `--show-trace`: auto-print trace after each CodeAct code turn (REPL only)
 
+### Structured State Snapshots (`save_state`)
+
+The `save_state` command captures the current sandbox display state and saves it to a file. This is useful for:
+- Debugging concurrent Actor calls
+- Sharing session state with teammates
+- Post-mortem analysis of complex runs
+
+```bash
+# Auto-generate filename with timestamp
+save_state
+
+# Specify custom path
+save_state my_debug_session.json
+```
+
+This creates two files:
+- **JSON file**: Machine-readable structured data (logs grouped by handle, event trees, traces)
+- **Text file**: Human-readable formatted output similar to the GUI layout
+
+The snapshot includes:
+- **CM Logs**: Grouped by Actor handle ID
+- **Actor Logs**: Grouped by Actor handle ID
+- **Manager Logs**: Grouped by Actor handle ID (requires `EVENTBUS_PUBLISHING_ENABLED=true`)
+- **Event Trees**: All execution trees with handle IDs
+- **CodeAct Traces**: All traces grouped by Actor handle ID
+
+## Environment Variables
+
+### `EVENTBUS_PUBLISHING_ENABLED`
+
+**Required for Event Tree and Manager Logs.** By default, EventBus publishing is disabled for local development. To enable the Event Tree and Manager Logs panels in the GUI, set:
+
+```bash
+export EVENTBUS_PUBLISHING_ENABLED=true
+```
+
+Without this, the Event Tree will be empty and Manager Logs will show "(no logs)". The Actor Logs and CM Logs panels work independently and are not affected.
+
 ## Troubleshooting
+
+### Event Tree is empty / Manager Logs show "(no logs)"
+Set `EVENTBUS_PUBLISHING_ENABLED=true` (see Environment Variables section above).
 
 ### “(no active conversation) Steering commands…”
 Steering commands only work while CM is processing (active handle or brain run in-flight). Send an event (`sms ...`, `call`, etc.) first.
