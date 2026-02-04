@@ -43,38 +43,62 @@ class EventTreeDisplay:
         self._max_executions = int(max(1, max_executions))
         self._executions: list[TreeNode] = []
         self._current_root: TreeNode | None = None
+        self._current_handle_id: int | None = None  # Current handle context
 
     def reset_tree(self) -> None:
         self._executions.clear()
         self._current_root = None
+        self._current_handle_id = None
+
+    def set_handle_context(self, *, handle_id: int | None) -> None:
+        """Set the current Actor handle context for routing subsequent events."""
+        self._current_handle_id = handle_id
 
     def handle_manager_method(
         self,
         *,
         call_id: str,
         payload: ManagerMethodPayload,
+        handle_id: int | None = None,
     ) -> None:
         """
         Ingest a single ManagerMethodPayload event.
 
         We treat a CodeActActor execute_code incoming as an "execution root" when
         present, but otherwise we place nodes under a generic root.
+
+        Args:
+            call_id: Unique ID for this manager method call
+            payload: The ManagerMethodPayload event
+            handle_id: Optional Actor handle ID for concurrent tracking. Falls back
+                       to _current_handle_id if not provided.
         """
         phase = (payload.phase or "").lower()
         is_boundary = (
             payload.manager == "CodeActActor" and payload.method == "execute_code"
         )
 
+        # Use provided handle_id or fall back to current context
+        effective_handle_id = (
+            handle_id if handle_id is not None else self._current_handle_id
+        )
+
         if phase == "incoming" and is_boundary:
             self._start_new_execution(
                 label=payload.hierarchy_label or "execute_code",
                 call_id=call_id,
+                handle_id=effective_handle_id,
             )
 
         if self._current_root is None:
-            self._start_new_execution(label="Execution", call_id=None)
+            self._start_new_execution(
+                label="Execution",
+                call_id=None,
+                handle_id=effective_handle_id,
+            )
 
         node = self._upsert_node(call_id=call_id, payload=payload)
+        node.handle_id = effective_handle_id
 
         if phase == "outgoing":
             node.finished_at = time.time()
@@ -103,11 +127,18 @@ class EventTreeDisplay:
     # Internals
     # ──────────────────────────────────────────────────────────────────
 
-    def _start_new_execution(self, *, label: str, call_id: str | None) -> None:
+    def _start_new_execution(
+        self,
+        *,
+        label: str,
+        call_id: str | None,
+        handle_id: int | None = None,
+    ) -> None:
         root = TreeNode(
             label=label or "Execution",
             call_id=call_id,
             started_at=time.time(),
+            handle_id=handle_id,
         )
         self._executions.append(root)
         self._current_root = root

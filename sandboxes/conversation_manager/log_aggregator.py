@@ -43,6 +43,7 @@ class LogAggregator:
         }
         self._expanded: set[Category] = set()
         self._execution_id: str | None = None
+        self._current_handle_id: int | None = None  # Current handle context
 
         self._debug_handler: logging.Handler | None = None
 
@@ -51,9 +52,14 @@ class LogAggregator:
             self._buf[k].clear()
         self._expanded.clear()
         self._execution_id = None
+        self._current_handle_id = None
 
     def reset_expansion(self) -> None:
         self._expanded.clear()
+
+    def set_handle_context(self, *, handle_id: int | None) -> None:
+        """Set the current Actor handle context for tagging subsequent events."""
+        self._current_handle_id = handle_id
 
     def counts(self) -> dict[Category, int]:
         return {k: len(v) for k, v in self._buf.items()}
@@ -78,7 +84,12 @@ class LogAggregator:
         level: str = "INFO",
         subcategory: str | None = None,
         event_id: str | None = None,
+        handle_id: int | None = None,
     ) -> None:
+        # Use provided handle_id or fall back to current context
+        effective_handle_id = (
+            handle_id if handle_id is not None else self._current_handle_id
+        )
         self._append(
             LogEntry(
                 timestamp=time.time(),
@@ -87,6 +98,7 @@ class LogAggregator:
                 message=str(message),
                 subcategory=subcategory,
                 event_id=event_id,
+                handle_id=effective_handle_id,
             ),
         )
 

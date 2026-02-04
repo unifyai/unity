@@ -41,24 +41,40 @@ class TraceDisplay:
         self._entries: list[TraceEntry] = []
         self._turn_counter: int = 0
         self._event_id: str = ""
+        self._handle_id: int | None = None  # Current handle context
         self._last_capture_error: str | None = None
         self._last_capture_error_at: float | None = None
         # Optional mapping used by IPC-driven tracing:
         # call_id (ManagerMethod) → index into `_entries`
         self._call_id_to_index: dict[str, int] = {}
+        # Per-handle turn counters for independent numbering
+        self._handle_turn_counters: dict[int, int] = {}
 
-    def set_event_context(self, *, event_id: str) -> None:
-        """Set the current event context (resets turn counter for the event)."""
+    def set_event_context(self, *, event_id: str, handle_id: int | None = None) -> None:
+        """Set the current event context (resets turn counter for the event).
+
+        Args:
+            event_id: Event identifier string
+            handle_id: Optional Actor handle ID for concurrent tracking.
+                       When provided, turn counters are tracked per-handle.
+        """
         self._event_id = str(event_id or "")
-        self._turn_counter = 0
+        self._handle_id = handle_id
+        # Only reset the global counter if no handle_id (legacy behavior)
+        if handle_id is None:
+            self._turn_counter = 0
+        elif handle_id not in self._handle_turn_counters:
+            self._handle_turn_counters[handle_id] = 0
 
     def reset_history(self) -> None:
         self._entries.clear()
         self._turn_counter = 0
         self._event_id = ""
+        self._handle_id = None
         self._last_capture_error = None
         self._last_capture_error_at = None
         self._call_id_to_index.clear()
+        self._handle_turn_counters.clear()
 
     def entry_count(self) -> int:
         return len(self._entries)
@@ -73,15 +89,34 @@ class TraceDisplay:
     def last_capture_error(self) -> str | None:
         return self._last_capture_error
 
-    def capture_execution(self, *, code: str, result: Any) -> TraceEntry:
-        self._turn_counter += 1
+    def capture_execution(
+        self,
+        *,
+        code: str,
+        result: Any,
+        handle_id: int | None = None,
+    ) -> TraceEntry:
+        # Use provided handle_id or fall back to current context
+        effective_handle_id = handle_id if handle_id is not None else self._handle_id
+
+        # Get the appropriate turn counter
+        if effective_handle_id is not None:
+            if effective_handle_id not in self._handle_turn_counters:
+                self._handle_turn_counters[effective_handle_id] = 0
+            self._handle_turn_counters[effective_handle_id] += 1
+            turn = self._handle_turn_counters[effective_handle_id]
+        else:
+            self._turn_counter += 1
+            turn = self._turn_counter
+
         entry = TraceEntry(
-            turn_index=self._turn_counter,
+            turn_index=turn,
             timestamp=time.time(),
             event_id=self._event_id,
             code=str(code or ""),
             result=result,
             error=_get_error(result),
+            handle_id=effective_handle_id,
         )
         self._entries.append(entry)
         if len(self._entries) > self._max_entries:
@@ -108,6 +143,7 @@ class TraceDisplay:
         *,
         call_id: str,
         payload: ManagerMethodPayload,
+        handle_id: int | None = None,
     ) -> None:
         """
         Ingest CodeActActor `execute_code` ManagerMethod events (IPC mode).
@@ -120,6 +156,11 @@ class TraceDisplay:
         - manager == "CodeActActor"
         - method == "execute_code"
         - phase in {"incoming", "outgoing"}
+
+        Args:
+            call_id: Unique ID for this manager method call
+            payload: The ManagerMethodPayload event
+            handle_id: Optional Actor handle ID for concurrent tracking
         """
 
         try:
@@ -133,6 +174,9 @@ class TraceDisplay:
         if not cid:
             return
 
+        # Use provided handle_id or fall back to current context
+        effective_handle_id = handle_id if handle_id is not None else self._handle_id
+
         # Prefer a stable "execution id" per hierarchy label.
         try:
             if payload.hierarchy_label:
@@ -142,16 +186,27 @@ class TraceDisplay:
 
         if phase == "incoming":
             code = (payload.instructions or payload.question or "").rstrip()
+
+            # Get turn counter for this handle
+            if effective_handle_id is not None:
+                if effective_handle_id not in self._handle_turn_counters:
+                    self._handle_turn_counters[effective_handle_id] = 0
+                self._handle_turn_counters[effective_handle_id] += 1
+                turn = self._handle_turn_counters[effective_handle_id]
+            else:
+                self._turn_counter += 1
+                turn = self._turn_counter
+
             # Create a placeholder result; it will be updated on outgoing.
             entry = TraceEntry(
-                turn_index=self._turn_counter + 1,
+                turn_index=turn,
                 timestamp=time.time(),
                 event_id=self._event_id,
                 code=code,
                 result={"stdout": "", "stderr": "", "error": None},
                 error=None,
+                handle_id=effective_handle_id,
             )
-            self._turn_counter += 1
             self._entries.append(entry)
             self._call_id_to_index[cid] = len(self._entries) - 1
             if len(self._entries) > self._max_entries:
@@ -171,6 +226,7 @@ class TraceDisplay:
                         "stderr": "",
                         "error": payload.error,
                     },
+                    handle_id=effective_handle_id,
                 )
                 return
             try:
@@ -187,6 +243,7 @@ class TraceDisplay:
                     code=prior.code,
                     result=res,
                     error=str(payload.error) if payload.error else None,
+                    handle_id=prior.handle_id,  # Preserve handle_id from incoming
                 )
             except Exception:
                 return
