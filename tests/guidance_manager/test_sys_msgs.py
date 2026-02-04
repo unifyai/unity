@@ -196,7 +196,7 @@ def _build_prompt_in_subprocess(method: str, test_context: str) -> str:
         from unity.guidance_manager.prompt_builders import build_ask_prompt, build_update_prompt
         gm = GuidanceManager()
         tools = dict(gm.get_tools("{method}"))
-        prompt = build_{method}_prompt(tools=tools, num_items=gm._num_items(), columns=gm._list_columns())
+        prompt = build_{method}_prompt(tools=tools, num_items=gm._num_items(), columns=gm._list_columns()).flatten()
         sys.stdout.write(prompt)
         """,
     )
