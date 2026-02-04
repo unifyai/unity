@@ -335,7 +335,7 @@ class PromptParts:
 
     This class replaces the raw `List[str]` accumulator in `compose_system_prompt`
     with a structured representation where each part is stored as
-    `{"type": "text", "content": "...", "static": True/False}`.
+    `{"type": "text", "text": "...", "_static": True/False}`.
 
     The `add` method handles separator insertion (blank lines between blocks),
     and `flatten` performs normalization (collapsing consecutive blanks) before
@@ -368,15 +368,15 @@ class PromptParts:
 
         if not self._parts:
             # First item - add directly without separator
-            self._parts.append({"type": "text", "content": part, "_static": static})
+            self._parts.append({"type": "text", "text": part, "_static": static})
         elif self._parts[-1]["_static"] == static:
             # Same static - merge with previous content
             joiner = "\n\n" if separator else "\n"
-            self._parts[-1]["content"] += joiner + part
+            self._parts[-1]["text"] += joiner + part
         else:
             # Different static - add new block
             content = ("\n\n" + part) if separator else "\n" + part
-            self._parts.append({"type": "text", "content": content, "_static": static})
+            self._parts.append({"type": "text", "text": content, "_static": static})
 
     def to_list(self) -> List[Dict[str, Any]]:
         """Return the internal structured parts."""
@@ -384,7 +384,7 @@ class PromptParts:
 
     def flatten(self) -> str:
         """Return the full prompt string by concatenating all parts."""
-        return "".join(p["content"] for p in self._parts)
+        return "".join(p["text"] for p in self._parts)
 
     def __str__(self) -> str:
         return self.flatten()
