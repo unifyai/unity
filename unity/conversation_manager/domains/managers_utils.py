@@ -656,6 +656,44 @@ def _init_managers(
     )
 
 
+async def _start_file_sync() -> None:
+    """Start file sync with managed VM after managers are initialized.
+
+    This starts rclone-based file synchronization between ~/Unity (assistant)
+    and /Unity (managed VM) if a desktop_url is configured in SESSION_DETAILS.
+
+    Runs asynchronously and logs success/failure.
+    """
+    try:
+        from unity.file_manager.managers.local import LocalFileManager
+
+        # Get LocalFileManager singleton (may already exist from manager init)
+        local_fm = LocalFileManager()
+        adapter = local_fm._adapter
+
+        # Check if adapter supports sync (LocalFileSystemAdapter does)
+        if not hasattr(adapter, "start_sync"):
+            print("[ManagersWorker] Adapter does not support file sync")
+            return
+
+        if adapter._enable_sync:
+            print("[ManagersWorker] Starting file sync with managed VM...")
+            success = await adapter.start_sync()
+            if success:
+                print("[ManagersWorker] File sync started successfully")
+            else:
+                print("[ManagersWorker] File sync not enabled or failed to start")
+        else:
+            print("[ManagersWorker] File sync disabled by configuration")
+
+    except Exception as e:
+        # File sync failure should not block manager initialization
+        print(f"[ManagersWorker] Failed to start file sync: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+
 async def init_conv_manager(
     cm: "ConversationManager",
     *,
@@ -694,6 +732,9 @@ async def init_conv_manager(
                         chat_history=store_chat_history.chat_history,
                     ).to_json(),
                 )
+
+            # Start file sync with managed VM (non-blocking)
+            await _start_file_sync()
 
             # Mark as initialized
             cm.initialized = True

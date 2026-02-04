@@ -770,7 +770,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(2)
 
     async def cleanup(self):
-        """Clean up any running call processes.
+        """Clean up any running call processes and file sync.
 
         Always updates rolling summaries before shutdown, regardless of message count,
         to ensure conversation context is persisted for the next session.
@@ -793,6 +793,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         await self.store_chat_history()
         await self.call_manager.cleanup_call_proc()
+
+        # Stop file sync to ensure final sync to VM
+        await self._stop_file_sync()
+
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
             self._session_logger.info(
                 "session_end",
@@ -800,6 +804,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
             debug_logger.mark_job_done(self.job_name)
         self.stop.set()
+
+    async def _stop_file_sync(self) -> None:
+        """Stop file sync with managed VM, performing final sync."""
+        try:
+            from unity.file_manager.managers.local import LocalFileManager
+
+            local_fm = LocalFileManager()
+            adapter = local_fm._adapter
+
+            # Check if adapter supports sync
+            if not hasattr(adapter, "sync_started"):
+                return
+
+            if adapter.sync_started:
+                print("[ConversationManager] Stopping file sync...")
+                await adapter.stop_sync()
+                print("[ConversationManager] File sync stopped")
+        except Exception as e:
+            print(f"[ConversationManager] Failed to stop file sync: {e}")
 
     # Proactive speech related methods
 
