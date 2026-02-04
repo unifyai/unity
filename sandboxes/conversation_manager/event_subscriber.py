@@ -246,6 +246,7 @@ async def subscribe_to_responses(
                             if ch.startswith("app:comms:"):
                                 # Prefer a contentful message so repeated events don't look
                                 # like duplicates in the GUI.
+                                # NOTE: Store full message; truncation happens at render time.
                                 m = event.__class__.__name__
                                 try:
                                     if isinstance(event, SMSReceived):
@@ -253,19 +254,19 @@ async def subscribe_to_responses(
                                             getattr(event, "content", "") or "",
                                         ).strip()
                                         if content:
-                                            m = f"SMSReceived: {content[:120]}"
+                                            m = f"SMSReceived: {content}"
                                     elif isinstance(event, SMSSent):
                                         content = str(
                                             getattr(event, "content", "") or "",
                                         ).strip()
                                         if content:
-                                            m = f"SMSSent: {content[:120]}"
+                                            m = f"SMSSent: {content}"
                                     elif isinstance(event, EmailSent):
                                         subj = str(
                                             getattr(event, "subject", "") or "",
                                         ).strip()
                                         if subj:
-                                            m = f"EmailSent: {subj[:120]}"
+                                            m = f"EmailSent: {subj}"
                                 except Exception:
                                     pass
                                 log_aggregator.handle_structured_event(
@@ -275,6 +276,7 @@ async def subscribe_to_responses(
                             elif ch.startswith("app:actor:"):
                                 # Include content for actor events (otherwise the pane
                                 # is not very informative).
+                                # NOTE: Store full message; truncation happens at render time.
                                 msg = event.__class__.__name__
                                 try:
                                     if isinstance(event, ActorHandleStarted):
@@ -282,19 +284,19 @@ async def subscribe_to_responses(
                                             getattr(event, "query", "") or "",
                                         ).strip()
                                         if q:
-                                            msg = f"ActorHandleStarted: {q[:160]}"
+                                            msg = f"ActorHandleStarted: {q}"
                                     elif isinstance(event, ActorNotification):
                                         r = str(
                                             getattr(event, "response", "") or "",
                                         ).strip()
                                         if r:
-                                            msg = f"ActorNotification: {r[:160]}"
+                                            msg = f"ActorNotification: {r}"
                                     elif isinstance(event, ActorResult):
                                         r = str(
                                             getattr(event, "result", "") or "",
                                         ).strip()
                                         if r:
-                                            msg = f"ActorResult: {r[:160]}"
+                                            msg = f"ActorResult: {r}"
                                 except Exception:
                                     pass
                                 log_aggregator.handle_structured_event(
