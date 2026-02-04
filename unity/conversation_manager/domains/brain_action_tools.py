@@ -3,6 +3,11 @@ Brain action tools for ConversationManager.
 
 All contact information is fetched from ContactManager (source of truth).
 No local caching of contact data.
+
+Context Propagation:
+- When `act` is called, the current state snapshot is passed to Actor via _parent_chat_context
+- For `interject` operations, only the incremental diff from the initial snapshot is sent
+  via _parent_chat_context_cont, avoiding duplication of unchanged state
 """
 
 from __future__ import annotations
@@ -31,6 +36,10 @@ from unity.conversation_manager.task_actions import (
     derive_short_name,
     build_action_name,
     safe_call_id_suffix,
+)
+from unity.conversation_manager.domains.renderer import (
+    SnapshotState,
+    compute_snapshot_diff,
 )
 
 if TYPE_CHECKING:
@@ -171,19 +180,28 @@ class ConversationManagerBrainActionTools:
     async def send_sms(
         self,
         *,
-        contact_id: int | None = None,
-        contact_details: ContactDetailsPhone | None = None,
+        recipient: int | str,
         content: str,
     ) -> dict[str, Any]:
         """
         Send an SMS message to a contact.
 
         Args:
-            contact_id: Target contact_id when known (preferred).
-            contact_details: Target identity details when contact_id is unknown.
-            content: SMS body to send.
+            recipient: Who to send the SMS to. Provide EITHER:
+                - An integer contact_id (e.g., 42) to message an existing contact, OR
+                - A phone number string (e.g., "+1234567890") to message that number
+                  directly. If the number isn't already in your contacts, a new
+                  contact will be created automatically.
+            content: The text content of the SMS message to send.
         """
-        contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+        # Resolve recipient to contact (creates contact if phone number provided)
+        if isinstance(recipient, int):
+            contact = await _get_or_create_contact(self._cm, contact_id=recipient)
+        else:
+            contact = await _get_or_create_contact(
+                self._cm,
+                details=ContactDetailsPhone(phone_number=recipient),
+            )
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
@@ -334,44 +352,230 @@ class ConversationManagerBrainActionTools:
     async def send_email(
         self,
         *,
-        contact_id: int | None = None,
-        contact_details: ContactDetailsEmail | None = None,
+        to: list[int | str] | None = None,
+        cc: list[int | str] | None = None,
+        bcc: list[int | str] | None = None,
         subject: str,
         body: str,
+        reply_all: bool = False,
         email_id_to_reply_to: str | None = None,
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         """
-        Send an email to a contact, optionally with a file attachment.
+        Send an email with flexible recipient specification.
+
+        Recipients can be specified as contact_ids (int) or email addresses (str).
+        Duplicates are automatically collapsed (e.g., if you provide both a contact_id
+        and the same contact's email address, only one recipient is sent).
 
         Args:
-            contact_id: Target contact_id when known (preferred).
-            contact_details: Target identity details when contact_id is unknown.
+            to: List of recipients (contact_ids or email addresses).
+            cc: List of CC recipients (contact_ids or email addresses).
+            bcc: List of BCC recipients (contact_ids or email addresses).
             subject: Email subject.
             body: Email body.
-            email_id_to_reply_to: Optional email id to reply to for threading.
+            reply_all: If True, automatically populate to/cc from the email being
+                replied to. Mutually exclusive with to/cc/bcc - fails if both are set.
+            email_id_to_reply_to: Email ID (RFC Message-ID) to reply to for threading.
+                Required for reply_all, or auto-inferred from most recent inbound email.
             attachment_filepath: Optional filepath to attach.
         """
         import base64
         import os
 
-        contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+        from unity.session_details import SESSION_DETAILS
 
-        outbound_error = _check_outbound_allowed(contact)
-        if outbound_error:
-            event = Error(outbound_error)
+        # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
+        if reply_all and (to or cc or bcc):
+            error_msg = (
+                "reply_all=True is mutually exclusive with to/cc/bcc. "
+                "Either use reply_all to auto-populate recipients from the thread, "
+                "or specify recipients explicitly."
+            )
+            event = Error(error_msg)
             await self._event_broker.publish("app:comms:email_sent", event.to_json())
-            return {"status": "error", "error": outbound_error}
+            return {"status": "error", "error": error_msg}
 
-        address_error = _check_contact_has_address(contact, "email_address", "email")
-        if address_error:
-            event = Error(address_error)
-            await self._event_broker.publish("app:comms:email_sent", event.to_json())
-            return {"status": "error", "error": address_error}
+        # --- Helper: resolve a recipient to a contact dict ---
+        async def _resolve_recipient(recipient: int | str) -> dict | None:
+            """Resolve a contact_id or email to a contact dict, creating if needed."""
+            if isinstance(recipient, int):
+                # It's a contact_id - look up the contact
+                return self._cm.contact_index.get_contact(recipient)
+            else:
+                # It's an email address - get or create contact
+                return await _get_or_create_contact(
+                    self._cm,
+                    details=ContactDetailsEmail(email_address=recipient),
+                )
 
-        to_email = contact.get("email_address")
+        # --- Helper: resolve a list of recipients to unique (email, contact) pairs ---
+        async def _resolve_recipients(
+            recipients: list[int | str] | None,
+        ) -> list[tuple[str, dict]]:
+            """Resolve recipients to list of (email_address, contact_dict) pairs."""
+            if not recipients:
+                return []
+            results: dict[str, dict] = {}  # email -> contact, for deduplication
+            for r in recipients:
+                contact = await _resolve_recipient(r)
+                if contact:
+                    email = contact.get("email_address")
+                    if email and email not in results:
+                        results[email] = contact
+            return [(email, contact) for email, contact in results.items()]
 
-        # Handle attachment
+        # --- Handle reply_all: populate to/cc from the email being replied to ---
+        final_to: list[str] = []
+        final_cc: list[str] = []
+        final_bcc: list[str] = []
+        reply_email_id = email_id_to_reply_to
+        primary_contact: dict | None = None  # For EmailSent event
+
+        if reply_all:
+            # Find the email to reply to
+            original_email = None
+            # Search all conversations for the email with this ID
+            if reply_email_id:
+                for conv_state in self._cm.contact_index.active_conversations.values():
+                    thread = conv_state.threads.get(Medium.EMAIL)
+                    if thread:
+                        for m in thread:
+                            if getattr(m, "email_id", None) == reply_email_id:
+                                original_email = m
+                                break
+                    if original_email:
+                        break
+            else:
+                # Auto-infer: find the most recent inbound email with matching subject
+                for conv_state in self._cm.contact_index.active_conversations.values():
+                    thread = conv_state.threads.get(Medium.EMAIL)
+                    if thread:
+                        for m in reversed(list(thread)):
+                            if getattr(m, "name", None) != "You" and getattr(
+                                m,
+                                "email_id",
+                                None,
+                            ):
+                                # Check subject match (strip "Re: " prefix for comparison)
+                                m_subject = getattr(m, "subject", "") or ""
+                                clean_subject = subject.removeprefix("Re: ").strip()
+                                clean_m_subject = m_subject.removeprefix("Re: ").strip()
+                                if (
+                                    clean_subject == clean_m_subject
+                                    or not clean_subject
+                                ):
+                                    original_email = m
+                                    reply_email_id = m.email_id
+                                    break
+                    if original_email:
+                        break
+
+            if not original_email:
+                error_msg = (
+                    "reply_all=True but no email found to reply to. "
+                    "Either provide email_id_to_reply_to or ensure there's a matching "
+                    "inbound email in the thread."
+                )
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+
+            # Standard reply-all behavior:
+            # - Original sender -> to
+            # - Original to + cc (minus self) -> cc
+            assistant_email = SESSION_DETAILS.assistant.email
+            original_to = getattr(original_email, "to", []) or []
+            original_cc = getattr(original_email, "cc", []) or []
+
+            # The sender goes to "to" - we need to find the sender email
+            # For inbound emails, the sender is in the contact associated with the email
+            # We can find it from the conversation state's contact
+            sender_email = None
+            for cid, conv_state in self._cm.contact_index.active_conversations.items():
+                thread = conv_state.threads.get(Medium.EMAIL)
+                if thread and original_email in thread:
+                    contact = self._cm.contact_index.get_contact(cid)
+                    if contact:
+                        sender_email = contact.get("email_address")
+                        primary_contact = contact
+                    break
+
+            if sender_email:
+                final_to = [sender_email]
+
+            # Original to + cc (minus self) go to cc
+            all_original_recipients = set(original_to) | set(original_cc)
+            if assistant_email:
+                all_original_recipients.discard(assistant_email)
+            if sender_email:
+                all_original_recipients.discard(sender_email)
+            final_cc = list(all_original_recipients)
+
+        else:
+            # --- Resolve explicit recipients (creates contacts if needed) ---
+            to_resolved = await _resolve_recipients(to)
+            cc_resolved = await _resolve_recipients(cc)
+            bcc_resolved = await _resolve_recipients(bcc)
+
+            # Extract just the email addresses for sending
+            final_to = [email for email, _ in to_resolved]
+            final_cc = [email for email, _ in cc_resolved]
+            final_bcc = [email for email, _ in bcc_resolved]
+
+            # Keep track of primary contact for the event
+            primary_contact = None
+            if to_resolved:
+                primary_contact = to_resolved[0][1]
+            elif cc_resolved:
+                primary_contact = cc_resolved[0][1]
+            elif bcc_resolved:
+                primary_contact = bcc_resolved[0][1]
+
+            # --- Validation: at least one recipient required ---
+            if not final_to and not final_cc and not final_bcc:
+                error_msg = (
+                    "At least one recipient is required. "
+                    "Provide to, cc, or bcc, or use reply_all=True."
+                )
+                event = Error(error_msg)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": error_msg}
+
+            # --- Infer reply ID from email thread if not provided ---
+            if not reply_email_id:
+                try:
+                    # Look for a matching inbound email in any conversation
+                    for (
+                        conv_state
+                    ) in self._cm.contact_index.active_conversations.values():
+                        thread = conv_state.threads.get(Medium.EMAIL)
+                        if thread:
+                            for m in reversed(list(thread)):
+                                if (
+                                    getattr(m, "name", None) != "You"
+                                    and getattr(m, "subject", None) == subject
+                                    and getattr(m, "email_id", None)
+                                ):
+                                    reply_email_id = m.email_id
+                                    break
+                        if reply_email_id:
+                            break
+                except Exception:
+                    pass
+
+        # --- Handle subject prefix for replies ---
+        final_subject = subject
+        if reply_email_id and not subject.startswith("Re: "):
+            final_subject = f"Re: {subject}"
+
+        # --- Handle attachment ---
         attachment = None
         attachment_filename = None
         if attachment_filepath:
@@ -419,53 +623,38 @@ class ConversationManagerBrainActionTools:
                 )
                 return {"status": "error", "error": error_msg}
 
-        # Infer reply ID from email thread if available
-        inferred_reply_id: str | None = None
-        try:
-            cid = contact.get("contact_id") if contact else contact_id
-            conv_state = (
-                self._cm.contact_index.get_conversation_state(cid) if cid else None
-            )
-            if conv_state:
-                thread = conv_state.threads.get(Medium.EMAIL)
-                if thread:
-                    for m in reversed(thread):
-                        if (
-                            getattr(m, "name", None) != "You"
-                            and getattr(m, "subject", None) == subject
-                            and getattr(m, "email_id", None)
-                        ):
-                            inferred_reply_id = m.email_id
-                            break
-        except Exception:
-            inferred_reply_id = None
-
-        if inferred_reply_id and inferred_reply_id != email_id_to_reply_to:
-            email_id_to_reply_to = inferred_reply_id
-
+        # --- Send the email ---
         response = await comms_utils.send_email_via_address(
-            to_email=to_email,
-            subject=subject,
+            to=final_to,
+            subject=final_subject,
             body=body,
-            email_id=email_id_to_reply_to,
+            cc=final_cc if final_cc else None,
+            bcc=final_bcc if final_bcc else None,
+            email_id=reply_email_id,
             attachment=attachment,
         )
+
         if response["success"]:
-            fresh_contact = (
-                self._cm.contact_index.get_contact(email=to_email) or contact or {}
-            )
+            # Use the primary contact we resolved earlier (or empty dict for reply_all fallback)
             event = EmailSent(
-                contact=fresh_contact,
+                contact=primary_contact or {},
                 body=body,
-                subject=subject,
-                email_id_replied_to=email_id_to_reply_to,
+                subject=final_subject,
+                email_id_replied_to=reply_email_id,
                 attachments=[attachment_filename] if attachment_filename else [],
+                to=final_to,
+                cc=final_cc,
+                bcc=final_bcc,
             )
         else:
             if not self._cm.assistant_email:
                 error_msg = "You don't have an email address, please provision one."
             else:
-                error_msg = response.get("error", f"Failed to send email to {to_email}")
+                recipients = final_to + final_cc + final_bcc
+                error_msg = response.get(
+                    "error",
+                    f"Failed to send email to {recipients}",
+                )
             event = Error(error_msg)
         await self._event_broker.publish("app:comms:email_sent", event.to_json())
         return {"status": "ok"}
@@ -473,17 +662,26 @@ class ConversationManagerBrainActionTools:
     async def make_call(
         self,
         *,
-        contact_id: int | None = None,
-        contact_details: ContactDetailsPhone | None = None,
+        recipient: int | str,
     ) -> dict[str, Any]:
         """
         Start an outbound phone call to a contact.
 
         Args:
-            contact_id: Target contact_id when known (preferred).
-            contact_details: Target identity details when contact_id is unknown.
+            recipient: Who to call. Provide EITHER:
+                - An integer contact_id (e.g., 42) to call an existing contact, OR
+                - A phone number string (e.g., "+1234567890") to call that number
+                  directly. If the number isn't already in your contacts, a new
+                  contact will be created automatically.
         """
-        contact = await _get_or_create_contact(self._cm, contact_id, contact_details)
+        # Resolve recipient to contact (creates contact if phone number provided)
+        if isinstance(recipient, int):
+            contact = await _get_or_create_contact(self._cm, contact_id=recipient)
+        else:
+            contact = await _get_or_create_contact(
+                self._cm,
+                details=ContactDetailsPhone(phone_number=recipient),
+            )
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
@@ -531,7 +729,7 @@ class ConversationManagerBrainActionTools:
 
         - **Retrieval**: Search contact records, query knowledge bases, look up past
           conversations, find calendar events, search the web, retrieve files
-        - **Action**: Update records, modify spreadsheets, control the desktop/browser,
+        - **Action**: Update records, modify spreadsheets, control the desktop/web interface,
           schedule tasks, create reminders
         - **Combined**: Find information and act on it (e.g., "find David's email")
 
@@ -546,17 +744,33 @@ class ConversationManagerBrainActionTools:
 
         await managers_utils.wait_for_initialization(self._cm)
 
+        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
+        # This is the exact state the brain saw when making this decision.
+        parent_context = (
+            [self._cm._current_state_snapshot]
+            if self._cm._current_state_snapshot
+            else None
+        )
+
         handle = await self._cm.actor.act(
             query,
-            _parent_chat_context=self._cm.chat_history,
+            _parent_chat_context=parent_context,
         )
 
         handle_id = _next_handle_id
         _next_handle_id += 1
+
+        # Capture the snapshot state for incremental diff computation.
+        # This is used when interjecting to send only changed state, avoiding duplication.
+        initial_snapshot_state: SnapshotState | None = None
+        if hasattr(self._cm, "_current_snapshot_state"):
+            initial_snapshot_state = self._cm._current_snapshot_state
+
         self._cm.in_flight_actions[handle_id] = {
             "handle": handle,
             "query": query,
             "handle_actions": [],
+            "initial_snapshot_state": initial_snapshot_state,
         }
 
         await self._event_broker.publish(
@@ -710,11 +924,16 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
 
-                        # Capture values for the closure
+                        # Capture values for the closure.
+                        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
                         _handle = handle
                         _param_value = param_value
                         _handle_id = handle_id
-                        _cm_chat_history = cm.chat_history
+                        _parent_context = (
+                            [cm._current_state_snapshot]
+                            if cm._current_state_snapshot
+                            else None
+                        )
 
                         # Spawn background task to perform ask and emit result
                         async def _perform_ask_and_emit():
@@ -722,7 +941,7 @@ class ConversationManagerBrainActionTools:
                                 # Start the ask operation (does the LLM roundtrip)
                                 ask_handle = await _handle.ask(
                                     _param_value,
-                                    _parent_chat_context_cont=_cm_chat_history,
+                                    _parent_chat_context=_parent_context,
                                 )
                                 # Await the result
                                 ask_result = await ask_handle.result()
@@ -760,9 +979,39 @@ class ConversationManagerBrainActionTools:
                                     "query": param_value,
                                 },
                             )
+
+                        # Compute incremental diff from initial snapshot to current state.
+                        # This avoids sending duplicate information that was already in the
+                        # initial _parent_chat_context when act() was called.
+                        parent_context_cont = None
+                        initial_snapshot = (
+                            handle_data.get("initial_snapshot_state")
+                            if handle_data
+                            else None
+                        )
+                        current_snapshot = getattr(cm, "_current_snapshot_state", None)
+
+                        if current_snapshot is not None:
+                            # Compute diff between initial and current state
+                            diff_content = compute_snapshot_diff(
+                                initial_snapshot,
+                                current_snapshot,
+                            )
+                            if diff_content:
+                                parent_context_cont = [
+                                    {
+                                        "role": "user",
+                                        "content": diff_content,
+                                        "_cm_context_diff": True,
+                                    },
+                                ]
+                        elif cm._current_state_snapshot:
+                            # Fallback: if no snapshot tracking, use full snapshot (backward compat)
+                            parent_context_cont = [cm._current_state_snapshot]
+
                         await handle.interject(
                             param_value,
-                            _parent_chat_context_cont=cm.chat_history,
+                            _parent_chat_context_cont=parent_context_cont,
                             images=kwargs.get("images"),
                         )
                         result = "Interjected successfully"

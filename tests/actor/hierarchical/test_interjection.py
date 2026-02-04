@@ -28,7 +28,7 @@ from tests.actor.hierarchical.helpers import (
 CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
     """
     async def main_plan():
-        '''Main plan for testing action caching with browser primitives.'''
+        '''Main plan for testing action caching with computer primitives.'''
         from pydantic import BaseModel, Field
         import asyncio
         print("--- Caching Test: Starting ---")
@@ -58,7 +58,7 @@ CANNED_PLAN_FOR_INTERJECTION_TEST_ACTION_CACHING = textwrap.dedent(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
-async def test_cache_hits_after_interjection_for_browser_primitives():
+async def test_cache_hits_after_interjection_for_computer_primitives():
     """Moved out of the monolith: validates cache hits after modify_task interjection."""
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
     active_task = None
@@ -233,100 +233,6 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
 
         if not active_task.done():
             await active_task.stop("Test complete - replace_task verified")
-
-    finally:
-        if active_task and not active_task.done():
-            try:
-                await active_task.stop()
-            except Exception:
-                pass
-        try:
-            await actor.close()
-        except Exception:
-            pass
-
-
-@pytest.mark.asyncio
-@pytest.mark.timeout(120)
-async def test_interject_with_various_image_formats():
-    """Moved out of the monolith: validates interject(images=...) accepts ImageRefs/list formats."""
-    from unity.image_manager.image_manager import ImageManager
-    from unity.image_manager.types import AnnotatedImageRef, RawImageRef, ImageRefs
-
-    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
-    actor.computer_primitives._computer = MockComputerBackend(
-        url="https://mock-url.com",
-        screenshot=VALID_MOCK_SCREENSHOT_PNG,
-    )
-    actor.computer_primitives.navigate = AsyncMock(return_value=None)
-    actor.computer_primitives.act = AsyncMock(return_value=None)
-
-    im = ImageManager()
-    [img_id] = im.add_images(
-        [{"caption": "test image", "data": VALID_MOCK_SCREENSHOT_PNG}],
-    )
-    img_id = int(img_id)
-
-    active_task = None
-    try:
-        active_task = HierarchicalActorHandle(
-            actor=actor,
-            goal="Test interjection with various image formats",
-            persist=True,
-        )
-        if active_task._execution_task:
-            active_task._execution_task.cancel()
-            try:
-                await active_task._execution_task
-            except asyncio.CancelledError:
-                pass
-
-        active_task.verification_client = SimpleMockVerificationClient()
-        active_task.modification_client.generate = AsyncMock(
-            return_value=InterjectionDecision(
-                action="modify_task",
-                reason="Ack.",
-                patches=[],
-            ).model_dump_json(),
-        )
-
-        active_task.plan_source_code = actor._sanitize_code(
-            textwrap.dedent(
-                """
-                async def main_plan():
-                    return "Plan complete"
-                """,
-            ),
-            active_task,
-        )
-        active_task._execution_task = asyncio.create_task(
-            active_task._initialize_and_run(),
-        )
-        await wait_for_state(
-            active_task,
-            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
-            timeout=30,
-        )
-
-        list_images = [
-            AnnotatedImageRef(
-                raw_image_ref=RawImageRef(image_id=img_id),
-                annotation="list format",
-            ),
-        ]
-        s1 = await active_task.interject("list format", images=list_images)
-        assert "error" not in s1.lower()
-
-        refs_images = ImageRefs(
-            [
-                AnnotatedImageRef(
-                    raw_image_ref=RawImageRef(image_id=img_id),
-                    annotation="rootmodel format",
-                ),
-            ],
-        )
-        s2 = await active_task.interject("rootmodel format", images=refs_images)
-        assert "error" not in s2.lower()
 
     finally:
         if active_task and not active_task.done():

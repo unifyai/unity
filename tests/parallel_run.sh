@@ -193,7 +193,7 @@ _NUM_CORES=$DETECTED_CPU_CORES
 # ---------------------------------------------------------------------------
 # Local Orchestra Setup
 # ---------------------------------------------------------------------------
-# UNIFY_BASE_URL is the single source of truth:
+# ORCHESTRA_URL is the single source of truth:
 # - Unset or localhost (127.0.0.1/localhost): use local orchestra
 # - Any other URL: use it directly (staging, production, etc.)
 #
@@ -301,7 +301,7 @@ _orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$_orchestra_search_base/../orchestr
 _local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
 unset _git_common_dir _main_repo_git _orchestra_search_base
 
-if _is_local_url "${UNIFY_BASE_URL:-}"; then
+if _is_local_url "${ORCHESTRA_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
     # Set up orchestra configuration for tests
     export ORCHESTRA_SEED_USER=1
@@ -344,7 +344,7 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
           # Instead, create symlinks so logs appear in expected locations.
           echo "Worktree detected: Using existing orchestra, creating log symlinks..."
           _create_orchestra_log_symlinks
-          export UNIFY_BASE_URL="$_local_url"
+          export ORCHESTRA_URL="$_local_url"
         else
           # MAIN REPO MODE: Restart to pick up logging config. The restart wipes
           # the database, which is intentional for test runs to ensure isolation.
@@ -353,10 +353,10 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
           "$_local_orchestra_script" restart >/dev/null 2>&1 || true
           if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
             echo "Using local orchestra: $_local_url"
-            export UNIFY_BASE_URL="$_local_url"
+            export ORCHESTRA_URL="$_local_url"
           else
             echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
-            export UNIFY_BASE_URL="$_original_url"
+            export ORCHESTRA_URL="$_original_url"
           fi
           unset _original_url
         fi
@@ -365,7 +365,7 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
         # Update ORCHESTRA_LOG_DIR to match what's currently configured
         export ORCHESTRA_LOG_DIR="$_current_log_dir"
         echo "Local orchestra already running with logging enabled: $_local_url"
-        export UNIFY_BASE_URL="$_local_url"
+        export ORCHESTRA_URL="$_local_url"
       fi
       unset _config_file _needs_restart _current_log_dir _current_otel_dir
     else
@@ -398,7 +398,7 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
       if "$_local_orchestra_script" start >/dev/null 2>&1; then
         if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
           echo "Using local orchestra: $_local_url"
-          export UNIFY_BASE_URL="$_local_url"
+          export ORCHESTRA_URL="$_local_url"
         else
           echo "Warning: Local orchestra started but not responding" >&2
         fi
@@ -412,9 +412,31 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
   fi
   unset _local_url _orchestra_logs_dir _timestamp
 else
-  echo "Using remote orchestra: $UNIFY_BASE_URL"
+  echo "Using remote orchestra: $ORCHESTRA_URL"
 fi
 unset _orchestra_repo_path _local_orchestra_script
+
+# ---------------------------------------------------------------------------
+# Communication Service URL Setup
+# ---------------------------------------------------------------------------
+# UNITY_COMMS_URL is auto-selected based on git branch if not explicitly set:
+# - main branch → production: https://unity-comms-app-262420637606.us-central1.run.app
+# - other branches → staging: https://unity-comms-app-staging-262420637606.us-central1.run.app
+#
+# This mirrors the CI behavior in .github/workflows/tests.yml
+if [[ -z "${UNITY_COMMS_URL:-}" ]]; then
+  _current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+  if [[ "$_current_branch" == "main" ]]; then
+    export UNITY_COMMS_URL="https://unity-comms-app-262420637606.us-central1.run.app"
+    echo "Using production communication service (main branch)"
+  else
+    export UNITY_COMMS_URL="https://unity-comms-app-staging-262420637606.us-central1.run.app"
+    echo "Using staging communication service (branch: $_current_branch)"
+  fi
+  unset _current_branch
+else
+  echo "Using communication service: $UNITY_COMMS_URL"
+fi
 
 # Build pytest marker filter based on flags
 MARKER_FILTER=""
@@ -567,7 +589,7 @@ build_env_exports() {
   # NOT propagated to individual sessions. They are handled at the script level to avoid race
   # conditions where multiple sessions try to delete the shared project simultaneously.
   # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
+  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY ORCHESTRA_URL UNITY_COMMS_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
   for var_name in $propagate_vars; do
     if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
       # Quote values containing special characters (paths, URLs with colons/slashes)

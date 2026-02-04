@@ -65,7 +65,7 @@ async def test_contact_lookup_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_contact_search_by_location_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_create_contact_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ async def test_knowledge_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ async def test_knowledge_about_product_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -210,7 +210,7 @@ async def test_store_knowledge_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ async def test_task_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -271,7 +271,7 @@ async def test_create_task_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -299,7 +299,7 @@ async def test_priority_task_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +332,7 @@ async def test_transcript_search_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -360,7 +360,7 @@ async def test_recent_messages_search_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -388,7 +388,7 @@ async def test_specific_topic_search_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +421,7 @@ async def test_weather_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -449,7 +449,7 @@ async def test_news_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -477,7 +477,7 @@ async def test_current_events_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +510,7 @@ async def test_guidance_query_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +543,7 @@ async def test_find_and_action_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -571,7 +571,7 @@ async def test_research_request_triggers_act(initialized_cm):
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +624,7 @@ async def test_email_summarize_attachment_triggers_act_with_filepath(initialized
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)
 
 
 @pytest.mark.asyncio
@@ -672,4 +672,4 @@ async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
     )
 
     # Efficiency assertions at end
-    assert_efficient(result)
+    assert_efficient(result, 3)

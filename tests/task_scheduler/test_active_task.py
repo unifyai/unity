@@ -17,10 +17,6 @@ from unity.task_scheduler.active_task import ActiveTask
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
 from unity.function_manager.function_manager import FunctionManager
-from unity.image_manager.image_manager import ImageManager
-from unity.image_manager.types import RawImageRef, AnnotatedImageRef
-from pathlib import Path
-import base64
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -58,7 +54,7 @@ async def test_ask(monkeypatch):
     await task.ask("Do we have any early metrics?")
     # Give the background worker a beat and then stop explicitly.
     await asyncio.sleep(0.2)
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert calls["ask"] == 1, "ask must be called exactly once"
@@ -96,7 +92,7 @@ async def test_interject(monkeypatch):
     # Give the background thread one beat to process the step counter.
     await asyncio.sleep(0.2)
     # Gracefully stop to avoid leaking the background thread.
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert calls["interject"] == 1, "interject must be called exactly once"
@@ -141,7 +137,7 @@ async def test_pause_resume(monkeypatch):
     await asyncio.sleep(0.1)
     await task.resume()
     # Stop the task to finish quickly and collect counts.
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()
 
     assert counts == {"pause": 1, "resume": 1}, "pause/resume each called once"
@@ -177,7 +173,7 @@ async def test_stop(monkeypatch):
         actor,
         task_description="Extract sentiment from reviews.",
     )
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     result = await task.result()
 
     assert called["stop"] == 1, "stop must be invoked exactly once"
@@ -204,7 +200,7 @@ async def test_result_and_done():
 
     # Perform one interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     result = await task.result()
 
     assert "stopped" in result.lower()
@@ -287,7 +283,7 @@ async def test_entrypoint_demonstrates_function_knowledge_during_ask():
 
     impl = '''
 def simulate_linkedin_sales_leads() -> str:
-    """Simulated browser flow:
+    """Simulated web flow:
     1) Trouble logging into LinkedIn (login blocked initially).
     2) Issue resolved; proceed to search sales leads on LinkedIn."""
     print("Trouble logging into LinkedIn: login blocked")
@@ -319,69 +315,5 @@ def simulate_linkedin_sales_leads() -> str:
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
 
     # Ensure clean shutdown to avoid relying on natural step completion
-    task.stop(cancel=False)
-    await task.result()
-
-
-# --------------------------------------------------------------------------- #
-#  7. Interject with image → simulation recognises spreadsheet                //
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_interject_image_guides_simulation_to_spreadsheet(
-    monkeypatch,
-):
-    """
-    Start an ActiveTask (wrapping SimulatedActor), interject with a screenshot (Google Sheets),
-    then ask about progress; the reply should reference a sheet/spreadsheet.
-    Mirrors the SimulatedActor handle test but via the ActiveTask wrapper.
-    """
-
-    # Store the screenshot and obtain an image id
-    img_path = (
-        Path(__file__).parent.parent
-        / "test_task_scheduler"
-        / "organize_weekly_rotar.png"
-    )
-    raw_bytes = img_path.read_bytes()
-    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
-
-    im = ImageManager()
-    [img_id] = im.add_images(
-        [
-            {"caption": "weekly rota", "data": img_b64},
-        ],
-    )
-
-    actor = SimulatedActor(steps=None, duration=None)
-    task = await ActiveTask.create(
-        actor,
-        task_description=(
-            "We'll start working on organizing the rota for the admin assistants."
-        ),
-    )
-
-    # Interject with the image attached; annotation intentionally does not say "spreadsheet"
-    await task.interject(
-        "Please start working on this file.",
-        images=[
-            AnnotatedImageRef(
-                raw_image_ref=RawImageRef(image_id=int(img_id)),
-                annotation="rota file",
-            ),
-        ],
-    )
-
-    # Ask about status and infer file type from the visual context
-    ask_handle = await task.ask(
-        "How is it going? What file are you working on? What file type is it?",
-    )
-    reply = await ask_handle.result()
-    assert isinstance(reply, str) and reply.strip()
-    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
-
-    # Ensure clean shutdown to avoid relying on natural step completion
-    task.stop(cancel=False)
+    await task.stop(cancel=False)
     await task.result()

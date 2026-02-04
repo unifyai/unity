@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import threading
 import time
@@ -61,7 +62,12 @@ class ProgressEvent(TypedDict, total=False):
         Cumulative time in milliseconds since file processing started. Provides
         a running total to understand overall progress timeline.
     error : str | None
-        Error message if status is "failed" or "retry".
+        Error message if status is "failed" or "retry". For large errors (e.g.,
+        HTTP errors with full payloads), this is truncated to the essential detail
+        and the full error is dumped to a separate file.
+    error_detail_file : str | None
+        Path to file containing full error details when error was truncated.
+        Only present when the original error exceeded max_error_length.
     traceback : str | None
         Full traceback string for error events (included at medium/high verbosity).
     meta : dict | None
@@ -78,6 +84,7 @@ class ProgressEvent(TypedDict, total=False):
     duration_ms: float
     elapsed_ms: float
     error: Optional[str]
+    error_detail_file: Optional[str]
     traceback: Optional[str]
     meta: Optional[Dict[str, Any]]
 
@@ -256,24 +263,63 @@ class JsonFileReporter:
     By default, the file is overwritten at the start of each pipeline run
     to ensure clean logs for each job.
 
+    For events with large error messages (e.g., HTTP errors containing full
+    request payloads), the error is truncated to the essential detail and the
+    full error is dumped to a separate file. The path to the full error file
+    is included in the event as `error_detail_file`.
+
+    Error files are organized into per-run subfolders based on the timestamp
+    when the reporter was created, e.g.:
+        error_details/
+        ├── 2025-01-29T10-30-45/
+        │   ├── ingest_table_0001.json
+        │   └── ingest_table_0002.json
+        └── 2025-01-29T11-45-00/
+            └── ingest_table_0001.json
+
     Parameters
     ----------
     file_path : str | Path
         Path to the output file. Created if it doesn't exist.
     append : bool
         If True, append to existing file. If False (default), overwrite at start.
+    max_error_length : int
+        Maximum length of error messages before truncation (default: 500).
+        Errors longer than this are truncated and full details dumped to file.
+    error_dir : str | Path | None
+        Base directory for error detail files. If None (default), creates an
+        `error_details` subdirectory next to the progress file. Each pipeline
+        run creates a timestamped subfolder within this directory.
     """
+
+    # Regex pattern to extract HTTP error detail from full error string
+    # Matches: ...failed with status code XXX: {"detail":"..."}
+    _HTTP_ERROR_PATTERN = re.compile(
+        r"failed with status code (\d+):\s*(\{.*\})",
+        re.DOTALL,
+    )
 
     def __init__(
         self,
         file_path: str | Path,
         append: bool = False,
+        max_error_length: int = 500,
+        error_dir: Optional[str | Path] = None,
     ) -> None:
         self._file_path = Path(file_path)
         self._append = append
+        self._max_error_length = max_error_length
+        # Generate run timestamp for unique subfolder per pipeline run
+        self._run_timestamp = time.strftime("%Y-%m-%dT%H-%M-%S")
+        # Default error dir: sibling to progress file, with per-run subfolder
+        base_error_dir = (
+            Path(error_dir) if error_dir else self._file_path.parent / "error_details"
+        )
+        self._error_dir = base_error_dir / self._run_timestamp
         self._lock = threading.Lock()
         self._file: Optional[TextIO] = None
         self._opened = False
+        self._error_counter = 0  # For unique error file names
 
     def _ensure_open(self) -> TextIO:
         """Ensure the file is open for writing."""
@@ -286,15 +332,134 @@ class JsonFileReporter:
         return self._file
 
     def report(self, event: ProgressEvent) -> None:
-        """Write the event as a JSON line with immediate flush."""
+        """Write the event as a JSON line with immediate flush.
+
+        If the event has a large error message, it is truncated and the full
+        error is dumped to a separate file. The path to the full error file
+        is included in the event as `error_detail_file`.
+        """
         with self._lock:
             try:
+                # Truncate large errors and dump full details to file
+                event = self._maybe_truncate_error(event)
                 f = self._ensure_open()
                 line = json.dumps(dict(event), ensure_ascii=False)
                 f.write(line + "\n")
                 f.flush()  # Ensure event is written immediately
             except Exception as e:
                 logger.warning(f"JSON file report failed: {e}")
+
+    def _maybe_truncate_error(self, event: ProgressEvent) -> ProgressEvent:
+        """Truncate long errors and dump full details to separate file.
+
+        Parameters
+        ----------
+        event : ProgressEvent
+            The event to potentially truncate.
+
+        Returns
+        -------
+        ProgressEvent
+            The event with truncated error and error_detail_file if applicable,
+            or the original event if no truncation was needed.
+        """
+        error = event.get("error")
+        if not error or len(error) <= self._max_error_length:
+            return event
+
+        # Extract the useful part (e.g., HTTP status + detail)
+        truncated = self._extract_error_summary(error)
+
+        # Dump full error to separate file
+        error_file = self._dump_full_error(event, error)
+
+        # Return modified event with truncated error + file reference
+        new_event = dict(event)
+        new_event["error"] = truncated
+        new_event["error_detail_file"] = str(error_file)
+        return new_event  # type: ignore[return-value]
+
+    def _extract_error_summary(self, error: str) -> str:
+        """Extract the useful HTTP error detail from a full error string.
+
+        Attempts to parse common HTTP error patterns and extract the status
+        code and detail message. Falls back to simple truncation if pattern
+        doesn't match.
+
+        Parameters
+        ----------
+        error : str
+            The full error string.
+
+        Returns
+        -------
+        str
+            A truncated/summarized version of the error.
+        """
+        match = self._HTTP_ERROR_PATTERN.search(error)
+        if match:
+            status_code = match.group(1)
+            try:
+                detail_json = json.loads(match.group(2))
+                detail_msg = detail_json.get("detail", "Unknown error")
+                return f"HTTP {status_code}: {detail_msg}"
+            except json.JSONDecodeError:
+                # JSON parse failed, extract raw detail string
+                raw_detail = match.group(2)
+                if len(raw_detail) > 200:
+                    raw_detail = raw_detail[:200] + "..."
+                return f"HTTP {status_code}: {raw_detail}"
+
+        # Fallback: just truncate with indicator
+        return (
+            error[: self._max_error_length] + "... [truncated, see error_detail_file]"
+        )
+
+    def _dump_full_error(self, event: ProgressEvent, full_error: str) -> Path:
+        """Dump full error to a separate file and return its path.
+
+        Creates a JSON file containing the full error details along with
+        context from the event (timestamp, file_path, phase, meta).
+
+        Files are stored in a per-run timestamped subfolder under error_dir.
+
+        Parameters
+        ----------
+        event : ProgressEvent
+            The event containing error context.
+        full_error : str
+            The full error string to dump.
+
+        Returns
+        -------
+        Path
+            Path to the created error detail file.
+        """
+        self._error_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create unique filename using phase and counter
+        # (timestamp subfolder already provides run isolation)
+        phase = event.get("phase", "unknown")
+        self._error_counter += 1
+        error_file = self._error_dir / f"{phase}_{self._error_counter:04d}.json"
+
+        error_payload = {
+            "timestamp": event.get("timestamp"),
+            "file_path": event.get("file_path"),
+            "phase": phase,
+            "status": event.get("status"),
+            "full_error": full_error,
+            "traceback": event.get("traceback"),
+            "meta": event.get("meta"),
+        }
+
+        try:
+            with open(error_file, "w", encoding="utf-8") as f:
+                json.dump(error_payload, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to dump error details to {error_file}: {e}")
+
+        return error_file
 
     def flush(self) -> None:
         """Flush and close the file."""
@@ -394,6 +559,8 @@ def create_reporter(
     callback: Optional[Callable[[ProgressEvent], None]] = None,
     verbosity: Literal["low", "medium", "high"] = "low",
     append: bool = False,
+    max_error_length: int = 500,
+    error_dir: Optional[str] = None,
 ) -> ProgressReporter:
     """Factory function to create a progress reporter.
 
@@ -411,6 +578,15 @@ def create_reporter(
     append : bool
         For json_file mode: if True, append to existing file; if False (default),
         overwrite to start fresh for each pipeline run.
+    max_error_length : int
+        For json_file mode: maximum length of error messages before truncation
+        (default: 500). Errors longer than this are truncated and full details
+        are dumped to a separate file.
+    error_dir : str | None
+        For json_file mode: base directory for error detail files. If None
+        (default), creates an `error_details` subdirectory next to the progress
+        file. Each pipeline run creates a timestamped subfolder within this
+        directory to isolate errors from different runs.
 
     Returns
     -------
@@ -429,7 +605,12 @@ def create_reporter(
         # Auto-generate file path if not provided
         actual_path = file_path or generate_progress_file_path()
         logger.info(f"📝 Progress events will be logged to: {actual_path}")
-        return JsonFileReporter(actual_path, append=append)
+        return JsonFileReporter(
+            actual_path,
+            append=append,
+            max_error_length=max_error_length,
+            error_dir=error_dir,
+        )
 
     if mode == "callback":
         if callback is None:

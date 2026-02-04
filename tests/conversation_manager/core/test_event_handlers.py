@@ -14,7 +14,6 @@ Tests cover:
 
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,6 +54,7 @@ from unity.conversation_manager.events import (
     DirectMessageEvent,
     AssistantUpdateEvent,
 )
+from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.types import Medium, Mode
@@ -86,8 +86,8 @@ def mock_event_broker():
 def mock_call_manager():
     """Create a mock call manager."""
     manager = MagicMock()
-    manager.start_call = MagicMock()
-    manager.start_unify_meet = MagicMock()
+    manager.start_call = AsyncMock()
+    manager.start_unify_meet = AsyncMock()
     manager.cleanup_call_proc = AsyncMock()
     manager.uses_realtime_api = False
     manager.conference_name = None
@@ -138,40 +138,24 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.is_summarizing = False
     cm.memory_manager = None
 
-    # Create a mock ContactManager that returns sample contacts
-    contacts_by_id = {c["contact_id"]: c for c in sample_contacts}
-    contacts_by_phone = {
-        c["phone_number"]: c for c in sample_contacts if c.get("phone_number")
-    }
-    contacts_by_email = {
-        c["email_address"]: c for c in sample_contacts if c.get("email_address")
-    }
+    # Create a SimulatedContactManager and populate with sample contacts
+    contact_manager = SimulatedContactManager()
 
-    def mock_get_contact_info(cid):
-        if cid in contacts_by_id:
-            return {cid: contacts_by_id[cid]}
-        return {}
+    # Update system contacts (0 and 1) with sample data
+    for contact_data in sample_contacts:
+        contact_id = contact_data["contact_id"]
+        contact_manager.update_contact(
+            contact_id=contact_id,
+            first_name=contact_data.get("first_name"),
+            surname=contact_data.get("surname"),
+            email_address=contact_data.get("email_address"),
+            phone_number=contact_data.get("phone_number"),
+        )
 
-    def mock_filter_contacts(filter=None, limit=None):
-        if filter and "phone_number" in filter:
-            for phone, contact in contacts_by_phone.items():
-                if phone in filter:
-                    return {"contacts": [contact]}
-        if filter and "email_address" in filter:
-            for email, contact in contacts_by_email.items():
-                if email in filter:
-                    return {"contacts": [contact]}
-        return {"contacts": []}
-
-    mock_contact_manager = MagicMock()
-    mock_contact_manager.get_contact_info = MagicMock(side_effect=mock_get_contact_info)
-    mock_contact_manager.filter_contacts = MagicMock(side_effect=mock_filter_contacts)
-    mock_contact_manager._sync_required_contacts = MagicMock()
-
-    # Set up contact index with mock ContactManager
+    # Set up contact index with SimulatedContactManager
     cm.contact_index = ContactIndex()
-    cm.contact_index.set_contact_manager(mock_contact_manager)
-    cm.contact_manager = mock_contact_manager
+    cm.contact_index.set_contact_manager(contact_manager)
+    cm.contact_manager = contact_manager
 
     # Set up notifications bar
     cm.notifications_bar = NotificationBar()
@@ -863,7 +847,7 @@ class TestVoiceUtteranceHandlers:
         contact = mock_cm.contact_index.active_conversations.get(2)
         assert contact is not None
         assert len(contact.threads[Medium.PHONE_CALL]) == 1
-        # Guidance messages have role="Guidance"
+        # Guidance messages have role="guidance"
 
 
 # =============================================================================
@@ -1060,13 +1044,13 @@ class TestNotificationEventHandlers:
         mock_cm.request_llm_run.assert_called_once_with(delay=0, cancel_running=True)
 
     @pytest.mark.asyncio
-    async def test_notification_unpinned_removes_from_bar(self, mock_cm):
+    async def test_notification_unpinned_removes_from_bar(self, mock_cm, static_now):
         """NotificationUnpinnedEvent removes pinned notification."""
         # First add a pinned notification
         mock_cm.notifications_bar.push_notif(
             "Test",
             "Pinned content",
-            datetime.now(),
+            static_now,
             pinned=True,
             id="notif_123",
         )
@@ -1164,7 +1148,15 @@ class TestSummarizeContextHandler:
 
         event = SummarizeContext()
 
-        await EventHandler.handle_event(event, mock_cm)
+        # Mock queue_operation to execute the function immediately
+        async def immediate_queue_operation(func, *args, **kwargs):
+            await func(*args, **kwargs)
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.managers_utils.queue_operation",
+            side_effect=immediate_queue_operation,
+        ):
+            await EventHandler.handle_event(event, mock_cm)
 
         # is_summarizing should be reset to False
         assert mock_cm.is_summarizing is False

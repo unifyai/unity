@@ -288,6 +288,179 @@ def record_until_enter() -> bytes:
             return f.read()
 
 
+def record_for_seconds(seconds: float = 6.0) -> bytes:
+    """Record microphone audio for a fixed duration and return WAV bytes.
+
+    This helper is designed for GUI usage where stdin-driven start/stop prompts
+    are not appropriate. It records immediately for `seconds` and returns a WAV
+    file payload that can be passed to transcription.
+    """
+    secs = float(seconds)
+    if secs <= 0:
+        secs = 1.0
+
+    # Ensure any prior TTS playback has finished
+    _wait_for_tts_end()
+
+    with noalsaerr(), suppress_stderr_fd():
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SAMPLE_RATE,
+            input=True,
+            frames_per_buffer=CHUNK,
+        )
+        sample_size = pa.get_sample_size(FORMAT)
+
+    frames: List[bytes] = []
+    target_chunks = int((SAMPLE_RATE * secs) / CHUNK)
+    _beep(1000)
+    try:
+        for _ in range(max(1, target_chunks)):
+            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+    finally:
+        with suppress_stderr_fd():
+            try:
+                stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
+            try:
+                pa.terminate()
+            except Exception:
+                pass
+        _beep(500)
+
+    wav_path = "/tmp/voice_input.wav"
+    with wave.open(wav_path, "wb") as wf:
+        wf.setnchannels(CHANNELS)
+        wf.setsampwidth(sample_size)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(b"".join(frames))
+
+    with open(wav_path, "rb") as f:
+        return f.read()
+
+
+class VoiceRecordingHandle:
+    """A simple start/stop microphone recording handle.
+
+    This is designed for GUI usage where stdin-driven prompts are not appropriate.
+    The handle starts recording immediately when created and stops when `stop()` is called.
+    """
+
+    def __init__(self) -> None:
+        # Ensure any prior TTS playback has finished before recording
+        _wait_for_tts_end()
+
+        with noalsaerr(), suppress_stderr_fd():
+            self._pa = pyaudio.PyAudio()
+            self._stream = self._pa.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=CHUNK,
+            )
+            self._sample_size = self._pa.get_sample_size(FORMAT)
+
+        self._frames: List[bytes] = []
+        self._stop = threading.Event()
+
+        def _capture() -> None:
+            while not self._stop.is_set():
+                try:
+                    self._frames.append(
+                        self._stream.read(CHUNK, exception_on_overflow=False),
+                    )
+                except Exception:
+                    # If the device errors mid-stream, stop recording.
+                    self._stop.set()
+                    break
+
+        _beep(1000)
+        self._thr = threading.Thread(target=_capture, daemon=True)
+        self._thr.start()
+
+    def stop(self) -> bytes:
+        """Stop recording and return WAV bytes."""
+        self._stop.set()
+        try:
+            self._thr.join(timeout=2.0)
+        except Exception:
+            pass
+
+        with suppress_stderr_fd():
+            try:
+                self._stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            try:
+                self._pa.terminate()
+            except Exception:
+                pass
+
+        _beep(500)
+
+        wav_path = "/tmp/voice_input.wav"
+        with wave.open(wav_path, "wb") as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(self._sample_size)
+            wf.setframerate(SAMPLE_RATE)
+            wf.writeframes(b"".join(self._frames))
+
+        with open(wav_path, "rb") as f:
+            return f.read()
+
+
+def start_voice_recording() -> "VoiceRecordingHandle":
+    """Start recording immediately and return a stop handle."""
+    return VoiceRecordingHandle()
+
+
+def transcribe_deepgram_no_input(audio_bytes: bytes) -> str:
+    """Transcribe with Deepgram, returning '' on failure (no CLI fallback).
+
+    This is intended for GUI usage: falling back to `input()` would block the UI.
+    """
+    key = os.getenv("DEEPGRAM_API_KEY")
+    if not key:
+        return ""
+
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+
+        req = _urlreq.Request(
+            url="https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true",
+            data=audio_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Token {key}",
+                "Content-Type": "audio/wav",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+        transcript = (
+            payload.get("results", {})
+            .get("channels", [{}])[0]
+            .get("alternatives", [{}])[0]
+            .get("transcript", "")
+        )
+        return (transcript or "").strip()
+    except Exception:
+        return ""
+
+
 # New: interruptible variant used for in-flight steering
 def record_until_enter_interruptible(is_cancelled) -> Optional[bytes]:
     """
@@ -471,7 +644,7 @@ def transcribe_deepgram(audio_bytes: bytes) -> str:
         return input("> ")
 
 
-async def _speak_async(text: str) -> None:
+async def _speak_async(text: str, *, enable_skip: bool = True) -> None:
     """
     Stream-out Cartesia audio as it is generated so playback starts almost
     immediately.  ↵ while speaking still skips the rest.
@@ -480,23 +653,28 @@ async def _speak_async(text: str) -> None:
         return
 
     # ─────────────── enter-to-skip listener ────────────────
+    # NOTE: In Textual/TUI apps, reading stdin in a background thread can interfere
+    # with the UI's input handling and make typing feel laggy. Allow disabling.
     skip = threading.Event()  # raised when user hits ↵
     listener_done = threading.Event()  # tells the listener to exit
-    # expose skip globally so other parts can cancel speech immediately
-    global _CURRENT_TTS_SKIP
-    _CURRENT_TTS_SKIP = skip
+    listener: threading.Thread | None = None
 
-    def _listen_enter():
-        """Poll stdin so we can shut the thread down cleanly."""
-        while not listener_done.is_set():
-            r, _, _ = select.select([sys.stdin], [], [], 0.05)
-            if r:
-                sys.stdin.readline()
-                skip.set()
-                break
+    if enable_skip:
+        # expose skip globally so other parts can cancel speech immediately
+        global _CURRENT_TTS_SKIP
+        _CURRENT_TTS_SKIP = skip
 
-    listener = threading.Thread(target=_listen_enter, daemon=True)
-    listener.start()
+        def _listen_enter():
+            """Poll stdin so we can shut the thread down cleanly."""
+            while not listener_done.is_set():
+                r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if r:
+                    sys.stdin.readline()
+                    skip.set()
+                    break
+
+        listener = threading.Thread(target=_listen_enter, daemon=True)
+        listener.start()
 
     try:
         # ─────────────── streaming TTS ────────────────
@@ -518,7 +696,8 @@ async def _speak_async(text: str) -> None:
             # skip hint so that it appears **after** those warnings.
             await asyncio.sleep(1.0)
             print(f'🗣️ Assistant speaking…\n"{text}"')
-            print("🔇 Press ↵ to skip playback")
+            if enable_skip:
+                print("🔇 Press ↵ to skip playback")
 
             def _frame_to_pcm(frame: "AudioFrame") -> bytes:
                 """Return raw 16-bit PCM for *any* Cartesia AudioFrame flavour."""
@@ -542,21 +721,26 @@ async def _speak_async(text: str) -> None:
     finally:
         # ─────────────── clean-up ───────────────
         listener_done.set()
-        listener.join(timeout=0.1)
-        # clear global skip handle now that we're done
-        _CURRENT_TTS_SKIP = None
+        try:
+            if listener is not None:
+                listener.join(timeout=0.1)
+        except Exception:
+            pass
+        if enable_skip:
+            # clear global skip handle now that we're done
+            _CURRENT_TTS_SKIP = None
 
-        if skip.is_set():  # flush the newline the user pressed
-            try:
-                import termios
+            if skip.is_set():  # flush the newline the user pressed
+                try:
+                    import termios
 
-                termios.tcflush(sys.stdin, termios.TCIFLUSH)
-            except Exception:
-                pass
+                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                except Exception:
+                    pass
 
 
 # ────────────────────────────── public shim ────────────────────────────────
-def speak(text: str) -> None:
+def speak(text: str, *, enable_skip: bool = True) -> None:
     """
     Thread-safe synchronous wrapper around :pyfunc:`_speak_async`.
 
@@ -579,7 +763,7 @@ def speak(text: str) -> None:
 
     def _run_in_thread() -> None:
         try:
-            asyncio.run(_speak_async(text))
+            asyncio.run(_speak_async(text, enable_skip=enable_skip))
         finally:
             _TTS_LOCK.release()
 
@@ -588,7 +772,7 @@ def speak(text: str) -> None:
         asyncio.get_running_loop()
     except RuntimeError:
         # No → safe to run the coroutine synchronously here
-        asyncio.run(_speak_async(text))
+        asyncio.run(_speak_async(text, enable_skip=enable_skip))
     else:
         # Yes → grab the lock *now* to freeze call order and then start
         # a worker that will release it when done.
@@ -604,6 +788,17 @@ def speak_and_wait(text: str) -> None:
     """
     speak(text)
     _wait_for_tts_end()
+
+
+def speak_no_stdin(text: str) -> None:
+    """
+    Speak `text` without touching stdin (safe for Textual/TUI apps).
+
+    This disables the enter-to-skip listener which would otherwise compete with
+    the UI's input handling.
+    """
+
+    speak(text, enable_skip=False)
 
 
 def stop_speaking() -> None:
@@ -900,13 +1095,14 @@ class _BroadcastLogHandler(logging.Handler):
 def configure_sandbox_logging(
     log_in_terminal: bool = False,
     log_file: Optional[str] = ".logs_main.txt",
+    log_file_mode: str = "w",
     tcp_port: int = 0,
     http_tcp_port: int = 0,
     unify_requests_log_file: Optional[str] = ".logs_unify_requests.txt",
 ) -> None:
     """Configure logging to a file by default, with optional terminal streaming.
 
-    - Overwrites the given log_file on each run.
+    - Uses `log_file_mode` for the main log file (default: overwrite each run).
     - Adds a StreamHandler to stdout when log_in_terminal is True.
     - Optionally serves logs over TCP on localhost:tcp_port for external viewing.
     - Supports a dedicated Unify Request log stream/file that captures only the 'unify_requests' logger.
@@ -936,7 +1132,10 @@ def configure_sandbox_logging(
             _abs_main_log = log_file
 
     if _abs_main_log:
-        _fh = _logging.FileHandler(_abs_main_log, mode="w", encoding="utf-8")
+        _mode = str(log_file_mode or "w")
+        if _mode not in {"w", "a"}:
+            _mode = "w"
+        _fh = _logging.FileHandler(_abs_main_log, mode=_mode, encoding="utf-8")
         _fh.setFormatter(_fmt)
 
         # Exclude Unify Request logs from the main log file to keep it high-level
@@ -2572,6 +2771,118 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
     by EventBus) belong to that project.  Call this immediately after handling
     CLI arguments and before any manager instances are constructed.
     """
+
+    def _maybe_autostart_local_orchestra() -> None:
+        """Best-effort local Orchestra autostart for sandbox runs.
+
+        Sandboxes call `unify.activate()` during startup, which requires a reachable
+        Unify API backend. In tests, `tests/parallel_run.sh` auto-starts local
+        Orchestra when `ORCHESTRA_URL` targets localhost. Sandbox entrypoints are
+        typically run directly, so we replicate that behavior here (sandbox-only).
+
+        This helper is intentionally:
+        - **best effort**: failures are logged and ignored (the subsequent call
+          will fail with a clearer HTTP error if a backend is still unavailable).
+        - **opt-in by URL**: only triggers when `ORCHESTRA_URL` explicitly points
+          at localhost/127.0.0.1.
+        """
+        import re
+        import subprocess
+        from pathlib import Path
+        from urllib.parse import urlparse
+
+        lg = logging.getLogger(__name__)
+
+        base_url = os.environ.get("ORCHESTRA_URL")
+        if not base_url:
+            # Respect the user's environment: only autostart when explicitly configured
+            # to use localhost (mirrors the user request).
+            return
+
+        try:
+            parsed = urlparse(base_url)
+            host = parsed.hostname or ""
+        except Exception:
+            host = ""
+
+        if host not in {"localhost", "127.0.0.1"} and "localhost" not in base_url:
+            return
+
+        # Resolve orchestra repo path (default: sibling repo ../orchestra).
+        # Repo root is .../unity/ (parent of sandboxes/).
+        repo_root = Path(__file__).resolve().parents[1]
+        orchestra_repo = Path(
+            os.environ.get("ORCHESTRA_REPO_PATH", str(repo_root.parent / "orchestra")),
+        )
+        local_sh = orchestra_repo / "scripts" / "local.sh"
+
+        if not local_sh.exists():
+            lg.warning(
+                "ORCHESTRA_URL targets localhost (%s) but local orchestra script not found at %s. "
+                "Set ORCHESTRA_REPO_PATH to your orchestra repo.",
+                base_url,
+                local_sh,
+            )
+            return
+        if not os.access(local_sh, os.X_OK):
+            lg.warning(
+                "Local orchestra script exists but is not executable: %s",
+                local_sh,
+            )
+            return
+
+        def _extract_url(text: str) -> str | None:
+            # `local.sh check` usually prints the base URL; be resilient to extra logging.
+            m = re.findall(r"https?://\\S+", text or "")
+            return m[-1].rstrip("/") if m else None
+
+        def _run(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [str(local_sh), *args],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        # First, see if it's already running.
+        check = _run("check")
+        if check.returncode == 0:
+            url = _extract_url((check.stdout or "") + "\n" + (check.stderr or ""))
+            if url:
+                # Ensure Unify client points at the discovered local URL (port may differ).
+                os.environ["ORCHESTRA_URL"] = url
+                lg.info("Using local orchestra: %s", url)
+            return
+
+        lg.info(
+            "ORCHESTRA_URL targets localhost (%s); attempting to start local orchestra...",
+            base_url,
+        )
+        start = _run("start")
+        if start.returncode != 0:
+            lg.warning(
+                "Failed to start local orchestra (exit=%s). stdout=%s stderr=%s",
+                start.returncode,
+                (start.stdout or "").strip(),
+                (start.stderr or "").strip(),
+            )
+            return
+
+        check2 = _run("check")
+        if check2.returncode != 0:
+            lg.warning(
+                "Local orchestra start completed, but 'check' still fails (exit=%s). stdout=%s stderr=%s",
+                check2.returncode,
+                (check2.stdout or "").strip(),
+                (check2.stderr or "").strip(),
+            )
+            return
+
+        url2 = _extract_url((check2.stdout or "") + "\n" + (check2.stderr or ""))
+        if url2:
+            os.environ["ORCHESTRA_URL"] = url2
+            lg.info("Using local orchestra: %s", url2)
+
     import unity
     from unity.events.event_bus import EVENT_BUS
 
@@ -2580,6 +2891,8 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
         os.environ["UNIFY_REQUESTS_DEBUG"] = "true"
     except Exception:
         pass
+
+    _maybe_autostart_local_orchestra()
 
     unity.init(
         project_name,

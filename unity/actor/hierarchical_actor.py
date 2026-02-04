@@ -1274,13 +1274,8 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
     async def stop(
         self,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ):
-        return await self._real_handle.stop(
-            reason,
-            parent_chat_context_cont=parent_chat_context_cont,
-        )
+        return await self._real_handle.stop(reason)
 
     async def pause(self):
         return await self._real_handle.pause()
@@ -1304,22 +1299,22 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         return await self._real_handle.ask(
             question,
-            parent_chat_context_cont=parent_chat_context_cont,
+            _parent_chat_context=_parent_chat_context,
         )
 
     async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ):
         return await self._real_handle.interject(
             message,
-            parent_chat_context_cont=parent_chat_context_cont,
+            _parent_chat_context_cont=_parent_chat_context_cont,
         )
 
     async def result(self) -> Any:
@@ -1577,7 +1572,7 @@ class _SteerableToolHandleProxy:
                     interactions_log.append(initial_interaction)
 
                 # URL capture happens at the tool-call proxy level, not at the handle
-                # method level (which may be domain-agnostic and not have browser access).
+                # method level (which may be domain-agnostic and not have computer access).
                 url = None
 
                 meta = {
@@ -1631,7 +1626,7 @@ class _SteerableToolHandleProxy:
                     interactions_log.append(interaction_to_cache)
 
                 # URL capture happens at the tool-call proxy level, not at the handle
-                # method level (which may be domain-agnostic and not have browser access).
+                # method level (which may be domain-agnostic and not have computer access).
                 url = None
 
                 meta = {
@@ -1726,7 +1721,7 @@ class _SteerableToolHandleProxy:
 
 class _ToolProviderProxy:
     """
-    Generic proxy for any tool provider (browser, state managers, and future custom
+    Generic proxy for any tool provider (computer/web, state managers, and future custom
     environments).
 
     Intercepts tool calls to apply:
@@ -1735,9 +1730,9 @@ class _ToolProviderProxy:
     - steerable handle tracking
     - run-id gating to prevent stale calls
 
-    Browser-specific features are conditionally enabled when the provided
+    Computer-environment-specific features are conditionally enabled when the provided
     `environment` looks like a `ComputerEnvironment`:
-    - Magnitude log capture (if the browser backend is `MagnitudeBackend`)
+    - Magnitude log capture (if the computer backend is `MagnitudeBackend`)
     - `wait`/`context` kwargs injection
     - URL + post-action screenshot capture for cache metadata
     - scoped context injection into the `reason` tool
@@ -1754,14 +1749,14 @@ class _ToolProviderProxy:
         self._plan = plan
         self._namespace = namespace
         self._environment = environment
-        self._is_browser_env = (
+        self._is_computer_env = (
             environment is not None
             and environment.__class__.__name__ == "ComputerEnvironment"
         )
 
     def _handle_name_for_tool(self, tool_method_name: str) -> str:
-        # Preserve historical naming for browser primitives and manager primitives.
-        if self._is_browser_env:
+        # Preserve historical naming for computer primitives and manager primitives.
+        if self._is_computer_env:
             return f"{tool_method_name}_handle"
         manager_name = self._namespace.split(".")[-1]
         return f"{manager_name}_{tool_method_name}_handle"
@@ -1788,8 +1783,8 @@ class _ToolProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
-            # Browser-only: inject scoped local context into reason() calls.
-            if self._is_browser_env and name == "reason":
+            # Computer-only: inject scoped local context into reason() calls.
+            if self._is_computer_env and name == "reason":
                 try:
                     scoped_context_dict = (
                         self._plan.actor._get_scoped_context_from_plan_state(self._plan)
@@ -1815,9 +1810,9 @@ class _ToolProviderProxy:
                         f"Failed to inject scoped context into 'reason' tool: {e}",
                     )
 
-            # Browser-only: support `wait=` without polluting cache keys.
+            # Computer-only: support `wait=` without polluting cache keys.
             wait = True
-            if self._is_browser_env:
+            if self._is_computer_env:
                 wait = kwargs.pop("wait", True)
 
             ctx_run_id = current_run_id_var.get()
@@ -1843,7 +1838,7 @@ class _ToolProviderProxy:
             #
             # IMPORTANT: do NOT allow these queue objects to pollute cache keys or logs.
             clarification_injected = False
-            if (not self._is_browser_env) and getattr(
+            if (not self._is_computer_env) and getattr(
                 self._plan,
                 "clarification_enabled",
                 False,
@@ -1881,7 +1876,7 @@ class _ToolProviderProxy:
 
             call_repr = f"{tool_name}({self._plan.actor._serialize_args(args, kwargs_for_cache)})"
             if diag_prefix:
-                if self._is_browser_env:
+                if self._is_computer_env:
                     logger.info(
                         f"{diag_prefix} 🐍 PYTHON: Executing {call_repr} (wait={wait})",
                     )
@@ -1901,7 +1896,7 @@ class _ToolProviderProxy:
                 cached_interaction = cached_data["interaction_log"]
 
                 if (
-                    self._is_browser_env
+                    self._is_computer_env
                     and isinstance(cached_interaction, tuple)
                     and len(cached_interaction) < 4
                 ):
@@ -1954,7 +1949,7 @@ class _ToolProviderProxy:
             backend = None
             is_magnitude = False
 
-            if self._is_browser_env:
+            if self._is_computer_env:
                 try:
                     backend = self._real_instance.computer.backend
                     is_magnitude = isinstance(backend, MagnitudeBackend)
@@ -1969,7 +1964,7 @@ class _ToolProviderProxy:
                 capture_q = None
 
             try:
-                if self._is_browser_env and name != "reason":
+                if self._is_computer_env and name != "reason":
                     func_name = (
                         self._plan.call_stack[-1] if self._plan.call_stack else "global"
                     )
@@ -1983,7 +1978,7 @@ class _ToolProviderProxy:
                 else:
                     tool_output = await real_attr(*args, **kwargs)
             except ComputerAgentError as e:
-                if self._is_browser_env and e.error_type == "cancelled":
+                if self._is_computer_env and e.error_type == "cancelled":
                     logger.info(
                         f"🔴 Action interrupted by immediate pause: {call_repr}",
                     )
@@ -2048,7 +2043,7 @@ class _ToolProviderProxy:
                 except Exception as e:
                     logger.debug(f"Pane registration failed for tool handle: {e}")
 
-            if self._is_browser_env:
+            if self._is_computer_env:
                 interaction_to_cache = (
                     "tool_call",
                     call_repr,
@@ -2062,7 +2057,7 @@ class _ToolProviderProxy:
                 interactions_log.append(interaction_to_cache)
 
             url = None
-            if self._is_browser_env:
+            if self._is_computer_env:
                 try:
                     url = await self._real_instance.computer.get_current_url()
                 except Exception:
@@ -2086,7 +2081,7 @@ class _ToolProviderProxy:
                 "impure": meta_impure,
             }
 
-            if meta["impure"] and self._is_browser_env:
+            if meta["impure"] and self._is_computer_env:
                 try:
                     post_screenshot = (
                         await self._real_instance.computer.get_screenshot()
@@ -2270,7 +2265,7 @@ class _ToolProviderProxy:
 
 
 class _PrimitivesProxy:
-    """Proxy for `unity.function_manager.primitives.Primitives`.\n\n    Exposes managers under `primitives.<manager>` and wraps each manager with\n    `_ToolProviderProxy` to ensure calls are logged/cached/handle-tracked.\n\n    Special-case: `primitives.computer` returns the already-injected\n    `computer_primitives` proxy so browser tools remain properly proxied.\n"""
+    """Proxy for `unity.function_manager.primitives.Primitives`.\n\n    Exposes managers under `primitives.<manager>` and wraps each manager with\n    `_ToolProviderProxy` to ensure calls are logged/cached/handle-tracked.\n\n    Special-case: `primitives.computer` returns the already-injected\n    `computer_primitives` proxy so computer tools remain properly proxied.\n"""
 
     def __init__(self, real_primitives: Any, plan: "HierarchicalActorHandle"):
         self._real_primitives = real_primitives
@@ -2278,7 +2273,7 @@ class _PrimitivesProxy:
 
     def __getattr__(self, name: str) -> Any:
         if name == "computer":
-            # Ensure browser operations remain proxied even if plan uses primitives.computer.
+            # Ensure computer operations remain proxied even if plan uses primitives.computer.
             cp = self._plan.execution_namespace.get("computer_primitives")
             if cp is not None:
                 return cp
@@ -2456,7 +2451,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
 
         # Plan-local environments map (used for proxy injection + verification evidence).
         # This must reflect the plan's dedicated computer primitives (when provided),
-        # rather than the actor's shared browser session.
+        # rather than the actor's shared computer session.
         self.environments: dict[str, BaseEnvironment] = {}
         try:
             if hasattr(actor, "environments") and isinstance(actor.environments, dict):
@@ -2466,7 +2461,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
             self.environments = {}
 
         if self.dedicated_computer_primitives is not None:
-            # Only override the browser environment when a dedicated session is used.
+            # Only override the computer environment when a dedicated session is used.
             # This ensures env.capture_state() reflects the dedicated session.
             from unity.actor.environments import ComputerEnvironment
 
@@ -2640,7 +2635,7 @@ class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
         )
         if cp is None:
             raise RuntimeError(
-                "computer_primitives is not available: this actor/plan was configured without a browser environment.",
+                "computer_primitives is not available: this actor/plan was configured without a computer environment.",
             )
         return cp
 
@@ -2968,7 +2963,7 @@ async def main_plan():
             with contextlib.suppress(Exception):
                 await self.clarification_up_q.put(question)
 
-            # Pause the plan (non-immediate: avoids browser interrupt assumptions).
+            # Pause the plan (non-immediate: avoids computer interrupt assumptions).
             with contextlib.suppress(Exception):
                 await self.pause(immediate=False)
 
@@ -3571,7 +3566,7 @@ async def main_plan():
                         new_screenshot = await backend.get_screenshot()
                         new_url = await backend.get_current_url()
 
-                        # Refresh evidence from browser environment after barrier.
+                        # Refresh evidence from computer environment after barrier.
                         # (The work item stores evidence per-environment namespace.)
                         if "computer_primitives" in item.post_state and isinstance(
                             item.post_state["computer_primitives"],
@@ -3591,7 +3586,7 @@ async def main_plan():
                         reason="Skipped verification for fully cached replay step.",
                     )
                 else:
-                    # Only attempt browser barriers when a browser environment is active.
+                    # Only attempt computer barriers when a computer environment is active.
                     computer_primitives: ComputerPrimitives | None = None
                     if (
                         "computer_primitives" in (self.actor.environments or {})
@@ -3668,11 +3663,11 @@ async def main_plan():
 
         self.last_verified_function_name = item.function_name
 
-        # Extract browser evidence if available (post-state is per-environment evidence).
-        browser_evidence = item.post_state.get("computer_primitives")
-        if isinstance(browser_evidence, dict):
-            self.last_verified_url = browser_evidence.get("url")
-            self.last_verified_screenshot = browser_evidence.get("screenshot")
+        # Extract computer evidence if available (post-state is per-environment evidence).
+        computer_evidence = item.post_state.get("computer_primitives")
+        if isinstance(computer_evidence, dict):
+            self.last_verified_url = computer_evidence.get("url")
+            self.last_verified_screenshot = computer_evidence.get("screenshot")
         else:
             self.last_verified_url = None
             self.last_verified_screenshot = None
@@ -3734,9 +3729,9 @@ async def main_plan():
                 self.summarization_client.set_response_format(PreconditionDecision)
                 try:
                     entry_screenshot = None
-                    entry_browser_evidence = item.pre_state.get("computer_primitives")
-                    if isinstance(entry_browser_evidence, dict):
-                        entry_screenshot = entry_browser_evidence.get("screenshot")
+                    entry_computer_evidence = item.pre_state.get("computer_primitives")
+                    if isinstance(entry_computer_evidence, dict):
+                        entry_screenshot = entry_computer_evidence.get("screenshot")
 
                     decision_str = await llm_call(
                         self.summarization_client,
@@ -3929,12 +3924,12 @@ async def main_plan():
                 self._execution_task,
                 f"verification failure targeting '{target_function_name_override}'",
             )
-            # Browser interruption is only applicable when a browser environment is active.
+            # Computer interruption is only applicable when a computer environment is active.
             if (
                 "computer_primitives" in (self.actor.environments or {})
                 and getattr(self.actor, "computer_primitives", None) is not None
             ):
-                await self._clear_browser_queue_for_run(run_id_being_cancelled)
+                await self._clear_computer_queue_for_run(run_id_being_cancelled)
                 computer_primitives = self._get_computer_primitives()
                 if hasattr(
                     computer_primitives.computer.backend,
@@ -3957,11 +3952,11 @@ async def main_plan():
                 f"Launching course correction agent for verification recovery targeting '{target_function_name_override}'.",
             )
             try:
-                # Extract browser screenshot for course correction.
+                # Extract computer screenshot for course correction.
                 target_screenshot = None
-                entry_browser_evidence = item.pre_state.get("computer_primitives")
-                if isinstance(entry_browser_evidence, dict):
-                    target_screenshot = entry_browser_evidence.get("screenshot")
+                entry_computer_evidence = item.pre_state.get("computer_primitives")
+                if isinstance(entry_computer_evidence, dict):
+                    target_screenshot = entry_computer_evidence.get("screenshot")
 
                 trajectory = []
                 for interaction in item.interactions:
@@ -4188,7 +4183,7 @@ async def main_plan():
         (A) the LLM's proposal (functions + intra-function tails), and
         (B) the impure guardrail for safety.
 
-        This method is domain-agnostic and works for any tool type (browser, state
+        This method is domain-agnostic and works for any tool type (computer/web, state
         managers, custom functions) based purely on cache metadata.
         """
         cache = self.idempotency_cache
@@ -4289,50 +4284,50 @@ async def main_plan():
         else:
             logger.debug(f"No task provided for cancellation ({reason}).")
 
-    async def _clear_browser_queue_for_run(self, run_id_to_clear: int):
+    async def _clear_computer_queue_for_run(self, run_id_to_clear: int):
         """
-        Instructs the browser backend to clear pending commands for a specific run_id.
+        Instructs the computer backend to clear pending commands for a specific run_id.
         This prevents stale commands from an old execution run from executing after
         the run has been cancelled and a new one has started.
 
-        This is a no-op if no browser environment is active.
+        This is a no-op if no computer environment is active.
         """
         if "computer_primitives" not in (self.actor.environments or {}):
             logger.debug(
-                "No browser environment active; skipping browser queue clearing.",
+                "No computer environment active; skipping command queue clearing.",
             )
             return
 
         try:
             backend = self._get_computer_primitives().computer.backend
         except Exception as e:
-            logger.debug(f"Could not access browser backend to clear queue: {e}")
+            logger.debug(f"Could not access computer backend to clear queue: {e}")
             return
 
         if not hasattr(backend, "clear_pending_commands"):
             logger.debug(
-                "Browser backend does not have 'clear_pending_commands'. Skipping queue clearing.",
+                "Computer backend does not have 'clear_pending_commands'. Skipping queue clearing.",
             )
             return
 
         try:
             self.action_log.append(
-                f"BROWSER: Clearing pending commands for cancelled run_id={run_id_to_clear}.",
+                f"COMPUTER: Clearing pending commands for cancelled run_id={run_id_to_clear}.",
             )
             logger.info(
-                f"Clearing pending browser commands for cancelled run_id={run_id_to_clear}.",
+                f"Clearing pending computer commands for cancelled run_id={run_id_to_clear}.",
             )
             await backend.clear_pending_commands(run_id=run_id_to_clear)
             self.action_log.append(
-                f"BROWSER: Pending commands cleared for run_id={run_id_to_clear}.",
+                f"COMPUTER: Pending commands cleared for run_id={run_id_to_clear}.",
             )
             logger.info(f"Pending commands cleared for run_id={run_id_to_clear}.")
         except Exception as e:
             self.action_log.append(
-                f"WARNING: Failed to clear browser command queue for run_id={run_id_to_clear}: {e}",
+                f"WARNING: Failed to clear computer command queue for run_id={run_id_to_clear}: {e}",
             )
             logger.warning(
-                f"Failed to clear browser command queue for run_id={run_id_to_clear}: {e}",
+                f"Failed to clear computer command queue for run_id={run_id_to_clear}: {e}",
                 exc_info=True,
             )
 
@@ -4473,7 +4468,6 @@ async def main_plan():
     async def interject(
         self,
         message: str,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> str:
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
@@ -4499,7 +4493,7 @@ async def main_plan():
             # to maintain user control flow.
             was_user_paused = self._state == _HierarchicalHandleState.PAUSED
 
-            # Conditionally interrupt browser if a browser environment is active.
+            # Conditionally interrupt computer if a computer environment is active.
             if "computer_primitives" in (self.actor.environments or {}):
                 try:
                     computer_primitives = self._get_computer_primitives()
@@ -4509,7 +4503,7 @@ async def main_plan():
                     ):
                         await computer_primitives.computer.backend.interrupt_current_action()
                 except Exception as e:
-                    logger.debug(f"Could not interrupt browser action: {e}")
+                    logger.debug(f"Could not interrupt computer action: {e}")
             await self.pause()
             decision = None
             try:
@@ -4548,7 +4542,6 @@ async def main_plan():
                         idempotency_cache=self.idempotency_cache,
                         tools=self.actor.tools,
                         environments=self.actor.environments,
-                        images=images,
                         pane_snapshot=pane_snapshot,
                     )
                 )
@@ -4559,7 +4552,6 @@ async def main_plan():
                         self.modification_client,
                         dynamic_prompt,
                         static_prompt=static_prompt,
-                        images=images,
                     )
                     decision = InterjectionDecision.model_validate_json(decision_str)
                     logger.debug(
@@ -4578,7 +4570,6 @@ async def main_plan():
                 routing_status = await self._apply_interjection_routing(
                     decision=decision,
                     original_message=message,
-                    images=images,
                 )
                 status_message = await self._execute_interjection_decision(decision)
                 if routing_status:
@@ -4612,7 +4603,6 @@ async def main_plan():
         *,
         decision: InterjectionDecision,
         original_message: str,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> str:
         """Apply routing from an interjection decision to in-flight handles via the pane.
 
@@ -4692,8 +4682,7 @@ async def main_plan():
                     await self.pane.interject(
                         resolved_hid,
                         routed_message,
-                        parent_chat_context_cont=self.parent_chat_context,
-                        images=images,
+                        _parent_chat_context_cont=self.parent_chat_context,
                     )
                     st = known.get(resolved_hid)
                     if st is None:
@@ -4760,8 +4749,7 @@ async def main_plan():
                 result = await self.pane.broadcast_interject(
                     routed_message,
                     filter=bfilter,
-                    parent_chat_context_cont=self.parent_chat_context,
-                    images=images,
+                    _parent_chat_context_cont=self.parent_chat_context,
                 )
                 status = f"Broadcast interjection to {int(result.get('count') or 0)} handle(s)"
                 self.action_log.append(f"ROUTING: {status}")
@@ -4789,7 +4777,7 @@ async def main_plan():
                 self._execution_task,
                 "modify_task interjection",
             )
-            await self._clear_browser_queue_for_run(run_id_being_cancelled)
+            await self._clear_computer_queue_for_run(run_id_being_cancelled)
 
             original_call_stack = list(self.call_stack)
             first_modified_function_index = -1
@@ -4885,7 +4873,7 @@ async def main_plan():
                     if any(f":{hid}." in meta_tool for hid in invalidated_handles):
                         self.idempotency_cache.pop(k, None)
 
-            # Course correction is only applicable for browser-based workflows.
+            # Course correction is only applicable for computer-based workflows.
             if (
                 trajectory
                 and target_screenshot
@@ -4975,7 +4963,7 @@ async def main_plan():
                 self._execution_task,
                 "replace_task interjection",
             )
-            await self._clear_browser_queue_for_run(run_id_being_cancelled)
+            await self._clear_computer_queue_for_run(run_id_being_cancelled)
 
             self.goal = decision.new_goal
             self.plan_source_code = None
@@ -5008,7 +4996,7 @@ async def main_plan():
                 self._execution_task,
                 "refactor_and_generalize interjection",
             )
-            await self._clear_browser_queue_for_run(run_id_being_cancelled)
+            await self._clear_computer_queue_for_run(run_id_being_cancelled)
 
             monolithic_code = (
                 "\n\n".join(
@@ -5075,7 +5063,7 @@ async def main_plan():
                 f"Executing decision: explore_detached for goal: '{decision.new_goal}'",
             )
 
-            # Tab isolation is only applicable for browser-based workflows.
+            # Tab isolation is only applicable for computer-based workflows.
             use_tab_isolation = "computer_primitives" in (self.actor.environments or {})
 
             computer_primitives = None
@@ -5094,7 +5082,7 @@ async def main_plan():
 
                         try:
                             original_tab_index = await computer_primitives.observe(
-                                "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
+                                "Look at the tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
                                 response_format=TabState,
                             )
                             original_url = (
@@ -5123,7 +5111,7 @@ async def main_plan():
                         use_tab_isolation = False
                 else:
                     self.action_log.append(
-                        "SANDBOX: Running detached exploration without tab isolation (no browser environment active)",
+                        "SANDBOX: Running detached exploration without tab isolation (no computer environment active)",
                     )
 
                 self.action_log.append(
@@ -5375,7 +5363,7 @@ async def main_plan():
         Pauses the plan's execution.
 
         Args:
-            immediate: If True, interrupts any currently executing browser action.
+            immediate: If True, interrupts any currently executing computer action.
 
         Returns:
             A status message.
@@ -5392,7 +5380,7 @@ async def main_plan():
                 ):
                     backend = computer_primitives.computer.backend
                     if hasattr(backend, "interrupt_current_action"):
-                        logger.info("⚡ Sending interrupt to browser action...")
+                        logger.info("⚡ Sending interrupt to computer action...")
                         await backend.interrupt_current_action()
 
             self.runtime.pause()
@@ -5524,9 +5512,9 @@ async def main_plan():
             async def query_tool(query: str) -> str:
                 """Query the agent's memory and action history."""
                 try:
-                    return await self._get_computer_primitives().browser_query(query)
+                    return await self._get_computer_primitives().query(query)
                 except Exception as e:
-                    return f"Error querying browser: {e}"
+                    return f"Error querying computer: {e}"
 
         else:
 
@@ -5618,7 +5606,7 @@ class HierarchicalActor(BaseActor):
         max_local_retries: Optional[int] = None,
         timeout: Optional[int] = 1000,
         computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
         enable_course_correction: bool = True,
         *,
@@ -5639,12 +5627,12 @@ class HierarchicalActor(BaseActor):
             max_local_retries: Default max number of tactical retries for plans.
             timeout: Default timeout for plan execution.
             computer_mode: The computer backend mode. Can be "magnitude" or "mock".
-            agent_mode: The agent mode to use. Can be "browser" or "desktop".
-            agent_server_url: The URL of the agent server. For browser mode, defaults to
+            agent_mode: The agent mode to use. Can be "web" or "desktop".
+            agent_server_url: The URL of the agent server. For web mode, defaults to
                 localhost:3000. For desktop mode, this should be the external VM's URL
                 (auto-resolved from SESSION_DETAILS.assistant.desktop_url if not provided).
             enable_course_correction: When True (default), the actor may spawn a recovery sub-agent
-                to restore computer/browser state after invalidation or verification recovery.
+                to restore computer state after invalidation or verification recovery.
                 When False, the actor will skip course correction and rely on replay/re-execution.
             connect_now: When False (default), defer any agent connections until first use.
             can_compose: When True (default), allows the actor to generate new code on the fly.
@@ -5887,13 +5875,13 @@ class HierarchicalActor(BaseActor):
         Resolve desktop_url from the orchestrator by assistant full name.
 
         Steps:
-        - GET <UNIFY_BASE_URL>/assistant with Authorization: Bearer <UNIFY_KEY>
+        - GET <ORCHESTRA_URL>/assistant with Authorization: Bearer <UNIFY_KEY>
         - Match the assistant whose full name matches env ASSISTANT_NAME as "<first> <last>"
         - Return its "desktop_url" field
 
         Falls back to the provided agent_server_url on any failure.
         """
-        orchestra_url = SETTINGS.UNIFY_BASE_URL
+        orchestra_url = SETTINGS.ORCHESTRA_URL
         unify_key = SESSION_DETAILS.unify_key
         assistant_name = SESSION_DETAILS.assistant.name.strip()
 
@@ -6304,7 +6292,7 @@ class HierarchicalActor(BaseActor):
 
         computer_primitives: ComputerPrimitives | None = None
         if "computer_primitives" in active_envs:
-            # Only resolve when actually configured; avoids implicit browser deps.
+            # Only resolve when actually configured; avoids implicit computer deps.
             computer_primitives = plan._get_computer_primitives()
 
         async def _int(func_name: str):
@@ -6494,11 +6482,11 @@ class HierarchicalActor(BaseActor):
             [
                 {
                     "data": base64.b64encode(current_screenshot).decode("ascii"),
-                    "caption": "Current browser state (before correction)",
+                    "caption": "Current computer state (before correction)",
                 },
                 {
                     "data": base64.b64encode(target_screenshot).decode("ascii"),
-                    "caption": "Target browser state (after correction)",
+                    "caption": "Target computer state (after correction)",
                 },
             ],
         )
@@ -6508,11 +6496,11 @@ class HierarchicalActor(BaseActor):
             [
                 AnnotatedImageRef(
                     raw_image_ref=RawImageRef(image_id=current_id),
-                    annotation="Current state: where the browser is now",
+                    annotation="Current state: where the computer is now",
                 ),
                 AnnotatedImageRef(
                     raw_image_ref=RawImageRef(image_id=target_id),
-                    annotation="Target state: where the browser should be",
+                    annotation="Target state: where the computer should be",
                 ),
             ],
         )
@@ -6520,7 +6508,7 @@ class HierarchicalActor(BaseActor):
         formatted_trajectory = "\n".join(f"- `{action}`" for action in trajectory)
         correction_goal = f"""
         ### Your Mission: Course Correction
-        Your goal is to restore the browser's state by writing and executing Python code in an iterative loop.
+        Your goal is to restore the computer's state by writing and executing Python code in an iterative loop.
 
         **CONTEXT:**
         - **Current State:** The first image provided. This is the state you are starting from.
@@ -6531,7 +6519,7 @@ class HierarchicalActor(BaseActor):
         **YOUR WORKFLOW:**
         1.  **Analyze:** Review the injected image overview (tool result) in the transcript that lists all available images with their annotations and metadata. Compare them to determine if a correction is needed. If they are the same, you are done.
         2.  **Plan & Execute:** Write Python code using the `computer_primitives` to reverse the trajectory. This may take multiple steps. After each step, you will receive new visual feedback to guide your next action.
-        3.  **Complete:** When the browser state visually matches the target state, your work is done.
+        3.  **Complete:** When the computer state visually matches the target state, your work is done.
         """
 
         logger.info("COURSE CORRECTION: Starting recovery sub-agent...")
@@ -6568,8 +6556,8 @@ class HierarchicalActor(BaseActor):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
-                # Only resolve browser primitives when a browser environment is active.
-                # Primitives-only deployments should not require (or even have) a browser.
+                # Only resolve computer primitives when a computer environment is active.
+                # Primitives-only deployments should not require (or even have) a computer environment.
                 active_envs = (
                     plan.environments
                     if hasattr(plan, "environments")
@@ -7358,17 +7346,17 @@ class HierarchicalActor(BaseActor):
                     f"SyntaxError. You MUST fix this error. Details:\n{last_syntax_error}"
                 )
 
-            browser_screenshot = None
+            computer_screenshot = None
             if (
                 "computer_primitives" in (self.environments or {})
                 and self.computer_primitives is not None
             ):
                 try:
-                    browser_screenshot = (
+                    computer_screenshot = (
                         await self.computer_primitives.computer.get_screenshot()
                     )
                 except Exception as e:
-                    logger.warning(f"Could not get browser screenshot: {e}")
+                    logger.warning(f"Could not get computer screenshot: {e}")
 
             call_stack_list_for_prompt = call_stack_snapshot or []
             scoped_context_str_for_prompt = self._format_scoped_context_for_prompt(
@@ -7432,7 +7420,7 @@ class HierarchicalActor(BaseActor):
                     clarification_question=kwargs.get("clarification_question"),
                     clarification_answer=kwargs.get("clarification_answer"),
                     replan_context=replan_reason,
-                    has_browser_screenshot=browser_screenshot is not None,
+                    has_computer_screenshot=computer_screenshot is not None,
                     tools=self.tools,
                     existing_functions=existing_functions,
                     environments=self.environments,
@@ -7447,7 +7435,7 @@ class HierarchicalActor(BaseActor):
                     plan.implementation_client,
                     dynamic_prompt,
                     static_prompt=static_prompt,
-                    screenshot=browser_screenshot,
+                    screenshot=computer_screenshot,
                     images=plan.images,
                 )
                 decision = ImplementationDecision.model_validate_json(response_str)
@@ -7540,9 +7528,9 @@ class HierarchicalActor(BaseActor):
 
         # Extract screenshot for the LLM call if available (backward-compatible image input).
         screenshot = None
-        browser_evidence = evidence.get("computer_primitives")
-        if isinstance(browser_evidence, dict) and "screenshot" in browser_evidence:
-            screenshot = browser_evidence.get("screenshot")
+        computer_evidence = evidence.get("computer_primitives")
+        if isinstance(computer_evidence, dict) and "screenshot" in computer_evidence:
+            screenshot = computer_evidence.get("screenshot")
 
         static_prompt, dynamic_prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,

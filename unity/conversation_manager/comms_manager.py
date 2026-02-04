@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,9 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.types import Medium
 
 load_dotenv()
+
+# Lock for unknown contact creation to prevent duplicates
+_unknown_contact_lock = threading.Lock()
 
 
 if TYPE_CHECKING:
@@ -85,6 +89,121 @@ events_map: dict[str, Event] = {
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
 }
+
+
+def _is_blacklisted(medium: str, contact_detail: str | None) -> bool:
+    """
+    Check if a contact detail is blacklisted for a given medium.
+
+    This is a fail-open check: returns False on any error to avoid
+    blocking legitimate messages due to infrastructure issues.
+
+    Gated by SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED (default False).
+    When disabled, returns False immediately without any manager initialization.
+
+    Args:
+        medium: The communication medium (e.g., "sms_message", "email", "phone_call")
+        contact_detail: The phone number or email address to check
+
+    Returns:
+        True if the contact detail is blacklisted, False otherwise
+    """
+    # Fast path: skip all manager initialization when blacklist checks disabled
+    if not SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED:
+        return False
+
+    if not contact_detail:
+        return False
+
+    try:
+        from unity.blacklist_manager import BlackListManager
+
+        blm = BlackListManager()
+        result = blm.filter_blacklist(
+            filter=f"medium == '{medium}' and contact_detail == '{contact_detail}'",
+            limit=1,
+        )
+        return len(result.get("entries", [])) > 0
+    except Exception:
+        # Fail-open: don't block messages if blacklist check fails
+        return False
+
+
+def _get_or_create_unknown_contact(
+    medium: str,
+    contact_detail: str,
+) -> dict | None:
+    """
+    Get an existing contact or create a new unknown contact.
+
+    When an inbound message arrives from an unknown sender (not in Contacts
+    and not in BlackList), we create a minimal contact record with:
+    - Only the medium field populated (phone_number or email_address)
+    - should_respond=False to prevent automatic responses
+    - A response_policy guiding the assistant to seek boss guidance
+
+    Uses a lock to prevent duplicate contact creation when multiple
+    messages arrive from the same unknown sender simultaneously.
+
+    Gated by SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED (default False).
+    When disabled, returns None immediately without any manager initialization.
+
+    Args:
+        medium: The communication medium (determines which contact field to set)
+        contact_detail: The phone number or email address
+
+    Returns:
+        The contact dict (existing or newly created), or None on error
+    """
+    # Fast path: skip all manager initialization when blacklist checks disabled
+    if not SETTINGS.conversation.BLACKLIST_CHECKS_ENABLED:
+        return None
+
+    from unity.manager_registry import ManagerRegistry
+    from unity.contact_manager.contact_manager import ContactManager
+
+    with _unknown_contact_lock:
+        try:
+            cm = ManagerRegistry.get_contact_manager()
+
+            # Determine which field to search/set based on medium
+            if medium in ("sms_message", "phone_call"):
+                field_name = "phone_number"
+            elif medium == "email":
+                field_name = "email_address"
+            else:
+                # For unify_message, we don't have external contact details
+                return None
+
+            # Check if contact already exists
+            result = cm.filter_contacts(
+                filter=f"{field_name} == '{contact_detail}'",
+                limit=1,
+            )
+            existing = result.get("contacts", [])
+            if existing:
+                contact = existing[0]
+                return (
+                    contact.model_dump() if hasattr(contact, "model_dump") else contact
+                )
+
+            # Create new unknown contact
+            create_kwargs = {
+                field_name: contact_detail,
+                "should_respond": False,
+                "response_policy": ContactManager.UNKNOWN_INBOUND_RESPONSE_POLICY,
+            }
+            outcome = cm._create_contact(**create_kwargs)
+            new_contact_id = outcome["details"]["contact_id"]
+
+            # Fetch the newly created contact
+            contact_info = cm.get_contact_info(new_contact_id)
+            new_contact = contact_info.get(new_contact_id)
+            return new_contact
+
+        except Exception as e:
+            print(f"Error in _get_or_create_unknown_contact: {e}")
+            return None
 
 
 class CommsManager:
@@ -246,11 +365,40 @@ class CommsManager:
                 )
 
                 content = event["body"]
-                topic = ""
+                contact_detail = ""
+                medium_for_blacklist = ""
+
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
-                    topic = event["from"].split("<")[1][:-1]
-                    contact = next(c for c in contacts if c["email_address"] == topic)
+                    contact_detail = event["from"].split("<")[1][:-1]
+                    medium_for_blacklist = Medium.EMAIL
+
+                    # Check blacklist before processing
+                    if _is_blacklisted(medium_for_blacklist, contact_detail):
+                        print(f"Ignoring blacklisted email from: {contact_detail}")
+                        message.ack()
+                        return
+
+                    # Find or create contact
+                    contact = next(
+                        (c for c in contacts if c["email_address"] == contact_detail),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        # Unknown sender - create minimal contact
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            contact_detail,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        print(
+                            f"Failed to resolve contact for email from: {contact_detail}",
+                        )
+                        message.ack()
+                        return
 
                     # Extract attachment filenames for the event
                     attachments = event.get("attachments") or []
@@ -258,6 +406,14 @@ class CommsManager:
                         att.get("filename") or f"attachment_{att.get('id', 'unknown')}"
                         for att in attachments
                     ]
+
+                    # Extract to/cc/bcc - normalize to lists
+                    def _normalize_recipients(val):
+                        if not val:
+                            return []
+                        if isinstance(val, str):
+                            return [val] if val else []
+                        return list(val)
 
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
@@ -267,8 +423,26 @@ class CommsManager:
                             contact=contact,
                             email_id=event["email_id"],
                             attachments=attachment_filenames,
+                            to=_normalize_recipients(event.get("to")),
+                            cc=_normalize_recipients(event.get("cc")),
+                            bcc=_normalize_recipients(event.get("bcc")),
                         ).to_json(),
                     )
+
+                    # Publish UnknownContactCreated event if this was a new unknown contact
+                    if is_new_unknown:
+                        self._publish_from_callback(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=(
+                                    event["subject"][:100]
+                                    if event.get("subject")
+                                    else ""
+                                ),
+                            ).to_json(),
+                        )
 
                     # add attachments (if any) to Downloads using async helper
                     try:
@@ -285,18 +459,28 @@ class CommsManager:
                         print(f"Failed scheduling attachment download: {e}")
 
                 elif thread == "unify_message":
-                    # Use contact_id from event if provided, otherwise default to boss (1)
-                    target_contact_id = event.get("contact_id", 1)
+                    # contact_id is required - no default to prevent silent privilege escalation
+                    # Note: unify_message comes from internal interface, not external unknown senders
+                    # so we don't apply blacklist check or unknown contact creation here
+                    target_contact_id = event.get("contact_id")
+                    if target_contact_id is None:
+                        print(
+                            "Error: contact_id is required for unify_message, "
+                            "skipping message",
+                        )
+                        message.ack()
+                        return
                     contact = next(
                         (c for c in contacts if c["contact_id"] == target_contact_id),
                         None,
                     )
                     if contact is None:
                         print(
-                            f"Warning: contact_id {target_contact_id} not found, "
-                            f"falling back to boss contact (1)",
+                            f"Error: contact_id {target_contact_id} not found in "
+                            f"contacts list, skipping message",
                         )
-                        contact = next(c for c in contacts if c["contact_id"] == 1)
+                        message.ack()
+                        return
 
                     # Extract attachment filenames for the event
                     attachments = event.get("attachments") or []
@@ -325,9 +509,37 @@ class CommsManager:
                         print(f"Failed scheduling attachment download: {e}")
 
                 else:
-                    topic = event["from_number"].strip()
-                    # Put the message in the queue instead of creating a task
-                    contact = next(c for c in contacts if c["phone_number"] == topic)
+                    # SMS message (thread == "msg")
+                    contact_detail = event["from_number"].strip()
+                    medium_for_blacklist = Medium.SMS_MESSAGE
+
+                    # Check blacklist before processing
+                    if _is_blacklisted(medium_for_blacklist, contact_detail):
+                        print(f"Ignoring blacklisted SMS from: {contact_detail}")
+                        message.ack()
+                        return
+
+                    # Find or create contact
+                    contact = next(
+                        (c for c in contacts if c["phone_number"] == contact_detail),
+                        None,
+                    )
+                    is_new_unknown = False
+                    if contact is None:
+                        # Unknown sender - create minimal contact
+                        contact = _get_or_create_unknown_contact(
+                            medium_for_blacklist,
+                            contact_detail,
+                        )
+                        is_new_unknown = contact is not None
+
+                    if contact is None:
+                        print(
+                            f"Failed to resolve contact for SMS from: {contact_detail}",
+                        )
+                        message.ack()
+                        return
+
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
@@ -335,6 +547,18 @@ class CommsManager:
                             contact=contact,
                         ).to_json(),
                     )
+
+                    # Publish UnknownContactCreated event if this was a new unknown contact
+                    if is_new_unknown:
+                        self._publish_from_callback(
+                            "app:comms:unknown_contact_created",
+                            UnknownContactCreated(
+                                contact=contact,
+                                medium=medium_for_blacklist,
+                                message_preview=content[:100] if content else "",
+                            ).to_json(),
+                        )
+
                 message.ack()
             elif thread == "log_pre_hire_chats":
                 try:
@@ -388,7 +612,8 @@ class CommsManager:
 
                     # Create the event based on the thread
                     if thread == "unify_meet":
-                        event = UnifyMeetReceived(
+                        # unify_meet is internal, no blacklist check needed
+                        call_event = UnifyMeetReceived(
                             contact=next(c for c in contacts if c["contact_id"] == 1),
                             livekit_agent_name=event.get("livekit_agent_name"),
                             room_name=event.get("livekit_room"),
@@ -396,25 +621,80 @@ class CommsManager:
                         topic = "app:comms:unify_meet_received"
                     elif thread == "call":
                         number = event.get("caller_number", event.get("user_number"))
+
+                        # Check blacklist before processing
+                        if _is_blacklisted(Medium.PHONE_CALL, number):
+                            print(f"Ignoring blacklisted call from: {number}")
+                            message.ack()
+                            return
+
+                        # Find or create contact
                         contact = next(
-                            c for c in contacts if c["phone_number"] == number
+                            (c for c in contacts if c["phone_number"] == number),
+                            None,
                         )
-                        event = PhoneCallReceived(
+                        is_new_unknown = False
+                        if contact is None:
+                            # Unknown caller - create minimal contact
+                            contact = _get_or_create_unknown_contact(
+                                Medium.PHONE_CALL,
+                                number,
+                            )
+                            is_new_unknown = contact is not None
+
+                        if contact is None:
+                            print(f"Failed to resolve contact for call from: {number}")
+                            message.ack()
+                            return
+
+                        call_event = PhoneCallReceived(
                             contact=contact,
                             conference_name=event.get("conference_name", ""),
                         )
                         topic = "app:comms:call_received"
+
+                        # Publish UnknownContactCreated event if this was a new unknown contact
+                        if is_new_unknown:
+                            self._publish_from_callback(
+                                "app:comms:unknown_contact_created",
+                                UnknownContactCreated(
+                                    contact=contact,
+                                    medium=Medium.PHONE_CALL,
+                                    message_preview="Incoming phone call",
+                                ).to_json(),
+                            )
+                    elif thread == "call_not_answered":
+                        # Outbound call was not answered (no-answer, busy, canceled, failed)
+                        number = event.get("user_number")
+                        call_status = event.get("call_status", "no-answer")
+                        contact = next(
+                            (c for c in contacts if c["phone_number"] == number),
+                            None,
+                        )
+                        if contact is None:
+                            # Fallback to boss contact
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = PhoneCallNotAnswered(
+                            contact=contact,
+                            reason=call_status,
+                        )
+                        topic = "app:comms:call_not_answered"
                     else:
+                        # call_answered - typically from known contacts initiating outbound
                         number = event.get("user_number")
                         contact = next(
-                            c for c in contacts if c["phone_number"] == number
+                            (c for c in contacts if c["phone_number"] == number),
+                            None,
                         )
-                        event = PhoneCallAnswered(contact=contact)
+                        if contact is None:
+                            # Fallback to boss contact for answered calls
+                            contact = next(c for c in contacts if c["contact_id"] == 1)
+                        call_event = PhoneCallAnswered(contact=contact)
                         topic = "app:comms:call_answered"
 
                     # Publish the event (blocking wait for call events)
                     future = asyncio.run_coroutine_threadsafe(
-                        self.event_broker.publish(topic, event.to_json()),
+                        self.event_broker.publish(topic, call_event.to_json()),
                         self.loop,
                     )
                     message.ack()

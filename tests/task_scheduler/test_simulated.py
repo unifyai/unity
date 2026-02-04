@@ -124,9 +124,9 @@ async def test_interject(monkeypatch):
     original_interject = _SimulatedTaskScheduleHandle.interject
 
     @functools.wraps(original_interject)
-    def wrapped(self, message: str) -> str:  # type: ignore[override]
+    async def wrapped(self, message: str, **kwargs) -> str:  # type: ignore[override]
         counts["interject"] += 1
-        return original_interject(self, message)
+        return await original_interject(self, message, **kwargs)
 
     monkeypatch.setattr(
         _SimulatedTaskScheduleHandle,
@@ -139,7 +139,7 @@ async def test_interject(monkeypatch):
     handle = await ts.ask("Give me a summary of all tasks.")
     # Send a follow-up while it is “running”
     await asyncio.sleep(0.05)
-    reply = handle.interject("Also include any deadlines, please.")
+    reply = await handle.interject("Also include any deadlines, please.")
     assert _ack_ok(reply)
 
     await handle.result()
@@ -155,7 +155,7 @@ async def test_stop():
     ts = SimulatedTaskScheduler()
     handle = await ts.ask("Produce a very long report about my tasks.")
     await asyncio.sleep(0.05)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
@@ -269,7 +269,7 @@ async def test_handle_ask():
     handle = await ts.ask("Summarize all tasks due this week.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on emails that need to be sent.")
+    await handle.interject("Focus on emails that need to be sent.")
 
     # Invoke the dynamic ask on the running handle
     nested = await handle.ask("What is the key task to prioritize within this summary?")
@@ -300,7 +300,7 @@ async def test_execute_basic_completion():
     ts = SimulatedTaskScheduler(actor_steps=None, actor_duration=None)
     handle = await ts.execute("Prepare slides for kickoff")
     # Explicitly stop to avoid relying on step-based completion
-    handle.stop(cancel=False)
+    await handle.stop(cancel=False)
     answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
     # The simulated actor should report it was stopped
@@ -378,7 +378,7 @@ async def test_stop_while_paused_finishes_immediately():
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
-    h.stop(cancel=True, reason="cancelled by user")
+    await h.stop(cancel=True, reason="cancelled by user")
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()
@@ -401,7 +401,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     )
     q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in q.lower()
-    h.stop(cancel=True, reason="no longer needed")
+    await h.stop(cancel=True, reason="no longer needed")
     out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()

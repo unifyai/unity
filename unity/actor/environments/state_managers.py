@@ -39,6 +39,7 @@ class _FilteredPrimitivesProxy:
             "files",
             "secrets",
             "computer",
+            "data",
         },
     )
 
@@ -165,6 +166,7 @@ class StateManagerEnvironment(BaseEnvironment):
             "Secret": "secrets",
             "Web": "web",
             "File": "files",
+            "Data": "data",
         }
         for k, v in special.items():
             if class_name == k and hasattr(Primitives, v):

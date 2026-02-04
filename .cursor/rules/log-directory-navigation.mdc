@@ -42,7 +42,7 @@ ls logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/
 
 **Step 2: Read with Read tool**
 ```
-Read: logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/test_contact_manager-test_ask.txt
+Read: logs/pytest/2025-12-05T14-30-45_unity_dev_ttys042/contact_manager-test_ask.txt
 ```
 
 ## Orchestra Trace Files
@@ -91,7 +91,7 @@ ls logs/pytest/2025-12-21T16-00-00_unity_dev_ttys042/
 
 Then use the Read tool:
 ```
-Read: logs/pytest/2025-12-21T16-00-00_unity_dev_ttys042/test_contact_manager-test_ask.txt
+Read: logs/pytest/2025-12-21T16-00-00_unity_dev_ttys042/contact_manager-test_ask.txt
 ```
 
 ## Example: Correlating Test ↔ Orchestra Traces

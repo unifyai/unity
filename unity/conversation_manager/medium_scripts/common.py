@@ -17,12 +17,106 @@ from unity.conversation_manager.events import (
     UnifyMeetEnded,
     UnifyMeetStarted,
 )
+from unity.conversation_manager.domains.ipc_socket import (
+    get_socket_client,
+    send_event_to_parent,
+    start_socket_receive_loop,
+    stop_socket_client,
+)
 from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
 
-# Shared event broker instance
-event_broker = get_event_broker()
+
+class SocketAwareEventBroker:
+    """
+    Simple event broker for cross-process communication via Unix socket.
+
+    When running as a subprocess (detected via CM_EVENT_SOCKET env var):
+    - Outbound: publish() sends events to parent via socket
+    - Inbound: register_callback() handlers are invoked when events arrive
+
+    Otherwise, falls back to in-memory broker for outbound events.
+    """
+
+    def __init__(self):
+        self._socket_client = get_socket_client()
+        self._fallback_broker = get_event_broker()
+        self._receive_started = False
+        self._callbacks: dict[str, Callable[[dict], None]] = {}
+
+    def register_callback(self, channel: str, handler: Callable[[dict], None]) -> None:
+        """
+        Register a callback for events on a channel.
+
+        The handler is invoked immediately when an event arrives on the channel.
+        Handler receives the parsed JSON data (dict).
+        """
+        self._callbacks[channel] = handler
+
+    async def start_receiving(self) -> bool:
+        """
+        Start receiving events from the parent process via socket.
+
+        Returns:
+            True if started (or already started), False if no socket available.
+        """
+        if self._receive_started:
+            return True
+
+        if not self._socket_client:
+            print("[SocketAwareEventBroker] No socket client, receive disabled")
+            return False
+
+        async def on_event(channel: str, event_json: str) -> None:
+            """Invoke registered callback when event arrives."""
+            print(f"[SocketAwareEventBroker] Received: {channel}")
+            if channel in self._callbacks:
+                try:
+                    data = json.loads(event_json)
+                    self._callbacks[channel](data)
+                except Exception as e:
+                    print(f"[SocketAwareEventBroker] Callback error: {e}")
+
+        success = await start_socket_receive_loop(on_event)
+        if success:
+            self._receive_started = True
+            print("[SocketAwareEventBroker] Now receiving events from parent")
+        return success
+
+    async def stop(self) -> None:
+        """Stop receiving events and close the socket."""
+        await stop_socket_client()
+        self._receive_started = False
+
+    async def publish(self, channel: str, message: str) -> int:
+        """Publish an event, using socket if available."""
+        if self._socket_client:
+            success = await send_event_to_parent(channel, message)
+            if success:
+                print(f"[SocketAwareEventBroker] Sent via socket: {channel}")
+                return 1
+            else:
+                print(
+                    f"[SocketAwareEventBroker] Socket send failed, using fallback: {channel}",
+                )
+
+        # Fall back to in-memory broker (won't work cross-process but useful for testing)
+        return await self._fallback_broker.publish(channel, message)
+
+
+# Shared event broker instance - socket-aware for cross-process communication
+event_broker = SocketAwareEventBroker()
+
+
+async def start_event_broker_receive() -> bool:
+    """
+    Start receiving events from parent process.
+
+    Call this at the start of call scripts to enable receiving
+    inbound events (call_guidance, call_status, etc.) from the parent.
+    """
+    return await event_broker.start_receiving()
 
 
 # ---------------------------------------------------------------------------

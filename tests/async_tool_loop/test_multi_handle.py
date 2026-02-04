@@ -245,7 +245,7 @@ async def test_multi_handle_request_handle_basic():
     assert not handle.done()
 
     # Interject
-    handle.interject("test message")
+    await handle.interject("test message")
     item = interject_queue.get_nowait()
     assert "[Request 0]" in item
 
@@ -272,7 +272,7 @@ async def test_multi_handle_request_handle_stop():
         coordinator=coordinator,
     )
 
-    handle.stop("user cancelled")
+    await handle.stop("user cancelled")
 
     # Should have injected cancellation notice
     item = interject_queue.get_nowait()
@@ -418,7 +418,7 @@ async def test_multi_handle_stop_one_request(model):
 
     # Stop the first request before it completes
     await asyncio.sleep(0.5)
-    handle0.stop("Changed my mind")
+    await handle0.stop("Changed my mind")
 
     # First request should be cancelled
     assert handle0.done()
@@ -451,7 +451,7 @@ async def test_multi_handle_interjection_routing(model):
     )
 
     # Send an interjection to request 0
-    handle0.interject("Update: the task is now urgent!")
+    await handle0.interject("Update: the task is now urgent!")
 
     # The interjection should be tagged with [Request 0]
     # and the LLM should see it as coming from request 0

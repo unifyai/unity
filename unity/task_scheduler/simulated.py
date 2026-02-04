@@ -200,21 +200,18 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         """Append a follow-up message that will be folded into the prompt.
 
         Args:
             message: The interjection message to inject.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         if self._cancelled:
             return "Interaction already stopped."
@@ -222,12 +219,12 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._interjections.append(message)
         return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,
         cancel: bool = False,
-        parent_chat_context_cont: list[dict] | None = None,
+        **kwargs,
     ) -> str:
         """Cancel further processing so `.result()` raises.
 
@@ -238,8 +235,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         Args:
             reason: Optional reason for stopping.
             cancel: Ignored; interaction is always cancelled.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
@@ -304,18 +299,15 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
             _return_reasoning_steps: Whether to return reasoning steps.
         """
         follow_up_prompt = build_followup_prompt(
@@ -669,8 +661,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 message: str,
                 *,
-                parent_chat_context_cont: list[dict] | None = None,
-                images: object | None = None,
+                _parent_chat_context_cont: list[dict] | None = None,
             ) -> None:  # type: ignore[override]
                 self._log_interject(message)
                 try:
@@ -678,28 +669,27 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                     try:
                         await self._inner.interject(  # type: ignore[arg-type]
                             message,
-                            parent_chat_context_cont=parent_chat_context_cont,
-                            images=images,
+                            _parent_chat_context_cont=_parent_chat_context_cont,
                         )
                     except TypeError:
-                        await self._inner.interject(message, images=images)  # type: ignore[arg-type]
+                        await self._inner.interject(message)  # type: ignore[arg-type]
                 except Exception:
                     return None
 
-            def stop(
+            async def stop(
                 self,
                 *,
                 cancel: bool = False,
                 reason: Optional[str] = None,
-                parent_chat_context_cont: list[dict] | None = None,
+                **kwargs,
             ) -> Optional[str]:  # type: ignore[override]
                 self._log_stop(reason)
                 # Prefer actor-style stop(reason) but tolerate both signatures
                 try:
-                    return self._inner.stop(reason)  # type: ignore[call-arg]
+                    return await self._inner.stop(reason)  # type: ignore[call-arg]
                 except TypeError:
                     try:
-                        return self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
+                        return await self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
                     except Exception:
                         return "Stopped."
                 except Exception:
@@ -755,8 +745,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 question: str,
                 *,
-                parent_chat_context_cont: list[dict] | None = None,
-                images: object | None = None,
+                _parent_chat_context: list[dict] | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":
                 return await self._inner.ask(question)  # type: ignore[attr-defined]

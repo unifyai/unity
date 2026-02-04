@@ -10,7 +10,6 @@ from .utils import maybe_await
 from ...constants import LOGGER
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
-from .images import append_images_with_source
 
 
 @contextmanager
@@ -480,7 +479,7 @@ async def forward_handle_call(
         for k in fallback_positional_keys:
             if kwargs and k in kwargs:
                 try:
-                    # Preserve additional kwargs (e.g., images) alongside the positional message
+                    # Preserve additional kwargs alongside the positional message
                     rest_kwargs = (
                         dict(normalised) if isinstance(normalised, dict) else {}
                     )
@@ -754,7 +753,7 @@ async def schedule_missing_for_message(
     only_ids: set[str],
     *,
     tools_data,
-    parent_chat_context,
+    context_state,
     propagate_chat_context,
     assistant_meta,
     client,
@@ -789,18 +788,6 @@ async def schedule_missing_for_message(
                     scheduled.append(cid)
                     continue
 
-                # If helper arguments include images, append them to the live images registry immediately
-                with suppress(Exception):
-                    payload = (
-                        json.loads(args_json or "{}")
-                        if isinstance(args_json, str)
-                        else (args_json or {})
-                    )
-                    imgs = payload.get("images") if isinstance(payload, dict) else None
-                    if imgs is None and isinstance(payload, dict):
-                        imgs = payload.get("images")
-                    append_images_with_source(imgs)
-
                 # Other helpers: acknowledge but do not execute during backfill
                 try:
                     await acknowledge_helper_call(
@@ -828,7 +815,7 @@ async def schedule_missing_for_message(
                 args_json=args_json,
                 call_id=cid,
                 call_idx=idx,
-                parent_chat_context=parent_chat_context,
+                context_state=context_state,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
                 initial_paused=initial_paused,

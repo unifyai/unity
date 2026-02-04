@@ -83,7 +83,6 @@ from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from ..common.llm_client import new_llm_client
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
 from ..common.context_registry import ContextRegistry, TableContext
 
@@ -458,7 +457,6 @@ class TaskScheduler(BaseTaskScheduler):
             Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             None,
         ] = "default",
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -487,15 +485,12 @@ class TaskScheduler(BaseTaskScheduler):
             ),
         )
 
-        # Prepare effective tool_policy – prefer image-aware policy when images are present
-        if images:
-            effective_tool_policy = self._ask_tool_policy_with_images
+        # Prepare effective tool_policy
+        if tool_policy == "default":
+            effective_tool_policy = self._default_ask_tool_policy
         else:
-            if tool_policy == "default":
-                effective_tool_policy = self._default_ask_tool_policy
-            else:
-                # pass through callable or None
-                effective_tool_policy = tool_policy
+            # pass through callable or None
+            effective_tool_policy = tool_policy
 
         # Start the tool-use loop
         handle = self._start_loop(
@@ -509,7 +504,6 @@ class TaskScheduler(BaseTaskScheduler):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            images=images,
             response_format=response_format,
         )
         # Logging wrapper applied by decorator
@@ -540,7 +534,6 @@ class TaskScheduler(BaseTaskScheduler):
             Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             None,
         ] = "default",
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -586,13 +579,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Prepare effective tool_policy
         if tool_policy == "default":
-            # When images are present, require an explicit task lookup first.
-            # This avoids blind schedule mutations based only on ambiguous visual references.
-            effective_tool_policy = (
-                self._update_tool_policy_with_images
-                if images
-                else self._default_update_tool_policy
-            )
+            effective_tool_policy = self._default_update_tool_policy
         else:
             # pass through callable or None
             effective_tool_policy = tool_policy
@@ -606,7 +593,6 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
-            images=images,
             response_format=response_format,
         )
         # Logging wrapper applied by decorator
@@ -630,9 +616,6 @@ class TaskScheduler(BaseTaskScheduler):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        images: Optional[
-            ImageRefs | list[RawImageRef | AnnotatedImageRef]
-        ] = None,  # kept for signature parity; unused here
     ) -> SteerableToolHandle:
         # Refuse execution when a task is already active.
         if self._active_task is not None:
@@ -3805,43 +3788,6 @@ class TaskScheduler(BaseTaskScheduler):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
-    @staticmethod
-    def _ask_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_tasks/ask_image/attach_image_raw (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_tasks", "ask_image", "attach_image_raw"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _update_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """
-        On step 0 of update(), require a tasks lookup tool when images are present.
-
-        Rationale: the first step should establish *which* tasks the images refer to
-        before any scheduling or queue mutations are attempted.
-        """
-        if step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_tasks", "filter_tasks"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
-        return ("auto", current_tools)
-
     # ------------------------------------------------------------------ #
     #  Small centralised write helper                                     #
     # ------------------------------------------------------------------ #
@@ -3913,7 +3859,6 @@ class TaskScheduler(BaseTaskScheduler):
             ]
         ] = None,
         handle_cls: Optional["type[SteerableToolHandle]"] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """Centralised wrapper around start_async_tool_loop."""
@@ -3927,7 +3872,6 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=log_steps,
             tool_policy=tool_policy,
             handle_cls=handle_cls,
-            images=images,
             response_format=response_format,
         )
 

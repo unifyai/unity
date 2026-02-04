@@ -74,7 +74,7 @@ class _MockHandle:
         self,
         reason: str | None = None,
         *,
-        parent_chat_context_cont=None,
+        _parent_chat_context_cont=None,
     ) -> str | None:  # noqa: ARG002
         self.stop_calls.append(reason)
         return "stopped"
@@ -83,8 +83,7 @@ class _MockHandle:
         self,
         message: str,
         *,
-        parent_chat_context_cont=None,
-        images=None,
+        _parent_chat_context_cont=None,
     ):  # noqa: ARG002
         self.interject_calls.append({"message": message})
         return "ok"
@@ -1210,8 +1209,8 @@ async def test_verification_captures_pane_events() -> None:
 
 
 @pytest_asyncio.fixture
-async def actor_with_mocked_browser():
-    """Create a real HierarchicalActor with ONLY StateManagerEnvironment (no browser env)."""
+async def actor_without_computer_env():
+    """Create a real HierarchicalActor with ONLY StateManagerEnvironment (no computer env)."""
     primitives = Primitives()
     actor = HierarchicalActor(
         headless=True,
@@ -1220,7 +1219,7 @@ async def actor_with_mocked_browser():
         environments=[StateManagerEnvironment(primitives)],
     )
 
-    # Mock specific browser methods that the test expects
+    # Mock specific computer methods that the test expects
     if actor.computer_primitives is not None:
         actor.computer_primitives.navigate = AsyncMock(return_value=None)
         actor.computer_primitives.observe = AsyncMock(return_value={})
@@ -1292,7 +1291,7 @@ async def test_pane_registers_handles_for_cross_manager_join():
 
     CANNED_PLAN = """
 async def main_plan():
-    # Deterministic plan: use primitives-only tools (no browser)
+    # Deterministic plan: use primitives-only tools (no computer)
     c_handle = await primitives.contacts.ask("What company does SteveTest Joinson work for?")
     company = await c_handle.result()
     k_handle = await primitives.knowledge.ask(f"How many employees does {company} have?")

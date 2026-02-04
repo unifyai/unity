@@ -12,10 +12,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.task import Task
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 from unity.task_scheduler.types.status import Status
-from unity.image_manager.image_manager import ImageManager
-from unity.image_manager.types import RawImageRef, AnnotatedImageRef
-from pathlib import Path
-import base64
 import inspect
 
 
@@ -113,7 +109,7 @@ async def test_direct_delegation_then_switch_to_multitask(monkeypatch):
     assert "progress update" not in captured[-1]
 
     # Cleanup: stop the active task to complete quickly
-    handle.stop(cancel=False)
+    await handle.stop(cancel=False)
     await handle.result()
 
 
@@ -671,7 +667,7 @@ async def test_handle_ask_includes_queue_context(monkeypatch):
     assert "USER QUESTION:" in user_prompt and "How is the queue going?" in user_prompt
 
     # Cleanup: stop the active queue to avoid leaving background tasks running
-    h.stop(cancel=False)
+    await h.stop(cancel=False)
     await asyncio.wait_for(h.result(), timeout=10)
 
 
@@ -1108,75 +1104,6 @@ async def test_task_done_incremental(monkeypatch):
 
     # Ensure the queue handle fully resolves to avoid lingering background tasks
     await asyncio.wait_for(h.result(), timeout=10)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_interject_image_seen_by_simulation(monkeypatch):
-    """
-    Singleton queue direct delegation: interject with an image via ActiveQueue handle,
-    then ask about the file; reply should reference a sheet/spreadsheet, proving
-    the image propagated to the underlying SimulatedActor.
-    """
-
-    # Prepare an image id from the existing rota screenshot
-    img_path = Path(__file__).parent / "organize_weekly_rotar.png"
-    raw_bytes = img_path.read_bytes()
-    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
-
-    im = ImageManager()
-    [img_id] = im.add_images(
-        [
-            {"caption": "weekly rota", "data": img_b64},
-        ],
-    )
-
-    # Use a non-completing actor; we'll explicitly stop before awaiting final result
-    actor = SimulatedActor(steps=None, duration=None)
-    ts = TaskScheduler(actor=actor)
-
-    # Build a singleton queue
-    (solo_id,) = tuple(await _make_ordered_queue(ts, ["Rota"]))
-
-    # Start execution by numeric id → ActiveQueue direct delegation (singleton)
-    h = await ts.execute(task_id=solo_id)
-
-    # Wait deterministically until a task is active
-    async def _wait_until_active(max_iters: int = 500):
-        for _ in range(max_iters):
-            try:
-                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
-            except Exception:
-                rows = []
-            if rows:
-                return
-            await asyncio.sleep(0)
-        raise AssertionError("No active task detected in time")
-
-    await _wait_until_active()
-
-    # Interject with the image attached; annotation intentionally does not say "spreadsheet"
-    await h.interject(
-        "Please start working on this file.",
-        images=[
-            AnnotatedImageRef(
-                raw_image_ref=RawImageRef(image_id=int(img_id)),
-                annotation="rota file",
-            ),
-        ],
-    )
-
-    # Ask about status and infer file type from the visual context
-    ask_handle = await h.ask(
-        "How is it going? What file are you working on? What file type is it?",
-    )
-    reply = await ask_handle.result()
-    assert isinstance(reply, str) and reply.strip()
-    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
-
-    # Explicitly stop to ensure clean shutdown without hang
-    h.stop(cancel=False)
-    await h.result()
 
 
 @pytest.mark.asyncio

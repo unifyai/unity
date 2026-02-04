@@ -7,7 +7,7 @@ a single async tool loop to serve multiple concurrent requests with shared conte
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from .request_state import RequestRegistry
 from .tagging import (
@@ -16,9 +16,6 @@ from .tagging import (
     format_request_paused_notice,
     format_request_resumed_notice,
 )
-
-if TYPE_CHECKING:
-    from unity.image_manager.types.image_refs import ImageRefs
 
 
 class MultiHandleCoordinator:
@@ -323,8 +320,7 @@ class MultiRequestHandle:
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
+        _parent_chat_context: list[dict] | None = None,
     ) -> "MultiRequestHandle":
         """Ask about this request's status.
 
@@ -333,22 +329,21 @@ class MultiRequestHandle:
         self._coordinator.inject_interjection(self._request_id, question)
         return self
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
         """Inject additional context for this request."""
         self._coordinator.inject_interjection(self._request_id, message)
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
+        _parent_chat_context_cont: list[dict] | None = None,
+        **kwargs,
     ) -> None:
         """Stop/cancel this specific request.
 

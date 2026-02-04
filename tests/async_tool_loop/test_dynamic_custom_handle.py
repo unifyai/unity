@@ -258,9 +258,9 @@ async def test_custom_outer_handle_instantiated(client):
     """
 
     class CustomOuterHandle(AsyncToolLoopHandle):
-        def stop(self, *, cancel: bool | None = None, reason: Optional[str] = None) -> None:  # type: ignore[override]
+        async def stop(self, *, cancel: bool | None = None, reason: Optional[str] = None) -> None:  # type: ignore[override]
             # Delegate to base stop for cancellation; accepting `cancel` is the point of this test
-            super().stop(reason=reason)
+            await super().stop(reason=reason)
 
     # Minimal prompt; we don't need tools for this test – just verify instantiation & signature
     client.set_system_message("Reply briefly.")
@@ -284,7 +284,7 @@ async def test_custom_outer_handle_instantiated(client):
     assert "cancel" in params
 
     # Calling stop with cancel should not raise, even with no delegate
-    outer.stop(cancel=True, reason="test")
+    await outer.stop(cancel=True, reason="test")
     # Wait for graceful shutdown of the handle task
     await outer.result()
 
@@ -612,13 +612,13 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
         def set_value(self, task_id: int, note: str | None = None) -> str:
             return f"set:{task_id}:{note or ''}"
 
-        async def ask(self, question: str, *, images=None):  # type: ignore[override]
+        async def ask(self, question: str):  # type: ignore[override]
             return self
 
-        async def interject(self, message: str, *, images=None):  # type: ignore[override]
+        async def interject(self, message: str):  # type: ignore[override]
             return None
 
-        def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):  # type: ignore[override]
+        def stop(self, reason: str | None = None):  # type: ignore[override]
             return "stopped"
 
         async def pause(self):  # type: ignore[override]

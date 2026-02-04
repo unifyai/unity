@@ -416,34 +416,6 @@ class TestStoreChatHistory:
 
 
 # =============================================================================
-# Test max_messages Configuration
-# =============================================================================
-
-
-class TestMaxMessagesConfiguration:
-    """Tests for max_messages configuration and its effects."""
-
-    def test_default_max_messages_is_30(self, initialized_cm):
-        """Default max_messages value is 30."""
-        # Create fresh CM to check default
-        assert initialized_cm.cm.max_messages == 30
-
-    def test_70_percent_threshold_calculation(self, initialized_cm):
-        """Verify the 70% threshold calculation."""
-        initialized_cm.cm.max_messages = 30
-        threshold = int(0.7 * initialized_cm.cm.max_messages)
-        assert threshold == 21
-
-        initialized_cm.cm.max_messages = 50
-        threshold = int(0.7 * initialized_cm.cm.max_messages)
-        assert threshold == 35
-
-        initialized_cm.cm.max_messages = 10
-        threshold = int(0.7 * initialized_cm.cm.max_messages)
-        assert threshold == 7
-
-
-# =============================================================================
 # Test Chat History Growth During LLM Runs
 # =============================================================================
 

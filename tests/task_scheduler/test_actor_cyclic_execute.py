@@ -12,7 +12,6 @@ This verifies:
 from __future__ import annotations
 
 import asyncio
-import inspect
 import textwrap
 from unittest.mock import AsyncMock
 
@@ -228,13 +227,13 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
         raising=True,
     )
 
-    # ── Build a HierarchicalActor and mock browser immediately ────────────────
+    # ── Build a HierarchicalActor and mock computer immediately ────────────────
     actor = HierarchicalActor(
         headless=True,
         computer_mode="mock",
         connect_now=False,
     )
-    # Mock specific browser primitives for test control.
+    # Mock specific computer primitives for test control.
     actor.computer_primitives.navigate = AsyncMock(return_value=None)
     actor.computer_primitives.act = AsyncMock(return_value="Mock action complete.")
     actor.computer_primitives.observe = AsyncMock(return_value="Mock observation.")
@@ -304,9 +303,7 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
         # Basic end-to-end steering on the returned ActiveQueue handle.
         await asyncio.wait_for(queue.pause(), timeout=5)  # type: ignore[union-attr]
         await asyncio.wait_for(queue.resume(), timeout=5)  # type: ignore[union-attr]
-        stop_ret = queue.stop(cancel=True)  # type: ignore[union-attr]
-        if inspect.isawaitable(stop_ret):
-            await asyncio.wait_for(stop_ret, timeout=10)
+        await asyncio.wait_for(queue.stop(cancel=True), timeout=10)  # type: ignore[union-attr]
 
         result = await asyncio.wait_for(queue.result(), timeout=15)  # type: ignore[union-attr]
         assert isinstance(result, str)
@@ -319,9 +316,7 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
         # Ensure any child handles started via the delegate are stopped.
         for h in child_handles:
             try:
-                stop_ret = h.stop(cancel=True)  # type: ignore[attr-defined]
-                if inspect.isawaitable(stop_ret):
-                    await asyncio.wait_for(stop_ret, timeout=10)
+                await asyncio.wait_for(h.stop(cancel=True), timeout=10)  # type: ignore[attr-defined]
                 # Ensure the child execution task cannot leak past test teardown.
                 try:
                     _t = getattr(h, "_execution_task", None)
@@ -339,9 +334,7 @@ async def test_delegate_path_used_and_active_queue_steering_works(monkeypatch):
         # Stop the outer handle if still running.
         try:
             if not outer.done():
-                stop_ret = outer.stop(cancel=True)
-                if inspect.isawaitable(stop_ret):
-                    await asyncio.wait_for(stop_ret, timeout=10)
+                await asyncio.wait_for(outer.stop(cancel=True), timeout=10)
             # Ensure the outer execution task is cancelled/awaited (prevents pytest-asyncio hang).
             if getattr(outer, "_execution_task", None) is not None and not outer._execution_task.done():  # type: ignore[attr-defined]
                 outer._execution_task.cancel()  # type: ignore[attr-defined]

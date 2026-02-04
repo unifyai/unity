@@ -2,8 +2,8 @@
 Comprehensive tests for Actor prompt builders.
 
 High-level intent:
-- **Environment-awareness**: prompts adapt to active namespaces (browser vs primitives vs mixed),
-  avoid browser-only assumptions when no browser env is present, and preserve backward
+- **Environment-awareness**: prompts adapt to active namespaces (computer vs primitives vs mixed),
+  avoid computer-only assumptions when no computer env is present, and preserve backward
   compatibility when `environments=None`.
 - **Dynamic context capture**: prompts correctly include (or omit) execution-time context such
   as call stacks, scoped source context, interactions (with optional agent logs), polymorphic
@@ -96,7 +96,7 @@ async def _dummy_observe(question: str, response_format: Any = None) -> Any:
 
 
 def _tools_mixed() -> Dict[str, Callable[..., Any]]:
-    """Return a representative mixed tool surface (browser + primitives)."""
+    """Return a representative mixed tool surface (computer + primitives)."""
 
     return {
         "computer_primitives.navigate": _dummy_navigate,
@@ -108,7 +108,7 @@ def _tools_mixed() -> Dict[str, Callable[..., Any]]:
 
 
 def _environments_mixed() -> Mapping[str, Any]:
-    """Return representative mixed environments (browser + primitives) with prompt context."""
+    """Return representative mixed environments (computer + primitives) with prompt context."""
 
     return {
         "computer_primitives": _DummyEnvironment(
@@ -246,15 +246,15 @@ def _interactions(
 
 def _evidence(
     *,
-    browser: bool,
+    computer: bool,
     primitives: bool,
-    browser_error: bool = False,
+    computer_error: bool = False,
 ) -> dict[str, Any]:
     """Return a polymorphic evidence dict shaped like env.capture_state() outputs."""
 
     evidence: dict[str, Any] = {}
-    if browser:
-        if browser_error:
+    if computer:
+        if computer_error:
             evidence["computer_primitives"] = {"error": "Could not capture screenshot"}
         else:
             evidence["computer_primitives"] = {
@@ -373,7 +373,7 @@ def test_all_codegen_prompts_include_simplicity_first_principles() -> None:
         clarification_question=None,
         clarification_answer=None,
         replan_context="Implement from stub.",
-        has_browser_screenshot=False,
+        has_computer_screenshot=False,
         tools=_tools_mixed(),
         existing_functions=_existing_functions_library(),
         environments=_environments_mixed(),
@@ -427,7 +427,7 @@ def test_dynamic_implement_includes_scoped_context_and_call_stack_formatting() -
         clarification_question=None,
         clarification_answer=None,
         replan_context="Implement from stub.",
-        has_browser_screenshot=False,
+        has_computer_screenshot=False,
         tools=_tools_mixed(),
         existing_functions=_existing_functions_library(),
         environments=_environments_mixed(),
@@ -441,8 +441,8 @@ def test_dynamic_implement_includes_scoped_context_and_call_stack_formatting() -
     assert "### Parent Function Source" in dynamic
     assert "### Current Function Source" in dynamic
     assert "### Children Source (Functions it may call)" in dynamic
-    assert "Current Browser View (Screenshot)" not in dynamic
-    assert "No browser state available." in dynamic
+    assert "Current Computer View (Screenshot)" not in dynamic
+    assert "No computer state available." in dynamic
     assert "Tools are grouped by namespace" in static_prefix
     assert (
         '"computer_primitives"' in static_prefix
@@ -470,7 +470,7 @@ def test_dynamic_implement_includes_optional_sections_only_when_provided() -> No
         clarification_question="What is X?",
         clarification_answer="X is 123.",
         replan_context="Fix: crashed due to KeyError.",
-        has_browser_screenshot=True,
+        has_computer_screenshot=True,
         tools=_tools_mixed(),
         existing_functions={},
         environments=_environments_mixed(),
@@ -487,7 +487,7 @@ def test_dynamic_implement_includes_optional_sections_only_when_provided() -> No
     assert "### Full Parent Chat Context" in dynamic
     assert json.dumps(parent_chat_context, indent=2) in dynamic
     assert "### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION `f`" in dynamic
-    assert "Current Browser View (Screenshot)" in dynamic
+    assert "Current Computer View (Screenshot)" in dynamic
     assert "The user has provided the following images" in dynamic
     assert "Image 0: Login screen" in dynamic
 
@@ -501,7 +501,7 @@ def test_verification_includes_agent_trace_when_present() -> None:
         function_docstring="doc",
         scoped_context=_scoped_context_str(include_parent=True, include_children=True),
         interactions=_interactions(with_agent_logs=True),
-        evidence=_evidence(browser=True, primitives=False),
+        evidence=_evidence(computer=True, primitives=False),
         function_return_value={"ok": True},
         clarification_question=None,
         clarification_answer=None,
@@ -549,23 +549,23 @@ def test_verification_evidence_sections_and_mixed_evidence() -> None:
             include_children=False,
         ),
         interactions=[],
-        evidence=_evidence(browser=True, primitives=True),
+        evidence=_evidence(computer=True, primitives=True),
         function_return_value="ok",
         environments=_environments_mixed(),
     )
 
     assert "No tool actions were logged for this step." in dynamic
-    assert "### 📸 Visual Evidence (Browser)" in dynamic
+    assert "### 📸 Visual Evidence (Computer)" in dynamic
     assert "https://example.com/path" in dynamic
     assert "### 📊 System State Evidence (Return Values)" in dynamic
-    assert "### 🔀 Mixed Evidence (Browser + Return Value)" in dynamic
+    assert "### 🔀 Mixed Evidence (Computer + Return Value)" in dynamic
     assert "Function Return Value:" in dynamic
     assert "```" in dynamic
     assert repr("ok") in dynamic
 
 
-def test_verification_browser_evidence_unavailable_section() -> None:
-    """`build_verification_prompt` includes a browser-evidence-unavailable section on capture errors."""
+def test_verification_computer_evidence_unavailable_section() -> None:
+    """`build_verification_prompt` includes a computer-evidence-unavailable section on capture errors."""
 
     _static_prefix, dynamic = build_verification_prompt(
         goal="Goal",
@@ -576,12 +576,12 @@ def test_verification_browser_evidence_unavailable_section() -> None:
             include_children=False,
         ),
         interactions=[],
-        evidence=_evidence(browser=True, primitives=False, browser_error=True),
+        evidence=_evidence(computer=True, primitives=False, computer_error=True),
         function_return_value="ok",
         environments=_environments_mixed(),
     )
-    assert "### ⚠️ Browser Evidence Unavailable" in dynamic
-    assert "Could not capture browser state" in dynamic
+    assert "### ⚠️ Computer Evidence Unavailable" in dynamic
+    assert "Could not capture computer state" in dynamic
 
 
 def test_verification_includes_clarification_transcript_and_parent_chat_context_sections() -> (
@@ -598,7 +598,7 @@ def test_verification_includes_clarification_transcript_and_parent_chat_context_
         function_docstring="doc",
         scoped_context=_scoped_context_str(include_parent=True, include_children=True),
         interactions=_interactions(with_agent_logs=True),
-        evidence=_evidence(browser=False, primitives=True),
+        evidence=_evidence(computer=False, primitives=True),
         function_return_value={"ok": True},
         clarification_question="Which Alice do you mean?",
         clarification_answer="Alice Smith in Sales.",
@@ -761,7 +761,7 @@ def test_interjection_prompt_with_mixed_image_refs() -> None:
 # ============================================================================
 
 
-def test_initial_plan_prompt_primitives_only_has_no_browser_namespace() -> None:
+def test_initial_plan_prompt_primitives_only_has_no_computer_namespace() -> None:
     """`build_initial_plan_prompt` should not mention `computer_primitives` in primitives-only mode."""
 
     tools: Dict[str, Callable[..., Any]] = {
@@ -788,7 +788,7 @@ def test_initial_plan_prompt_primitives_only_has_no_browser_namespace() -> None:
     assert "primitives.contacts.ask" in prompt
 
 
-def test_dynamic_implement_prompt_primitives_only_has_no_browser_namespace() -> None:
+def test_dynamic_implement_prompt_primitives_only_has_no_computer_namespace() -> None:
     """`build_dynamic_implement_prompt` should not mention `computer_primitives` in primitives-only mode."""
 
     tools: Dict[str, Callable[..., Any]] = {
@@ -811,7 +811,7 @@ def test_dynamic_implement_prompt_primitives_only_has_no_browser_namespace() -> 
         clarification_question=None,
         clarification_answer=None,
         replan_context="Implement from stub.",
-        has_browser_screenshot=True,
+        has_computer_screenshot=True,
         tools=tools,
         existing_functions={},
         environments=environments,
@@ -825,7 +825,7 @@ def test_dynamic_implement_prompt_primitives_only_has_no_browser_namespace() -> 
     assert '"primitives"' in static_prefix or "`primitives`" in static_prefix
 
 
-def test_prompts_include_primitives_guidance_when_browser_env_is_present() -> None:
+def test_prompts_include_primitives_guidance_when_computer_env_is_present() -> None:
     """In mixed mode, plan/implement prompts should still include primitives guidance sections."""
 
     tools: Dict[str, Callable[..., Any]] = {
@@ -864,7 +864,7 @@ def test_prompts_include_primitives_guidance_when_browser_env_is_present() -> No
         clarification_question=None,
         clarification_answer=None,
         replan_context="Implement from stub.",
-        has_browser_screenshot=False,
+        has_computer_screenshot=False,
         tools=tools,
         existing_functions={},
         environments=environments,
@@ -876,7 +876,7 @@ def test_prompts_include_primitives_guidance_when_browser_env_is_present() -> No
 
 
 def test_interjection_prompt_primitives_only_is_environment_aware() -> None:
-    """`build_interjection_prompt` should be namespace-grouped and avoid browser assumptions in primitives-only mode."""
+    """`build_interjection_prompt` should be namespace-grouped and avoid computer assumptions in primitives-only mode."""
 
     tools: Dict[str, Callable[..., Any]] = {
         "primitives.contacts.ask": _dummy_contacts_ask,
@@ -916,7 +916,7 @@ def test_interjection_prompt_mixed_mode_routing() -> None:
         "primitives.contacts.ask": _dummy_contacts_ask,
     }
     environments = {
-        "computer_primitives": _DummyEnvironment("### Browser"),
+        "computer_primitives": _DummyEnvironment("### Computer"),
         "primitives": _DummyEnvironment("### State managers"),
     }
 
@@ -937,8 +937,8 @@ def test_interjection_prompt_mixed_mode_routing() -> None:
     assert "routing" in static_prefix.lower()
 
 
-def test_refactor_prompt_allows_missing_url_and_is_not_browser_assuming() -> None:
-    """`build_refactor_prompt` tolerates `current_url=None` and avoids browser-only instructions."""
+def test_refactor_prompt_allows_missing_url_and_is_not_computer_assuming() -> None:
+    """`build_refactor_prompt` tolerates `current_url=None` and avoids computer-only instructions."""
 
     tools: Dict[str, Callable[..., Any]] = {
         "primitives.contacts.ask": _dummy_contacts_ask,
@@ -959,25 +959,25 @@ def test_refactor_prompt_allows_missing_url_and_is_not_browser_assuming() -> Non
         environments=environments,
     )
 
-    assert "Browser's Current URL" not in prompt
+    assert "- **Current URL:**" not in prompt
     assert "Current URL" not in prompt
     assert "Use the `computer_primitives` global object" not in prompt
     assert "namespaces" in prompt
 
 
 @pytest.mark.asyncio
-async def test_clear_browser_queue_is_noop_without_browser_env() -> None:
-    """`HierarchicalActorHandle._clear_browser_queue_for_run` is a no-op with no browser env configured."""
+async def test_clear_computer_queue_is_noop_without_computer_env() -> None:
+    """`HierarchicalActorHandle._clear_computer_queue_for_run` is a no-op with no computer env configured."""
 
     handle = HierarchicalActorHandle.__new__(HierarchicalActorHandle)
     handle.actor = SimpleNamespace(environments={})
     handle.action_log = []
-    await handle._clear_browser_queue_for_run(run_id_to_clear=123)
+    await handle._clear_computer_queue_for_run(run_id_to_clear=123)
 
 
 @pytest.mark.asyncio
-async def test_interject_does_not_require_browser_env_for_interrupt() -> None:
-    """Interjection handling should not touch browser primitives when no browser env exists."""
+async def test_interject_does_not_require_computer_env_for_interrupt() -> None:
+    """Interjection handling should not touch computer primitives when no computer env exists."""
 
     handle = HierarchicalActorHandle.__new__(HierarchicalActorHandle)
 
@@ -1011,8 +1011,8 @@ async def test_interject_does_not_require_browser_env_for_interrupt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_ask_prompt_with_browser_environment_and_visual_evidence() -> None:
-    """`build_ask_prompt` includes browser-specific sections only when visual evidence is available."""
+async def test_build_ask_prompt_with_computer_environment_and_visual_evidence() -> None:
+    """`build_ask_prompt` includes computer-specific sections only when visual evidence is available."""
 
     environments = {"computer_primitives": _MockEnvironment("computer_primitives")}
     evidence = {"computer_primitives": {"type": "screenshot", "data": "base64_data"}}
@@ -1032,8 +1032,8 @@ async def test_build_ask_prompt_with_browser_environment_and_visual_evidence() -
 
 
 @pytest.mark.asyncio
-async def test_build_ask_prompt_with_browser_environment_no_visual_evidence() -> None:
-    """`build_ask_prompt` is generic when browser exists but no visual evidence is attached."""
+async def test_build_ask_prompt_with_computer_environment_no_visual_evidence() -> None:
+    """`build_ask_prompt` is generic when computer exists but no visual evidence is attached."""
 
     environments = {"computer_primitives": _MockEnvironment("computer_primitives")}
     evidence = None
@@ -1055,7 +1055,7 @@ async def test_build_ask_prompt_with_browser_environment_no_visual_evidence() ->
 
 @pytest.mark.asyncio
 async def test_build_ask_prompt_with_mixed_environments_and_visual_evidence() -> None:
-    """With mixed environments, `build_ask_prompt` includes browser view only when visual evidence is available."""
+    """With mixed environments, `build_ask_prompt` includes the computer view only when visual evidence is available."""
 
     environments = {
         "computer_primitives": _MockEnvironment("computer_primitives"),
@@ -1079,7 +1079,7 @@ async def test_build_ask_prompt_with_mixed_environments_and_visual_evidence() ->
 
 @pytest.mark.asyncio
 async def test_build_ask_prompt_with_mixed_environments_no_visual_evidence() -> None:
-    """With mixed environments, `build_ask_prompt` omits browser view when no visual evidence is attached."""
+    """With mixed environments, `build_ask_prompt` omits computer view when no visual evidence is attached."""
 
     environments = {
         "computer_primitives": _MockEnvironment("computer_primitives"),
@@ -1129,7 +1129,7 @@ async def test_build_ask_prompt_with_evidence_dict_mixed() -> None:
 
 @pytest.mark.asyncio
 async def test_build_ask_prompt_with_primitives_evidence_only() -> None:
-    """`build_ask_prompt` handles primitives evidence without browser."""
+    """`build_ask_prompt` handles primitives evidence without computer tools."""
 
     environments = {"primitives": _MockEnvironment("primitives")}
     evidence = {"primitives": {"type": "return_value", "value": "3 contacts found"}}
@@ -1146,7 +1146,7 @@ async def test_build_ask_prompt_with_primitives_evidence_only() -> None:
 
     assert "State Manager Evidence" in prompt or "return value" in prompt.lower()
     assert "Visual Evidence" not in prompt
-    assert "Browser" not in prompt
+    assert "computer_primitives" not in prompt
 
 
 @pytest.mark.asyncio
@@ -1168,8 +1168,8 @@ async def test_build_ask_prompt_backward_compatibility() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_precondition_prompt_with_browser_environment() -> None:
-    """`build_precondition_prompt` includes URL/page-based examples when browser env is active."""
+async def test_build_precondition_prompt_with_computer_environment() -> None:
+    """`build_precondition_prompt` includes URL/page-based examples when computer env is active."""
 
     environments = {"computer_primitives": _MockEnvironment("computer_primitives")}
 
@@ -1186,7 +1186,7 @@ async def test_build_precondition_prompt_with_browser_environment() -> None:
 
 @pytest.mark.asyncio
 async def test_build_precondition_prompt_visual_context_generic() -> None:
-    """When screenshot exists but no browser env, visual-context language should be environment-generic."""
+    """When screenshot exists but no computer env, visual-context language should be environment-generic."""
 
     environments = {"primitives": _MockEnvironment("primitives")}
 
@@ -1198,7 +1198,7 @@ async def test_build_precondition_prompt_visual_context_generic() -> None:
     )
 
     assert "execution environment" in prompt.lower() or "environment" in prompt.lower()
-    assert "browser's state" not in prompt.lower()
+    assert "autonomous web agent" not in prompt.lower()
 
 
 @pytest.mark.asyncio
@@ -1238,13 +1238,13 @@ class _HistoryHandle(SteerableToolHandle):
         self._final_result = final_result
         self._history = history or ["loop:step1", "loop:step2", "loop:step3"]
 
-    async def ask(self, question: str, *, parent_chat_context_cont=None, images=None):
+    async def ask(self, question: str, *, _parent_chat_context_cont=None, images=None):
         return self
 
-    def interject(self, message: str, *, parent_chat_context_cont=None, images=None):
+    def interject(self, message: str, *, _parent_chat_context_cont=None, images=None):
         return None
 
-    def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):
+    def stop(self, reason: str | None = None):
         self._stopped = True
         return None
 
@@ -1284,7 +1284,7 @@ async def test_actor_captures_and_passes_call_stack_and_scoped_context_to_dynami
     import unity.actor.hierarchical_actor as hierarchical_actor_mod
     import unity.actor.prompt_builders as prompt_builders
 
-    # Create actor with mock browser (no external services needed).
+    # Create actor with mock computer backend (no external services needed).
     actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
 
     # We'll patch the prompt builder to record the actor-supplied snapshots, and patch

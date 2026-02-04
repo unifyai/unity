@@ -47,16 +47,16 @@ def build_code_act_prompt(
         if primary_tools:
             primary_tool_reference = _build_tool_signatures(primary_tools)
 
-    has_browser_env = "computer_primitives" in environments
+    has_computer_env = "computer_primitives" in environments
     role_line = (
         "You are an expert agent that solves tasks by writing and executing code."
     )
     capabilities_line = (
         "Your primary tool is a multi-language, multi-session execution environment where you can run Python and shell code, "
-        "and (when enabled) control browsers and other tool domains."
-        if has_browser_env
+        "and (when enabled) control computer interfaces and other tool domains."
+        if has_computer_env
         else "Your primary tool is a multi-language, multi-session execution environment where you can use whatever tool "
-        "domains are available via injected environment globals (e.g. state managers, and optionally browser/desktop)."
+        "domains are available via injected environment globals (e.g. state managers, and optionally computer/desktop)."
     )
 
     # Detect FunctionManager tools early for critical rules section
@@ -318,7 +318,7 @@ def _build_critical_rules_section(has_function_manager: bool) -> str:
 
 def _build_simplicity_first_principles(
     *,
-    has_browser: bool = True,
+    has_computer: bool = True,
     has_primitives: bool = True,
 ) -> str:
     """Shared guidance: prefer elegant, minimal plans that leverage powerful tool loops.
@@ -329,12 +329,12 @@ def _build_simplicity_first_principles(
     - interjection decisions
     """
     tool_line = ""
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         tool_line = (
             "- Calls like `computer_primitives.act(...)`, `computer_primitives.observe(...)`, and many `primitives.*` methods\n"
             "  accept natural language and often run their own internal tool loops."
         )
-    elif has_browser:
+    elif has_computer:
         tool_line = (
             "- Calls like `computer_primitives.act(...)` and `computer_primitives.observe(...)`\n"
             "  accept natural language and often run their own internal tool loops."
@@ -377,10 +377,10 @@ def _build_verification_static_prefix(
     Returns:
         Static prefix string for verification prompts (≥2,048 tokens)
     """
-    has_browser = environments is None or "computer_primitives" in environments
+    has_computer = environments is None or "computer_primitives" in environments
     has_primitives = environments is not None and "primitives" in environments
     examples_block = get_verification_examples_for_environments(
-        has_browser=has_browser,
+        has_computer=has_computer,
         has_primitives=has_primitives,
     )
     return textwrap.dedent(
@@ -459,14 +459,14 @@ def _build_dynamic_implement_static_prefix(
         ---
         {
             _build_simplicity_first_principles(
-                has_browser=(environments is None or "computer_primitives" in environments),
+                has_computer=(environments is None or "computer_primitives" in environments),
                 has_primitives=(environments is None or (environments and "primitives" in environments)),
             )
         }
 
         ---
         **CRITICAL: You must choose one of four actions:**
-        1.  **`implement_function`**: Write the Python code for the function. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
+        1.  **`implement_function`**: Write the Python code for the function. Choose this if the function's goal is achievable from the current computer state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
         2.  **`skip_function`**: Bypass this function entirely. Choose this if you observe that the function's goal is **already completed** or is now **irrelevant**. For example, skip a "log in" function if you are already logged in.
         3.  **`replan_parent`**: Escalate the failure to the calling function. Choose this if the current function is **impossible to implement** because of a mistake made in a *previous* step. For example, if the goal is "apply filters" but the page has no filter controls, the error lies with the parent function that navigated to the wrong page or failed to get to the right state.
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
@@ -557,7 +557,7 @@ def _build_core_implementation_rules() -> str:
 
         5.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all environment methods AND any helper functions or skills you call.
             ```python
-            # ✅ CORRECT: Awaiting environment methods (browser or primitives)
+            # ✅ CORRECT: Awaiting environment methods (computer or primitives)
             await computer_primitives.navigate("https://example.com")
             contact = await primitives.contacts.ask("Find John Doe")
 
@@ -643,7 +643,7 @@ def _build_core_implementation_rules() -> str:
 
             # ✅ CORRECT: Use injected globals directly
             async def my_func():
-                # Browser environment
+                # Computer environment
                 result = await computer_primitives.navigate("https://example.com")
                 data = await computer_primitives.observe("Get page title")
 
@@ -663,30 +663,30 @@ def _build_core_implementation_rules() -> str:
     ).strip()
 
 
-def _build_browser_implementation_examples() -> str:
+def _build_computer_implementation_examples() -> str:
     """
-    Builds browser-specific implementation examples from the centralized library.
+    Builds computer-specific implementation examples from the centralized library.
 
     Returns:
-        Formatted string with browser navigation, multi-step, and screenshot-driven examples
+        Formatted string with computer navigation, multi-step, and screenshot-driven examples
     """
     from unity.actor.prompt_examples import (
-        get_browser_navigation_example,
-        get_browser_multistep_example,
-        get_browser_screenshot_driven_example,
+        get_computer_navigation_example,
+        get_computer_multistep_example,
+        get_computer_screenshot_driven_example,
     )
 
     return textwrap.dedent(
         f"""
-        ### Browser Implementation Examples
+        ### Computer Implementation Examples
 
         When implementing functions that use `computer_primitives`, follow these patterns:
 
-        {get_browser_navigation_example().strip()}
+        {get_computer_navigation_example().strip()}
 
-        {get_browser_multistep_example().strip()}
+        {get_computer_multistep_example().strip()}
 
-        {get_browser_screenshot_driven_example().strip()}
+        {get_computer_screenshot_driven_example().strip()}
         """,
     ).strip()
 
@@ -773,7 +773,7 @@ def _build_interjection_static_prefix(
     Builds the static, cacheable prefix for interjection prompts.
 
     Includes environment-agnostic cache invalidation rules, decision tree,
-    routing guidance for in-flight handles, and examples for browser,
+    routing guidance for in-flight handles, and examples for computer,
     primitives, and mixed-mode workflows.
 
     Args:
@@ -798,7 +798,7 @@ def _build_interjection_static_prefix(
         ---
         {
             _build_simplicity_first_principles(
-                has_browser=(environments is None or "computer_primitives" in environments),
+                has_computer=(environments is None or "computer_primitives" in environments),
                 has_primitives=(environments is None or (environments and "primitives" in environments)),
             )
         }
@@ -916,10 +916,10 @@ def _build_interjection_static_prefix(
             }}
             ```
 
-        #### 6. Mixed-Mode Interjection (Browser + Primitives)
+        #### 6. Mixed-Mode Interjection (Computer + Primitives)
         - **Context**: Plan is browsing LinkedIn and saving contacts concurrently
         - **User interjects**: "Prioritize data validation before saving"
-        - **Analysis**: Guidance applies to both browser extraction and contact updates
+        - **Analysis**: Guidance applies to both computer extraction and contact updates
         - **JSON Output**:
             ```json
             {{
@@ -1293,13 +1293,13 @@ def _format_images_for_prompt(
     return "\n\n" + "\n".join(image_lines)
 
 
-def _build_core_planning_rules(*, has_browser: bool) -> str:
+def _build_core_planning_rules(*, has_computer: bool) -> str:
     """
     Environment-agnostic planning rules (condensed from rules 1-13).
     Removes verbose inline code examples for better token efficiency.
     """
     normalize_hint = ""
-    if has_browser:
+    if has_computer:
         normalize_hint = textwrap.dedent(
             """
               Instead, use a composition pattern:
@@ -1386,16 +1386,16 @@ def _build_core_planning_rules(*, has_browser: bool) -> str:
     ).strip()
 
 
-def _build_browser_planning_examples() -> str:
-    """Browser-specific planning examples using the centralized library."""
-    from unity.actor.prompt_examples import get_browser_examples
+def _build_computer_planning_examples() -> str:
+    """Computer-specific planning examples using the centralized library."""
+    from unity.actor.prompt_examples import get_computer_examples
 
     return textwrap.dedent(
         f"""
         ---
-        ### Browser Automation Examples
+        ### Computer Automation Examples
 
-        {get_browser_examples()}
+        {get_computer_examples()}
         """,
     ).strip()
 
@@ -1428,23 +1428,23 @@ def _build_mixed_planning_examples() -> str:
     return textwrap.dedent(
         f"""
         ---
-        ### Mixed-Mode Examples (Browser + State Managers)
+        ### Mixed-Mode Examples (Computer + State Managers)
 
         {get_mixed_examples()}
         """,
     ).strip()
 
 
-def _build_browser_rules_and_examples(computer_primitives) -> str:
-    """Builds the browser-centric rules/examples block (legacy CodeAct content)."""
+def _build_computer_rules_and_examples(computer_primitives) -> str:
+    """Builds the computer-centric rules/examples block (legacy CodeAct content)."""
     all_tools = {}
 
-    browser_tools = {
+    computer_tools = {
         "navigate": computer_primitives.navigate,
         "act": computer_primitives.act,
         "observe": computer_primitives.observe,
     }
-    all_tools.update(browser_tools)
+    all_tools.update(computer_tools)
 
     if hasattr(computer_primitives, "reason"):
         all_tools["reason"] = computer_primitives.reason
@@ -1503,9 +1503,9 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
 
         5. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
 
-        6. **Browser State Feedback**: After browser actions, you'll automatically receive:
-           - The current URL
-           - A screenshot of the page
+        6. **Computer State Feedback**: After computer actions, you'll automatically receive:
+           - The current computer state metadata (e.g., URL when available)
+           - A screenshot (as an image block) when available
            - Any output from your code
 
         7. **exit**: Your workflow should be:
@@ -1551,7 +1551,7 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
         ### 💡 Strategy & Examples
 
         Your primary workflow is an iterative loop: **Think → Choose session/mode → Execute → Observe → Repeat**.
-        In these browser examples we use Python `state_mode="stateful", session_id=0` so state persists between steps.
+        In these computer automation examples we use Python `state_mode="stateful", session_id=0` so state persists between steps.
 
         ---
 
@@ -1577,9 +1577,9 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
             ```
         * **Observation**:
             ```text
-            --- BROWSER STATE ---
+            --- COMPUTER STATE ---
             URL: https://playwright.dev/
-            [A screenshot of the Playwright homepage is available to you.]
+            [A screenshot is available to you as an image block.]
             ```
 
         *Turn 2: Observe the content using a Pydantic model*
@@ -1605,9 +1605,9 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
               "heading": "Playwright enables reliable end-to-end testing for modern web apps.",
               "first_paragraph": "Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API."
             }
-            --- BROWSER STATE ---
+            --- COMPUTER STATE ---
             URL: https://playwright.dev/
-            [A screenshot of the Playwright homepage is available to you.]
+            [A screenshot is available to you as an image block.]
             ```
 
         *Turn 3: Provide the final answer*
@@ -1636,7 +1636,7 @@ def _build_browser_rules_and_examples(computer_primitives) -> str:
               }]
             }
             ```
-        * **Observation**: Success, browser is on example.com.
+        * **Observation**: Success, the computer environment is on example.com.
 
         *Turn 2: Attempt to extract data with a mistake*
         * **Tool Call**:
@@ -1942,8 +1942,8 @@ def _build_code_act_rules_and_examples(
     - New preferred usage passes `environments=...` for environment-aware composition.
     """
     if environments is None:
-        # Legacy: browser-only content.
-        return _build_browser_rules_and_examples(computer_primitives)
+        # Legacy: computer-only content.
+        return _build_computer_rules_and_examples(computer_primitives)
 
     parts: list[str] = []
 
@@ -1981,7 +1981,7 @@ def _build_code_act_rules_and_examples(
         except Exception:
             cp = None
     if cp is not None:
-        parts.append(_build_browser_rules_and_examples(cp))
+        parts.append(_build_computer_rules_and_examples(cp))
 
     if "primitives" in environments:
         # Get exposed managers from the environment if available
@@ -2007,18 +2007,20 @@ def _build_initial_plan_rules_and_examples(
 
     # Detect active environments
     if environments is None:
-        # Legacy mode: infer from tool namespaces to avoid browser assumptions
+        # Legacy mode: infer from tool namespaces to avoid computer assumptions
         # for primitives-only callers
         tool_names = list(tools.keys())
-        has_browser = any(name.startswith("computer_primitives") for name in tool_names)
+        has_computer = any(
+            name.startswith("computer_primitives") for name in tool_names
+        )
         has_primitives = any(name.startswith("primitives") for name in tool_names)
     else:
         # Modern mode: use explicit environment map
-        has_browser = "computer_primitives" in environments
+        has_computer = "computer_primitives" in environments
         has_primitives = "primitives" in environments
 
     # Core rules (environment-aware where needed, but still "mostly" agnostic).
-    core_rules = _build_core_planning_rules(has_browser=has_browser)
+    core_rules = _build_core_planning_rules(has_computer=has_computer)
 
     routing_instruction_str = ""
     if has_primitives:
@@ -2031,7 +2033,7 @@ def _build_initial_plan_rules_and_examples(
             - **External / public info** (general concepts/definitions; news, weather, “this week/today/latest”, real-time facts): default to `await primitives.web.ask(...)` (even for stable concepts).
             """,
         ).strip()
-        if has_browser:
+        if has_computer:
             routing_instruction_str += (
                 "\n- Do NOT use `computer_primitives.reason(...)` as a substitute for `primitives.web.ask(...)`. "
                 "Use `reason` only to structure/summarize after you've gathered evidence (e.g., from web search)."
@@ -2055,15 +2057,15 @@ def _build_initial_plan_rules_and_examples(
             f"### Core Patterns (Environment-Agnostic)\n\n{core_examples}",
         )
 
-    if has_browser:
-        example_sections.append(_build_browser_planning_examples())
+    if has_computer:
+        example_sections.append(_build_computer_planning_examples())
 
     if has_primitives:
         example_sections.append(
             _build_primitives_planning_examples(managers=managers_filter),
         )
 
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         example_sections.append(_build_mixed_planning_examples())
 
     examples_str = "\n\n".join(example_sections) if example_sections else ""
@@ -2128,17 +2130,17 @@ def _build_dynamic_implement_rules_and_examples(
     if environments is None:
         # Legacy mode: infer from tool namespaces
         tool_names = list(tools.keys())
-        has_browser = any(
+        has_computer = any(
             name.startswith("computer_primitives.") for name in tool_names
         )
         has_primitives = any(name.startswith("primitives.") for name in tool_names)
     else:
         # Modern mode: use explicit environment map
-        has_browser = "computer_primitives" in environments
+        has_computer = "computer_primitives" in environments
         has_primitives = "primitives" in environments
 
-    # Primitives-only mode: simplified rules without browser references
-    if (not has_browser) and has_primitives:
+    # Primitives-only mode: simplified rules without computer references
+    if (not has_computer) and has_primitives:
         simplified_rules = textwrap.dedent(
             """
             ### 🎯 CRITICAL RULES FOR DYNAMIC FUNCTION IMPLEMENTATION
@@ -2191,7 +2193,7 @@ def _build_dynamic_implement_rules_and_examples(
             """,
         ).strip()
 
-    # Browser or mixed mode: full rules with environment-specific examples
+    # Computer or mixed mode: full rules with environment-specific examples
     sections = []
 
     # Core rules (always included)
@@ -2213,8 +2215,8 @@ def _build_dynamic_implement_rules_and_examples(
     )
 
     # Environment-specific examples
-    if has_browser:
-        sections.append(_build_browser_implementation_examples())
+    if has_computer:
+        sections.append(_build_computer_implementation_examples())
 
     if has_primitives:
         # Add state manager guidance section (examples provided separately below)
@@ -2223,7 +2225,7 @@ def _build_dynamic_implement_rules_and_examples(
         )
         sections.append(_build_primitives_implementation_examples())
 
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         sections.append(_build_mixed_implementation_examples())
 
     return "\n\n---\n\n".join(sections)
@@ -2293,14 +2295,14 @@ def build_initial_plan_prompt(
         )
 
     # Build the namespaces list based on available environments
-    has_browser_for_library = (
+    has_computer_for_library = (
         environments is None or "computer_primitives" in environments
     )
     has_primitives_for_library = environments is None or "primitives" in environments
 
-    if has_browser_for_library and has_primitives_for_library:
+    if has_computer_for_library and has_primitives_for_library:
         namespace_list = "`primitives.*`, `computer_primitives.*`"
-    elif has_browser_for_library:
+    elif has_computer_for_library:
         namespace_list = "`computer_primitives.*`"
     elif has_primitives_for_library:
         namespace_list = "`primitives.*`"
@@ -2374,7 +2376,7 @@ def build_initial_plan_prompt(
         ---
         {
             _build_simplicity_first_principles(
-                has_browser=(environments is None or "computer_primitives" in environments),
+                has_computer=(environments is None or "computer_primitives" in environments),
                 has_primitives=(environments is None or (environments and "primitives" in environments)),
             )
         }
@@ -2402,7 +2404,7 @@ def build_dynamic_implement_prompt(
     clarification_question: str | None,
     clarification_answer: str | None,
     replan_context: str,
-    has_browser_screenshot: bool = True,
+    has_computer_screenshot: bool = True,
     *,
     tools: Dict[str, Callable],
     existing_functions: Dict[str, Any],
@@ -2527,13 +2529,13 @@ def build_dynamic_implement_prompt(
         """,
         )
 
-    browser_context_section = ""
-    has_browser_env = environments is None or "computer_primitives" in environments
-    if has_browser_env and has_browser_screenshot:
-        browser_context_section = textwrap.dedent(
+    computer_context_section = ""
+    has_computer_env = environments is None or "computer_primitives" in environments
+    if has_computer_env and has_computer_screenshot:
+        computer_context_section = textwrap.dedent(
             """
-            **Current Browser View (Screenshot):**
-            An image of the current browser page has been provided. Analyze it carefully to inform your implementation or modification. Use it as the primary source of truth for the visual state.
+            **Current Computer View (Screenshot):**
+            An image of the current computer view has been provided. Analyze it carefully to inform your implementation or modification. Use it as the primary source of truth for the visual state.
             """,
         )
 
@@ -2587,7 +2589,7 @@ def build_dynamic_implement_prompt(
         ### Situation Analysis
         **Function to Address:** `async def {function_name}{function_sig}`
         **Purpose of this Function:** "{function_docstring}"
-        {browser_context_section or "No browser state available."}
+        {computer_context_section or "No computer state available."}
 
         {image_context_str}
 
@@ -2627,7 +2629,7 @@ def build_verification_prompt(
         interactions: A log of tool interactions made.
         evidence: Dictionary of evidence from all active environments.
             Dynamically builds evidence sections based on available evidence types:
-            - Visual evidence (browser screenshots)
+            - Visual evidence (computer screenshots)
             - Return value evidence (state manager operations)
             - Mixed evidence (both): if both visual evidence and state-manager return-value evidence are present,
               a dedicated mixed-evidence section is added instructing cross-checking and discrepancy resolution.
@@ -2671,7 +2673,7 @@ def build_verification_prompt(
             f"""
         ---
         ### 🔬 Low-Level Agent Trace (Ground Truth)
-        This is the detailed low-level tool trace captured during execution. **This is your most important source of truth.** It reveals *why* actions were taken and what the agent observed at a micro-level across whatever tool domains were used (browser, state managers, etc.). Analyze it carefully to understand the root cause of any success or failure.
+        This is the detailed low-level tool trace captured during execution. **This is your most important source of truth.** It reveals *why* actions were taken and what the agent observed at a micro-level across whatever tool domains were used (computer, state managers, etc.). Analyze it carefully to understand the root cause of any success or failure.
 
         {traces_joined}
         ---
@@ -2681,31 +2683,31 @@ def build_verification_prompt(
     # Build evidence sections dynamically based on what's available.
     evidence_sections: list[str] = []
 
-    # Visual evidence (browser).
-    browser_evidence = evidence.get("computer_primitives")
-    has_browser_screenshot_evidence = False
-    if isinstance(browser_evidence, dict):
-        if "screenshot" in browser_evidence and "error" not in browser_evidence:
-            has_browser_screenshot_evidence = True
-            url = browser_evidence.get("url", "N/A")
+    # Visual evidence (computer).
+    computer_evidence = evidence.get("computer_primitives")
+    has_computer_screenshot_evidence = False
+    if isinstance(computer_evidence, dict):
+        if "screenshot" in computer_evidence and "error" not in computer_evidence:
+            has_computer_screenshot_evidence = True
+            url = computer_evidence.get("url", "N/A")
             evidence_sections.append(
                 textwrap.dedent(
                     f"""
                     ---
-                    ### 📸 Visual Evidence (Browser)
-                    You have been provided a **screenshot** of the browser's final state.
+                    ### 📸 Visual Evidence (Computer)
+                    You have been provided a **screenshot** of the computer's final state.
                     - **URL**: {url}
                     - Use the screenshot to visually confirm the outcome described in the agent trace.
                     """,
                 ),
             )
-        elif "error" in browser_evidence:
+        elif "error" in computer_evidence:
             evidence_sections.append(
                 textwrap.dedent(
                     f"""
                     ---
-                    ### ⚠️ Browser Evidence Unavailable
-                    Could not capture browser state: {browser_evidence.get('error')}
+                    ### ⚠️ Computer Evidence Unavailable
+                    Could not capture computer state: {computer_evidence.get('error')}
                     """,
                 ),
             )
@@ -2731,16 +2733,16 @@ def build_verification_prompt(
             ),
         )
 
-    # Mixed evidence (browser + primitives): add dedicated instructions when both are present.
-    if has_browser_screenshot_evidence and has_primitives_return_value_evidence:
+    # Mixed evidence (computer + primitives): add dedicated instructions when both are present.
+    if has_computer_screenshot_evidence and has_primitives_return_value_evidence:
         evidence_sections.append(
             textwrap.dedent(
                 """
                 ---
-                ### 🔀 Mixed Evidence (Browser + Return Value)
-                Both a browser screenshot and a state-manager return value are available.
+                ### 🔀 Mixed Evidence (Computer + Return Value)
+                Both a computer screenshot and a state-manager return value are available.
                 - **Cross-check the screenshot against the returned value, resolve discrepancies, and prefer the ground-truth source.**
-                - Treat the **screenshot** as ground truth for the browser/UI final state and treat the **return value** as ground truth for state-manager mutation outcomes.
+                - Treat the **screenshot** as ground truth for the computer/UI final state and treat the **return value** as ground truth for state-manager mutation outcomes.
                 - If they disagree, explain why (cite the trace/evidence) and choose the most conservative status (often `reimplement_local` or `request_clarification`).
                 """,
             ),
@@ -2839,7 +2841,6 @@ def build_interjection_prompt(
     *,
     tools: Dict[str, Callable],
     environments: Mapping[str, "BaseEnvironment"] | None = None,
-    images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     pane_snapshot: Optional[dict[str, Any]] = None,
 ) -> tuple[str, str]:
     """
@@ -2850,7 +2851,7 @@ def build_interjection_prompt(
     while the dynamic content contains the interjection and current execution state.
     """
     cache_summary = _format_cache_summary(idempotency_cache)
-    image_context_str = _format_images_for_prompt(images)
+    image_context_str = ""
     pane_context_str = ""
     if pane_snapshot and pane_snapshot.get("active_handles"):
         handles = pane_snapshot.get("active_handles") or []
@@ -2931,7 +2932,7 @@ def build_ask_prompt(
         The complete prompt string.
     """
     # Determine available evidence types
-    has_browser = "computer_primitives" in (environments or {})
+    has_computer = "computer_primitives" in (environments or {})
     has_primitives = "primitives" in (environments or {})
 
     # Check for visual evidence (screenshot from any environment)
@@ -2973,7 +2974,7 @@ def build_ask_prompt(
     context_items_str = "\n        ".join(context_items)
 
     # Determine task type
-    if has_browser and has_visual_evidence:
+    if has_computer and has_visual_evidence:
         task_type = "web automation task"
     elif has_primitives:
         task_type = "state management task"
@@ -3033,7 +3034,7 @@ def build_sandbox_merge_prompt(
     """
     Builds the prompt for the sandbox merge decision LLM.
 
-    NOTE: This prompt is already domain-agnostic and works for browser,
+    NOTE: This prompt is already domain-agnostic and works for computer,
     state manager, and mixed-modality workflows without modification.
     """
     return textwrap.dedent(
@@ -3079,7 +3080,7 @@ def build_refactor_prompt(
         monolithic_code: The source code of the current single-function plan.
         generalization_request: The user's request to generalize the logic.
         action_log: The full execution trace for deducing the start state.
-        current_url: The browser's URL at the time of interjection.
+        current_url: The current URL (when available) at the time of interjection.
         tools: The available tools for the actor.
 
     Returns:
@@ -3096,9 +3097,9 @@ def build_refactor_prompt(
         tool_usage_instruction,
         environments=environments,
     )
-    browser_context = f"- **Current URL:** `{current_url}`\n" if current_url else ""
+    computer_context = f"- **Current URL:** `{current_url}`\n" if current_url else ""
 
-    # Build example section - use browser example if URL is available, otherwise generic state-manager example
+    # Build example section - use the computer example if a URL is available, otherwise a generic state-manager example
     if current_url:
         example_section = textwrap.dedent(
             """
@@ -3116,7 +3117,7 @@ def build_refactor_prompt(
             @verify
             async def search_for_item(item_name: str):
                 \"\"\"Searches for a given item on the site.\"\"\"
-                # This skill assumes the browser is on the homepage to find the search bar.
+                # This skill assumes the computer environment is on the homepage to find the search bar.
                 await computer_primitives.act(f"Type '{item_name}' into the search bar and press Enter")
 
             @verify
@@ -3129,7 +3130,7 @@ def build_refactor_prompt(
             async def main_plan():
                 \"\"\"
                 Orchestrates the process of searching for and adding 'keyboards' to the cart.
-                It handles resetting the browser state as its first step.
+                It handles resetting the computer state as its first step.
                 \"\"\"
                 # CRITICAL: The agent is on a product page, but `search_for_item`
                 # needs to be on the homepage. This is the state-bridging step.
@@ -3183,7 +3184,7 @@ def build_refactor_prompt(
 
         ### Full Context
         - **User's Generalization Request:** "{generalization_request}"
-        {browser_context.strip() if browser_context else ""}
+        {computer_context.strip() if computer_context else ""}
         - **Full Execution Action Log (for context):**
         ```
         {action_log}
@@ -3234,12 +3235,14 @@ def build_precondition_prompt(
         has_entry_screenshot: Whether a screenshot or visual evidence is provided.
         environments: The active environments for conditional examples and language.
     """
-    has_browser = "computer_primitives" in (environments or {})
+    has_computer = "computer_primitives" in (environments or {})
 
     screenshot_section = ""
     if has_entry_screenshot:
         evidence_type = (
-            "the execution environment" if not has_browser else "the browser"
+            "the execution environment"
+            if not has_computer
+            else "the computer environment"
         )
         screenshot_section = textwrap.dedent(
             f"""
@@ -3252,9 +3255,9 @@ def build_precondition_prompt(
         )
 
     # Conditional examples and language based on environment
-    if has_browser:
+    if has_computer:
         agent_description = "an autonomous web agent"
-        function_description = "A function that interacts with a web browser"
+        function_description = "A function that interacts with a web interface"
         state_basis = "Based on the function's first few actions and the visual screenshot, what *must* be true about the page for this function to succeed?"
         url_guidance = """3.  **Prioritize Description Over Specific URLs.**
             * If the function's purpose is generic (like extracting search results or items from a list), the **URL is incidental**. The important precondition is the *type* of page. In this case, provide a `description` like "A search results page must be visible" or "A product listing page must be displayed." **Do not include a specific URL.**
@@ -3306,14 +3309,14 @@ def build_precondition_prompt(
 
 
 #   1.  **Dual Environments**: You can see and interact with two main components:
-#             - A **Chromium web browser** for all internet-related tasks.
+#             - A **Chromium-based web interface** for all internet-related tasks.
 #             - An **`xterm` terminal** for all command-line operations.
 
-#         2.  **Workflow Integration**: The most powerful solutions often involve using both environments together. A common workflow is to use the browser to find and download a file, then use the terminal to install or process that file.
+#         2.  **Workflow Integration**: The most powerful solutions often involve using both environments together. A common workflow is to use the web interface to find and download a file, then use the terminal to install or process that file.
 
 #         3.  **OS-Awareness**: The terminal is a standard Debian Linux environment.
 #             - Use `apt-get` for package management (e.g., `apt-get update && apt-get install -y <package>`).
 #             - Use `dpkg -i <file.deb>` to install downloaded Debian packages.
-#             - The default download directory for the browser is `/tmp/unify/assistant/browser/install`. You must use this full path when accessing downloaded files from the terminal.
+#             - The default download directory for the web interface is `/tmp/unify/assistant/computer/install`. You must use this full path when accessing downloaded files from the terminal.
 
 #         4.  **Command Chaining**: For multi-step terminal operations, chain commands with `&&` within a single `act` call to ensure they execute in the correct sequence and context (e.g., `cd /tmp/downloads && ./install.sh`).

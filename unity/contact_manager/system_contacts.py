@@ -344,7 +344,7 @@ def _fetch_org_members() -> List[Dict[str, Any]]:
     from ..session_details import SESSION_DETAILS
     from ..settings import SETTINGS
 
-    base_url = SETTINGS.UNIFY_BASE_URL
+    base_url = SETTINGS.ORCHESTRA_URL
     api_key = SESSION_DETAILS.unify_key
 
     if not base_url or not api_key:

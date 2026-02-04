@@ -56,6 +56,23 @@ pytestmark = pytest.mark.eval
 
 
 # =============================================================================
+# Helper Functions for Deterministic Waiting
+# =============================================================================
+
+
+async def _wait_for_condition(predicate, *, timeout: float = 30.0, poll: float = 0.05):
+    """Poll predicate() until it returns True or timeout expires."""
+    import time as _time
+
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
+
+
+# =============================================================================
 # Test Response Formats (Pydantic Models and Enums)
 # =============================================================================
 
@@ -253,7 +270,7 @@ class TestSendNotification:
             contact_id=1,
             conversation_manager=mock_cm,
         )
-        handle.stop(reason="test")
+        await handle.stop(reason="test")
 
         result = await handle.send_notification("Should fail")
 
@@ -297,7 +314,8 @@ class TestInterject:
 class TestHandleLifecycle:
     """Tests for handle lifecycle methods (stop, done, result)."""
 
-    def test_stop_marks_handle_done(self):
+    @pytest.mark.asyncio
+    async def test_stop_marks_handle_done(self):
         """stop() marks the handle as done."""
         mock_broker = MagicMock()
         mock_cm = MagicMock()
@@ -312,10 +330,11 @@ class TestHandleLifecycle:
         )
 
         assert handle.done() is False
-        handle.stop(reason="user cancelled")
+        await handle.stop(reason="user cancelled")
         assert handle.done() is True
 
-    def test_stop_returns_reason(self):
+    @pytest.mark.asyncio
+    async def test_stop_returns_reason(self):
         """stop() returns message with reason."""
         mock_broker = MagicMock()
         mock_cm = MagicMock()
@@ -329,10 +348,11 @@ class TestHandleLifecycle:
             conversation_manager=mock_cm,
         )
 
-        result = handle.stop(reason="task completed")
+        result = await handle.stop(reason="task completed")
         assert "task completed" in result
 
-    def test_stop_idempotent(self):
+    @pytest.mark.asyncio
+    async def test_stop_idempotent(self):
         """Calling stop() multiple times is safe."""
         mock_broker = MagicMock()
         mock_cm = MagicMock()
@@ -346,8 +366,8 @@ class TestHandleLifecycle:
             conversation_manager=mock_cm,
         )
 
-        handle.stop(reason="first")
-        result = handle.stop(reason="second")
+        await handle.stop(reason="first")
+        result = await handle.stop(reason="second")
         assert "already stopped" in result.lower()
 
     @pytest.mark.asyncio
@@ -373,7 +393,7 @@ class TestHandleLifecycle:
         assert not result_task.done()
 
         # Stop the handle
-        handle.stop(reason="completed")
+        await handle.stop(reason="completed")
 
         # Result should now complete
         result = await asyncio.wait_for(result_task, timeout=1.0)
@@ -632,8 +652,12 @@ async def test_ask_path2_asks_when_ambiguous(initialized_cm):
         response_format=MeetingTime,
     )
 
-    # Give it time to start and ask
-    await asyncio.sleep(0.5)
+    # Wait for active_ask_handle to be set (indicates PATH 2 started)
+    # Use polling instead of fixed sleep for deterministic behavior
+    await _wait_for_condition(
+        lambda: cm.cm.active_ask_handle is not None,
+        timeout=30.0,
+    )
 
     # If PATH 2, there should be a direct speech asking the question
     # The handle should be waiting for user reply
@@ -738,13 +762,20 @@ async def test_ask_path2_multiple_followup_questions(initialized_cm):
         "What is the user's phone number for callbacks?",
     )
 
-    # Wait for first question
-    await asyncio.sleep(0.5)
+    # Wait for first question to be asked (poll for direct_speech event)
+    await _wait_for_condition(
+        lambda: len(questions_asked) >= 1,
+        timeout=30.0,
+    )
 
     # Give vague reply - should trigger follow-up
     await ask_handle.interject("You can reach me anytime")
 
-    await asyncio.sleep(0.5)
+    # Wait for follow-up question (poll for second question)
+    await _wait_for_condition(
+        lambda: len(questions_asked) >= 2 or ask_handle.done(),
+        timeout=30.0,
+    )
 
     # Provide actual answer
     await ask_handle.interject("+1-555-123-4567")
@@ -897,7 +928,7 @@ async def test_intercepting_handle_delegates_lifecycle_methods(initialized_cm):
     assert ask_handle.done() is False
 
     # stop() tells the inner loop to cancel - this is non-blocking
-    ask_handle.stop(reason="cancelled by test")
+    await ask_handle.stop(reason="cancelled by test")
 
     # Following standard pattern: await result() for clean completion
     # When stopped, result() returns None
@@ -1167,7 +1198,7 @@ async def test_ask_raises_when_handle_stopped(initialized_cm):
         conversation_manager=cm.cm,
     )
 
-    handle.stop(reason="already done")
+    await handle.stop(reason="already done")
 
     with pytest.raises(RuntimeError, match="stopped"):
         await handle.ask("This should fail")
@@ -1197,8 +1228,13 @@ async def test_ask_handles_empty_transcript(initialized_cm):
 
     ask_handle = await handle.ask("What is the user's name?")
 
+    # Wait for active_ask_handle to be set (PATH 2 started)
+    await _wait_for_condition(
+        lambda: cm.cm.active_ask_handle is not None,
+        timeout=30.0,
+    )
+
     # Should be waiting for user input (PATH 2)
-    await asyncio.sleep(0.5)
     assert not ask_handle.done()
 
     # Provide answer via interject
@@ -1278,7 +1314,7 @@ async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
     assert cm.cm.active_ask_handle is ask_handle_1
 
     # Stop first handle before starting second (clean replacement)
-    ask_handle_1.stop(reason="replaced by new ask")
+    await ask_handle_1.stop(reason="replaced by new ask")
 
     # Start second ask (should replace first)
     ask_handle_2 = await handle.ask("What is the user's favorite food?")
@@ -1295,6 +1331,65 @@ async def test_only_one_active_ask_handle_at_a_time(initialized_cm):
         await asyncio.wait_for(ask_handle_1.result(), timeout=5.0)
     except Exception:
         pass  # May already be cleaned up
+
+
+# =============================================================================
+# Integration Tests: Transcript Content (CallGuidance Exclusion)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_transcript_excludes_call_guidance(initialized_cm):
+    """
+    CallGuidance (internal orchestration) should NOT appear in the transcript.
+
+    The transcript passed to handle.ask() should only contain actual communications
+    between the assistant and contacts, not internal guidance from the Main CM Brain
+    to the Voice Agent.
+
+    This test verifies that:
+    1. User utterances appear in the transcript
+    2. CallGuidance messages are filtered out
+    3. Only "user" and "assistant" roles appear (not "guidance")
+    """
+    cm = initialized_cm
+    contact = TEST_CONTACTS[1]
+
+    # Start a Unify Meet session - this will trigger CallGuidance from the CM brain
+    await cm.step(UnifyMeetReceived(contact=contact))
+    await cm.step(UnifyMeetStarted(contact=contact))
+
+    # User speaks - this should appear in transcript
+    user_message = "I'd like to schedule a meeting for tomorrow."
+    await cm.step(
+        InboundUnifyMeetUtterance(
+            contact=contact,
+            content=user_message,
+        ),
+    )
+
+    # Get the transcript that would be passed to handle.ask()
+    conversation_turns, _ = cm.cm.get_recent_transcript(
+        contact=contact,
+        max_messages=20,
+    )
+
+    # Should have at least the user message
+    assert len(conversation_turns) >= 1, "Transcript should contain user message"
+
+    # All roles should be either "user" or "assistant" (not "guidance")
+    for turn in conversation_turns:
+        assert turn["role"] in (
+            "user",
+            "assistant",
+        ), f"Unexpected role in transcript: {turn['role']}"
+
+    # User message should be in transcript
+    transcript_contents = [turn["content"] for turn in conversation_turns]
+    assert any(
+        user_message in content for content in transcript_contents
+    ), "User message should appear in transcript"
 
 
 # =============================================================================

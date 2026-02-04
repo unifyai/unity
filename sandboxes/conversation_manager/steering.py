@@ -104,17 +104,26 @@ class BrainRunController:
         return "✅ Interjection sent (triggered a fresh brain run)"
 
     async def ask(self, question: str) -> str:
-        # Limited: no nested handle; just expose state snapshot.
-        qn = question.strip()
-        qn_display = qn[:120] + ("..." if len(qn) > 120 else "")
-        return (
-            "🧾 Brain-run status (best-effort)\n"
-            f"- question: {qn_display}\n"
-            f"- in_call: {bool(getattr(self.state, 'in_call', False))}\n"
-            f"- paused: {bool(getattr(self.state, 'paused', False))}\n"
-            f"- brain_run_in_flight: {bool(getattr(self.state, 'brain_run_in_flight', False))}\n"
-            f"- queued_events: {len(getattr(self.state, 'queued_events', []) or [])}"
-        )
+        """
+        Production-faithful "/ask": send a new user utterance.
+
+        In production, users don't have a privileged "status" channel. A user asking
+        "what are you working on?" is simply a new inbound utterance; the CM brain
+        decides whether to:
+        - answer directly
+        - query/steer an in-flight action using the exposed steering tools
+        - stop/pause work, etc.
+
+        The sandbox `/ask <q>` command therefore publishes the question as a normal
+        inbound utterance (phone during a call, otherwise SMS), triggering the same
+        CM routing behavior as production.
+        """
+        qn = (question or "").strip()
+        if not qn:
+            return "⚠️ Usage: /ask <question>"
+        # Reuse the same path as interject: publish a real inbound utterance.
+        await self.interject(qn)
+        return "✅ Sent as user utterance (CM brain will decide how to respond)"
 
 
 async def _publish_from_parsed(publisher: Any, cmd: Any) -> None:
@@ -205,28 +214,12 @@ class SteeringController:
         if cmd in {"i", "interject"}:
             if not arg.strip():
                 return "⚠️ Usage: /i <message>"
-            await _maybe_await(
-                handle.interject(
-                    arg,
-                    parent_chat_context_cont=list(self.chat_history),
-                ),
-            )
-            return "✅ Interjection sent"
+            # Production-faithful: interjections are *user utterances* handled by CM.
+            brain = BrainRunController(publisher=self.publisher, state=self.state)
+            return await brain.interject(arg.strip())
         if cmd in {"ask", "?"}:
-            if not arg.strip():
-                return "⚠️ Usage: /ask <question>"
-            helper = await handle.ask(
-                arg,
-                parent_chat_context_cont=list(self.chat_history),
-            )
-            try:
-                answer = await helper.result()  # type: ignore[attr-defined]
-            except Exception as exc:
-                return f"❌ Ask failed: {exc}"
-            # Some implementations return (answer, messages)
-            if isinstance(answer, tuple) and answer:
-                answer = answer[0]
-            return f"🧾 {answer}"
+            brain = BrainRunController(publisher=self.publisher, state=self.state)
+            return await brain.ask(arg)
         if cmd in {"stop", "cancel"}:
             reason = arg.strip() or None
             await _maybe_await(handle.stop(reason))
@@ -238,7 +231,10 @@ class SteeringController:
             if not arg.strip():
                 return "⚠️ Usage: /freeform <text>"
             await _maybe_await(
-                handle.interject(arg, parent_chat_context_cont=list(self.chat_history)),
+                handle.interject(
+                    arg,
+                    _parent_chat_context_cont=list(self.chat_history),
+                ),
             )
             return "✅ Sent (freeform → interject)"
         return f"⚠️ Unknown steering command: /{cmd}. Try /help."

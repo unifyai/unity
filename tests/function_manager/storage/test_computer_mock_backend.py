@@ -120,9 +120,10 @@ class TestMockComputerBackendMethods:
         assert "url" in result
         assert result["format"] == "markdown"
 
-    def test_stop(self, backend):
+    @pytest.mark.asyncio
+    async def test_stop(self, backend):
         """stop() should be a no-op (not raise)."""
-        backend.stop()  # Should not raise
+        await backend.stop()  # Should not raise
 
 
 class TestMockComputerBackendExtras:

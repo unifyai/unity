@@ -72,77 +72,90 @@ async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.debug("ping", log_str)
 
 
-CallEvents = Union[
-    PhoneCallReceived,
-    PhoneCallSent,
-    UnifyMeetReceived,
-    PhoneCallAnswered,
-]
+@EventHandler.register(PhoneCallAnswered)
+async def _(event: PhoneCallAnswered, cm: "ConversationManager", *args, **kwargs):
+    """
+    Forward call answered status to the voice agent subprocess.
+
+    This event arrives from the telephony system (via GCP PubSub) when the contact
+    picks up for outbound calls. Forward it unconditionally - if this event arrives,
+    we're in a call context by definition.
+    """
+    await cm.event_broker.publish(
+        "app:call:status",
+        json.dumps({"type": "call_answered"}),
+    )
 
 
-@EventHandler.register(
-    (PhoneCallReceived, PhoneCallSent, UnifyMeetReceived, PhoneCallAnswered),
-)
-async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
+CallInitEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyMeetReceived]
+
+
+@EventHandler.register((PhoneCallReceived, PhoneCallSent, UnifyMeetReceived))
+async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
+    """
+    Handle incoming/outgoing call initiation - spawn voice agent subprocess.
+    """
+    # Don't start a new call if we're already in voice mode
     if cm.mode.is_voice:
-        if isinstance(event, PhoneCallAnswered):
-            await cm.event_broker.publish(
-                "app:call:status",
-                json.dumps({"type": "call_answered"}),
-            )
+        return
+
+    boss = cm.contact_index.get_contact(contact_id=1)
+    if isinstance(event, UnifyMeetReceived):
+        contact = boss
     else:
-        message_content = None
-        notif_content = None
-        boss = cm.contact_index.get_contact(contact_id=1)
-        if isinstance(event, UnifyMeetReceived):
-            contact = boss
-        else:
-            contact = cm.contact_index.get_contact(
-                phone_number=event.contact["phone_number"],
+        contact = cm.contact_index.get_contact(
+            phone_number=event.contact["phone_number"],
+        )
+        if contact is None:
+            contact = event.contact
+
+    contact_id = (
+        contact.get("contact_id") if contact else event.contact.get("contact_id")
+    )
+    sender_name = _get_sender_name(contact)
+
+    match event:
+        case PhoneCallReceived() as e:
+            cm.call_manager.conference_name = e.conference_name
+            await cm.call_manager.start_call(contact, boss)
+            message_content = "<Recvieving Call...>"
+            notif_content = f"Call received from {sender_name}"
+        case PhoneCallSent():
+            await cm.call_manager.start_call(contact, boss, outbound=True)
+            message_content = "<Sending Call...>"
+            notif_content = f"Call sent to {sender_name}"
+        case UnifyMeetReceived() as e:
+            await cm.call_manager.start_unify_meet(
+                contact,
+                boss,
+                e.livekit_agent_name,
+                e.room_name,
             )
-            if contact is None:
-                contact = event.contact
+            message_content = "<Recieving Call...>"
+            notif_content = f"Call received from {sender_name}"
 
-        contact_id = (
-            contact.get("contact_id") if contact else event.contact.get("contact_id")
-        )
-        sender_name = _get_sender_name(contact)
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+    role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
+    medium = (
+        Medium.UNIFY_MEET if isinstance(event, UnifyMeetReceived) else Medium.PHONE_CALL
+    )
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=medium,
+        message_content=message_content,
+        role=role,
+        timestamp=event.timestamp,
+    )
 
-        match event:
-            case PhoneCallReceived() as e:
-                cm.call_manager.conference_name = e.conference_name
-                cm.call_manager.start_call(contact, boss)
-                message_content = "<Recvieving Call...>"
-                notif_content = f"Call received from {sender_name}"
-            case PhoneCallSent() as e:
-                cm.call_manager.start_call(contact, boss, outbound=True)
-                message_content = "<Sending Call...>"
-                notif_content = f"Call sent to {sender_name}"
-            case UnifyMeetReceived() as e:
-                cm.call_manager.start_unify_meet(
-                    contact,
-                    boss,
-                    e.livekit_agent_name,
-                    e.room_name,
-                )
-                message_content = "<Recieving Call...>"
-                notif_content = f"Call received from {sender_name}"
-
-        cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
-        role = "user" if "received" in event.__class__.__name__.lower() else "assistant"
-        medium = (
-            Medium.UNIFY_MEET
-            if isinstance(event, UnifyMeetReceived)
-            else Medium.PHONE_CALL
-        )
-        cm.contact_index.push_message(
-            contact_id=contact_id,
-            sender_name=sender_name,
-            thread_name=medium,
-            message_content=message_content,
-            role=role,
-            timestamp=event.timestamp,
-        )
+    # For outbound calls, trigger LLM run immediately to generate initial guidance.
+    # The mode is set to CALL for the _run_llm method to handle the case where
+    # the LLM finishes before PhoneCallStarted sets mode to CALL.
+    # This gives us subprocess startup + ringing time as buffer before the user picks
+    # up.
+    if isinstance(event, PhoneCallSent):
+        cm.mode = Mode.CALL
+        await cm.request_llm_run(delay=0, cancel_running=True)
 
 
 @EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
@@ -185,7 +198,81 @@ async def _(
     )
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
-    await cm.request_llm_run(delay=0)
+
+    # NOTE: For OUTBOUND calls, the slow brain LLM run is triggered earlier on
+    # PhoneCallSent to give maximum time for guidance generation (subprocess
+    # startup + ringing time). See the PhoneCallSent handler above.
+    #
+    # The slow brain will be triggered later for all calls by:
+    # - InboundPhoneUtterance (user says something)
+    # - ActorResult (action completes)
+    # - NotificationInjectedEvent (cross-channel notification)
+    # - SMSReceived/EmailReceived while on call
+
+
+@EventHandler.register(PhoneCallNotAnswered)
+async def _(
+    event: PhoneCallNotAnswered,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    """
+    Handle outbound call not answered (no-answer, busy, canceled, failed).
+
+    This event arrives from the telephony system (via GCP PubSub) when the contact
+    doesn't pick up for outbound calls. We need to:
+    1. Tell the voice agent to stop (if running)
+    2. Clean up the call process
+    3. Notify the LLM brain so it can react appropriately
+    """
+    contact = cm.contact_index.get_contact(
+        phone_number=event.contact.get("phone_number"),
+    )
+    if contact is None:
+        contact = event.contact
+
+    contact_id = contact.get("contact_id") if contact else 1
+    sender_name = _get_sender_name(contact)
+    reason = event.reason or "no-answer"
+
+    # Forward stop status to voice agent subprocess
+    await cm.event_broker.publish(
+        "app:call:status",
+        json.dumps({"type": "stop", "reason": f"call_not_answered:{reason}"}),
+    )
+
+    # Reset mode if we were in call mode
+    if cm.mode.is_voice:
+        cm.mode = Mode.TEXT
+        cm.call_manager.call_contact = None
+        cm.call_manager.conference_name = None
+
+    # Clean up the call process
+    await cm.call_manager.cleanup_call_proc()
+
+    # Build display content
+    reason_display = {
+        "no-answer": "did not answer",
+        "busy": "was busy",
+        "canceled": "call was canceled",
+        "failed": "call failed",
+    }.get(reason, f"not answered ({reason})")
+
+    notif_content = f"Outbound call to {sender_name} {reason_display}"
+    cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+
+    cm.contact_index.push_message(
+        contact_id=contact_id,
+        sender_name=sender_name,
+        thread_name=Medium.PHONE_CALL,
+        message_content=f"<Call Not Answered: {reason_display}>",
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
+    # Trigger LLM run so the brain can decide next steps
+    await cm.request_llm_run(delay=0, cancel_running=True)
 
 
 @EventHandler.register(
@@ -251,7 +338,7 @@ async def _(
         sender_name=sender_name,
         thread_name=medium,
         message_content=event.content,
-        role="Guidance",
+        role="guidance",
     )
 
 
@@ -267,13 +354,15 @@ async def _(
     if isinstance(event, PhoneCallEnded):
         cm.call_manager.conference_name = None
     if isinstance(event, UnifyMeetEnded):
-        contact = cm.contact_index.get_contact(contact_id=1)
+        contact_id = event.contact.get("contact_id")
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
     else:
         contact = cm.contact_index.get_contact(
             phone_number=event.contact["phone_number"],
         )
-        if contact is None:
-            contact = event.contact
+
+    if contact is None:
+        contact = event.contact
 
     contact_id = (
         contact.get("contact_id") if contact else event.contact.get("contact_id")
@@ -337,6 +426,93 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         ...
 
 
+def _push_email_to_all_contacts(
+    cm: "ConversationManager",
+    event,
+    sender_contact: dict | None,
+    sender_name: str,
+    subject: str,
+    body: str,
+    email_id: str | None,
+    attachments: list[str] | None,
+    email_to: list[str],
+    email_cc: list[str],
+    email_bcc: list[str],
+    role: str,
+):
+    """
+    Push an email to ALL contacts involved (sender, to, cc, bcc).
+
+    Emails are pushed to every known contact's thread to ensure no context is
+    missing when viewing any contact-specific thread. Each message is tagged
+    with `contact_role` to clarify the contact's relationship to the email.
+
+    Args:
+        cm: ConversationManager instance
+        event: The email event (EmailSent or EmailReceived)
+        sender_contact: The sender's contact dict (may be None for external senders)
+        sender_name: Display name for the email sender
+        subject: Email subject
+        body: Email body
+        email_id: Email ID for threading
+        attachments: List of attachment filenames
+        email_to: List of TO recipient email addresses
+        email_cc: List of CC recipient email addresses
+        email_bcc: List of BCC recipient email addresses
+        role: "user" (received) or "assistant" (sent)
+    """
+    # Track which contact_ids we've already pushed to (avoid duplicates)
+    pushed_contact_ids: set[int] = set()
+
+    def _push_to_contact(contact_id: int, contact_role: str):
+        """Helper to push email to a contact's thread."""
+        if contact_id in pushed_contact_ids:
+            return
+        pushed_contact_ids.add(contact_id)
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=Medium.EMAIL,
+            subject=subject,
+            body=body,
+            email_id=email_id,
+            attachments=attachments,
+            timestamp=event.timestamp,
+            role=role,
+            to=email_to,
+            cc=email_cc,
+            bcc=email_bcc,
+            contact_role=contact_role,
+        )
+
+    def _resolve_contact_by_email(email_addr: str) -> dict | None:
+        """Look up contact by email address."""
+        return cm.contact_index.get_contact(email=email_addr)
+
+    # 1. Push to sender's contact (if known)
+    sender_contact_id = sender_contact.get("contact_id") if sender_contact else None
+    if sender_contact_id is not None:
+        _push_to_contact(sender_contact_id, "sender")
+
+    # 2. Push to all TO recipients
+    for email_addr in email_to or []:
+        contact = _resolve_contact_by_email(email_addr)
+        if contact and contact.get("contact_id"):
+            _push_to_contact(contact["contact_id"], "to")
+
+    # 3. Push to all CC recipients
+    for email_addr in email_cc or []:
+        contact = _resolve_contact_by_email(email_addr)
+        if contact and contact.get("contact_id"):
+            _push_to_contact(contact["contact_id"], "cc")
+
+    # 4. Push to all BCC recipients
+    for email_addr in email_bcc or []:
+        contact = _resolve_contact_by_email(email_addr)
+        if contact and contact.get("contact_id"):
+            _push_to_contact(contact["contact_id"], "bcc")
+
+
 @EventHandler.register(
     (
         SMSSent,
@@ -350,24 +526,19 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
-    thread = None
     message_content = None
-    subject = None
-    body = None
-    email_id = None
     attachments = None
     notif_content = None
 
     # Get contact info from ContactManager, fallback to event.contact
-    contact = cm.contact_index.get_contact(event.contact["contact_id"])
+    # Note: event.contact may be empty dict for emails to external addresses
+    contact_id = event.contact.get("contact_id") if event.contact else None
+    contact = cm.contact_index.get_contact(contact_id) if contact_id else None
     if contact is None:
-        contact = event.contact
+        contact = event.contact or {}
 
-    contact_id = (
-        contact.get("contact_id")
-        if isinstance(contact, dict)
-        else event.contact["contact_id"]
-    )
+    # contact_id may be None for external recipients not in contacts
+    contact_id = contact.get("contact_id") if isinstance(contact, dict) else None
     sender_name = _get_sender_name(contact)
 
     match event:
@@ -382,21 +553,55 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"SMS Received from {sender_name}"
             role = "user"
         case EmailSent():
-            medium = Medium.EMAIL
-            subject = event.subject
-            body = event.body
-            email_id = event.email_id_replied_to
-            attachments = event.attachments
-            notif_content = f"Email sent to {sender_name}"
-            role = "assistant"
+            # Email handling is special: push to ALL contacts involved
+            email_to = event.to or []
+            email_cc = event.cc or []
+            email_bcc = event.bcc or []
+            # For sent emails, the assistant is the sender
+            _push_email_to_all_contacts(
+                cm=cm,
+                event=event,
+                sender_contact=None,  # Assistant is sender, not a contact
+                sender_name="You",
+                subject=event.subject,
+                body=event.body,
+                email_id=event.email_id_replied_to,
+                attachments=event.attachments,
+                email_to=email_to,
+                email_cc=email_cc,
+                email_bcc=email_bcc,
+                role="assistant",
+            )
+            notif_content = f"Email sent to {', '.join(email_to[:2])}{'...' if len(email_to) > 2 else ''}"
+            cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
+            await cm.request_llm_run(delay=2)
+            return  # Early return - email handling is complete
+
         case EmailReceived():
-            medium = Medium.EMAIL
-            subject = event.subject
-            body = event.body
-            email_id = event.email_id
-            attachments = event.attachments
+            # Email handling is special: push to ALL contacts involved
+            email_to = event.to or []
+            email_cc = event.cc or []
+            email_bcc = event.bcc or []
+            _push_email_to_all_contacts(
+                cm=cm,
+                event=event,
+                sender_contact=contact,  # The contact who sent the email
+                sender_name=sender_name,
+                subject=event.subject,
+                body=event.body,
+                email_id=event.email_id,
+                attachments=event.attachments,
+                email_to=email_to,
+                email_cc=email_cc,
+                email_bcc=email_bcc,
+                role="user",
+            )
             notif_content = f"Email Received from {sender_name}"
-            role = "user"
+            cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
+            await cm.cancel_proactive_speech()
+            await cm.request_llm_run(delay=2)
+            return  # Early return - email handling is complete
+
         case UnifyMessageSent():
             medium = Medium.UNIFY_MESSAGE
             message_content = event.content
@@ -410,18 +615,17 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Unify message from {sender_name}"
             role = "user"
 
-    cm.contact_index.push_message(
-        contact_id=contact_id,
-        sender_name=sender_name,
-        thread_name=medium,
-        message_content=message_content,
-        subject=subject,
-        body=body,
-        email_id=email_id,
-        attachments=attachments,
-        timestamp=event.timestamp,
-        role=role,
-    )
+    # Non-email messages: push to single contact only
+    if contact_id is not None:
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=medium,
+            message_content=message_content,
+            attachments=attachments,
+            timestamp=event.timestamp,
+            role=role,
+        )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
     if role == "user":
@@ -447,6 +651,48 @@ async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwar
         f"Caching {len(event.contacts)} contacts from inbound",
     )
     cm.contact_index.set_fallback_contacts(event.contacts)
+
+
+@EventHandler.register(UnknownContactCreated)
+async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kwargs):
+    """
+    Handle new unknown contact creation from inbound messages.
+
+    When an inbound SMS, email, or call arrives from an unknown sender (not in
+    Contacts and not in BlackList), a minimal contact is automatically created
+    with should_respond=False. This event notifies the ConversationManager so
+    it can inform the boss and seek guidance on how to handle the contact.
+
+    The assistant should use its judgement to decide the best course of action:
+    - Inform the boss and ask for guidance
+    - If clearly spam, potentially blacklist the contact
+    - If legitimate, update contact details and enable responses
+    """
+    contact = event.contact
+    contact_name = (
+        contact.get("first_name")
+        or contact.get("phone_number")
+        or contact.get("email_address")
+        or "Unknown"
+    )
+
+    cm._session_logger.info(
+        "unknown_contact_created",
+        f"New unknown contact created: {contact_name} via {event.medium}",
+    )
+
+    # Push notification so the assistant is aware
+    notif_content = f"New unknown contact from {event.medium}: {contact_name}"
+    if event.message_preview:
+        notif_content += (
+            f" - '{event.message_preview[:50]}...'"
+            if len(event.message_preview) > 50
+            else f" - '{event.message_preview}'"
+        )
+    cm.notifications_bar.push_notif("contacts", notif_content, event.timestamp)
+
+    # Trigger LLM run so assistant can decide how to handle
+    await cm.request_llm_run(delay=2)
 
 
 @EventHandler.register((StartupEvent))
@@ -552,10 +798,14 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     action_query = action_data.get("query", f"Action {event.handle_id}")
     short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
 
+    # Pin action completion notifications so they persist across LLM runs.
+    # Action completions are FACTS about work done (not transient requests),
+    # and the CM should remember them until it communicates the result to the user.
     cm.notifications_bar.push_notif(
         "Action",
         f"Action completed: {short_desc}\nResult: {event.result}",
         event.timestamp,
+        pinned=True,
     )
     cm.in_flight_actions.pop(event.handle_id, None)
     await cm.request_llm_run()
@@ -660,49 +910,8 @@ async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(SummarizeContext)
 async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
-    if cm.memory_manager is None:
-        cm._session_logger.debug(
-            "summarize",
-            "SummarizeContext skipped (MemoryManager disabled)",
-        )
-        cm.is_summarizing = False
-        cm.chat_history = []
-        return
-
-    async def summarize_task():
-        # Build render data for each active conversation
-        render_data = []
-        for contact_id, conv_state in cm.contact_index.active_conversations.items():
-            contact_info = cm.contact_index.get_contact(contact_id) or {}
-            rendered = cm.prompt_renderer.render_contact(
-                contact_info=contact_info,
-                conv_state=conv_state,
-                max_messages=25,
-                last_snapshot=cm.last_snapshot,
-            )
-            render_data.append((contact_id, rendered))
-
-        tasks = [
-            asyncio.create_task(
-                cm.memory_manager.update_contact_rolling_summary(
-                    rendered,
-                    contact_id=cid,
-                ),
-            )
-            for cid, rendered in render_data
-        ]
-        try:
-            await asyncio.gather(*tasks)
-            cm.is_summarizing = False
-            cm.chat_history = []
-            cm._session_logger.info("summarize", "Contact rolling summary updated")
-        except Exception as e:
-            cm._session_logger.error(
-                "summarize",
-                f"Error updating rolling summary: {e}",
-            )
-
-    asyncio.create_task(summarize_task())
+    # Use queue_operation to ensure managers are initialized before running
+    await managers_utils.queue_operation(managers_utils.update_rolling_summaries, cm)
 
 
 @EventHandler.register(DirectMessageEvent)

@@ -53,7 +53,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
     def __init__(
         self,
-        task_description: str,
+        task_description: str | dict | list[str | dict],
         tools: Dict[str, Callable[..., Awaitable[Any]]],
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -240,7 +240,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
                 self._state = _HandleState.RUNNING
                 logger.info(
-                    f"Handle {self._task_id}: Starting/Resuming with: '{current_task_description}'",
+                    f"Handle {self._task_id}: Starting/Resuming with: {current_task_description!r}",
                 )
 
                 self._client.reset_messages()
@@ -266,7 +266,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
                     tool_policy=self._tool_policy,
-                    images=self._images,
                     response_format=self._response_format,
                     persist=bool(self._persist),
                     preprocess_msgs=self._preprocess_msgs,
@@ -473,8 +472,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
     async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
@@ -498,13 +495,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            try:
-                self._loop_handle.stop(
-                    reason,
-                    parent_chat_context_cont=parent_chat_context_cont,
-                )
-            except Exception:
-                self._loop_handle.stop(reason)
+            self._loop_handle.stop(reason)
         elif (
             previous_state == _HandleState.IDLE and not self._completion_event.is_set()
         ):
@@ -569,8 +560,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> str:
         if not self._is_valid_method("interject"):
             if self.done():
@@ -595,8 +585,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         try:
             await self._loop_handle.interject(
                 message=message,
-                parent_chat_context_cont=parent_chat_context_cont,
-                images=images,
+                _parent_chat_context_cont=_parent_chat_context_cont,
             )
         except TypeError:
             await self._loop_handle.interject(message)
@@ -619,7 +608,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
 
         system_message = f"""
         You are an AI assistant in the middle of performing a task. The user has just asked a question.
-        Based on the provided context (the task history and a screenshot of your browser), give a brief, natural, first-person response.
+        Based on the provided context (the task history and a screenshot of your current computer view), give a brief, natural, first-person response.
         Speak as if you are the one doing the work (e.g., "I'm currently looking for...").
         **Task History:**
         The task's history up to this point has been shared with you.
@@ -642,8 +631,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
 
                 system_message += (
-                    "\n**Current Browser View (Screenshot):**\n"
-                    "An image of the current browser page has also been provided."
+                    "\n**Current Computer View (Screenshot):**\n"
+                    "An image of the current computer view has also been provided."
                 )
                 messages_to_send.append(
                     {

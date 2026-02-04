@@ -250,7 +250,7 @@ class TestSendEmailViaAddress:
             }
 
             result = await comms_utils.send_email_via_address(
-                to_email="user@example.com",
+                to=["user@example.com"],
                 subject="Report",
                 body="Please see attached.",
                 attachment=attachment,
@@ -261,3 +261,48 @@ class TestSendEmailViaAddress:
             # Verify attachment was included in the request
             call_args = mock_session.post.call_args
             assert call_args.kwargs["json"]["attachment"] == attachment
+
+    @pytest.mark.asyncio
+    async def test_send_with_cc_and_bcc(self):
+        """Sends email with cc and bcc recipients."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(
+            return_value={"success": True, "id": "email-123"},
+        )
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(
+            return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_response)),
+        )
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SESSION_DETAILS",
+            ) as mock_session_details,
+            patch(
+                "unity.conversation_manager.domains.comms_utils.SETTINGS",
+            ) as mock_settings,
+        ):
+            mock_session_details.assistant.email = "assistant@test.com"
+            mock_settings.conversation.COMMS_URL = "http://localhost:8080"
+
+            result = await comms_utils.send_email_via_address(
+                to=["user@example.com"],
+                cc=["cc1@example.com", "cc2@example.com"],
+                bcc=["bcc@example.com"],
+                subject="Team Update",
+                body="Here's the update.",
+            )
+
+            assert result["success"] is True
+
+            # Verify cc and bcc were included in the request
+            call_args = mock_session.post.call_args
+            payload = call_args.kwargs["json"]
+            assert payload["to"] == ["user@example.com"]
+            assert payload["cc"] == ["cc1@example.com", "cc2@example.com"]
+            assert payload["bcc"] == ["bcc@example.com"]

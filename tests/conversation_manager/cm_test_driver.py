@@ -105,9 +105,8 @@ class CMStepDriver:
                 evt = None
             if evt is not None:
                 published_events.append(evt)
-            if publish:
-                return await original_publish(channel, message)
-            return 0
+            # Always forward to real broker so actor lifecycle events work correctly.
+            return await original_publish(channel, message)
 
         step_requests: list[tuple[float, bool]] = []
         token = _step_llm_requests.set(step_requests)
@@ -222,9 +221,8 @@ class CMStepDriver:
                     self._cm,
                     is_voice_call=self._cm.call_manager.uses_realtime_api,
                 )
-            if publish:
-                return await original_publish(channel, message)
-            return 0
+            # Always forward to real broker so actor lifecycle events work correctly.
+            return await original_publish(channel, message)
 
         step_requests: list[tuple[float, bool]] = []
         token = _step_llm_requests.set(step_requests)

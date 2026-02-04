@@ -19,7 +19,7 @@ inspecting `@abstractmethod` definitions on base classes, minus an explicit
 exclusion set for non-primitive methods like `clear()`.
 
 This module provides:
-- `ComputerPrimitives` - Computer use (browser/desktop) control and reasoning capabilities
+- `ComputerPrimitives` - Computer use (web/desktop) control and reasoning capabilities
 - `Primitives` - Runtime interface for accessing all primitives from executed functions
 - Registry functions for syncing primitives to the database
 """
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# ComputerPrimitives - Computer Use (Browser/Desktop) Control
+# ComputerPrimitives - Computer Use (Web/Desktop) Control
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -83,7 +83,7 @@ class ComputerPrimitives:
         self,
         headless: bool = False,
         computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
         *,
         connect_now: bool = False,
@@ -146,6 +146,11 @@ class ComputerPrimitives:
 
         def _make_lazy_wrapper(method_name: str, backend_class):
             async def wrapper(*args, **kwargs):
+                # Internal-only kwargs may be injected by environment wrappers (e.g.
+                # clarification queue propagation). Backend implementations (notably
+                # MagnitudeBackend) do not accept these, so strip them here.
+                kwargs.pop("_clarification_up_q", None)
+                kwargs.pop("_clarification_down_q", None)
                 backend_method = getattr(self.computer.backend, method_name)
                 return await backend_method(*args, **kwargs)
 
@@ -1022,7 +1027,7 @@ class Primitives:
 
     All imports and instantiations are lazy - only the primitives actually
     accessed by a function are loaded. This means a function that only uses
-    contacts and transcripts will NOT import or initialize the browser/desktop
+    contacts and transcripts will NOT import or initialize the web/desktop
     infrastructure.
 
     All state managers are obtained via ManagerRegistry typed methods
@@ -1038,7 +1043,7 @@ class Primitives:
             # Only ContactManager is imported/initialized
             await primitives.contacts.update(text="Add Alice")
 
-            # Only if accessed: browser/desktop infrastructure loaded
+            # Only if accessed: web/desktop infrastructure loaded
             await primitives.computer.navigate("https://example.com")
 
             # Sync managers are wrapped - use await for consistency
@@ -1155,9 +1160,9 @@ class Primitives:
         """
         Computer use primitives (navigate, act, observe, query, reason).
 
-        This provides browser and desktop control capabilities. Only imported
+        This provides web and desktop control capabilities. Only imported
         and initialized when actually accessed, so functions that don't need
-        computer use won't load browser/desktop infrastructure.
+        computer use won't load web/desktop infrastructure.
         """
         if self._computer is None:
             self._computer = ComputerPrimitives()

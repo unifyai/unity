@@ -174,11 +174,11 @@ watch_tests
 watch_tests                    # Look for f ❌ prefix
 
 # Attach to see full output
-attach 'f ❌ test_contact_manager-test_ask'
+attach 'f ❌ contact_manager-test_ask'
 
 # Or check the log file
 ls logs/pytest/*/             # Find the run directory
-cat logs/pytest/2025-12-05T14-30-22_unity_dev_ttys042/test_contact_manager-test_ask.txt
+cat logs/pytest/2025-12-05T14-30-22_unity_dev_ttys042/contact_manager-test_ask.txt
 ```
 
 ### Clean up after tests

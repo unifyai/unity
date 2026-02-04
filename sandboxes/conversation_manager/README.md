@@ -6,7 +6,7 @@ This folder contains an **interactive playground** for the `ConversationManager`
 ## Quick start
 
 ```bash
-# REPL (default) — simulated comms, SimulatedActor, no external infrastructure needed
+# REPL (default) — prompts for actor config; no external infrastructure needed for mode 1/2
 python -m sandboxes.conversation_manager.sandbox --project_name Sandbox --overwrite
 
 # REPL + voice (optional) — enables `sayv` (voice phone utterances) and TTS for phone responses
@@ -19,18 +19,40 @@ python -m sandboxes.conversation_manager.sandbox --gui --project_name Sandbox --
 python -m sandboxes.conversation_manager.sandbox --real-comms --project_name Sandbox --overwrite
 ```
 
-## Modes
+## Loom walkthrough
 
-### Simulated mode (default)
-- No real SMS/emails/calls
-- Uses `SimulatedActor` (no real Actor/browser)
-- No external comms infrastructure required
+https://www.loom.com/share/44171c4c1aa2475abd539d1251e1baab
+
+## Actor configurations (modes)
+
+On startup, the sandbox prompts you to select one of three configurations (and remembers the last-used choice in a project-local file):
+
+- **Mode 1 — `SandboxSimulatedActor`**: simulated managers, **no computer interface**
+- **Mode 2 — `CodeActActor + simulated managers`**: mock computer backend (no agent-service)
+- **Mode 3 — `CodeActActor + real managers + real computer interface`**: uses **agent-service** (Magnitude) + real state managers
+
+Configuration persistence:
+- Saved to **`.cm_sandbox_config`** in the repo root (gitignored).
+- You can switch configs at runtime via the `config` command (restarts sandbox).
 
 ### Real-comms mode (`--real-comms`)
 - Comms are **real** (SMS/email/calls) via `CommsManager`
 - Sandbox applies a **confirmation prompt** before any outbound action
 - Requires backend infrastructure + correct session/env configuration
 - **REPL only** (GUI is simulated-only)
+
+## Computer integration (Mode 3)
+
+- The Magnitude agent runs in a **separate Chromium instance** (agent-service).
+- The GUI “Computer” tab shows:
+  - last known URL (best-effort)
+  - recent computer actions (navigate/act/observe/query)
+
+Relevant flags:
+- `--agent-server-url http://localhost:3000`
+- `--agent-mode web` (or `desktop`)
+- `--headless` (launch Chromium headless)
+- `--agent-service-bootstrap guide|auto` (help with setup; `auto` can install/build/start best-effort)
 
 ## Command reference (REPL + GUI command bar)
 
@@ -39,6 +61,7 @@ python -m sandboxes.conversation_manager.sandbox --real-comms --project_name San
 - `quit` / `exit`: exit sandbox
 - `reset`: clear sandbox + CM state (best-effort)
 - `save_project` / `sp`: snapshot the Unify project
+- `config`: switch actor configuration (restarts sandbox; state is reset)
 
 ### Event simulation (inbound → CM)
 - `sms <message>`
@@ -97,6 +120,17 @@ You can bypass prompts with `--auto-confirm` (dangerous; use only for controlled
 
 See `sandboxes/conversation_manager/examples.md`.
 
+## Trace / tree / logs (CodeAct UX helpers)
+
+These are intended for debugging and “execution visibility” in Mode 2/3:
+
+- `trace [N]`: show last N CodeAct execution turns (default 3)
+- `tree`: show the current manager call hierarchy (EventBus `ManagerMethod` events)
+- `show_logs <cm|actor|manager|all>` / `collapse_logs <...>`: expand/collapse log categories
+
+CLI:
+- `--show-trace`: auto-print trace after each CodeAct code turn (REPL only)
+
 ## Troubleshooting
 
 ### “(no active conversation) Steering commands…”
@@ -108,8 +142,15 @@ Scenario seeding is idle-only. Use `/stop` or wait for the active action to comp
 ### Real-comms mode fails to start
 Real-comms requires backend infrastructure and correct env/session configuration. Check your `.env` / `SESSION_DETAILS` settings and comms deployment.
 
-### “Provider List: https://docs.litellm.ai/docs/providers”
-This is emitted by Litellm when provider config is missing/mismatched. Ensure your LLM credentials/config are set for local runs.
+### Mode 3 fails validation (“agent-service is not running or unreachable”)
+Mode 3 requires:
+- `agent-service` running and reachable at `--agent-server-url`
+- `UNIFY_KEY` set (agent-service uses it for auth)
+
+If you’re on a fresh install and don’t have Magnitude set up yet:
+- See `sandboxes/actor/README.md` → “Magnitude Agent Service Setup” (step-by-step)
+- The sandbox can also print setup instructions (default) and can *attempt* auto-bootstrap with:
+  - `--agent-service-bootstrap auto`
 
 ## Other entrypoints
 
@@ -129,3 +170,25 @@ This sandbox provides:
 - Dual-mode steering (Actor handle + brain-run best-effort)
 - Scenario seeding (`us`, `usv`)
 - Real-comms mode with safety prompts (`--real-comms`)
+
+## Example: CodeAct + real managers + browser (GUI)
+
+Start the sandbox in GUI mode with agent-service wired up:
+
+```bash
+python -m sandboxes.conversation_manager.sandbox \
+  --gui \
+  --voice \
+  --project_name Sandbox \
+  --overwrite \
+  --agent-server-url http://localhost:3000 \
+  --agent-mode web
+```
+
+Then, in the command bar, try an end-to-end request (Mode 3):
+
+```text
+sms Can you find OpenAI's careers page, check if there’s a “Backend Engineer” role open, and if so create a task for me called “Apply to OpenAI” with the role URL in the description?
+```
+
+Tip: add `--headless` if you don’t want a visible Chromium window.

@@ -29,7 +29,7 @@ First, ensure you have the necessary setup:
 1.  **Environment Variables**: Create a `.env` file in the project root with your `OPENAI_API_KEY`. Optionally set `UNIFY_MODEL` to override the default LLM model.
 2.  **Redis**: Make sure a Redis server is running on `localhost:6379`.
 3.  **Dependencies**: Install all required packages (`pip install -r requirements.txt`).
-4.  **Playwright**: Install browser binaries with `playwright install`.
+4.  **Playwright**: Install automation binaries with `playwright install`.
 
 ### Run the HierarchicalActor
 
@@ -56,7 +56,7 @@ if not root_logger.handlers:
 
 
 async def main():
-    """Initializes and runs the HierarchicalActor for a browser task."""
+    """Initializes and runs the HierarchicalActor for a web task."""
     unify.activate("hp_demo")
 
     actor = HierarchicalActor(headless=True)

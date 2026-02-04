@@ -298,7 +298,7 @@ async def test_stop():
     handle = await tm.ask(
         "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
     )
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done()
 
@@ -439,8 +439,12 @@ async def test_clarification_request(
         pass
 
     # ── 5.  Initial step roles ─────────────────────────
+    # steps[0] = "IMPORTANT: You MUST call a tool" system message (from preprocessing)
+    # steps[1] = main TranscriptManager system prompt
+    # steps[2] = user message
     assert steps[0]["role"] == "system"
-    assert steps[1]["role"] == "user"
+    assert steps[1]["role"] == "system"
+    assert steps[2]["role"] == "user"
 
     # ── 6.  Assistant responds ─────────────────────────
     assert steps[-1]["role"] == "assistant"

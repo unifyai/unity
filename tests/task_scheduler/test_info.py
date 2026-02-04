@@ -178,7 +178,7 @@ async def test_summary_on_stop_defer(monkeypatch):
     await asyncio.sleep(0.1)
 
     stop_reason = "Stopping to defer"
-    handle.stop(cancel=False, reason=stop_reason)
+    await handle.stop(cancel=False, reason=stop_reason)
 
     while not handle.done():
         await asyncio.sleep(0.01)
@@ -287,7 +287,7 @@ async def test_summary_on_stop_cancel(monkeypatch):
 
     # Stop the task (cancel) – triggers background summary saving
     stop_reason = "Cancelling explicitly"
-    handle.stop(cancel=True, reason=stop_reason)
+    await handle.stop(cancel=True, reason=stop_reason)
 
     # Wait for the handle to finish
     while not handle.done():

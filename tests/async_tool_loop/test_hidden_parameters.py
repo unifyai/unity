@@ -113,86 +113,7 @@ def test_hidden_parameters_are_removed_from_schema_and_docs(fn) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Test that parent_chat_context_cont is hidden from steering methods       #
-# --------------------------------------------------------------------------- #
-def test_parent_chat_context_cont_hidden_from_steering_methods() -> None:
-    """
-    The parent_chat_context_cont parameter (plumbing for context propagation)
-    must be hidden from LLM tool schemas because it's automatically injected
-    by the orchestrating code layer, not supplied by the LLM.
-
-    This parameter is hidden via an explicit list in method_to_schema, not by
-    underscore prefix convention.
-    """
-    from typing import Optional
-    from unity.image_manager.types.image_refs import ImageRefs
-
-    # Simulate a steering method with parent_chat_context_cont
-    async def interject(
-        message: str,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: Optional[ImageRefs] = None,
-    ) -> str:
-        """Provide additional information or instructions to the running task.
-
-        Parameters
-        ----------
-        message : str
-            The user interjection to inject into the loop.
-        images : ImageRefs | None, optional
-            Live image references to make available during this interjection.
-        """
-        return "ok"
-
-    schema = llmh.method_to_schema(interject)
-    props = schema["function"]["parameters"]["properties"]
-    required = schema["function"]["parameters"]["required"]
-    desc = schema["function"]["description"]
-
-    # parent_chat_context_cont MUST be hidden (via explicit list)
-    assert "parent_chat_context_cont" not in props
-    assert "parent_chat_context_cont" not in required
-    assert "parent_chat_context_cont" not in desc
-
-    # message and images SHOULD be visible
-    assert "message" in props
-    assert "message" in required
-    assert "images" in props
-
-
-def test_steering_method_images_type_is_schema_safe() -> None:
-    """
-    The images parameter should use Optional[ImageRefs] which produces a valid
-    strict JSON schema, not list | dict | None which fails strict validation.
-    """
-    from typing import Optional
-    from unity.image_manager.types.image_refs import ImageRefs
-
-    async def interject(
-        message: str,
-        *,
-        images: Optional[ImageRefs] = None,
-    ) -> str:
-        """Interject with images."""
-        return "ok"
-
-    schema = llmh.method_to_schema(interject)
-    props = schema["function"]["parameters"]["properties"]
-
-    # The images property should exist and have a valid schema
-    assert "images" in props
-    images_schema = props["images"]
-
-    # Should NOT be a bare {"type": "array"} without items
-    # Should NOT be an anyOf union (which strict mode rejects)
-    # ImageRefs produces a proper JSON schema with $defs and items
-    assert images_schema.get("type") != "array" or "items" in images_schema
-    assert "anyOf" not in images_schema
-
-
-# --------------------------------------------------------------------------- #
-# 5. Test DynamicToolFactory adopts handle signatures without hardcoding      #
+# 4. Test DynamicToolFactory adopts handle signatures without hardcoding      #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_dynamic_factory_adopts_custom_interject_args() -> None:
@@ -202,13 +123,11 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
     handle defines, rather than hardcoding a fixed set of params.
     """
     from contextlib import suppress
-    from typing import Optional
 
     from unity.common.async_tool_loop import SteerableToolHandle
     from unity.common._async_tool.tools_data import ToolsData
     from unity.common._async_tool.tools_utils import ToolCallMetadata
     from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
-    from unity.image_manager.types.image_refs import ImageRefs
 
     class CustomInterjectHandle(SteerableToolHandle):
         """Handle with custom interject parameters."""
@@ -222,8 +141,7 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
             *,
             priority: int = 1,
             category: str = "general",
-            parent_chat_context_cont: list[dict] | None = None,
-            images: Optional[ImageRefs] = None,
+            _parent_chat_context_cont: list[dict] | None = None,
         ) -> str:
             """Custom interject with priority and category.
 
@@ -235,8 +153,6 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
                 Priority level (1-5).
             category : str
                 Category for routing.
-            images : ImageRefs | None
-                Optional images.
             """
             return "ok"
 
@@ -326,178 +242,8 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
     # message SHOULD be visible (either from handle or content alias)
     assert "message" in props or "content" in props
 
-    # parent_chat_context_cont MUST be hidden (via explicit list)
-    assert "parent_chat_context_cont" not in props
-
-    # images SHOULD be visible
-    assert "images" in props
-
-    with suppress(BaseException):
-        pending_task.cancel()
-        await pending_task
-
-
-# --------------------------------------------------------------------------- #
-# 6. Test parity between parent_chat_context_cont and images across methods   #
-# --------------------------------------------------------------------------- #
-def test_steering_methods_have_parity_for_plumbing_and_images() -> None:
-    """
-    Verify that ask, interject, and stop all have both parent_chat_context_cont
-    (hidden plumbing via explicit list) and images (visible) parameters for full parity.
-    """
-    from unity.common.async_tool_loop import SteerableHandle, SteerableToolHandle
-    import inspect
-
-    # Check SteerableHandle.ask
-    ask_sig = inspect.signature(SteerableHandle.ask)
-    ask_params = set(ask_sig.parameters.keys()) - {"self"}
-    assert (
-        "parent_chat_context_cont" in ask_params
-    ), "ask should have parent_chat_context_cont"
-    assert "images" in ask_params, "ask should have images"
-
-    # Check SteerableHandle.interject
-    interject_sig = inspect.signature(SteerableHandle.interject)
-    interject_params = set(interject_sig.parameters.keys()) - {"self"}
-    assert (
-        "parent_chat_context_cont" in interject_params
-    ), "interject should have parent_chat_context_cont"
-    assert "images" in interject_params, "interject should have images"
-
-    # Check SteerableToolHandle.stop
-    stop_sig = inspect.signature(SteerableToolHandle.stop)
-    stop_params = set(stop_sig.parameters.keys()) - {"self"}
-    assert (
-        "parent_chat_context_cont" in stop_params
-    ), "stop should have parent_chat_context_cont"
-    assert "images" in stop_params, "stop should have images"
-
-
-@pytest.mark.asyncio
-async def test_dynamic_factory_stop_tool_has_images_from_handle() -> None:
-    """
-    Verify that the stop tool generated by DynamicToolFactory has the images
-    parameter from the handle's native signature (not from post-processing).
-    """
-    from contextlib import suppress
-    from typing import Optional
-
-    from unity.common.async_tool_loop import SteerableToolHandle
-    from unity.common._async_tool.tools_data import ToolsData
-    from unity.common._async_tool.tools_utils import ToolCallMetadata
-    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
-    from unity.image_manager.types.image_refs import ImageRefs
-
-    class HandleWithStopImages(SteerableToolHandle):
-        """Handle with stop() that includes images natively."""
-
-        def __init__(self) -> None:
-            pass
-
-        def stop(
-            self,
-            reason: Optional[str] = None,
-            *,
-            parent_chat_context_cont: list[dict] | None = None,
-            images: Optional[ImageRefs] = None,
-        ) -> str:
-            """Stop with images.
-
-            Parameters
-            ----------
-            reason : str | None
-                Reason for stopping.
-            images : ImageRefs | None
-                Images to attach.
-            """
-            return "stopped"
-
-        async def ask(self, q: str, **kw):
-            return self
-
-        async def interject(self, m: str, **kw):
-            return None
-
-        async def pause(self):
-            return "paused"
-
-        async def resume(self):
-            return "resumed"
-
-        def done(self):
-            return True
-
-        async def result(self):
-            return "ok"
-
-        async def next_clarification(self):
-            return {}
-
-        async def next_notification(self):
-            return {}
-
-        async def answer_clarification(self, cid, ans):
-            pass
-
-    class _DummyLogger:
-        log_steps = False
-
-        def info(self, *a, **kw): ...
-        def error(self, *a, **kw): ...
-
-    class _DummyClient:
-        def __init__(self):
-            self.messages = []
-
-    tools_data = ToolsData({}, client=_DummyClient(), logger=_DummyLogger())
-    pending_task = asyncio.create_task(asyncio.sleep(10))
-
-    meta = ToolCallMetadata(
-        name="stop_test_tool",
-        call_id="call_789",
-        call_dict={
-            "id": "call_789",
-            "function": {"name": "stop_test", "arguments": "{}"},
-        },
-        call_idx=0,
-        chat_context=None,
-        assistant_msg={},
-        is_interjectable=False,
-        tool_schema={},
-        llm_arguments={},
-        raw_arguments_json="{}",
-        handle=HandleWithStopImages(),
-        interject_queue=None,
-        clar_up_queue=None,
-        clar_down_queue=None,
-        notification_queue=None,
-        pause_event=None,
-    )
-    tools_data.save_task(pending_task, meta)
-
-    factory = DynamicToolFactory(tools_data)
-    factory.generate()
-
-    # Find the stop tool
-    stop_keys = [k for k in factory.dynamic_tools.keys() if k.startswith("stop_")]
-    assert stop_keys, "Expected stop helper to be generated"
-
-    helper = factory.dynamic_tools[stop_keys[0]]
-    schema = llmh.method_to_schema(helper, include_class_name=False)
-    props = schema["function"]["parameters"]["properties"]
-
-    # images SHOULD be visible (from handle's native signature, not post-processing)
-    assert (
-        "images" in props
-    ), f"Expected 'images' in stop schema, got: {list(props.keys())}"
-
-    # reason SHOULD be visible
-    assert (
-        "reason" in props
-    ), f"Expected 'reason' in stop schema, got: {list(props.keys())}"
-
-    # parent_chat_context_cont MUST be hidden (via explicit list)
-    assert "parent_chat_context_cont" not in props
+    # _parent_chat_context_cont MUST be hidden (via explicit list)
+    assert "_parent_chat_context_cont" not in props
 
     with suppress(BaseException):
         pending_task.cancel()

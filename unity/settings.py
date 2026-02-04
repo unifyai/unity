@@ -80,7 +80,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_BASE_URL: str = "https://api.unify.ai/v0"
+    ORCHESTRA_URL: str = "https://api.unify.ai/v0"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging / Observability
@@ -90,6 +90,14 @@ class ProductionSettings(BaseSettings):
     # When set, logs are written to {UNITY_LOG_DIR}/unity.log
     # Default: None (console only)
     UNITY_LOG_DIR: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EventBus Publishing
+    # ─────────────────────────────────────────────────────────────────────────
+    # Controls whether EventBus publishes events (logging to Unify and local
+    # subscriptions/callbacks). Disabled by default for local development to
+    # reduce noise. Enable in production deployments.
+    EVENTBUS_PUBLISHING_ENABLED: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # OpenTelemetry Tracing
@@ -178,6 +186,7 @@ class ProductionSettings(BaseSettings):
     @field_validator(
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",
+        "EVENTBUS_PUBLISHING_ENABLED",
         "PYTEST_LOG_TO_FILE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",

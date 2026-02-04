@@ -220,7 +220,7 @@ async def run_cm_until_wait(
     events (e.g., ActorResult) request another LLM turn.
 
     Returns:
-        Output events emitted during these LLM steps (e.g., SMSSent).
+        Output events emitted during these LLM steps (e.g., SMSSent, ActorHandleStarted).
     """
     cm = cm_driver.cm
     output_events: list[Event] = []
@@ -239,10 +239,11 @@ async def run_cm_until_wait(
                 EmailSent,
                 UnifyMessageSent,
                 PhoneCallSent,
+                ActorHandleStarted,
             ),
         ):
             output_events.append(evt)
-        # Handle locally for deterministic state updates; do not forward to broker.
+        # Handle locally for deterministic state updates.
         if evt is not None:
             from unity.conversation_manager.domains.event_handlers import EventHandler
 
@@ -251,7 +252,8 @@ async def run_cm_until_wait(
                 cm,
                 is_voice_call=cm.call_manager.uses_realtime_api,
             )
-        return 0
+        # Forward to real broker so actor lifecycle events work correctly.
+        return await original_publish(channel, message)
 
     # Patch request_llm_run so "requested turns" don't escape into background debouncers.
     original_request = cm.request_llm_run
@@ -274,6 +276,72 @@ async def run_cm_until_wait(
     finally:
         cm.event_broker.publish = original_publish
         cm.request_llm_run = original_request
+
+
+# ---------------------------------------------------------------------------
+# Multi-actor serial execution helper
+# ---------------------------------------------------------------------------
+
+
+async def run_until_all_actors_complete(
+    cm_driver: Any,
+    initial_result: Any,
+    *,
+    timeout_per_actor: float = 90.0,
+    max_actors: int = 10,
+    max_cm_steps: int = 10,
+) -> list[str]:
+    """
+    Run CM until it calls `wait` with zero in-flight actors.
+
+    Some compound user instructions may be broken into multiple serial actor calls
+    (e.g., "read file and create task" → actor1: read file, actor2: create task).
+    This helper loops until CM calls `wait` with no pending actors, waiting for
+    each actor to complete and injecting results back to CM.
+
+    Args:
+        cm_driver: The CMStepDriver instance.
+        initial_result: The StepResult from the initial step_until_wait() call.
+        timeout_per_actor: Timeout for each individual actor completion.
+        max_actors: Safety limit on number of actor calls to prevent infinite loops.
+        max_cm_steps: Max CM brain steps between actor completions.
+
+    Returns:
+        List of actor result strings from each completed actor.
+    """
+    results: list[str] = []
+    current_events = initial_result.output_events
+
+    for _ in range(max_actors):
+        # Check if an actor was started in this round
+        actor_events = filter_events_by_type(current_events, ActorHandleStarted)
+        if not actor_events:
+            # No actor started, CM is done with actor work
+            break
+
+        handle_id = actor_events[0].handle_id
+
+        # Wait for actor to complete
+        final = await wait_for_actor_completion(
+            cm_driver,
+            handle_id,
+            timeout=timeout_per_actor,
+        )
+        results.append(final)
+
+        # Inject result back to CM so it can observe completion
+        await inject_actor_result(
+            cm_driver,
+            handle_id=handle_id,
+            result=final,
+            success=True,
+        )
+
+        # Let CM continue - it may start another actor
+        followup_events = await run_cm_until_wait(cm_driver, max_steps=max_cm_steps)
+        current_events = followup_events
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +469,9 @@ def verify_task_in_db(
     ), f"Expected exactly 1 task row for task_id={task_id}, got {len(logs) if logs else 0}"
     row = logs[0].entries or {}
     for k, v in expected_fields.items():
+        # Use ... (Ellipsis) to fetch a field without asserting its value
+        if v is ...:
+            continue
         assert (
             row.get(k) == v
         ), f"Task {task_id} field {k!r}: expected {v!r}, got {row.get(k)!r}"

@@ -319,7 +319,7 @@ async def test_modify_task_skips_course_correction_when_disabled():
 
         await actor._prepare_execution_environment(active_task)
         active_task._restart_execution_loop = lambda *args, **kwargs: None  # type: ignore[method-assign]
-        active_task._clear_browser_queue_for_run = AsyncMock(return_value=None)
+        active_task._clear_computer_queue_for_run = AsyncMock(return_value=None)
 
         key_valid = (("main_plan",), (), (), 1, "computer_primitives.act", "valid")
         key_invalid = (

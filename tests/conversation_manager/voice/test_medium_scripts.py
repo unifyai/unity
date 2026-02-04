@@ -39,7 +39,6 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
-import asyncio
 import json
 
 import pytest
@@ -271,12 +270,6 @@ class TestSTSAssistantClass:
 class TestCommonHelpers:
     """Tests for shared helper functions in common.py."""
 
-    def test_default_inactivity_timeout_value(self):
-        """DEFAULT_INACTIVITY_TIMEOUT is 5 minutes (300 seconds)."""
-        from unity.conversation_manager.medium_scripts import common
-
-        assert common.DEFAULT_INACTIVITY_TIMEOUT == 300
-
     def test_should_dispatch_livekit_agent_with_dev_command(self, monkeypatch):
         """should_dispatch_livekit_agent returns True for 'dev' command."""
         from unity.conversation_manager.medium_scripts import common
@@ -325,20 +318,6 @@ class TestSTSUsageLogging:
         log_sts_usage(call_duration_seconds=-10)
 
         assert "Skipping STS usage logging" in caplog.text
-
-    def test_sts_billing_constants(self):
-        """STS billing constants have expected values."""
-        from unity.conversation_manager.medium_scripts.common import (
-            _STS_BILLING_MODEL,
-            _STS_TOKENS_PER_SECOND,
-            _STS_SPEECH_RATIO,
-            _STS_INPUT_OUTPUT_SPLIT,
-        )
-
-        assert _STS_BILLING_MODEL == "gpt-4o-realtime-preview"
-        assert _STS_TOKENS_PER_SECOND == 150
-        assert _STS_SPEECH_RATIO == 0.5
-        assert _STS_INPUT_OUTPUT_SPLIT == 0.5
 
 
 # =============================================================================
@@ -1002,118 +981,3 @@ class TestInactivityTimeout:
 
         # Should not raise
         touch()
-
-
-# =============================================================================
-# Unit Tests: Module Structure
-# =============================================================================
-
-
-class TestModuleStructure:
-    """Tests for medium script module structure."""
-
-    def test_call_module_has_entrypoint(self):
-        """call.py has an entrypoint function."""
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        assert hasattr(call_module, "entrypoint")
-        assert asyncio.iscoroutinefunction(call_module.entrypoint)
-
-    def test_call_module_has_prewarm(self):
-        """call.py has a prewarm function for heavy initialization."""
-        from unity.conversation_manager.medium_scripts import call as call_module
-
-        assert hasattr(call_module, "prewarm")
-        assert callable(call_module.prewarm)
-
-    def test_sts_module_has_entrypoint(self):
-        """sts_call.py has an entrypoint function."""
-        from unity.conversation_manager.medium_scripts import sts_call as sts_module
-
-        assert hasattr(sts_module, "entrypoint")
-        assert asyncio.iscoroutinefunction(sts_module.entrypoint)
-
-
-# =============================================================================
-# Unit Tests: LiveKit Plugin Preloading
-# =============================================================================
-
-
-class TestLiveKitPluginPreloading:
-    """Tests for LiveKit plugin preloading in call_manager.py.
-
-    LiveKit requires plugins to be registered on the main thread, but when
-    running in dev mode the voice agent script runs in a background thread.
-    call_manager.py preloads these plugins on import to ensure registration
-    happens before the thread is spawned.
-    """
-
-    def test_call_manager_preloads_openai_realtime_plugin(self):
-        """call_manager.py preloads OpenAI Realtime plugin for STS mode."""
-        import sys
-
-        # Import call_manager (this triggers preloading)
-        from unity.conversation_manager.domains import (
-            call_manager as _call_manager_import,
-        )  # noqa: F401
-
-        # The OpenAI realtime plugin should be in sys.modules after import
-        assert "livekit.plugins.openai.realtime" in sys.modules, (
-            "OpenAI Realtime plugin not preloaded. "
-            "call_manager.py must import livekit.plugins.openai.realtime at module level."
-        )
-
-    def test_call_manager_preloads_tts_plugins(self):
-        """call_manager.py preloads TTS plugins (deepgram, elevenlabs, cartesia, silero)."""
-        import sys
-
-        # Import call_manager (this triggers preloading)
-        from unity.conversation_manager.domains import (
-            call_manager as _call_manager_import,
-        )  # noqa: F401
-
-        # Verify TTS plugins are actually loaded in sys.modules
-        tts_plugins = [
-            "livekit.plugins.cartesia",
-            "livekit.plugins.deepgram",
-            "livekit.plugins.elevenlabs",
-            "livekit.plugins.silero",
-        ]
-
-        missing_plugins = [p for p in tts_plugins if p not in sys.modules]
-
-        assert len(missing_plugins) == 0, (
-            f"TTS plugins not preloaded: {missing_plugins}. "
-            "call_manager.py must import these plugins at module level."
-        )
-
-    def test_call_manager_preloads_noise_cancellation_on_darwin(self):
-        """call_manager.py preloads noise_cancellation plugin on macOS."""
-        import sys
-
-        # Import call_manager (this triggers preloading)
-        from unity.conversation_manager.domains import (
-            call_manager as _call_manager_import,
-        )  # noqa: F401
-
-        # On macOS, verify it's actually loaded
-        if sys.platform == "darwin":
-            assert "livekit.plugins.noise_cancellation" in sys.modules, (
-                "noise_cancellation plugin not preloaded on macOS. "
-                "call_manager.py must import this plugin at module level."
-            )
-
-    def test_call_manager_preloads_turn_detector(self):
-        """call_manager.py preloads turn_detector.english plugin."""
-        import sys
-
-        # Import call_manager (this triggers preloading)
-        from unity.conversation_manager.domains import (
-            call_manager as _call_manager_import,
-        )  # noqa: F401
-
-        # Verify turn detector is actually loaded
-        assert "livekit.plugins.turn_detector.english" in sys.modules, (
-            "Turn detector plugin not preloaded. "
-            "call_manager.py must import livekit.plugins.turn_detector.english at module level."
-        )

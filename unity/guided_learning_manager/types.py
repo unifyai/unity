@@ -10,7 +10,7 @@ from typing import List, Optional, TYPE_CHECKING
 from unity.image_manager.image_manager import ImageHandle
 
 if TYPE_CHECKING:
-    from unity.image_manager.types import AnnotatedImageRef
+    pass
 
 
 @dataclass
@@ -121,44 +121,16 @@ class GuidedLearningStep:
         # Last resort: use generic detection_reason
         return f"[t={kf.timestamp:.1f}s] {kf.detection_reason}"
 
-    def to_actor_interject_args(self) -> tuple[str, List["AnnotatedImageRef"]]:
+    def to_actor_interject_args(self) -> str:
         """
-        Returns (transcript, annotated_images) ready for HierarchicalActorHandle.interject().
-
-        Uses the best available annotation for each keyframe:
-        - LLM mode: Uses the semantic detection_reason from LLM keyframe selection
-        - Algorithmic mode: Uses ImageHandle's auto-generated caption
+        Returns transcript ready for HierarchicalActorHandle.interject().
 
         Example:
             step = await guided_learning_manager.get_next_step()
-            transcript, images = step.to_actor_interject_args()
-            await actor_handle.interject(transcript, images=images)
+            transcript = step.to_actor_interject_args()
+            await actor_handle.interject(transcript)
 
         Returns:
-            Tuple of (transcript, list of AnnotatedImageRef)
+            The transcript string.
         """
-        from unity.image_manager.types import AnnotatedImageRef, RawImageRef
-
-        annotated: List[AnnotatedImageRef] = []
-
-        # Include context frame if no keyframes (commentary only)
-        if self.context_frame and not self.keyframes:
-            annotated.append(
-                AnnotatedImageRef(
-                    raw_image_ref=RawImageRef(
-                        image_id=self.context_frame.image_handle.image_id,
-                    ),
-                    annotation=self._get_annotation(self.context_frame),
-                ),
-            )
-
-        # Add all keyframes with their best available annotations
-        for kf in self.keyframes:
-            annotated.append(
-                AnnotatedImageRef(
-                    raw_image_ref=RawImageRef(image_id=kf.image_handle.image_id),
-                    annotation=self._get_annotation(kf),
-                ),
-            )
-
-        return self.transcript, annotated
+        return self.transcript

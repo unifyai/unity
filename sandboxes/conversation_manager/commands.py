@@ -21,6 +21,13 @@ CommandKind = Literal[
     "quit",
     "reset",
     "save_project",
+    # Configuration + display (REPL/GUI surfaces)
+    "config",
+    "trace",
+    "tree",
+    "show_logs",
+    "collapse_logs",
+    "agent_logs",
     # Scenario seeding
     "scenario_seed",
     "scenario_seed_voice",
@@ -52,8 +59,18 @@ Type a command at the prompt.
 Meta commands:
   help | h            Show this help
   quit | exit         Exit the sandbox
-  reset               Reset sandbox session state (best-effort)
+  reset               Reset sandbox session state
   save_project | sp   Save a Unify project snapshot
+
+Configuration:
+  config              Switch actor configuration (restarts sandbox; state is reset)
+
+Display commands:
+  trace [N]           Show recent CodeAct execution trace (default: 3)
+  tree                Show current manager call event tree
+  show_logs <cat>     Expand logs for category: cm | actor | manager | all
+  collapse_logs <cat> Collapse logs for category: cm | actor | manager | all
+  agent_logs [N]      Show last N lines of sandbox-started agent-service logs (default: 80)
 
 Inbound event simulation:
   sms <msg>                     Simulate incoming SMS
@@ -102,6 +119,49 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         return ParsedCommand(kind="reset", raw=raw, name="reset")
     if lower in {"save_project", "sp"}:
         return ParsedCommand(kind="save_project", raw=raw, name="save_project")
+    if lower in {"config", "switch_actor"}:
+        if active:
+            return ParsedCommand(
+                kind="unknown",
+                raw=raw,
+                name="config",
+                error="⚠️ Cannot switch configuration while execution is active. Use /stop first.",
+            )
+        return ParsedCommand(kind="config", raw=raw, name="config")
+    if lower == "tree" or lower == "show_tree":
+        return ParsedCommand(kind="tree", raw=raw, name="tree")
+    if lower == "trace" or lower == "show_trace":
+        return ParsedCommand(kind="trace", raw=raw, name="trace", args="")
+    if lower.startswith("trace "):
+        return ParsedCommand(
+            kind="trace",
+            raw=raw,
+            name="trace",
+            args=trimmed[6:].strip(),
+        )
+    if lower.startswith("show_logs "):
+        return ParsedCommand(
+            kind="show_logs",
+            raw=raw,
+            name="show_logs",
+            args=trimmed[len("show_logs ") :].strip(),
+        )
+    if lower.startswith("collapse_logs "):
+        return ParsedCommand(
+            kind="collapse_logs",
+            raw=raw,
+            name="collapse_logs",
+            args=trimmed[len("collapse_logs ") :].strip(),
+        )
+    if lower == "agent_logs":
+        return ParsedCommand(kind="agent_logs", raw=raw, name="agent_logs", args="")
+    if lower.startswith("agent_logs "):
+        return ParsedCommand(
+            kind="agent_logs",
+            raw=raw,
+            name="agent_logs",
+            args=trimmed[len("agent_logs ") :].strip(),
+        )
 
     # 2) Scenario commands — only when idle
     if lower == "usv":

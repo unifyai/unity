@@ -35,7 +35,6 @@ def get_simulated_user_contact() -> dict:
 class EventPublisher:
     cm: object
     state: object
-    simulate_calls_as_text: bool = True
 
     async def publish_sms(self, message: str) -> None:
         contact = get_simulated_user_contact()
@@ -70,11 +69,6 @@ class EventPublisher:
             pass
 
         self.state.in_call = True
-        if self.simulate_calls_as_text:
-            # Sandbox call mode is a text-only simulation: we keep CM in TEXT mode and
-            # use SMS-style events under the hood, while the UI renders them as phone.
-            return
-
         event = PhoneCallStarted(contact=contact)
         self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
@@ -84,9 +78,6 @@ class EventPublisher:
         )
 
     async def publish_phone_utterance(self, text: str) -> None:
-        if self.simulate_calls_as_text:
-            await self.publish_sms(text)
-            return
         contact = get_simulated_user_contact()
         try:
             self.cm.contact_index.set_fallback_contacts([contact])
@@ -106,9 +97,6 @@ class EventPublisher:
             pass
 
         self.state.in_call = False
-        if self.simulate_calls_as_text:
-            return
-
         event = PhoneCallEnded(contact=contact)
         self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()

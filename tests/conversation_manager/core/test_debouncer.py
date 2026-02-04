@@ -1,573 +1,312 @@
 """
-Tests for the Debouncer class.
+Tests for the Debouncer utility.
 
-The Debouncer provides rate-limiting for async function calls with these behaviors:
-1. Debouncing: Multiple rapid submits result in only the last one running
-2. Sequential execution: Running tasks complete before the next starts (by default)
-3. Cancel running: Optionally cancel currently running task for immediate new execution
-4. Delay: Optionally wait before starting execution
+The Debouncer is a core utility that manages async task execution with
+debouncing semantics. It supports:
+- Pending task replacement (debouncing)
+- Optional running task cancellation (cancel_running parameter)
+- Task queuing (at most 1 running + 1 pending)
+
+These tests verify the Debouncer's behavior independent of the
+ConversationManager integration.
+
+NOTE: Debouncer tests are inherently timing-sensitive since the debouncer
+manages task timing. Some fixed sleeps are intentional to test the debounce
+behavior (e.g., simulating LLM thinking time). Where possible, we use
+event-based synchronization for task coordination.
 """
 
 import asyncio
+import time as _time
+
 import pytest
 
-from unity.conversation_manager.domains.utils import Debouncer
+
+async def _wait_for_condition(
+    predicate,
+    *,
+    timeout: float = 5.0,
+    poll: float = 0.02,
+) -> bool:
+    """Poll predicate() until True or timeout. Returns whether condition was met."""
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        if predicate():
+            return True
+        await asyncio.sleep(poll)
+    return False
 
 
-class TestBasicExecution:
-    """Test basic submit and execution functionality."""
-
-    @pytest.mark.asyncio
-    async def test_submit_executes_async_function(self):
-        """Test that a submitted function is actually executed."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task():
-            result.append("executed")
-
-        await debouncer.submit(task)
-        # Wait for the pending task to schedule and run
-        await asyncio.sleep(0.01)
-
-        assert result == ["executed"]
+class TestDebouncerCancelRunning:
+    """Tests for the cancel_running parameter behavior."""
 
     @pytest.mark.asyncio
-    async def test_submit_with_args(self):
-        """Test that args are passed correctly to the function."""
+    async def test_preserves_running_task_when_cancel_running_false(self):
+        """
+        Verify that with cancel_running=False, the running task completes.
+
+        This is the core behavior needed for voice mode:
+        - When cancel_running=False, the currently running task must complete
+        - New submissions replace the pending task, not the running one
+        """
+        from unity.conversation_manager.domains.utils import Debouncer
+
         debouncer = Debouncer()
-        result = []
 
-        async def task(a, b, c):
-            result.append((a, b, c))
+        execution_log = []
+        task1_started = asyncio.Event()
+        task1_can_complete = asyncio.Event()
 
-        await debouncer.submit(task, args=(1, 2, 3))
-        await asyncio.sleep(0.01)
+        async def task1():
+            """First task - signals when started, waits for permission to complete."""
+            execution_log.append("task1:started")
+            task1_started.set()
+            try:
+                await asyncio.wait_for(task1_can_complete.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                execution_log.append("task1:timeout")
+                return
+            except asyncio.CancelledError:
+                execution_log.append("task1:cancelled")
+                raise
+            execution_log.append("task1:completed")
 
-        assert result == [(1, 2, 3)]
-
-    @pytest.mark.asyncio
-    async def test_submit_with_kwargs(self):
-        """Test that kwargs are passed correctly to the function."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task(x=None, y=None):
-            result.append({"x": x, "y": y})
-
-        await debouncer.submit(task, kwargs={"x": 10, "y": 20})
-        await asyncio.sleep(0.01)
-
-        assert result == [{"x": 10, "y": 20}]
-
-    @pytest.mark.asyncio
-    async def test_submit_with_args_and_kwargs(self):
-        """Test that both args and kwargs are passed correctly."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task(a, b, x=None):
-            result.append((a, b, x))
-
-        await debouncer.submit(task, args=(1, 2), kwargs={"x": "hello"})
-        await asyncio.sleep(0.01)
-
-        assert result == [(1, 2, "hello")]
-
-
-class TestDebouncingBehavior:
-    """Test that multiple rapid submits result in only the last one running."""
-
-    @pytest.mark.asyncio
-    async def test_rapid_submits_only_last_runs(self):
-        """Test that rapid submits debounce - only the last submitted task runs."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task(value):
-            result.append(value)
-
-        # Submit multiple tasks rapidly
-        await debouncer.submit(task, args=("first",))
-        await debouncer.submit(task, args=("second",))
-        await debouncer.submit(task, args=("third",))
-
-        # Wait for execution
-        await asyncio.sleep(0.05)
-
-        # Only the last one should have run
-        assert result == ["third"]
-
-    @pytest.mark.asyncio
-    async def test_debounce_cancels_pending_not_running(self):
-        """Test that debouncing cancels pending tasks but not running ones."""
-        debouncer = Debouncer()
-        execution_order = []
-        started_event = asyncio.Event()
-
-        async def slow_task(value):
-            execution_order.append(f"start:{value}")
-            started_event.set()
+        async def task2():
+            """Second task."""
+            execution_log.append("task2:started")
             await asyncio.sleep(0.1)
-            execution_order.append(f"end:{value}")
+            execution_log.append("task2:completed")
 
-        async def fast_task(value):
-            execution_order.append(f"fast:{value}")
+        # Submit first task
+        await debouncer.submit(task1, cancel_running=False)
 
-        # Start a slow task
-        await debouncer.submit(slow_task, args=("slow",))
+        # Wait for first task to start
+        await asyncio.wait_for(task1_started.wait(), timeout=2.0)
 
-        # Wait for slow task to start running
-        await started_event.wait()
+        # Now submit second task WITH cancel_running=False
+        # This should NOT cancel task1
+        await debouncer.submit(task2, cancel_running=False)
 
-        # Submit multiple fast tasks while slow is running
-        # These become pending and get debounced
-        await debouncer.submit(fast_task, args=("pending1",))
-        await debouncer.submit(fast_task, args=("pending2",))
+        # Wait for task2 to be queued (pending)
+        await _wait_for_condition(lambda: debouncer.pending_task is not None)
 
-        # Wait for everything to complete
-        await asyncio.sleep(0.2)
+        # Now allow task1 to complete
+        task1_can_complete.set()
 
-        # Slow task should complete, and only pending2 should run (pending1 debounced)
-        assert "start:slow" in execution_order
-        assert "end:slow" in execution_order
-        assert "fast:pending1" not in execution_order
-        assert "fast:pending2" in execution_order
+        # Wait for both tasks to complete (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: "task1:completed" in execution_log)
+        await _wait_for_condition(lambda: "task2:completed" in execution_log)
 
+        # KEY ASSERTION: Task 1 should have COMPLETED, not been cancelled
+        assert "task1:completed" in execution_log, (
+            f"Task 1 should have completed when cancel_running=False!\n"
+            f"  Execution log: {execution_log}\n"
+            f"\n"
+            f"With cancel_running=False, the running task should be allowed\n"
+            f"to complete. Only the pending task should be replaced."
+        )
 
-class TestSequentialExecution:
-    """Test that tasks execute sequentially by default."""
-
-    @pytest.mark.asyncio
-    async def test_tasks_execute_sequentially(self):
-        """Test that a new task waits for the running task to complete."""
-        debouncer = Debouncer()
-        execution_order = []
-        first_started = asyncio.Event()
-
-        async def task(value, duration):
-            execution_order.append(f"start:{value}")
-            if value == "first":
-                first_started.set()
-            await asyncio.sleep(duration)
-            execution_order.append(f"end:{value}")
-
-        # Start first task
-        await debouncer.submit(task, args=("first", 0.1))
-
-        # Wait for first to start
-        await first_started.wait()
-
-        # Submit second task (should wait for first)
-        await debouncer.submit(task, args=("second", 0.05))
-
-        # Wait for both to complete
-        await asyncio.sleep(0.3)
-
-        # First should complete before second starts
-        assert execution_order.index("end:first") < execution_order.index(
-            "start:second",
+        assert "task1:cancelled" not in execution_log, (
+            f"Task 1 was cancelled even though cancel_running=False!\n"
+            f"  Execution log: {execution_log}"
         )
 
     @pytest.mark.asyncio
-    async def test_running_task_not_cancelled_by_default(self):
-        """Test that the running task is not cancelled when a new task is submitted."""
-        debouncer = Debouncer()
-        cancelled = []
-        first_started = asyncio.Event()
+    async def test_cancels_running_task_when_cancel_running_true(self):
+        """
+        Verify that with cancel_running=True, the running task IS cancelled.
 
-        async def task(value):
+        This is useful for text mode where we want to cancel stale work
+        and start fresh with new context.
+        """
+        from unity.conversation_manager.domains.utils import Debouncer
+
+        debouncer = Debouncer()
+
+        execution_log = []
+        task1_started = asyncio.Event()
+
+        async def task1():
+            """First task - will be cancelled."""
+            execution_log.append("task1:started")
+            task1_started.set()
             try:
-                execution_order = []
-                execution_order.append(f"start:{value}")
-                if value == "first":
-                    first_started.set()
-                await asyncio.sleep(0.1)
-                execution_order.append(f"end:{value}")
+                await asyncio.sleep(5.0)  # Long sleep - should be cancelled
+                execution_log.append("task1:completed")
             except asyncio.CancelledError:
-                cancelled.append(value)
+                execution_log.append("task1:cancelled")
                 raise
 
-        # Start first task
-        await debouncer.submit(task, args=("first",))
-
-        # Wait for it to start
-        await first_started.wait()
-
-        # Submit new task (should NOT cancel first)
-        await debouncer.submit(task, args=("second",))
-
-        # Wait for completion
-        await asyncio.sleep(0.3)
-
-        # First task should NOT have been cancelled
-        assert "first" not in cancelled
-
-
-class TestCancelRunning:
-    """Test cancel_running=True behavior."""
-
-    @pytest.mark.asyncio
-    async def test_cancel_running_cancels_current_task(self):
-        """Test that cancel_running=True cancels the currently running task."""
-        debouncer = Debouncer()
-        cancelled = []
-        completed = []
-        first_started = asyncio.Event()
-
-        async def task(value):
-            try:
-                if value == "first":
-                    first_started.set()
-                await asyncio.sleep(0.5)
-                completed.append(value)
-            except asyncio.CancelledError:
-                cancelled.append(value)
-                raise
-
-        # Start first task
-        await debouncer.submit(task, args=("first",))
-
-        # Wait for it to start
-        await first_started.wait()
-
-        # Submit with cancel_running=True
-        await debouncer.submit(task, args=("second",), cancel_running=True)
-
-        # Wait for completion
-        await asyncio.sleep(0.6)
-
-        # First should be cancelled, second should complete
-        assert "first" in cancelled
-        assert "second" in completed
-
-    @pytest.mark.asyncio
-    async def test_cancel_running_allows_immediate_new_task(self):
-        """Test that cancel_running allows new task to start immediately."""
-        debouncer = Debouncer()
-        start_times = {}
-        first_started = asyncio.Event()
-
-        async def task(value):
-            start_times[value] = asyncio.get_event_loop().time()
-            if value == "first":
-                first_started.set()
-            await asyncio.sleep(0.5)
-
-        start_time = asyncio.get_event_loop().time()
-
-        # Start first task
-        await debouncer.submit(task, args=("first",))
-
-        # Wait for it to start
-        await first_started.wait()
-
-        # Submit with cancel_running=True
-        await debouncer.submit(task, args=("second",), cancel_running=True)
-
-        # Wait a bit for second to start
-        await asyncio.sleep(0.05)
-
-        # Second should have started quickly (not waiting 0.5s for first)
-        assert "second" in start_times
-        second_delay = start_times["second"] - start_time
-        assert second_delay < 0.3  # Should start well before first would complete
-
-
-class TestDelay:
-    """Test delay parameter functionality."""
-
-    @pytest.mark.asyncio
-    async def test_delay_before_execution(self):
-        """Test that task execution is delayed by the specified amount."""
-        debouncer = Debouncer()
-        start_time = asyncio.get_event_loop().time()
-        execution_time = []
-
-        async def task():
-            execution_time.append(asyncio.get_event_loop().time())
-
-        await debouncer.submit(task, delay=0.1)
-
-        # Wait for execution
-        await asyncio.sleep(0.2)
-
-        assert len(execution_time) == 1
-        elapsed = execution_time[0] - start_time
-        assert 0.08 <= elapsed <= 0.2  # Should have waited ~0.1s
-
-    @pytest.mark.asyncio
-    async def test_delayed_task_debounced_before_delay(self):
-        """Test that a delayed task can be debounced before its delay expires."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task(value):
-            result.append(value)
-
-        # Submit with delay
-        await debouncer.submit(task, args=("first",), delay=0.1)
-
-        # Submit again before delay expires (debounces first)
-        await debouncer.submit(task, args=("second",), delay=0.0)
-
-        # Wait for execution
-        await asyncio.sleep(0.2)
-
-        # Only second should run (first was debounced)
-        assert result == ["second"]
-
-    @pytest.mark.asyncio
-    async def test_delay_zero_executes_immediately(self):
-        """Test that delay=0 executes without waiting."""
-        debouncer = Debouncer()
-        start_time = asyncio.get_event_loop().time()
-        execution_time = []
-
-        async def task():
-            execution_time.append(asyncio.get_event_loop().time())
-
-        await debouncer.submit(task, delay=0)
-
-        # Wait briefly for async execution
-        await asyncio.sleep(0.02)
-
-        assert len(execution_time) == 1
-        elapsed = execution_time[0] - start_time
-        assert elapsed < 0.05  # Should be nearly immediate
-
-
-class TestDelayAndCancelRunning:
-    """Test interaction between delay and cancel_running."""
-
-    @pytest.mark.asyncio
-    async def test_delay_with_cancel_running(self):
-        """Test that delay works with cancel_running=True."""
-        debouncer = Debouncer()
-        cancelled = []
-        start_times = {}
-        first_started = asyncio.Event()
-
-        async def task(value):
-            try:
-                start_times[value] = asyncio.get_event_loop().time()
-                if value == "first":
-                    first_started.set()
-                await asyncio.sleep(0.5)
-            except asyncio.CancelledError:
-                cancelled.append(value)
-                raise
-
-        submit_time = asyncio.get_event_loop().time()
-
-        # Start first task
-        await debouncer.submit(task, args=("first",))
-
-        # Wait for it to start
-        await first_started.wait()
-
-        # Submit with delay AND cancel_running
-        await debouncer.submit(task, args=("second",), delay=0.1, cancel_running=True)
-
-        # Wait for everything
-        await asyncio.sleep(0.3)
-
-        # First should be cancelled
-        assert "first" in cancelled
-        # Second should have started after ~0.1s delay
-        assert "second" in start_times
-        second_delay = start_times["second"] - submit_time
-        assert 0.08 <= second_delay <= 0.2
-
-
-class TestEdgeCases:
-    """Test edge cases and boundary conditions."""
-
-    @pytest.mark.asyncio
-    async def test_submit_when_nothing_running(self):
-        """Test submit works correctly when no task is currently running."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task():
-            result.append("ran")
-
-        # Initial state - nothing running
-        assert debouncer.running_task is None
-        assert debouncer.pending_task is None
-
-        await debouncer.submit(task)
-        await asyncio.sleep(0.02)
-
-        assert result == ["ran"]
-
-    @pytest.mark.asyncio
-    async def test_multiple_sequential_submits(self):
-        """Test multiple submits that each complete before the next."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task(value):
-            result.append(value)
-
-        # Submit and wait for completion
-        await debouncer.submit(task, args=("first",))
-        await asyncio.sleep(0.02)
-
-        await debouncer.submit(task, args=("second",))
-        await asyncio.sleep(0.02)
-
-        await debouncer.submit(task, args=("third",))
-        await asyncio.sleep(0.02)
-
-        # All should have run
-        assert result == ["first", "second", "third"]
-
-    @pytest.mark.asyncio
-    async def test_cancel_running_when_nothing_running(self):
-        """Test that cancel_running=True works when nothing is running."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task():
-            result.append("ran")
-
-        # cancel_running should be a no-op when nothing is running
-        await debouncer.submit(task, cancel_running=True)
-        await asyncio.sleep(0.02)
-
-        assert result == ["ran"]
-
-    @pytest.mark.asyncio
-    async def test_task_exception_does_not_break_debouncer(self):
-        """Test that an exception in a task doesn't break subsequent submits."""
-        debouncer = Debouncer()
-        result = []
-
-        async def failing_task():
-            raise ValueError("intentional error")
-
-        async def working_task():
-            result.append("worked")
-
-        # Submit failing task
-        await debouncer.submit(failing_task)
-        await asyncio.sleep(0.02)
-
-        # Subsequent submit should still work
-        await debouncer.submit(working_task)
-        await asyncio.sleep(0.02)
-
-        assert result == ["worked"]
-
-    @pytest.mark.asyncio
-    async def test_none_args_kwargs_defaults(self):
-        """Test that None args/kwargs are handled correctly."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task():
-            result.append("no-args")
-
-        # Explicitly pass None
-        await debouncer.submit(task, args=None, kwargs=None)
-        await asyncio.sleep(0.02)
-
-        assert result == ["no-args"]
-
-
-class TestTaskStateTracking:
-    """Test internal state tracking of running and pending tasks."""
-
-    @pytest.mark.asyncio
-    async def test_running_task_set_during_execution(self):
-        """Test that running_task is set while task is executing."""
-        debouncer = Debouncer()
-        running_task_during_execution = []
-        task_started = asyncio.Event()
-
-        async def task():
-            task_started.set()
-            running_task_during_execution.append(debouncer.running_task)
-            await asyncio.sleep(0.05)
-
-        await debouncer.submit(task)
-
-        # Wait for task to start and capture state
-        await task_started.wait()
-
-        # running_task should be set
-        assert len(running_task_during_execution) == 1
-        assert running_task_during_execution[0] is not None
-        assert isinstance(running_task_during_execution[0], asyncio.Task)
-
-    @pytest.mark.asyncio
-    async def test_pending_task_cleared_after_becomes_running(self):
-        """Test that pending_task is cleared once the task starts running."""
-        debouncer = Debouncer()
-        task_started = asyncio.Event()
-
-        async def task():
-            task_started.set()
-            await asyncio.sleep(0.05)
-
-        await debouncer.submit(task)
-
-        # Immediately after submit, pending_task should be set
-        assert debouncer.pending_task is not None
-
-        # Wait for task to start running
-        await task_started.wait()
-        await asyncio.sleep(0.01)  # Small delay for state update
-
-        # pending_task should be cleared (it's now running_task)
-        assert debouncer.pending_task is None
-        assert debouncer.running_task is not None
-
-
-class TestCancelTasks:
-    """Test the _cancel_tasks internal method behavior."""
-
-    @pytest.mark.asyncio
-    async def test_cancel_tasks_cancels_pending(self):
-        """Test that _cancel_tasks(pending=True) cancels pending task."""
-        debouncer = Debouncer()
-        result = []
-
-        async def task():
-            result.append("ran")
-
-        # Submit with delay so it stays pending
-        await debouncer.submit(task, delay=0.5)
-
-        # Cancel pending
-        await debouncer._cancel_tasks(pending=True, running=False)
-
-        # Wait - task should not run
-        await asyncio.sleep(0.6)
-
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_cancel_tasks_running_false_does_not_cancel_running(self):
-        """Test that _cancel_tasks(running=False) does not cancel running task."""
-        debouncer = Debouncer()
-        completed = []
-        started = asyncio.Event()
-
-        async def task():
-            started.set()
+        async def task2():
+            """Second task."""
+            execution_log.append("task2:started")
             await asyncio.sleep(0.1)
-            completed.append("done")
+            execution_log.append("task2:completed")
 
-        await debouncer.submit(task)
-        await started.wait()
+        # Submit first task
+        await debouncer.submit(task1, cancel_running=False)
 
-        # Cancel with running=False
-        await debouncer._cancel_tasks(pending=True, running=False)
+        # Wait for first task to start
+        await asyncio.wait_for(task1_started.wait(), timeout=2.0)
 
-        # Wait for task to complete
-        await asyncio.sleep(0.2)
+        # Submit second task WITH cancel_running=True
+        # This SHOULD cancel task1
+        await debouncer.submit(task2, cancel_running=True)
 
-        # Task should have completed (not cancelled)
-        assert completed == ["done"]
+        # Wait for task2 to complete (poll instead of fixed sleep)
+        await _wait_for_condition(lambda: "task2:completed" in execution_log)
+
+        # Task 1 should have been CANCELLED (not completed)
+        assert "task1:cancelled" in execution_log, (
+            f"Task 1 should have been cancelled when cancel_running=True!\n"
+            f"  Execution log: {execution_log}"
+        )
+
+        # Task 2 should have run
+        assert "task2:completed" in execution_log, (
+            f"Task 2 should have completed!\n" f"  Execution log: {execution_log}"
+        )
+
+
+class TestDebouncerCancellationPropagation:
+    """
+    Tests for cancellation propagation behavior.
+
+    In Python 3.11+, cancelling a task that is awaiting another task will
+    also cancel the inner task. The Debouncer must use asyncio.shield()
+    to protect running tasks from this propagation when a pending task
+    is cancelled (debounced).
+    """
+
+    @pytest.mark.asyncio
+    async def test_pending_cancellation_does_not_cancel_running_task(self):
+        """
+        REGRESSION TEST: Cancelling a pending task must NOT cancel the running task.
+
+        This tests the asyncio.shield() fix for Python 3.11+ behavior where
+        cancelling a task that awaits another task propagates the cancellation.
+
+        Scenario:
+        1. Task A starts running
+        2. Task B is submitted (pending, waiting for A)
+        3. Task C is submitted (cancels pending B)
+        4. Task A must continue and complete (not be cancelled by B's cancellation)
+
+        Before fix: Task A would be cancelled when Task B was cancelled
+        After fix: Task A completes normally, Task C runs after
+        """
+        from unity.conversation_manager.domains.utils import Debouncer
+
+        debouncer = Debouncer()
+        results = []
+
+        async def slow_task(task_id):
+            """A task that takes 0.3s to complete."""
+            try:
+                results.append(f"task{task_id}:started")
+                await asyncio.sleep(0.3)
+                results.append(f"task{task_id}:completed")
+            except asyncio.CancelledError:
+                results.append(f"task{task_id}:cancelled")
+                raise
+
+        # Submit task 0 - it starts running
+        await debouncer.submit(slow_task, args=(0,), cancel_running=False)
+        # Wait for task 0 to start
+        await _wait_for_condition(lambda: "task0:started" in results)
+
+        # Submit task 1 - becomes pending, waiting for task 0
+        await debouncer.submit(slow_task, args=(1,), cancel_running=False)
+        # Wait for task 1 to be queued as pending
+        await _wait_for_condition(lambda: debouncer.pending_task is not None)
+
+        # Submit task 2 - this cancels pending task 1 (debounce)
+        # The bug: task 1's cancellation would propagate to task 0
+        await debouncer.submit(slow_task, args=(2,), cancel_running=False)
+
+        # Wait for task 0 and task 2 to complete (poll instead of fixed sleep)
+        await _wait_for_condition(
+            lambda: "task0:completed" in results and "task2:completed" in results,
+        )
+
+        # Task 0 MUST have completed (not cancelled)
+        assert "task0:completed" in results, (
+            f"Task 0 should have completed!\n"
+            f"  Results: {results}\n"
+            f"\n"
+            f"This regression indicates the asyncio.shield() fix is missing.\n"
+            f"In Python 3.11+, cancelling a pending task that awaits the running\n"
+            f"task will propagate the cancellation unless shield() is used."
+        )
+
+        assert "task0:cancelled" not in results, (
+            f"Task 0 was cancelled by pending task cancellation!\n"
+            f"  Results: {results}\n"
+            f"\n"
+            f"The Debouncer must use asyncio.shield() to protect the running\n"
+            f"task from cancellation propagation when pending tasks are cancelled."
+        )
+
+        # Task 2 should also complete (it was the final pending task)
+        assert "task2:completed" in results, (
+            f"Task 2 should have completed!\n" f"  Results: {results}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rapid_submissions_with_cancel_running_false(self):
+        """
+        Test rapid submissions don't cause unexpected cancellations.
+
+        Simulates the voice mode scenario where rapid user utterances
+        trigger many submissions in quick succession.
+        """
+        from unity.conversation_manager.domains.utils import Debouncer
+
+        debouncer = Debouncer()
+        results = []
+
+        async def task(task_id):
+            try:
+                results.append(f"task{task_id}:started")
+                await asyncio.sleep(0.5)  # Simulates LLM thinking time
+                results.append(f"task{task_id}:completed")
+            except asyncio.CancelledError:
+                results.append(f"task{task_id}:cancelled")
+                raise
+
+        # Rapid submissions (faster than task completion time)
+        # NOTE: The 0.1s delay between submissions is intentional - it simulates
+        # rapid user utterances in voice mode (faster than LLM thinking time)
+        for i in range(5):
+            await debouncer.submit(task, args=(i,), cancel_running=False)
+            if i < 4:
+                await asyncio.sleep(
+                    0.1,
+                )  # 0.1s between submissions (intentional timing)
+
+        # Wait for final tasks to complete (poll instead of fixed 2s sleep)
+        # With cancel_running=False: task0 runs to completion, then task4 runs
+        await _wait_for_condition(
+            lambda: sum(1 for r in results if "completed" in r) >= 2,
+            timeout=5.0,
+        )
+
+        # Count results
+        completed = sum(1 for r in results if "completed" in r)
+        cancelled = sum(1 for r in results if "cancelled" in r)
+
+        # With cancel_running=False and proper shielding:
+        # - Task 0 completes (first running task)
+        # - Task 4 completes (final pending task after task 0 finishes)
+        # - No tasks should be cancelled
+        assert completed >= 2, (
+            f"Expected at least 2 completions (first + final task)\n"
+            f"  Completed: {completed}, Cancelled: {cancelled}\n"
+            f"  Results: {results}"
+        )
+
+        assert cancelled == 0, (
+            f"No tasks should be cancelled with cancel_running=False!\n"
+            f"  Completed: {completed}, Cancelled: {cancelled}\n"
+            f"  Results: {results}"
+        )

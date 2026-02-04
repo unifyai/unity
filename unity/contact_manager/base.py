@@ -5,7 +5,6 @@ from abc import abstractmethod
 import asyncio
 from typing import Dict, List, Optional, Any, Type, TYPE_CHECKING
 from pydantic import BaseModel
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..manager_registry import SingletonABCMeta
@@ -41,7 +40,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing contact list** (read‑only) and obtain a live
@@ -65,18 +63,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Do not request how the question should be answered; ask in natural
         language and allow this method to determine the best approach.
-
-        Visual inputs policy
-        --------------------
-        • When relevant images are available, pass them via the ``images`` argument.
-        • Provide image references as their numeric ``image_id`` values, optionally
-          with short annotations (e.g., "contact card") to guide interpretation.
-        • Prefer a curated subset aligned to the question; if curation is unclear,
-          include all potentially relevant images rather than none.
-        • When delegating to another tool that declares an ``images`` parameter, forward the
-          relevant images and rewrite/augment their annotations so they align with the delegated
-          question or action (not the original user phrasing). Prefer AnnotatedImageRefs; preserve
-          user‑referenced ordering when it matters.
 
         Examples
         --------
@@ -102,10 +88,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels. When supplied the LLM can ask the human
             follow-up questions via *up_q* and must read answers from *down_q*.
-        images : optional
-            Optional references to images relevant to the question. Pass the numeric
-            ``image_id`` for each image, optionally with a brief annotation. If images
-            are available and relevant, include them.
 
         Returns
         -------
@@ -125,7 +107,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a **mutation** request – create, edit, delete or merge contacts –
@@ -145,18 +126,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         • When no clarification tool exists, proceed with sensible defaults or
           best‑guess values and state those assumptions in the final reply.
 
-        Visual inputs policy
-        --------------------
-        • When relevant images are available, pass them via the ``images`` argument.
-        • Provide image references as their numeric ``image_id`` values, optionally
-          with short annotations (e.g., "contact card") to guide interpretation.
-        • Prefer a curated subset aligned to the request; if curation is unclear,
-          include all potentially relevant images rather than none.
-        • When delegating to another tool that declares an ``images`` parameter, forward the
-          relevant images and rewrite/augment their annotations so they align with the delegated
-          request (not the original user phrasing). Prefer AnnotatedImageRefs; preserve
-          user‑referenced ordering when it matters.
-
         Parameters
         ----------
         text : str
@@ -168,10 +137,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         _return_reasoning_steps, _parent_chat_context,
         _clarification_up_q, _clarification_down_q
             Same semantics as in :py:meth:`ask`.
-        images : optional
-            Optional references to images relevant to the request. Pass the numeric
-            ``image_id`` for each image, optionally with a brief annotation. If images
-            are available and relevant, include them.
 
         Returns
         -------

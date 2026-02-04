@@ -285,7 +285,7 @@ async def my_task():
             "function_id": 1,
             "name": "my_task",
             "implementation": entrypoint_code,
-            "verify": False,  # Skip verification to avoid needing browser
+            "verify": False,  # Skip verification to avoid needing computer access
         },
     ]
     mock_function_manager.list_functions.return_value = {

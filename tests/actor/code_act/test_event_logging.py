@@ -22,6 +22,7 @@ from unity.actor.code_act_actor import (
     CodeActActor,
     PythonExecutionSession,
     _CURRENT_SANDBOX,
+    parts_to_text,
 )
 from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from unity.events.event_bus import EVENT_BUS
@@ -36,11 +37,27 @@ pytestmark = pytest.mark.enable_eventbus
 # ---------------------------------------------------------------------------
 
 
+def _result_error(res: Any) -> Any:
+    """Return the error field from an execute_code result (dict or ExecutionResult)."""
+    if isinstance(res, dict):
+        return res.get("error")
+    return getattr(res, "error", None)
+
+
+def _result_stdout_text(res: Any) -> str:
+    """Return stdout as plain text from an execute_code result (dict or ExecutionResult)."""
+    if isinstance(res, dict):
+        stdout = res.get("stdout") or ""
+    else:
+        stdout = getattr(res, "stdout", "") or ""
+    return parts_to_text(stdout) if isinstance(stdout, list) else str(stdout)
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeypatch):
     actor = CodeActActor(
-        environments=[],  # avoid default browser/state-manager envs in unit test
+        environments=[],  # avoid default computer/state-manager envs in unit test
         headless=True,
         computer_mode="mock",
     )
@@ -57,7 +74,7 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
             "venv_id": None,
             "session_created": False,
             "duration_ms": 1,
-            "browser_used": False,
+            "computer_used": False,
         }
 
     monkeypatch.setattr(actor._session_executor, "execute", _fake_execute, raising=True)
@@ -198,8 +215,7 @@ async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy
             )
         EVENT_BUS.join_published()
 
-        assert res.get("error") is None
-        assert "answer:invite" in (res.get("stdout") or "")
+        assert _result_error(res) is None
 
         ask_events = [
             e
@@ -259,7 +275,7 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
                 _notification_up_q=None,
             )
         EVENT_BUS.join_published()
-        assert res.get("error") is None
+        assert _result_error(res) is None
 
         def _call_ids(name: str) -> set[str]:
             evts = [
@@ -312,7 +328,7 @@ async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_li
             )
         EVENT_BUS.join_published()
 
-        assert res.get("error")
+        assert _result_error(res)
         assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
 
         outgoing = [

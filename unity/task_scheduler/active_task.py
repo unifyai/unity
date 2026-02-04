@@ -155,7 +155,6 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 parent_chat_context=_parent_chat_context,
                 clarification_up_q=_clarification_up_q,
                 clarification_down_q=_clarification_down_q,
-                images=None,
             )
         else:
             actor_steerable_handle = await actor.act(
@@ -189,8 +188,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
         intent: Optional[str] = None
@@ -216,14 +214,14 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             else:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=parent_chat_context_cont,
+                    parent_chat_context=_parent_chat_context_cont,
                 )
         except Exception as e:
             # Robust fallback: use built-in classifier to avoid losing the steering signal entirely
             try:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=parent_chat_context_cont,
+                    parent_chat_context=_parent_chat_context_cont,
                 )
             except Exception as _e:
                 intent, reason = None, None
@@ -295,19 +293,15 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             return
 
         # No stop/defer/cancel intent ⇒ forward interjection to the actor.
-        # Avoid passing images kwarg when None to preserve compatibility with wrappers
-        # that don't declare the images kwarg (e.g., some test monkeypatches).
-        if images is None:
-            await self._actor_handle.interject(message)  # type: ignore[arg-type]
-        else:
-            await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
+        await self._actor_handle.interject(message)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(
+    async def stop(
         self,
         *,
         cancel: bool = False,
         reason: Optional[str] = None,
+        **kwargs,
     ) -> Optional[str]:
         """Stop the running activity with explicit intent.
 
@@ -317,17 +311,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         """
         # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
         try:
-            # Some actor handles implement stop() as async. We must not drop the coroutine.
             # Prefer passing cancel/reason when supported, but fall back for compatibility.
             try:
-                ret = self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
+                ret = await self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
             except TypeError:
                 # Legacy signature: stop(reason: str | None = None)
-                ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
-
-            if asyncio.iscoroutine(ret):
-                asyncio.create_task(ret)
-                ret = "Stopping."
+                ret = await self._actor_handle.stop(reason)  # type: ignore[call-arg]
         except Exception:
             ret = "Stopped."
         self._was_stopped = True

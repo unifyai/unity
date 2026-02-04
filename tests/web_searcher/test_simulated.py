@@ -94,9 +94,9 @@ async def test_interject(monkeypatch):
     orig = _SimulatedWebSearcherHandle.interject
 
     @functools.wraps(orig)
-    def wrapped(self, msg: str) -> str:  # type: ignore[override]
+    async def wrapped(self, msg: str, **kwargs) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return orig(self, msg)
+        return await orig(self, msg, **kwargs)
 
     monkeypatch.setattr(
         _SimulatedWebSearcherHandle,
@@ -108,7 +108,7 @@ async def test_interject(monkeypatch):
     ws = SimulatedWebSearcher()
     h = await ws.ask("Summarize latest announcements from major vendors.")
     await asyncio.sleep(0.05)
-    reply = h.interject("Prefer primary sources and release notes.")
+    reply = await h.interject("Prefer primary sources and release notes.")
     assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
@@ -123,7 +123,7 @@ async def test_stop():
     ws = SimulatedWebSearcher()
     h = await ws.ask("Generate a long market analysis.")
     await asyncio.sleep(0.05)
-    h.stop()
+    await h.stop()
     await h.result()
     assert h.done(), "Handle should report done after stop()"
 
@@ -221,7 +221,7 @@ async def test_nested_ask():
 
     handle = await ws.ask("Summarize key research findings.")
 
-    handle.interject("Focus on European enterprise accounts.")
+    await handle.interject("Focus on European enterprise accounts.")
 
     nested = await handle.ask("What is the key point to emphasize?")
 
@@ -304,7 +304,7 @@ async def test_stop_while_paused_finishes_immediately():
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
-    h.stop("cancelled")
+    await h.stop("cancelled")
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()
@@ -327,7 +327,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     )
     q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in q.lower()
-    h.stop("no longer needed")
+    await h.stop("no longer needed")
     out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()

@@ -648,7 +648,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )
-                # Deliver any queued interjections (message + images) for the newly active task
+                # Deliver any queued interjections for the newly active task
                 try:
                     pending_msgs = getattr(self, "_queued_interjections", {}).pop(
                         self._current_task_id,
@@ -658,13 +658,9 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                         try:
                             if isinstance(_item, dict):
                                 _m = _item.get("message", "")
-                                _imgs = _item.get("images")
                             else:
-                                _m, _imgs = _item, None
-                            if _imgs is None:
-                                await self._current_handle.interject(_m)
-                            else:
-                                await self._current_handle.interject(_m, images=_imgs)
+                                _m = _item
+                            await self._current_handle.interject(_m)
                         except Exception:
                             pass
                 except Exception:
@@ -678,8 +674,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:  # type: ignore[override]
         """Route interjections to specific tasks in the queue using an LLM router.
 
@@ -697,17 +692,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         if self._should_delegate_directly():
             if not (message or "").strip():
                 return
-            if images is None:
-                await self._current_handle.interject(
-                    message,
-                    parent_chat_context_cont=parent_chat_context_cont,
-                )
-            else:
-                await self._current_handle.interject(
-                    message,
-                    parent_chat_context_cont=parent_chat_context_cont,
-                    images=images,
-                )
+            await self._current_handle.interject(
+                message,
+                _parent_chat_context_cont=_parent_chat_context_cont,
+            )
             return
 
         # Fast path: empty/whitespace → no-op
@@ -746,10 +734,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 except Exception:
                     pass
                 return
-            if images is None:
-                await self._current_handle.interject(message)
-            else:
-                await self._current_handle.interject(message, images=images)
+            await self._current_handle.interject(message)
             return
 
         if not hasattr(self, "_queued_interjections"):
@@ -763,21 +748,16 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             for tid in task_ids:
                 if tid == self._current_task_id:
                     try:
-                        await self._current_handle.interject(instr, images=images)
+                        await self._current_handle.interject(instr)
                     except Exception:
                         pass
                 else:
-                    self._queued_interjections.setdefault(tid, []).append(
-                        {
-                            "message": instr,
-                            "images": images,
-                        },
-                    )
+                    self._queued_interjections.setdefault(tid, []).append(instr)
         return
 
-    def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+    async def stop(self, *, cancel: bool = False, reason: Optional[str] = None, **kwargs) -> Optional[str]:  # type: ignore[override]
         try:
-            return self._current_handle.stop(cancel=cancel, reason=reason)
+            return await self._current_handle.stop(cancel=cancel, reason=reason)
         except Exception:
             return "Stopped."
 
@@ -1077,13 +1057,13 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             def __init__(self, text: str) -> None:
                 self._text = text
 
-            async def interject(self, message: str): ...
+            async def interject(self, message: str, **kwargs): ...
 
-            def stop(self, reason: Optional[str] = None): ...
+            async def stop(self, reason: Optional[str] = None, **kwargs): ...
 
-            def pause(self): ...
+            async def pause(self): ...
 
-            def resume(self): ...
+            async def resume(self): ...
 
             def done(self) -> bool:
                 return True
@@ -1091,7 +1071,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             async def result(self) -> str:
                 return self._text
 
-            async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
+            async def ask(self, q: str, **kwargs) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
             # New abstract event APIs – provide harmless stubs for the static handle

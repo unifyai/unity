@@ -21,7 +21,6 @@ from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     assert_act_triggered,
     assert_efficient,
-    assert_reasonably_efficient,
     assert_steering_called,
     build_cm_context,
     get_in_flight_action_count,
@@ -107,9 +106,10 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     )
 
     # Efficiency: Step 2 is pure small talk (acknowledge + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: small talk")
-    assert_efficient(result3, "Step 3: ask status")
+    # Step 3 uses async ask_* which may take extra turns (interim ack + result relay)
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: small talk")
+    assert_efficient(result3, 5, "Step 3: ask status (async)")
 
 
 @pytest.mark.asyncio
@@ -164,9 +164,10 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
     )
 
     # Efficiency: Step 2 is a question that could trigger act to check time/timezone
-    assert_efficient(result1, "Step 1: initial action")
-    assert_reasonably_efficient(result2, "Step 2: unrelated question (may trigger act)")
-    assert_efficient(result3, "Step 3: ask progress")
+    # Step 3 uses async ask_* which may take extra turns (interim ack + result relay)
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: unrelated question (may trigger act)")
+    assert_efficient(result3, 5, "Step 3: ask progress (async)")
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +228,9 @@ async def test_stop_task_after_small_talk(initialized_cm):
     )
 
     # Efficiency: Step 2 is pure weather small talk (acknowledge + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: small talk")
-    assert_efficient(result3, "Step 3: cancel request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: small talk")
+    assert_efficient(result3, 3, "Step 3: cancel request")
 
 
 @pytest.mark.asyncio
@@ -284,9 +285,9 @@ async def test_stop_task_change_of_mind(initialized_cm):
     )
 
     # Efficiency: Step 2 mentions a task ("buy groceries") - LLM may offer to help
-    assert_efficient(result1, "Step 1: initial action")
-    assert_reasonably_efficient(result2, "Step 2: mentions task (may offer to help)")
-    assert_efficient(result3, "Step 3: cancel request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: mentions task (may offer to help)")
+    assert_efficient(result3, 3, "Step 3: cancel request")
 
 
 # ---------------------------------------------------------------------------
@@ -346,9 +347,9 @@ async def test_pause_task_for_meeting(initialized_cm):
     )
 
     # Efficiency: Step 2 implies time constraint - LLM may interject deadline, expedite, etc.
-    assert_efficient(result1, "Step 1: initial action")
-    assert_reasonably_efficient(result2, "Step 2: time constraint (may adapt task)")
-    assert_efficient(result3, "Step 3: pause request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: time constraint (may adapt task)")
+    assert_efficient(result3, 3, "Step 3: pause request")
 
 
 @pytest.mark.asyncio
@@ -394,8 +395,8 @@ async def test_pause_task_hold_on(initialized_cm):
     )
 
     # Efficiency: Step 2 is explicit pause request (pause + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: hold on request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: hold on request")
 
 
 # ---------------------------------------------------------------------------
@@ -455,9 +456,9 @@ async def test_resume_after_pause(initialized_cm):
     )
 
     # Efficiency: Steps 2 and 3 are explicit steering requests (pause/resume + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: hold request")
-    assert_efficient(result3, "Step 3: resume request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: hold request")
+    assert_efficient(result3, 3, "Step 3: resume request")
 
 
 @pytest.mark.asyncio
@@ -521,10 +522,10 @@ async def test_resume_continue_where_left_off(initialized_cm):
     )
 
     # Efficiency: Step 3 is pure explanation (acknowledge + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: hold request")
-    assert_efficient(result3, "Step 3: small talk")
-    assert_efficient(result4, "Step 4: resume request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: hold request")
+    assert_efficient(result3, 3, "Step 3: small talk")
+    assert_efficient(result4, 3, "Step 4: resume request")
 
 
 # ---------------------------------------------------------------------------
@@ -584,9 +585,9 @@ async def test_interject_additional_constraint(initialized_cm):
     )
 
     # Efficiency: Step 2 mentions "team event" which could be context for the contact search
-    assert_efficient(result1, "Step 1: initial action")
-    assert_reasonably_efficient(result2, "Step 2: context (may interject to task)")
-    assert_efficient(result3, "Step 3: interject constraint")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: context (may interject to task)")
+    assert_efficient(result3, 3, "Step 3: interject constraint")
 
 
 @pytest.mark.asyncio
@@ -641,9 +642,9 @@ async def test_interject_extension(initialized_cm):
     )
 
     # Efficiency: Step 2 is pure anticipation (acknowledge + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: anticipation")
-    assert_efficient(result3, "Step 3: extension")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: anticipation")
+    assert_efficient(result3, 3, "Step 3: extension")
 
 
 @pytest.mark.asyncio
@@ -698,9 +699,9 @@ async def test_interject_new_priority(initialized_cm):
     )
 
     # Efficiency: Step 2 is pure statement (acknowledge + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: conversation")
-    assert_efficient(result3, "Step 3: narrow focus")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: conversation")
+    assert_efficient(result3, 3, "Step 3: narrow focus")
 
 
 # ---------------------------------------------------------------------------
@@ -771,10 +772,10 @@ async def test_pause_interject_resume_sequence(initialized_cm):
     )
 
     # Efficiency: All steps are explicit steering requests
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: pause request")
-    assert_efficient(result3, "Step 3: interject while paused")
-    assert_efficient(result4, "Step 4: resume request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: pause request")
+    assert_efficient(result3, 3, "Step 3: interject while paused")
+    assert_efficient(result4, 3, "Step 4: resume request")
 
 
 @pytest.mark.asyncio
@@ -840,11 +841,11 @@ async def test_multiple_distractors_then_stop(initialized_cm):
     )
 
     # Efficiency: Steps 2-4 are pure chit-chat (acknowledge + wait)
-    assert_efficient(result1, "Step 1: initial action")
-    assert_efficient(result2, "Step 2: distractor 1")
-    assert_efficient(result3, "Step 3: distractor 2")
-    assert_efficient(result4, "Step 4: distractor 3")
-    assert_efficient(result5, "Step 5: stop request")
+    assert_efficient(result1, 3, "Step 1: initial action")
+    assert_efficient(result2, 3, "Step 2: distractor 1")
+    assert_efficient(result3, 3, "Step 3: distractor 2")
+    assert_efficient(result4, 3, "Step 4: distractor 3")
+    assert_efficient(result5, 3, "Step 5: stop request")
 
 
 # ---------------------------------------------------------------------------
@@ -944,7 +945,7 @@ async def test_ask_shows_pending_then_completed(initialized_cm):
         pytest.fail("Expected at least one action with ask actions in history")
 
     # Efficiency: Step 1 is a straightforward action request
-    assert_efficient(result1, "Step 1: initial action")
+    assert_efficient(result1, 3, "Step 1: initial action")
 
 
 @pytest.mark.asyncio
@@ -1011,4 +1012,4 @@ async def test_ask_response_triggers_llm_followup(initialized_cm):
     )
 
     # Efficiency: Step 1 is a straightforward action request
-    assert_efficient(result1, "Step 1: initial action")
+    assert_efficient(result1, 3, "Step 1: initial action")

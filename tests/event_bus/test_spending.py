@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from unillm import LLMEvent
-from unillm.limit_hooks import LimitCheckRequest, LimitCheckResponse, LimitType
+from unillm.limit_hooks import LimitCheckRequest, LimitType
 
 from unity.common.log_utils import AtomicUpsertResult, atomic_upsert
 from unity.events.llm_event_hook import (
@@ -85,7 +85,7 @@ class TestAtomicUpsert:
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -145,7 +145,7 @@ class TestAtomicUpsert:
                 mock_session.assistant_record = {"agent_id": "asst_789"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -203,7 +203,7 @@ class TestAtomicUpsert:
                 mock_session.org_name = "TestOrg"  # Set org name
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -250,7 +250,7 @@ class TestAtomicUpsert:
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -528,7 +528,7 @@ class TestConcurrentSpendUpdates:
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 with patch("unity.common.log_utils.SETTINGS") as mock_settings:
-                    mock_settings.UNIFY_BASE_URL = "https://api.test.com/v0"
+                    mock_settings.ORCHESTRA_URL = "https://api.test.com/v0"
 
                     with patch("unity.common.log_utils.unify") as mock_unify:
                         mock_unify.active_project.return_value = "Assistants"
@@ -657,7 +657,8 @@ class TestCheckSpendingLimitsCallback:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -691,7 +692,8 @@ class TestCheckSpendingLimitsCallback:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -736,7 +738,8 @@ class TestPersonalContextLimitChecks:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -782,7 +785,8 @@ class TestOrgContextLimitChecks:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -829,7 +833,8 @@ class TestOrgContextLimitChecks:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -864,7 +869,8 @@ class TestLimitCheckErrorHandling:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -902,7 +908,8 @@ class TestLimitCheckErrorHandling:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -940,7 +947,8 @@ class TestLimitCheckErrorHandling:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -984,7 +992,8 @@ class TestParallelLimitChecks:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -1032,7 +1041,8 @@ class TestNoLimitSet:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -1103,7 +1113,8 @@ class TestLimitBoundary:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -1137,7 +1148,8 @@ class TestLimitBoundary:
 
         with patch("unity.spending_limits._get_api_key", return_value="test-key"):
             with patch(
-                "unity.spending_limits._get_base_url", return_value="http://test/v0"
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
             ):
                 with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                     mock_session.assistant_record = {"agent_id": "agent_123"}
@@ -1170,7 +1182,7 @@ class TestLimitBoundary:
 #   ORCHESTRA_ADMIN_KEY=<orchestra-key>
 #   OPENAI_API_KEY=<openai-key>
 #   ANTHROPIC_API_KEY=<anthropic-key>
-#   3. Run tests: pytest tests/test_event_bus/test_spending.py -m requires_orchestra
+#   3. Run tests: pytest tests/event_bus/test_spending.py -m requires_orchestra
 
 
 import os as _os
@@ -1196,7 +1208,7 @@ class E2ETestConfig:
     @classmethod
     def from_env(cls) -> "E2ETestConfig":
         """Create config from environment variables."""
-        base_url = _os.getenv("UNIFY_BASE_URL", "http://localhost:8000/v0")
+        base_url = _os.getenv("ORCHESTRA_URL", "http://localhost:8000/v0")
         api_key = _os.getenv("UNIFY_KEY", "local-test-api-key")
         admin_key = _os.getenv("ORCHESTRA_ADMIN_KEY", api_key)
         return cls(base_url=base_url, api_key=api_key, admin_key=admin_key)
@@ -1625,7 +1637,10 @@ class TestE2ESpendingLimits:
                 return None
 
         results = await asyncio.gather(
-            make_call(0), make_call(1), make_call(2), return_exceptions=True
+            make_call(0),
+            make_call(1),
+            make_call(2),
+            return_exceptions=True,
         )
 
         # At least some calls should succeed

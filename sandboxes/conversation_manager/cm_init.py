@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable, Optional
 
-from sandboxes.conversation_manager.sandbox_simulated_actor import SandboxSimulatedActor
+from sandboxes.conversation_manager.actor_factory import ActorFactory
+from sandboxes.conversation_manager.config_manager import ActorConfig
 from unity.conversation_manager.event_broker import get_event_broker, reset_event_broker
 from unity.conversation_manager.main import run_conversation_manager
 from unity.conversation_manager.domains.managers_utils import init_conv_manager
@@ -33,7 +34,11 @@ _SIMULATION_GUIDANCE = (
 )
 
 
-async def initialize_cm(*, args: Any):
+async def initialize_cm(
+    *,
+    args: Any,
+    progress_callback: Optional[Callable[[str], None]] = None,
+):
     """
     Initialize ConversationManager for the sandbox.
 
@@ -58,6 +63,12 @@ async def initialize_cm(*, args: Any):
         pass
 
     real_comms = bool(getattr(args, "real_comms", False))
+    cfg: ActorConfig = getattr(
+        args,
+        "_actor_config",
+        ActorConfig(actor_type="simulated"),
+    )
+    use_real_managers = cfg.managers_mode == "real"
 
     # Start CM in-process.
     cm = await run_conversation_manager(
@@ -65,7 +76,8 @@ async def initialize_cm(*, args: Any):
         event_broker=event_broker,
         stop_event=asyncio.Event(),
         enable_comms_manager=True if real_comms else False,
-        apply_test_mocks=False if real_comms else True,
+        # Simulated-only mode uses CM test mocks; real-managers mode must not.
+        apply_test_mocks=(False if (real_comms or use_real_managers) else True),
     )
 
     if real_comms:
@@ -76,33 +88,55 @@ async def initialize_cm(*, args: Any):
             ),
         )
 
-        # In real-comms mode, CM will usually be initialized by StartupEvent.
-        # However, for local dev it's often desirable to have managers ready.
-        # init_conv_manager without an injected actor uses default Actor (not desired here),
-        # so we keep SimulatedActor injection even in real-comms mode per epic constraint.
-        sim_actor = SandboxSimulatedActor(
-            steps=None,
-            duration=8.0,
-            log_mode="print",
-            simulation_guidance=_SIMULATION_GUIDANCE,
-        )
-        await init_conv_manager(cm, actor=sim_actor)
+        # In real-comms mode, CM will usually be initialized by StartupEvent. For local dev
+        # it's often desirable to have managers ready, so we eagerly init with the selected actor.
+        actor = ActorFactory.create_actor(
+            cfg,
+            args=args,
+            progress_callback=progress_callback or print,
+        ).actor
+        await init_conv_manager(cm, actor=actor)
     else:
         # Simulated mode should not depend on COMMS_URL, GCP Pub/Sub, or provisioned numbers.
         apply_simulated_comms()
 
-        # Inject SimulatedActor; run_conversation_manager doesn't init managers when mocks are enabled.
-        sim_actor = SandboxSimulatedActor(
-            steps=None,
-            duration=8.0,
-            log_mode="print",
-            simulation_guidance=_SIMULATION_GUIDANCE,
-        )
-        await init_conv_manager(cm, actor=sim_actor)
+        # Inject selected actor; run_conversation_manager doesn't init managers when mocks are enabled.
+        actor = ActorFactory.create_actor(
+            cfg,
+            args=args,
+            progress_callback=progress_callback or print,
+        ).actor
+        await init_conv_manager(cm, actor=actor)
+
+        # Ensure the system user contact (contact_id=1) has basic identity details
+        # populated in the Contacts table.
+        #
+        # In sandbox/simulated contexts, ContactManager provisions system contacts from
+        # `SESSION_DETAILS` / API. When those aren't initialized (common locally), the
+        # default user contact may be missing `phone_number` / `email_address`, which
+        # makes brain actions like `send_sms` / `send_email` fail with an Error event.
+        try:
+            from sandboxes.conversation_manager.event_publisher import (
+                get_simulated_user_contact,
+            )
+
+            u = get_simulated_user_contact()
+            if getattr(cm, "contact_manager", None) is not None:
+                cm.contact_manager.update_contact(  # type: ignore[union-attr]
+                    contact_id=1,
+                    first_name=u.get("first_name") or None,
+                    surname=u.get("surname") or None,
+                    phone_number=u.get("phone_number") or None,
+                    email_address=u.get("email_address") or None,
+                    should_respond=True,
+                )
+        except Exception:
+            pass
 
     LG.info(
-        "ConversationManager initialized (%s, SimulatedActor injected)",
-        "real-comms" if real_comms else "simulated",
+        "ConversationManager initialized (%s, actor=%s)",
+        "real-comms" if real_comms else "simulated-comms",
+        cfg.actor_type,
     )
     return cm
 

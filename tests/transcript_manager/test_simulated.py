@@ -104,9 +104,9 @@ async def test_handle_interject(monkeypatch):
     original_interject = _SimulatedTranscriptHandle.interject
 
     @functools.wraps(original_interject)
-    def wrapped(self, message: str) -> str:  # type: ignore[override]
+    async def wrapped(self, message: str, **kwargs) -> str:  # type: ignore[override]
         counts["interject"] += 1
-        return original_interject(self, message)
+        return await original_interject(self, message, **kwargs)
 
     monkeypatch.setattr(
         _SimulatedTranscriptHandle,
@@ -119,7 +119,7 @@ async def test_handle_interject(monkeypatch):
     handle = await tm.ask("Summarise yesterday's Slack exchange with Bob.")
     # interject while running
     await asyncio.sleep(0.05)
-    reply = handle.interject("Also include any emojis Bob used.")
+    reply = await handle.interject("Also include any emojis Bob used.")
     assert _ack_ok(reply)
 
     await handle.result()
@@ -135,7 +135,7 @@ async def test_handle_stop():
     tm = SimulatedTranscriptManager()
     handle = await tm.ask("Produce a full export of all messages.")
     await asyncio.sleep(0.05)
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done(), "Handle should report done after stop()"
 
@@ -251,7 +251,7 @@ async def test_handle_ask():
     handle = await tm.ask("Summarize all unread messages this week.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on European enterprise accounts.")
+    await handle.interject("Focus on European enterprise accounts.")
 
     # Invoke the dynamic ask on the running handle
     nested = await handle.ask("What is the key point to emphasize?")
@@ -281,7 +281,7 @@ async def test_stop_while_paused():
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
-    h.stop("cancelled by user")
+    await h.stop("cancelled by user")
     out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()
@@ -304,7 +304,7 @@ async def test_stop_while_waiting_clarification():
     )
     q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in q.lower()
-    h.stop("no longer needed")
+    await h.stop("no longer needed")
     out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()

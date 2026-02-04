@@ -85,8 +85,29 @@ async def actor_watch_notifications(
         except asyncio.TimeoutError:
             continue
 
-        # get message
-        msg = notif.get("message") if isinstance(notif, dict) else str(notif)
+        # Extract a human-friendly message.
+        #
+        # Contract:
+        # - Notifications may be plain strings (already display-ready), OR
+        # - Structured dict payloads (recommended: include both "type" and "message").
+        #
+        # We keep this adapter strict and predictable: prefer "message"; otherwise
+        # fall back to "type"; otherwise JSON-dump the payload.
+        msg: str
+        if isinstance(notif, dict):
+            if notif.get("message") is not None:
+                msg = str(notif.get("message"))
+            elif notif.get("type") is not None:
+                msg = str(notif.get("type"))
+            else:
+                try:
+                    import json as _json
+
+                    msg = _json.dumps(notif, ensure_ascii=False, default=str)
+                except Exception:
+                    msg = str(notif)
+        else:
+            msg = str(notif)
 
         # publish response
         await event_broker.publish(
@@ -131,7 +152,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     print("publishing transcript", event_name)
     event_name = event_name.lower()
     if "unify" in event_name or "prehire" in event_name:
-        medium = Medium.UNIFY_MEET if "call" in event_name else Medium.UNIFY_MESSAGE
+        medium = Medium.UNIFY_MEET if "meet" in event_name else Medium.UNIFY_MESSAGE
     elif "phone" in event_name:
         medium = Medium.PHONE_CALL
     elif "sms" in event_name:
@@ -159,12 +180,18 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
             OutboundUnifyMeetUtterance,
         ),
     ):
-        # Use contact from event, fall back to default if not in index
+        # Use contact from event - contact_id must be valid, no silent fallback
         evt_contact_id = event.contact.get("contact_id")
         if cm.contact_index.get_contact(contact_id=evt_contact_id):
             contact_id = evt_contact_id
         else:
-            contact_id = 1
+            # Log error but use the provided contact_id anyway since the event
+            # already contains the full contact dict from the source
+            print(
+                f"Warning: contact_id {evt_contact_id} not in contact_index, "
+                f"using contact from event",
+            )
+            contact_id = evt_contact_id
     elif cm.contact_index.get_contact(contact_id=event.contact["contact_id"]):
         contact_id = event.contact["contact_id"]
     if role == "Assistant":
@@ -336,6 +363,58 @@ async def update_session_contacts(
     await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
 
 
+async def update_rolling_summaries(cm: "ConversationManager") -> None:
+    """Update rolling summaries for all active conversations."""
+    if cm.memory_manager is None:
+        print("[ManagersWorker] Rolling summary skipped (MemoryManager disabled)")
+        cm._session_logger.debug(
+            "summarize",
+            "Rolling summary skipped (MemoryManager disabled)",
+        )
+        cm.is_summarizing = False
+        cm.chat_history = []
+        return
+
+    # Build render data for each active conversation
+    render_data = []
+    for contact_id, conv_state in cm.contact_index.active_conversations.items():
+        contact_info = cm.contact_index.get_contact(contact_id) or {}
+        rendered = cm.prompt_renderer.render_contact(
+            contact_info=contact_info,
+            conv_state=conv_state,
+            max_messages=25,
+            last_snapshot=cm.last_snapshot,
+        )
+        render_data.append((contact_id, rendered))
+
+    print(
+        f"[ManagersWorker] Updating rolling summary for {len(render_data)} contacts: "
+        f"{[cid for cid, _ in render_data]}",
+    )
+
+    tasks = [
+        asyncio.create_task(
+            cm.memory_manager.update_contact_rolling_summary(
+                rendered,
+                contact_id=cid,
+            ),
+        )
+        for cid, rendered in render_data
+    ]
+    try:
+        await asyncio.gather(*tasks)
+        cm.is_summarizing = False
+        cm.chat_history = []
+        print("[ManagersWorker] Rolling summary updated successfully")
+        cm._session_logger.info("summarize", "Contact rolling summary updated")
+    except Exception as e:
+        print(f"[ManagersWorker] Error updating rolling summary: {e}")
+        cm._session_logger.error(
+            "summarize",
+            f"Error updating rolling summary: {e}",
+        )
+
+
 # Queueing operations that need managers
 
 _operations_queue = asyncio.Queue()
@@ -349,11 +428,29 @@ async def queue_operation(async_func: callable, *args, **kwargs) -> None:
     await _operations_queue.put((async_func, args, kwargs))
 
 
-async def wait_for_initialization(cm: "ConversationManager") -> None:
+async def wait_for_initialization(
+    cm: "ConversationManager",
+    timeout: float = 30.0,
+) -> None:
     """
     Wait for initialization to complete.
+
+    Args:
+        cm: The ConversationManager instance to wait for.
+        timeout: Maximum seconds to wait before raising an error. Default 30s.
+
+    Raises:
+        RuntimeError: If initialization does not complete within the timeout.
     """
+    import time
+
+    start = time.monotonic()
     while not cm.initialized:
+        if time.monotonic() - start > timeout:
+            raise RuntimeError(
+                f"ConversationManager initialization did not complete within {timeout}s. "
+                "Check for initialization errors above.",
+            )
         await asyncio.sleep(0.1)
 
 
@@ -614,3 +711,4 @@ async def init_conv_manager(
 
         except Exception as e:
             print(f"[ManagersWorker] Error during initialization: {e}")
+            raise

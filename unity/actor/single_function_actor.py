@@ -11,6 +11,13 @@ The actor can execute either user-defined functions from the FunctionManager
 or action primitives (like ContactManager.ask, TaskScheduler.execute, etc.).
 
 Supports optional verification via LLM to check if the function achieved its goal.
+
+Steerable Function Support
+--------------------------
+If the executed function returns a SteerableHandle (e.g., from CodeActActor.act()
+or start_async_tool_loop()), the handle is detected and all steering operations
+(interject, stop, pause, resume, ask) are forwarded to the inner handle. This
+enables compositional functions that wrap other actors to be fully steerable.
 """
 
 from __future__ import annotations
@@ -23,7 +30,11 @@ from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
+from unity.common.async_tool_loop import (
+    SteerableHandle,
+    SteerableToolHandle,
+    start_async_tool_loop,
+)
 from unity.common.llm_client import new_llm_client
 from unity.function_manager.execution_env import create_execution_globals
 from unity.manager_registry import ManagerRegistry
@@ -54,11 +65,19 @@ class SingleFunctionVerificationResult(BaseModel):
 
 class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
     """
-    A minimal handle for a single function execution.
+    A handle for a single function execution with steerable forwarding support.
 
-    This handle provides the standard steerable interface but with simplified
-    behavior: pause/resume/interject are no-ops since a single function
-    execution cannot be meaningfully paused mid-flight.
+    This handle provides the standard steerable interface. For non-steerable
+    functions, pause/resume/interject are no-ops. For steerable functions
+    (those that return a SteerableHandle), all operations are forwarded to
+    the inner handle, enabling full steering support.
+
+    Steerable Detection
+    -------------------
+    When the executed function returns a SteerableHandle (detected via isinstance),
+    this handle becomes a transparent forwarder - all steering operations are
+    delegated to the inner handle. This enables compositional functions that
+    wrap CodeActActor or other steerable actors to be fully steerable.
     """
 
     def __init__(
@@ -87,13 +106,31 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
         self._verification_passed: Optional[bool] = None
         self._verification_reason: Optional[str] = None
 
+        # Steerable forwarding support
+        self._inner_handle: Optional[SteerableHandle] = None
+        self._function_returned = asyncio.Event()
+
         # Start monitoring the task
         asyncio.create_task(self._monitor_execution())
 
     async def _monitor_execution(self):
-        """Monitor the execution task, run verification if enabled, and set completion when done."""
+        """Monitor the execution task, detect steerable handles, and manage completion."""
         try:
             result = await self._execution_task
+
+            # Check if the result is a steerable handle
+            if isinstance(result, SteerableHandle):
+                # Store the inner handle for forwarding
+                self._inner_handle = result
+                logger.info(
+                    f"Function '{self._function_name}' returned steerable handle, "
+                    f"forwarding operations to inner handle.",
+                )
+                # DO NOT set completion_event - the inner handle manages completion
+                # The function_returned event signals that we have the inner handle
+                return
+
+            # Non-steerable: process result as before
             if not self._stopped:
                 result_str = (
                     str(result)
@@ -101,7 +138,7 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
                     else "Function completed successfully."
                 )
 
-                # Run verification if enabled
+                # Run verification if enabled (only for non-steerable)
                 if self._verify and self._actor is not None:
                     try:
                         verification = await self._actor._verify_execution(
@@ -138,17 +175,31 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
                 else:
                     self._result_str = result_str
 
+            # Non-steerable: mark as complete
+            self._completion_event.set()
+
         except asyncio.CancelledError:
             self._result_str = f"Function '{self._function_name}' was cancelled."
             self._stopped = True
+            self._completion_event.set()
         except Exception as e:
             self._error_str = str(e)
             self._result_str = f"Function '{self._function_name}' failed: {e}"
-        finally:
             self._completion_event.set()
+        finally:
+            # Always signal that the function call has returned
+            self._function_returned.set()
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
+        # Wait for the function to return first
+        await self._function_returned.wait()
+
+        # If steerable, forward to inner handle
+        if self._inner_handle is not None:
+            return await self._inner_handle.result()
+
+        # Non-steerable: wait for completion and return stored result
         await self._completion_event.wait()
         if self._error_str:
             return f"Error: {self._error_str}"
@@ -156,50 +207,109 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
+        # If we have an inner handle, delegate to it
+        if self._inner_handle is not None:
+            return self._inner_handle.done()
+        # Non-steerable: check completion event
         return self._completion_event.is_set()
 
-    @functools.wraps(BaseActiveTask.stop, updated=())
-    async def stop(self, reason: Optional[str] = None, **kwargs) -> str:
-        """Cancel the function execution if still running."""
-        if self._completion_event.is_set():
-            return await self.result()
+    @functools.wraps(SteerableToolHandle.stop, updated=())
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+    ) -> Optional[str]:
+        """Stop the function execution. Forwards to inner handle if steerable."""
+        # If we already have an inner handle, forward to it
+        if self._inner_handle is not None:
+            return await self._inner_handle.stop(reason)
 
-        self._stopped = True
-        self._execution_task.cancel()
+        # If function hasn't returned yet, cancel the task
+        if not self._function_returned.is_set():
+            self._stopped = True
+            self._execution_task.cancel()
 
-        # Wait for cancellation to complete
-        try:
-            await asyncio.wait_for(self._completion_event.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            pass
+            # Wait for cancellation to complete
+            try:
+                await asyncio.wait_for(self._function_returned.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
 
-        self._result_str = (
-            f"Function '{self._function_name}' stopped."
-            if not reason
-            else f"Function '{self._function_name}' stopped: {reason}"
-        )
-        return self._result_str
+            self._result_str = (
+                f"Function '{self._function_name}' stopped."
+                if not reason
+                else f"Function '{self._function_name}' stopped: {reason}"
+            )
+            return self._result_str
 
-    @functools.wraps(BaseActiveTask.pause, updated=())
-    async def pause(self) -> str:
-        """No-op: single function execution cannot be paused."""
-        return f"Pause acknowledged (no effect on single function '{self._function_name}')."
+        # Non-steerable and already complete
+        return f"Function '{self._function_name}' already completed."
 
-    @functools.wraps(BaseActiveTask.resume, updated=())
-    async def resume(self) -> str:
-        """No-op: single function execution cannot be resumed."""
-        return f"Resume acknowledged (no effect on single function '{self._function_name}')."
+    @functools.wraps(SteerableToolHandle.pause, updated=())
+    async def pause(self) -> Optional[str]:
+        """Pause the execution. Forwards to inner handle if steerable."""
+        # Wait for function to return so we know if it's steerable
+        await self._function_returned.wait()
 
-    @functools.wraps(BaseActiveTask.interject, updated=())
-    async def interject(self, message: str, **kwargs) -> str:
-        """No-op: single function execution cannot be interjected."""
-        return f"Interjection acknowledged (no effect on single function '{self._function_name}')."
+        if self._inner_handle is not None:
+            return await self._inner_handle.pause()
 
-    @functools.wraps(BaseActiveTask.ask, updated=())
-    async def ask(self, question: str) -> SteerableToolHandle:
-        """Returns a simple response about the function status."""
+        # Non-steerable: no-op
+        return f"Pause acknowledged (no effect on non-steerable function '{self._function_name}')."
+
+    @functools.wraps(SteerableToolHandle.resume, updated=())
+    async def resume(self) -> Optional[str]:
+        """Resume the execution. Forwards to inner handle if steerable."""
+        # Wait for function to return so we know if it's steerable
+        await self._function_returned.wait()
+
+        if self._inner_handle is not None:
+            return await self._inner_handle.resume()
+
+        # Non-steerable: no-op
+        return f"Resume acknowledged (no effect on non-steerable function '{self._function_name}')."
+
+    @functools.wraps(SteerableHandle.interject, updated=())
+    async def interject(
+        self,
+        message: str,
+        *,
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        """Interject into the execution. Forwards to inner handle if steerable."""
+        # Wait for function to return so we know if it's steerable
+        await self._function_returned.wait()
+
+        # If steerable, forward to inner handle
+        if self._inner_handle is not None:
+            return await self._inner_handle.interject(
+                message,
+                _parent_chat_context_cont=_parent_chat_context_cont,
+            )
+
+        # Non-steerable: no-op
+        return f"Interjection acknowledged (no effect on non-steerable function '{self._function_name}')."
+
+    @functools.wraps(SteerableHandle.ask, updated=())
+    async def ask(
+        self,
+        question: str,
+        *,
+        _parent_chat_context: list[dict] | None = None,
+    ) -> SteerableHandle:
+        """Query the status. Forwards to inner handle if steerable."""
+        # Wait for function to return so we know if it's steerable
+        await self._function_returned.wait()
+
+        # If steerable, forward to inner handle
+        if self._inner_handle is not None:
+            return await self._inner_handle.ask(
+                question,
+                _parent_chat_context=_parent_chat_context,
+            )
+
+        # Non-steerable: return status-reporting loop
         client = new_llm_client()
-        id_info = f"(primitive)" if self._is_primitive else f"(ID: {self._function_id})"
+        id_info = "(primitive)" if self._is_primitive else f"(ID: {self._function_id})"
         client.set_system_message(
             f"You are reporting on the status of a function execution. "
             f"The function '{self._function_name}' {id_info} is currently running. "
@@ -228,29 +338,82 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
     # Additional BaseActiveTask methods that may be expected
 
     async def next_clarification(self) -> dict:
-        """No clarifications for single function execution."""
+        """Get next clarification. Forwards to inner handle if steerable."""
+        await self._function_returned.wait()
+
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "next_clarification",
+        ):
+            return await self._inner_handle.next_clarification()
+
+        # Non-steerable: no clarifications
         await asyncio.Event().wait()  # Wait forever
         return {}
 
     async def next_notification(self) -> dict:
-        """No notifications for single function execution."""
+        """Get next notification. Forwards to inner handle if steerable."""
+        await self._function_returned.wait()
+
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "next_notification",
+        ):
+            return await self._inner_handle.next_notification()
+
+        # Non-steerable: no notifications
         await asyncio.Event().wait()  # Wait forever
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
-        """No clarifications to answer."""
+        """Answer a clarification. Forwards to inner handle if steerable."""
+        await self._function_returned.wait()
+
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "answer_clarification",
+        ):
+            return await self._inner_handle.answer_clarification(call_id, answer)
+
+        # Non-steerable: no clarifications to answer
+        return None
 
     def get_history(self) -> list[dict]:
-        """No conversation history for single function execution."""
+        """Get conversation history. Forwards to inner handle if steerable."""
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "get_history",
+        ):
+            return self._inner_handle.get_history()
         return []
 
     @property
     def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "clarification_up_q",
+        ):
+            return self._inner_handle.clarification_up_q
         return None
 
     @property
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "clarification_down_q",
+        ):
+            return self._inner_handle.clarification_down_q
         return None
+
+    @property
+    def is_steerable(self) -> bool:
+        """Return True if this handle wraps a steerable inner handle."""
+        return self._inner_handle is not None
+
+    @property
+    def inner_handle(self) -> Optional[SteerableHandle]:
+        """Return the inner steerable handle if available."""
+        return self._inner_handle
 
 
 class SingleFunctionActor(BaseActor):
@@ -273,7 +436,7 @@ class SingleFunctionActor(BaseActor):
         function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
         computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
+        agent_mode: str = "web",
         agent_server_url: str = "http://localhost:3000",
     ):
         """
@@ -286,7 +449,7 @@ class SingleFunctionActor(BaseActor):
                             uses the singleton.
             headless: Whether to run in headless mode.
             computer_mode: Computer backend mode ("magnitude" or "mock").
-            agent_mode: Agent mode for ComputerPrimitives ("browser" or "desktop").
+            agent_mode: Agent mode for ComputerPrimitives ("web" or "desktop").
             agent_server_url: URL for the agent server. For desktop mode, pass the
                 external VM's URL.
         """

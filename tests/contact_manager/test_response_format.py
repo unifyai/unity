@@ -70,7 +70,7 @@ async def test_simulated_ask_response_format():
 @_handle_project
 async def test_simulated_update_response_format():
     """Simulated ContactManager.update should return structured output when response_format is provided."""
-    cm = SimulatedContactManager("Demo CRM for testing updates.")
+    cm = SimulatedContactManager("Demo CRM for testing updates.", deterministic=False)
 
     handle = await cm.update(
         "Create a new contact named John Doe with email john@example.com",
