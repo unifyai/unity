@@ -1023,7 +1023,7 @@ class ConversationManagerBrainActionTools:
                                     "query": param_value,
                                 },
                             )
-                        handle.stop(reason=param_value or None)
+                        await handle.stop(reason=param_value or None)
                         result = "Action stopped"
                         cm.in_flight_actions.pop(handle_id, None)
                     case "pause":
