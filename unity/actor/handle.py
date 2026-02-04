@@ -232,7 +232,6 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
                     tool_policy=self._tool_policy,
-                    images=self._images,
                     response_format=self._response_format,
                     persist=bool(self._persist),
                 )
