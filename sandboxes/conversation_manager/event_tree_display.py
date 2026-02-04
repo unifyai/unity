@@ -18,6 +18,7 @@ from unity.events.types.manager_method import ManagerMethodPayload
 class TreeNode:
     label: str
     call_id: str | None = None
+    handle_id: int | None = None  # Actor handle ID for concurrent tracking
     status: str = "in_progress"  # in_progress | completed | error
     started_at: float | None = None
     finished_at: float | None = None
@@ -30,7 +31,7 @@ class TreeNode:
         for c in self.children:
             if c.label == label:
                 return c
-        n = TreeNode(label=label)
+        n = TreeNode(label=label, handle_id=self.handle_id)
         self.children.append(n)
         return n
 

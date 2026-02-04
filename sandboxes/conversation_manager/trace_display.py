@@ -30,6 +30,7 @@ class TraceEntry:
     code: str
     result: Any
     error: Optional[str] = None
+    handle_id: Optional[int] = None  # Actor handle ID for concurrent tracking
 
 
 class TraceDisplay:
