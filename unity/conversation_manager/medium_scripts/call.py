@@ -308,15 +308,17 @@ async def entrypoint(ctx: agents.JobContext):
     print("starting AgentSession")
     await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
 
-    await session.generate_reply(allow_interruptions=True)
-
-    # Session is now ready - process buffered guidance and mark ready for future
+    # Mark session ready and process any buffered guidance BEFORE first utterance.
+    # After this, the on_guidance callback will apply guidance immediately.
+    # Note: For outbound calls, llm_node will wait for call_received (set by on_status).
     session_ready = True
     if pending_guidance:
-        print(f"[Guidance] Processing {len(pending_guidance)} buffered message(s)")
+        print(f"[Guidance] Applying {len(pending_guidance)} buffered message(s)")
         for content in pending_guidance:
             apply_guidance(content)
         pending_guidance.clear()
+
+    await session.generate_reply(allow_interruptions=True)
 
 
 if __name__ == "__main__":
