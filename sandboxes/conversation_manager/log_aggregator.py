@@ -163,13 +163,35 @@ class LogAggregator:
             lines.append(colorize(f"[{label}] {n} log line(s)", color))
         return "\n".join(lines)
 
-    def render_expanded(self, category: Category, *, group_by_handle: bool = False) -> str:
+    def render_expanded(
+        self,
+        category: Category,
+        *,
+        group_by_handle: bool = False,
+        max_message_length: int = 160,
+    ) -> str:
+        """Render logs for a category.
+
+        Args:
+            category: The log category to render
+            group_by_handle: If True, group logs by handle_id with visual separation
+            max_message_length: Maximum message length for display (0 = no limit)
+        """
         buf = self._buf[category]
         if not buf:
             return "(no logs)"
         if group_by_handle:
-            return self._render_grouped(buf, category)
-        return self._render_flat(buf, category, show_handle=True)
+            return self._render_grouped(
+                buf,
+                category,
+                max_message_length=max_message_length,
+            )
+        return self._render_flat(
+            buf,
+            category,
+            show_handle=True,
+            max_message_length=max_message_length,
+        )
 
     def _render_flat(
         self,
@@ -177,7 +199,9 @@ class LogAggregator:
         category: Category,
         *,
         show_handle: bool = False,
+        max_message_length: int = 160,
     ) -> str:
+        """Render logs in flat chronological order."""
         lines: list[str] = []
         for e in buf:
             prefix = f"[{category}]"
@@ -185,10 +209,21 @@ class LogAggregator:
                 prefix += f"[H{e.handle_id}]"
             if e.subcategory:
                 prefix += f"[{e.subcategory}]"
-            lines.append(f"{prefix} {e.level}: {e.message}")
+            # Truncate message for display if needed
+            msg = e.message
+            if max_message_length > 0 and len(msg) > max_message_length:
+                msg = msg[:max_message_length] + "..."
+            lines.append(f"{prefix} {e.level}: {msg}")
         return "\n".join(lines)
 
-    def _render_grouped(self, buf: list[LogEntry], category: Category) -> str:
+    def _render_grouped(
+        self,
+        buf: list[LogEntry],
+        category: Category,
+        *,
+        max_message_length: int = 160,
+    ) -> str:
+        """Render logs grouped by handle_id with visual separation."""
         by_handle: dict[int | None, list[LogEntry]] = {}
         for e in buf:
             hid = e.handle_id
@@ -202,9 +237,17 @@ class LogAggregator:
             if hid is None:
                 header = f"─── {category.upper()} (no handle) ───"
             else:
-                header = f"─── {category.upper()} Handle {hid} ({len(entries)} entries) ───"
-            content = self._render_flat(entries, category, show_handle=False)
+                header = (
+                    f"─── {category.upper()} Handle {hid} ({len(entries)} entries) ───"
+                )
+            content = self._render_flat(
+                entries,
+                category,
+                show_handle=False,
+                max_message_length=max_message_length,
+            )
             sections.append(f"{header}\n{content}")
+
         return "\n\n".join(sections)
 
     def get_active_handles(self, category: Category) -> list[int]:
