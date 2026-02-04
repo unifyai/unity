@@ -143,6 +143,7 @@ def build_file_manager_ask_about_file_prompt(
     if describe_fname:
         parts.add(
             f"ALWAYS call `{describe_fname}` first to get exact context paths before using filter/search/reduce.",
+            separator=False,
         )
 
     # LAYER 2: Generic capabilities block (slim)
