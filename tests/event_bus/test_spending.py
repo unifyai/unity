@@ -1990,3 +1990,457 @@ class TestE2ESpendingLimits:
                 assistant_id=str(e2e_config.test_agent_id),
                 user_name="Test User",
             )
+
+
+# ===========================================================================
+# Part 6: Spending Limit Notification Tests
+# ===========================================================================
+
+
+class TestNotifyLimitReached:
+    """Tests for the _notify_limit_reached function."""
+
+    @pytest.mark.asyncio
+    async def test_notification_sent_on_exceeded_limit(self):
+        """Notification should be sent when limit is exceeded."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        captured_request = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"notified": True, "recipient_count": 1}
+
+        async def capture_post(url, headers=None, json=None):
+            captured_request["url"] = url
+            captured_request["payload"] = json
+            return mock_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = capture_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            result = _LimitCheckResult(
+                exceeded=True,
+                limit_type="assistant",
+                limit_value=100.0,
+                current_spend=100.0,
+                entity_id="agent_123",
+                entity_name="Test Bot",
+                limit_set_at="2026-02-01T10:00:00Z",
+            )
+
+            await _notify_limit_reached(
+                result,
+                month="2026-02",
+                base_url="http://test/v0",
+                api_key="test-key",
+            )
+
+        assert "spending-limit-reached" in captured_request["url"]
+        assert captured_request["payload"]["limit_type"] == "assistant"
+        assert captured_request["payload"]["entity_id"] == "agent_123"
+        assert captured_request["payload"]["limit_value"] == 100.0
+        assert captured_request["payload"]["month"] == "2026-02"
+        assert captured_request["payload"]["limit_set_at"] == "2026-02-01T10:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_notification_includes_org_id_for_member_limit(self):
+        """Member limit notification should include organization_id."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        captured_request = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"notified": True, "recipient_count": 1}
+
+        async def capture_post(url, headers=None, json=None):
+            captured_request["payload"] = json
+            return mock_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = capture_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            result = _LimitCheckResult(
+                exceeded=True,
+                limit_type="member",
+                limit_value=200.0,
+                current_spend=200.0,
+                entity_id="user_456",
+                organization_id=789,
+            )
+
+            await _notify_limit_reached(
+                result,
+                month="2026-02",
+                base_url="http://test/v0",
+                api_key="test-key",
+            )
+
+        assert captured_request["payload"]["organization_id"] == 789
+
+    @pytest.mark.asyncio
+    async def test_notification_handles_errors_gracefully(self):
+        """Notification should not raise on errors (fire-and-forget)."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        async def failing_post(url, headers=None, json=None):
+            raise httpx.TimeoutException("Timeout")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = failing_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            result = _LimitCheckResult(
+                exceeded=True,
+                limit_type="assistant",
+                limit_value=100.0,
+                current_spend=100.0,
+                entity_id="agent_123",
+            )
+
+            # Should NOT raise
+            await _notify_limit_reached(
+                result,
+                month="2026-02",
+                base_url="http://test/v0",
+                api_key="test-key",
+            )
+
+    @pytest.mark.asyncio
+    async def test_notification_handles_http_errors_gracefully(self):
+        """Notification should not raise on HTTP errors."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.json.return_value = {"error": "Internal server error"}
+
+        async def error_post(url, headers=None, json=None):
+            return mock_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = error_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            result = _LimitCheckResult(
+                exceeded=True,
+                limit_type="user",
+                limit_value=50.0,
+                current_spend=50.0,
+                entity_id="user_123",
+            )
+
+            # Should NOT raise
+            await _notify_limit_reached(
+                result,
+                month="2026-02",
+                base_url="http://test/v0",
+                api_key="test-key",
+            )
+
+
+class TestNotificationStress:
+    """Stress tests for concurrent notification scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_notifications_all_sent(self):
+        """Multiple concurrent notifications should all be sent."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        notification_count = 0
+        lock = asyncio.Lock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"notified": True, "recipient_count": 1}
+
+        async def counting_post(url, headers=None, json=None):
+            nonlocal notification_count
+            await asyncio.sleep(0.01)  # Simulate network delay
+            async with lock:
+                notification_count += 1
+            return mock_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = counting_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            # Launch 10 concurrent notifications
+            tasks = []
+            for i in range(10):
+                result = _LimitCheckResult(
+                    exceeded=True,
+                    limit_type="assistant",
+                    limit_value=100.0,
+                    current_spend=100.0,
+                    entity_id=f"agent_{i}",
+                )
+                tasks.append(
+                    _notify_limit_reached(
+                        result,
+                        month="2026-02",
+                        base_url="http://test/v0",
+                        api_key="test-key",
+                    ),
+                )
+
+            await asyncio.gather(*tasks)
+
+        assert notification_count == 10
+
+    @pytest.mark.asyncio
+    async def test_notification_does_not_block_limit_check(self):
+        """Notification should be fire-and-forget, not blocking the response."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        notification_started = asyncio.Event()
+        notification_completed = asyncio.Event()
+
+        mock_spend_response = MagicMock()
+        mock_spend_response.json.return_value = {
+            "cumulative_spend": 150.0,
+            "limit": 100.0,
+            "limit_set_at": "2026-02-01T10:00:00Z",
+        }
+        mock_spend_response.raise_for_status = MagicMock()
+
+        mock_notify_response = MagicMock()
+        mock_notify_response.status_code = 200
+        mock_notify_response.json.return_value = {"notified": True}
+
+        async def mock_get(url, *args, **kwargs):
+            return mock_spend_response
+
+        async def slow_notify_post(url, headers=None, json=None):
+            notification_started.set()
+            await asyncio.sleep(0.5)  # Slow notification
+            notification_completed.set()
+            return mock_notify_response
+
+        with patch("unity.spending_limits._get_api_key", return_value="test-key"):
+            with patch(
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
+            ):
+                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.user_id = "user_456"
+                    mock_session.org_id = None
+                    mock_session.assistant.timezone = "UTC"
+
+                    with patch("httpx.AsyncClient") as mock_client:
+                        mock_instance = AsyncMock()
+                        mock_instance.get = mock_get
+                        mock_instance.post = slow_notify_post
+                        mock_instance.__aenter__.return_value = mock_instance
+                        mock_instance.__aexit__.return_value = None
+                        mock_client.return_value = mock_instance
+
+                        start_time = asyncio.get_event_loop().time()
+                        request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                        response = await check_spending_limits_callback(request)
+                        callback_time = asyncio.get_event_loop().time() - start_time
+
+        # Response should be fast (not waiting for notification)
+        assert response.allowed is False
+        assert callback_time < 0.2  # Should complete in < 200ms
+
+        # Wait for notification to complete in background
+        await asyncio.sleep(0.1)
+        assert notification_started.is_set()  # Notification was triggered
+
+    @pytest.mark.asyncio
+    async def test_rapid_limit_checks_with_notifications(self):
+        """Rapid limit checks should each trigger notifications independently."""
+        from unity.spending_limits import check_spending_limits_callback
+
+        notification_calls = []
+
+        mock_spend_response = MagicMock()
+        mock_spend_response.json.return_value = {
+            "cumulative_spend": 150.0,
+            "limit": 100.0,
+        }
+        mock_spend_response.raise_for_status = MagicMock()
+
+        mock_notify_response = MagicMock()
+        mock_notify_response.status_code = 200
+        mock_notify_response.json.return_value = {
+            "notified": False,
+            "reason": "already_notified",
+        }
+
+        async def mock_get(url, *args, **kwargs):
+            return mock_spend_response
+
+        async def tracking_post(url, headers=None, json=None):
+            notification_calls.append(json)
+            return mock_notify_response
+
+        with patch("unity.spending_limits._get_api_key", return_value="test-key"):
+            with patch(
+                "unity.spending_limits._get_base_url",
+                return_value="http://test/v0",
+            ):
+                with patch("unity.session_details.SESSION_DETAILS") as mock_session:
+                    mock_session.assistant_record = {"agent_id": "agent_123"}
+                    mock_session.user_id = "user_456"
+                    mock_session.org_id = None
+                    mock_session.assistant.timezone = "UTC"
+
+                    with patch("httpx.AsyncClient") as mock_client:
+                        mock_instance = AsyncMock()
+                        mock_instance.get = mock_get
+                        mock_instance.post = tracking_post
+                        mock_instance.__aenter__.return_value = mock_instance
+                        mock_instance.__aexit__.return_value = None
+                        mock_client.return_value = mock_instance
+
+                        # Fire 5 rapid limit checks
+                        tasks = []
+                        for _ in range(5):
+                            request = LimitCheckRequest(model="gpt-4", endpoint="test")
+                            tasks.append(check_spending_limits_callback(request))
+
+                        responses = await asyncio.gather(*tasks)
+
+                        # Wait for background notifications
+                        await asyncio.sleep(0.1)
+
+        # All limit checks should return denied
+        assert all(not r.allowed for r in responses)
+
+        # All 5 should have triggered notification attempts
+        # (deduplication is handled by Orchestra, not Unity)
+        assert len(notification_calls) == 5
+
+    @pytest.mark.asyncio
+    async def test_mixed_limit_types_concurrent_notifications(self):
+        """Different limit types should send independent notifications."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        captured_payloads = []
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"notified": True}
+
+        async def capture_post(url, headers=None, json=None):
+            captured_payloads.append(json)
+            return mock_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = capture_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            results = [
+                _LimitCheckResult(
+                    exceeded=True,
+                    limit_type="assistant",
+                    limit_value=100.0,
+                    current_spend=100.0,
+                    entity_id="agent_1",
+                ),
+                _LimitCheckResult(
+                    exceeded=True,
+                    limit_type="user",
+                    limit_value=200.0,
+                    current_spend=200.0,
+                    entity_id="user_1",
+                ),
+                _LimitCheckResult(
+                    exceeded=True,
+                    limit_type="member",
+                    limit_value=150.0,
+                    current_spend=150.0,
+                    entity_id="user_1",
+                    organization_id=123,
+                ),
+                _LimitCheckResult(
+                    exceeded=True,
+                    limit_type="organization",
+                    limit_value=1000.0,
+                    current_spend=1000.0,
+                    entity_id="123",
+                    entity_name="TestOrg",
+                ),
+            ]
+
+            tasks = [
+                _notify_limit_reached(r, "2026-02", "http://test/v0", "test-key")
+                for r in results
+            ]
+            await asyncio.gather(*tasks)
+
+        assert len(captured_payloads) == 4
+        limit_types = {p["limit_type"] for p in captured_payloads}
+        assert limit_types == {"assistant", "user", "member", "organization"}
+
+    @pytest.mark.asyncio
+    async def test_notification_with_missing_optional_fields(self):
+        """Notification should work with minimal required fields."""
+        from unity.spending_limits import _notify_limit_reached, _LimitCheckResult
+
+        captured_payload = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"notified": True}
+
+        async def capture_post(url, headers=None, json=None):
+            captured_payload.update(json)
+            return mock_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.post = capture_post
+            mock_instance.__aenter__.return_value = mock_instance
+            mock_instance.__aexit__.return_value = None
+            mock_client.return_value = mock_instance
+
+            result = _LimitCheckResult(
+                exceeded=True,
+                limit_type="assistant",
+                limit_value=100.0,
+                current_spend=100.0,
+                entity_id="agent_123",
+                # No entity_name, limit_set_at, or organization_id
+            )
+
+            await _notify_limit_reached(
+                result,
+                month="2026-02",
+                base_url="http://test/v0",
+                api_key="test-key",
+            )
+
+        # Required fields present
+        assert captured_payload["limit_type"] == "assistant"
+        assert captured_payload["entity_id"] == "agent_123"
+        assert captured_payload["limit_value"] == 100.0
+        assert captured_payload["month"] == "2026-02"
+
+        # Optional fields not included when None
+        assert "limit_set_at" not in captured_payload
+        assert "organization_id" not in captured_payload

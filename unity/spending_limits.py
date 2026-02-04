@@ -46,6 +46,8 @@ class _LimitCheckResult:
     current_spend: Optional[float] = None
     entity_id: Optional[str] = None
     entity_name: Optional[str] = None
+    limit_set_at: Optional[str] = None  # ISO format timestamp
+    organization_id: Optional[int] = None  # For member limits
 
 
 def _get_api_key() -> Optional[str]:
@@ -87,6 +89,7 @@ async def _check_assistant_limit(
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
+        limit_set_at = data.get("limit_set_at")
 
         # No limit set = unlimited
         if limit is None:
@@ -100,6 +103,7 @@ async def _check_assistant_limit(
             current_spend=spend,
             entity_id=agent_id,
             entity_name=data.get("agent_name"),
+            limit_set_at=limit_set_at,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -132,6 +136,7 @@ async def _check_user_limit(
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
+        limit_set_at = data.get("limit_set_at")
 
         if limit is None:
             return _LimitCheckResult(exceeded=False)
@@ -143,6 +148,7 @@ async def _check_user_limit(
             limit_value=limit,
             current_spend=spend,
             entity_id=user_id,
+            limit_set_at=limit_set_at,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -175,6 +181,7 @@ async def _check_member_limit(
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
+        limit_set_at = data.get("limit_set_at")
 
         if limit is None:
             return _LimitCheckResult(exceeded=False)
@@ -186,6 +193,8 @@ async def _check_member_limit(
             limit_value=limit,
             current_spend=spend,
             entity_id=user_id,
+            limit_set_at=limit_set_at,
+            organization_id=org_id,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -217,6 +226,7 @@ async def _check_org_limit(
 
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
+        limit_set_at = data.get("limit_set_at")
 
         if limit is None:
             return _LimitCheckResult(exceeded=False)
@@ -229,6 +239,7 @@ async def _check_org_limit(
             current_spend=spend,
             entity_id=str(org_id),
             entity_name=data.get("organization_name"),
+            limit_set_at=limit_set_at,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -238,6 +249,65 @@ async def _check_org_limit(
     except Exception as e:
         logger.warning(f"Failed to check org limit: {e}")
         return _LimitCheckResult(exceeded=False)
+
+
+async def _notify_limit_reached(
+    result: _LimitCheckResult,
+    month: str,
+    base_url: str,
+    api_key: str,
+) -> None:
+    """
+    Fire-and-forget notification to Orchestra when a limit is reached.
+
+    This calls Orchestra's spending-limit-reached endpoint which:
+    - Deduplicates notifications (won't spam for same limit)
+    - Sends email to affected users
+    - Records the notification for auditing
+
+    Errors are logged but don't affect the limit check response.
+    """
+    url = f"{base_url}/admin/spending-limit-reached"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    payload = {
+        "limit_type": result.limit_type,
+        "entity_id": result.entity_id,
+        "limit_value": result.limit_value,
+        "current_spend": result.current_spend,
+        "month": month,
+        "entity_name": result.entity_name,
+    }
+
+    # Include limit_set_at if available (for re-enable detection)
+    if result.limit_set_at:
+        payload["limit_set_at"] = result.limit_set_at
+
+    # Include organization_id for member limits
+    if result.organization_id:
+        payload["organization_id"] = result.organization_id
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("notified"):
+                    logger.info(
+                        f"Spending limit notification sent for {result.limit_type} "
+                        f"limit (entity_id={result.entity_id}, limit=${result.limit_value})",
+                    )
+                else:
+                    logger.debug(
+                        f"Spending limit notification skipped: {data.get('reason', 'unknown')}",
+                    )
+            else:
+                logger.warning(
+                    f"Spending limit notification failed: {response.status_code}",
+                )
+    except Exception as e:
+        # Fire-and-forget: log error but don't propagate
+        logger.warning(f"Failed to send spending limit notification: {e}")
 
 
 async def check_spending_limits_callback(
@@ -342,6 +412,13 @@ async def check_spending_limits_callback(
             )
             limit = f"${result.limit_value:.2f}" if result.limit_value else "unknown"
             reason = f"Monthly spending limit exceeded: {result.limit_type} limit of {limit} reached (current: {current})"
+
+            # Fire-and-forget notification to Orchestra
+            # This triggers email notifications to affected users
+            asyncio.create_task(
+                _notify_limit_reached(result, month, base_url, api_key),
+            )
+
             return LimitCheckResponse(
                 allowed=False,
                 reason=reason,
