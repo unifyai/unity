@@ -6,7 +6,7 @@ by programmatically building prompts using shared utilities from common/prompt_h
 
 from __future__ import annotations
 
-from ..common.prompt_helpers import now, PromptParts
+from ..common.prompt_helpers import now
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -127,7 +127,7 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     is_voice_call: bool = False,
-) -> PromptParts:
+) -> str:
     """Build the system prompt for the ConversationManager LLM.
 
     Parameters
@@ -173,11 +173,11 @@ def build_system_prompt(
         else ""
     )
 
-    # Build the full prompt using PromptParts for structured output
-    parts = PromptParts()
+    # Build the full prompt using Markdown-style sections
+    parts = []
 
     # Role
-    parts.add(
+    parts.append(
         f"""Role
 ----
 You are a general purpose assistant that is communicating with your boss and his contacts directly through different mediums.
@@ -186,14 +186,14 @@ You are able to communicate with several people at the same time, more details i
     )
 
     # Bio
-    parts.add(
+    parts.append(
         f"""Bio
 ---
 {bio}""",
     )
 
     # Boss details
-    parts.add(
+    parts.append(
         f"""Boss details
 ------------
 The following are your boss details:
@@ -201,7 +201,7 @@ The following are your boss details:
     )
 
     # Input format
-    parts.add(
+    parts.append(
         f"""Input format
 ------------
 Your input will be the current state of all conversations you are having at the moment.
@@ -218,7 +218,7 @@ Messages from the current turn have **NEW** tag prepended:
     )
 
     # Output format
-    parts.add(
+    parts.append(
         f"""Output format
 -------------
 Your output will be in the following format:
@@ -252,7 +252,7 @@ For communication tools, provide the contact_id when the contact is in the activ
     )
 
     # Action steering guidelines
-    parts.add(
+    parts.append(
         """Action steering guidelines
 --------------------------
 **Understanding in-flight actions:**
@@ -297,7 +297,7 @@ The key distinction: `interject_*` is proactive (you're volunteering information
     )
 
     # Conversational restraint
-    parts.add(
+    parts.append(
         """Conversational restraint
 ------------------------
 CRITICAL: You have a tendency to be over-eager and verbose. Fight this aggressively.
@@ -343,7 +343,7 @@ You do NOT need to poll or check on actions - the system will wake you when some
 
     # Communication guidelines
     phone_guidelines_section = f"\n{phone_guidelines}" if phone_guidelines else ""
-    parts.add(
+    parts.append(
         f"""Communication guidelines
 ------------------------
 Communicate naturally and casually. Keep responses short.
@@ -372,7 +372,7 @@ This is a hard constraint, not a suggestion. Even if your boss asks you to conta
     )
 
     # Uncertainty handling
-    parts.add(
+    parts.append(
         """Uncertainty handling
 --------------------
 When you are uncertain whether you have the information needed to complete a request, use the **parallel strategy**: simultaneously ask for clarification AND call `act` to search.
@@ -393,7 +393,7 @@ When you are uncertain whether you have the information needed to complete a req
     )
 
     # Act capabilities
-    parts.add(
+    parts.append(
         """Act capabilities
 ----------------
 The `act` tool CREATES NEW WORK. It is your gateway to the assistant's knowledge systems. Use it to access:
@@ -421,7 +421,7 @@ Examples of questions that should trigger `act`:
     )
 
     # Concurrent action and acknowledgment
-    parts.add(
+    parts.append(
         """Concurrent action and acknowledgment
 ------------------------------------
 **CRITICAL: When calling `act`, call it IN THE SAME RESPONSE as a brief acknowledgment message.**
@@ -456,20 +456,23 @@ NOT: first act, then in a separate response send_sms. That's inefficient.
 
     # Add voice calls guide if on a voice call
     if is_voice_call:
-        parts.add(voice_calls_guide)
+        parts.append(voice_calls_guide)
 
     # Add scenarios
     phone_scenarios_section = f"\n{phone_scenarios}" if phone_scenarios else ""
-    parts.add(
+    parts.append(
         f"""Scenarios
 ---------
 - If the boss user gives a wrong contact address, you will receive an error after the communication attempt, or worse, it might be a completely different person. Simply inform your boss about the error and ask them if there could be something wrong with the contact detail. On the following communication attempt, just change the wrong contact details (phone number or email), and the detail will be implicitly updated.{phone_scenarios_section}""",
     )
 
-    # Add time footer using shared utility (dynamic content)
-    parts.add(f"Current time: {now()}.", static=False)
+    # Join all parts
+    prompt = "\n\n".join(parts)
 
-    return parts
+    # Add time footer using shared utility
+    prompt = f"{prompt}\n\nCurrent time: {now()}."
+
+    return prompt
 
 
 def build_ask_handle_prompt(
@@ -543,7 +546,7 @@ def build_voice_agent_prompt(
     contact_phone_number: str | None = None,
     contact_email: str | None = None,
     contact_rolling_summary: str | None = None,
-) -> PromptParts:
+) -> str:
     """Build the system prompt for the Voice Agent (fast brain).
 
     The Voice Agent handles the actual voice conversation autonomously,
@@ -593,11 +596,11 @@ def build_voice_agent_prompt(
     caller_description = "your boss" if is_boss_user else "one of your boss contacts"
     caller_ref = "your boss" if is_boss_user else "your boss contact"
 
-    # Build parts using PromptParts for structured output
-    parts = PromptParts()
+    # Build parts
+    parts = []
 
     # Role
-    parts.add(
+    parts.append(
         f"""Role
 ----
 You are a general-purpose assistant communicating with {caller_description} directly over the phone.
@@ -611,7 +614,7 @@ Assume the language is English.""",
     )
 
     # Bio
-    parts.add(
+    parts.append(
         f"""Bio
 ---
 {bio}""",
@@ -648,7 +651,7 @@ If the data appears ANYWHERE in this conversation history (from you, the user, o
     )
 
     # Internal notifications
-    parts.add(
+    parts.append(
         """Notifications
 -------------
 You will occasionally receive notifications (marked as `[notification]`). These provide you with:
@@ -670,7 +673,7 @@ You will occasionally receive notifications (marked as `[notification]`). These 
     )
 
     # Communication guidelines
-    parts.add(
+    parts.append(
         """Communication guidelines
 ------------------------
 Your job is to keep the conversation flowing naturally.
@@ -702,7 +705,7 @@ Your job is to keep the conversation flowing naturally.
     )
 
     # Boss details
-    parts.add(
+    parts.append(
         f"""Boss details
 ------------
 The following are your boss's details:
@@ -718,7 +721,7 @@ The following are your boss's details:
             f"- Email: {contact_email}",
         ]
         contact_details = "\n".join(contact_lines)
-        parts.add(
+        parts.append(
             f"""Contact details
 ---------------
 {contact_details}""",
@@ -726,7 +729,7 @@ The following are your boss's details:
 
     # Add conversation history if available
     if contact_rolling_summary:
-        parts.add(
+        parts.append(
             f"""Conversation history
 --------------------
 This is a summary of your past conversations with the person on this call:
@@ -736,7 +739,10 @@ This is a summary of your past conversations with the person on this call:
 Use this context to personalize the conversation, but don't explicitly reference "your records" or "our past conversations" unless natural to do so.""",
         )
 
-    # Add time footer using shared utility (dynamic content)
-    parts.add(f"Current time: {now()}.", static=False)
+    # Join all parts
+    prompt = "\n\n".join(parts)
 
-    return parts
+    # Add time footer using shared utility
+    prompt = f"{prompt}\n\nCurrent time: {now()}."
+
+    return prompt
