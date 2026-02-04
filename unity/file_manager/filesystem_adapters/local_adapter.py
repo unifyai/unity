@@ -1,20 +1,57 @@
+"""Local filesystem adapter with optional managed VM file sync."""
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Iterable, Optional, List
+import asyncio
 import shutil
+from pathlib import Path
+from typing import TYPE_CHECKING, Iterable, List, Optional
 
 from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
 
+if TYPE_CHECKING:
+    from unity.file_manager.sync import SyncManager
+
 
 class LocalFileSystemAdapter(BaseFileSystemAdapter):
-    """Adapter for a local directory tree (read + rename/move)."""
+    """Adapter for a local directory tree with optional VM sync.
 
-    def __init__(self, root: str | None = None):
-        # Optional root: when None, operate with system root for relative paths;
-        # absolute paths are always accepted and bypass _root.
-        self._root = Path(root).expanduser().resolve() if root else Path("/").resolve()
+    When sync is enabled and a managed VM is configured (via SESSION_DETAILS.desktop_url),
+    files in ~/Unity/Local are synchronized with /Unity/Local on the VM via rclone SFTP.
+
+    Sync lifecycle:
+    - Job start: Pull files from VM (start_sync → sync_from_remote)
+    - File write: Push changed file to VM (notify_file_write)
+    - Periodic: Bidirectional sync for remote changes (bisync)
+    - Job end: Final push to VM (stop_sync → sync_to_remote)
+    """
+
+    def __init__(
+        self,
+        root: str | None = None,
+        *,
+        enable_sync: bool = True,
+    ):
+        """Initialize LocalFileSystemAdapter.
+
+        Parameters
+        ----------
+        root : str | None, default None
+            Root directory for file operations. Defaults to ~/Unity/Local.
+        enable_sync : bool, default True
+            Whether to enable VM file sync. Actual sync only occurs if
+            SESSION_DETAILS.desktop_url is configured.
+        """
+        # Default root to ~/Unity/Local for sync compatibility
+        if root is None:
+            root = str(Path.home() / "Unity" / "Local")
+
+        self._root = Path(root).expanduser().resolve()
+
+        # Ensure root directory exists
+        self._root.mkdir(parents=True, exist_ok=True)
+
         self._caps = FileSystemCapabilities(
             can_read=True,
             can_rename=True,
@@ -22,9 +59,13 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
             can_delete=True,
         )
 
+        # Sync component (lazy initialization)
+        self._enable_sync = enable_sync
+        self._sync_manager: Optional["SyncManager"] = None
+
     @property
     def name(self) -> str:
-        return f"Local"
+        return "Local"
 
     @property
     def uri_name(self) -> str:
@@ -33,6 +74,24 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
     @property
     def capabilities(self) -> FileSystemCapabilities:
         return self._caps
+
+    # ----------------------- Sync Properties ----------------------- #
+
+    @property
+    def sync_enabled(self) -> bool:
+        """Whether file sync is configured and enabled."""
+        if self._sync_manager is None:
+            return False
+        return self._sync_manager.enabled
+
+    @property
+    def sync_started(self) -> bool:
+        """Whether file sync has been started."""
+        if self._sync_manager is None:
+            return False
+        return self._sync_manager._started
+
+    # ----------------------- Core IO Methods ----------------------- #
 
     def _abspath(self, p: str) -> Path:
         # Support both absolute and root-relative inputs.
@@ -109,9 +168,6 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         dest_path = dest_dir / path.lstrip("/")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Copy file preserving metadata
-        import shutil
-
         shutil.copy2(source_path, dest_path)
 
         return str(dest_path)
@@ -183,6 +239,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         p.unlink()
 
     # ------------------------- High-level import APIs ------------------------- #
+
     @staticmethod
     def _unique_name(existing: set[str], desired: str) -> str:
         base = Path(desired).stem
@@ -259,7 +316,30 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         # Local adapter does not persist protection flags; always False
         return False
 
-    def save_file_to_downloads(self, filename: str, contents: bytes) -> str:
+    def save_file_to_downloads(
+        self,
+        filename: str,
+        contents: bytes,
+        *,
+        sync: bool = False,
+    ) -> str:
+        """Save bytes to Downloads directory.
+
+        Parameters
+        ----------
+        filename : str
+            Desired filename for the saved file.
+        contents : bytes
+            File contents.
+        sync : bool, default False
+            If True and sync is active, trigger sync to remote VM.
+            Note: When True, this method schedules an async sync task.
+
+        Returns
+        -------
+        str
+            Relative path to saved file (e.g., "Downloads/report.pdf")
+        """
         downloads_dir = (self._root / "Downloads").resolve()
         try:
             downloads_dir.mkdir(parents=True, exist_ok=True)
@@ -274,7 +354,20 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         target_path = downloads_dir / unique
         with open(target_path, "wb") as f:
             f.write(contents)
-        return f"Downloads/{unique}"
+
+        relative_path = f"Downloads/{unique}"
+
+        # Schedule sync if requested and sync is active
+        if sync and self._sync_manager is not None and self._sync_manager._started:
+            abs_path = str(self._root / relative_path)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._sync_manager.on_file_write(abs_path))
+            except RuntimeError:
+                # No running loop - sync will happen on next poll
+                print(f"[LocalFS] No event loop for sync, will sync on next poll")
+
+        return relative_path
 
     def resolve_display_name(self, display_name: str) -> Optional[str]:
         candidate = (self._root / display_name).expanduser().resolve()
@@ -285,3 +378,74 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         if dl.exists():
             return str(dl)
         return None
+
+    # ----------------------- Async Sync Methods ----------------------- #
+
+    async def start_sync(self) -> bool:
+        """Start file synchronization with managed VM.
+
+        Called during manager initialization on job start.
+        Creates the SyncManager lazily and initiates sync.
+
+        Returns
+        -------
+        bool
+            True if sync started successfully, False otherwise.
+        """
+        if not self._enable_sync:
+            print("[LocalFS] Sync disabled by constructor flag")
+            return False
+
+        # Lazy create SyncManager to allow SESSION_DETAILS to be populated first
+        if self._sync_manager is None:
+            from unity.file_manager.sync import SyncManager
+
+            self._sync_manager = SyncManager()
+
+        if not self._sync_manager.enabled:
+            print("[LocalFS] Sync not enabled (no desktop_url)")
+            return False
+
+        return await self._sync_manager.start()
+
+    async def stop_sync(self) -> None:
+        """Stop file synchronization with final sync to VM."""
+        if self._sync_manager is not None:
+            await self._sync_manager.stop()
+
+    async def notify_file_write(self, path: str) -> None:
+        """Notify sync manager of a file write.
+
+        Parameters
+        ----------
+        path : str
+            Absolute path to the written file.
+        """
+        if self._sync_manager is not None and self._sync_manager._started:
+            await self._sync_manager.on_file_write(path)
+
+    async def notify_file_delete(self, path: str) -> None:
+        """Notify sync manager of a file deletion.
+
+        Parameters
+        ----------
+        path : str
+            Absolute path to the deleted file.
+        """
+        if self._sync_manager is not None and self._sync_manager._started:
+            await self._sync_manager.on_file_delete(path)
+
+    async def refresh_from_remote(self) -> bool:
+        """Manually refresh files from remote VM.
+
+        Useful before reading files that may have changed on desktop.
+
+        Returns
+        -------
+        bool
+            True if refresh succeeded, False otherwise.
+        """
+        if self._sync_manager is None or not self._sync_manager._started:
+            return False
+        result = await self._sync_manager.sync_remote_changes()
+        return result.success
