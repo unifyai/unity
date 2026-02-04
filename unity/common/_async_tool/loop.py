@@ -63,6 +63,7 @@ from .dynamic_tools_factory import DynamicToolFactory
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
     from .multi_handle import MultiHandleCoordinator
+    from unillm.types import PromptCacheParam
 
 
 def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
@@ -206,6 +207,7 @@ async def async_tool_loop_inner(
     images: "ImageRefs | None" = None,
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
+    prompt_caching: Optional["PromptCacheParam"] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -2137,6 +2139,7 @@ async def async_tool_loop_inner(
                     "tools": tmp_tools,
                     "tool_choice": tool_choice_mode,
                     "stateful": True,
+                    "prompt_caching": prompt_caching,
                 }
                 if max_parallel_tool_calls is not None:
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
@@ -2344,6 +2347,7 @@ async def async_tool_loop_inner(
                         "tools": tmp_tools,
                         "tool_choice": tool_choice_mode,
                         "stateful": True,
+                        "prompt_caching": prompt_caching,
                     }
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls

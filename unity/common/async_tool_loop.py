@@ -31,6 +31,7 @@ from ._async_tool.tagging import tag_message_with_request
 
 if TYPE_CHECKING:
     from ..image_manager.types.image_refs import ImageRefs
+    from unillm.types import PromptCacheParam
 
 
 # Tiny handle objects exposed to callers
@@ -759,6 +760,7 @@ def start_async_tool_loop(
     evented: Optional[bool] = None,
     persist: bool = False,
     multi_handle: bool = False,
+    prompt_caching: Optional["PromptCacheParam"] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -875,6 +877,7 @@ def start_async_tool_loop(
                 images=images,
                 persist=persist,
                 multi_handle_coordinator=multi_handle_coordinator,
+                prompt_caching=prompt_caching,
             )
         except asyncio.CancelledError:
             raise
