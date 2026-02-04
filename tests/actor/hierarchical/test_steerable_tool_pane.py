@@ -84,7 +84,6 @@ class _MockHandle:
         message: str,
         *,
         _parent_chat_context_cont=None,
-        images=None,
     ):  # noqa: ARG002
         self.interject_calls.append({"message": message})
         return "ok"
