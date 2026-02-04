@@ -28,6 +28,7 @@ class LogEntry:
     message: str
     subcategory: str | None = None
     event_id: str | None = None
+    handle_id: int | None = None  # Actor handle ID for concurrent tracking
 
 
 class LogAggregator:
