@@ -163,17 +163,57 @@ class LogAggregator:
             lines.append(colorize(f"[{label}] {n} log line(s)", color))
         return "\n".join(lines)
 
-    def render_expanded(self, category: Category) -> str:
+    def render_expanded(self, category: Category, *, group_by_handle: bool = False) -> str:
         buf = self._buf[category]
         if not buf:
             return "(no logs)"
+        if group_by_handle:
+            return self._render_grouped(buf, category)
+        return self._render_flat(buf, category, show_handle=True)
+
+    def _render_flat(
+        self,
+        buf: list[LogEntry],
+        category: Category,
+        *,
+        show_handle: bool = False,
+    ) -> str:
         lines: list[str] = []
         for e in buf:
             prefix = f"[{category}]"
+            if show_handle and e.handle_id is not None:
+                prefix += f"[H{e.handle_id}]"
             if e.subcategory:
                 prefix += f"[{e.subcategory}]"
             lines.append(f"{prefix} {e.level}: {e.message}")
         return "\n".join(lines)
+
+    def _render_grouped(self, buf: list[LogEntry], category: Category) -> str:
+        by_handle: dict[int | None, list[LogEntry]] = {}
+        for e in buf:
+            hid = e.handle_id
+            if hid not in by_handle:
+                by_handle[hid] = []
+            by_handle[hid].append(e)
+
+        sections: list[str] = []
+        for hid in sorted(by_handle.keys(), key=lambda x: (x is None, x)):
+            entries = by_handle[hid]
+            if hid is None:
+                header = f"─── {category.upper()} (no handle) ───"
+            else:
+                header = f"─── {category.upper()} Handle {hid} ({len(entries)} entries) ───"
+            content = self._render_flat(entries, category, show_handle=False)
+            sections.append(f"{header}\n{content}")
+        return "\n\n".join(sections)
+
+    def get_active_handles(self, category: Category) -> list[int]:
+        """Return list of handle_ids that have log entries in this category."""
+        handles = set()
+        for e in self._buf[category]:
+            if e.handle_id is not None:
+                handles.add(e.handle_id)
+        return sorted(handles)
 
     # ──────────────────────────────────────────────────────────────────
     # Internals

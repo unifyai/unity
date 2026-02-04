@@ -268,16 +268,54 @@ class TraceDisplay:
             return self.render_recent(3)
         return self._render_entries(ev_entries)
 
-    def render_all(self) -> str:
-        """Render all captured turns currently in memory (across events)."""
+    def render_all(self, *, group_by_handle: bool = False) -> str:
+        """Render all captured turns currently in memory (across events).
+
+        Args:
+            group_by_handle: If True, group entries by handle_id with visual separation.
+        """
         if not self._entries:
             return "(no trace entries yet)"
+        if group_by_handle:
+            return self._render_entries_grouped(list(self._entries))
         return self._render_entries(list(self._entries))
 
-    def _render_entries(self, entries: list[TraceEntry]) -> str:
+    def render_for_handle(self, handle_id: int) -> str:
+        """Render all captured turns for a specific Actor handle."""
+        entries = [e for e in self._entries if e.handle_id == handle_id]
+        if not entries:
+            return f"(no trace entries for handle {handle_id})"
+        return self._render_entries(entries, show_handle=False)
+
+    def get_active_handles(self) -> list[int]:
+        """Return list of handle_ids that have trace entries."""
+        handles = set()
+        for e in self._entries:
+            if e.handle_id is not None:
+                handles.add(e.handle_id)
+        return sorted(handles)
+
+    def get_entries_by_handle(self) -> dict[int | None, list[TraceEntry]]:
+        """Return entries grouped by handle_id for concurrent visualization."""
+        result: dict[int | None, list[TraceEntry]] = {}
+        for e in self._entries:
+            hid = e.handle_id
+            if hid not in result:
+                result[hid] = []
+            result[hid].append(e)
+        return result
+
+    def _render_entries(
+        self,
+        entries: list[TraceEntry],
+        *,
+        show_handle: bool = True,
+    ) -> str:
         blocks: list[str] = []
         for e in entries:
             title = f"TRACE — Turn {e.turn_index}"
+            if show_handle and e.handle_id is not None:
+                title += f" [H{e.handle_id}]"
             if e.event_id:
                 title += f" (event={truncate(e.event_id, 16)})"
 
@@ -295,6 +333,24 @@ class TraceDisplay:
                 draw_box(join_blocks([code_box, out_box], separator="\n"), title=title),
             )
         return join_blocks(blocks, separator="\n\n" + ("═" * 60) + "\n\n")
+
+    def _render_entries_grouped(self, entries: list[TraceEntry]) -> str:
+        """Render entries grouped by handle_id with visual separation."""
+        by_handle = self.get_entries_by_handle()
+        if not by_handle:
+            return "(no trace entries yet)"
+
+        sections: list[str] = []
+        for hid in sorted(by_handle.keys(), key=lambda x: (x is None, x)):
+            handle_entries = by_handle[hid]
+            if hid is None:
+                header = "━━━ Traces (no handle) ━━━"
+            else:
+                header = f"━━━ Handle {hid} ({len(handle_entries)} turn(s)) ━━━"
+            section_content = self._render_entries(handle_entries, show_handle=False)
+            sections.append(f"{header}\n\n{section_content}")
+
+        return "\n\n".join(sections)
 
     def install_executor_wrapper(
         self,
