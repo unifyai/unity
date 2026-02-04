@@ -72,6 +72,7 @@ import pytest
 
 from unity.conversation_manager.events import (
     PhoneCallStarted,
+    PhoneCallSent,
     InboundPhoneUtterance,
     OutboundPhoneUtterance,
     CallGuidance,
@@ -188,14 +189,14 @@ class TestSlowBrainDecisionBoundaries:
         finally:
             initialized_cm.cm.event_broker.publish = original_publish
 
-    async def test_outbound_call_start_triggers_guidance(
+    async def test_outbound_call_sent_triggers_guidance(
         self,
         initialized_cm,
         boss_contact,
     ):
         """
-        When an OUTBOUND call starts, the slow brain SHOULD run to provide
-        initial guidance on what to say and why we're calling.
+        When an OUTBOUND call is initiated (PhoneCallSent), the slow brain SHOULD
+        run immediately to provide initial guidance on what to say.
 
         Unlike inbound calls (where the user initiates with their own agenda),
         outbound calls are initiated by the assistant with a specific purpose.
@@ -204,41 +205,62 @@ class TestSlowBrainDecisionBoundaries:
         - What information to convey or gather
         - Any relevant context from recent interactions
 
+        The LLM is triggered on PhoneCallSent (not PhoneCallStarted) to maximize
+        the time available for guidance generation:
+        - Subprocess startup time (2-5 seconds)
+        - Phone ringing time (variable)
+
         Flow for outbound calls:
-        1. PhoneCallSent triggers call_manager.start_call(outbound=True)
-        2. call_manager.is_outbound = True
-        3. Fast brain subprocess starts and waits for call_answered
-        4. PhoneCallStarted arrives, slow brain sees is_outbound=True
-        5. Slow brain runs immediately via request_llm_run(delay=0)
-        6. Slow brain generates call_guidance with purpose/context
-        7. Guidance is buffered by fast brain (in pending_guidance)
-        8. When call is answered, fast brain speaks with the guidance
+        1. PhoneCallSent arrives, call_manager.is_outbound = True
+        2. LLM runs immediately via request_llm_run(delay=0)
+        3. Slow brain generates call_guidance (is_outbound check allows this even
+           before mode is set to CALL)
+        4. Fast brain subprocess starts and buffers guidance
+        5. PhoneCallStarted arrives, mode set to CALL
+        6. When call is answered, fast brain applies guidance before first utterance
+
+        Note: Mode is set to CALL in PhoneCallStarted (not PhoneCallSent) for
+        consistency. The _run_llm method checks call_manager.is_outbound to handle
+        the case where LLM finishes before mode is set.
         """
         cm = initialized_cm.cm
 
-        # Simulate outbound call setup - set is_outbound BEFORE PhoneCallStarted
-        # In real flow, this happens in PhoneCallSent handler calling start_call(outbound=True)
-        cm.call_manager.is_outbound = True
+        # Mock start_call to avoid spawning actual subprocess
+        original_start_call = cm.call_manager.start_call
+
+        async def mock_start_call(contact, boss, outbound=False):
+            cm.call_manager.is_outbound = outbound
+
+        cm.call_manager.start_call = mock_start_call
 
         try:
-            # Simulate call starting (for outbound call)
-            event = PhoneCallStarted(contact=boss_contact)
+            # Simulate outbound call being sent
+            event = PhoneCallSent(contact=boss_contact)
             result = await initialized_cm.step(event)
+
+            # Mode is NOT set to CALL here - that happens in PhoneCallStarted.
+            # But is_outbound should be set.
+            assert (
+                cm.call_manager.is_outbound
+            ), "is_outbound should be True after PhoneCallSent"
 
             # The slow brain SHOULD run for outbound calls to provide initial guidance
             assert result.llm_ran, (
-                "Slow brain should run on PhoneCallStarted for OUTBOUND calls!\n"
+                "Slow brain should run on PhoneCallSent for OUTBOUND calls!\n"
                 "\n"
                 "Outbound calls are initiated by the assistant with a purpose.\n"
                 "The slow brain must provide initial guidance so the fast brain\n"
                 "knows what to say when the call is answered.\n"
                 "\n"
-                "Check that call_manager.is_outbound is True before PhoneCallStarted."
+                "The LLM is triggered on PhoneCallSent (not PhoneCallStarted) to\n"
+                "give maximum time for guidance generation before the user picks up."
             )
 
         finally:
-            # Reset outbound flag
+            # Reset state
+            cm.call_manager.start_call = original_start_call
             cm.call_manager.is_outbound = False
+            cm.mode = Mode.TEXT
 
     async def test_call_guidance_field_allows_empty_value(
         self,

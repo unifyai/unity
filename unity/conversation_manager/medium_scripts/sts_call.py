@@ -292,23 +292,24 @@ async def entrypoint(ctx: JobContext) -> None:
     # Get realtime session (only available after session.start())
     rt = agent.realtime_llm_session
 
-    # For outbound calls, wait for call_answered before generating reply.
-    # Unlike TTS mode (call.py), the Realtime API doesn't go through llm_node,
-    # so we must gate the initial reply here instead.
-    if outbound and not agent.call_received:
+    # For outbound calls, wait for call_answered before speaking.
+    # Unlike call.py, the Realtime API bypasses llm_node, so we must wait here.
+    # Note: await on an already-set Event returns immediately.
+    if outbound:
         print("Outbound call: waiting for call_answered before speaking...")
         await call_answered_flag.wait()
         print("Outbound call: call answered, proceeding to speak")
 
-    await session.generate_reply(allow_interruptions=True)
-
-    # Session is now ready - process buffered guidance and mark ready for future
+    # Mark session ready and process any buffered guidance BEFORE first utterance.
+    # After this, the on_guidance callback will apply guidance immediately.
     session_ready = True
     if pending_guidance:
-        print(f"[Guidance] Processing {len(pending_guidance)} buffered message(s)")
+        print(f"[Guidance] Applying {len(pending_guidance)} buffered message(s)")
         for content in pending_guidance:
             apply_guidance(content)
         pending_guidance.clear()
+
+    await session.generate_reply(allow_interruptions=True)
 
 
 if __name__ == "__main__":
