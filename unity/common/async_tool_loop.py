@@ -12,6 +12,7 @@ from typing import (
     Any,
     Union,
     Type,
+    TYPE_CHECKING,
 )
 from ..constants import LOGGER
 from .llm_helpers import short_id
@@ -27,6 +28,9 @@ from ._async_tool.multi_handle import (
     MultiRequestHandle,
 )
 from ._async_tool.tagging import tag_message_with_request
+
+if TYPE_CHECKING:
+    from unillm.types import PromptCacheParam
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -747,6 +751,7 @@ def start_async_tool_loop(
     evented: Optional[bool] = None,
     persist: bool = False,
     multi_handle: bool = False,
+    prompt_caching: Optional["PromptCacheParam"] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -862,6 +867,7 @@ def start_async_tool_loop(
                 max_parallel_tool_calls=max_parallel_tool_calls,
                 persist=persist,
                 multi_handle_coordinator=multi_handle_coordinator,
+                prompt_caching=prompt_caching,
             )
         except asyncio.CancelledError:
             raise

@@ -7,9 +7,12 @@ import functools
 import json
 import logging
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from unillm.types import PromptCacheParam
 
 from unity.common.async_tool_loop import (
     ChatContextPropagation,
@@ -65,7 +68,36 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         computer_primitives: Optional[Any] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         response_format: Optional[Type[BaseModel]] = None,
+        model: str | None = "claude-4.5-opus@anthropic",
+        preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
+        prompt_caching: Optional["PromptCacheParam"] = None,
     ):
+        """
+        Initialize an ActorHandle.
+
+        Args:
+            task_description: The initial task description to execute.
+            tools: Dictionary of tool name to async callable mappings.
+            parent_chat_context: Optional parent conversation context.
+            clarification_up_q: Queue for sending clarification requests up.
+            clarification_down_q: Queue for receiving clarification answers.
+            call_id: Optional identifier for this call.
+            on_finally: Optional async callback to run when execution completes.
+            main_event_loop: Optional event loop reference.
+            timeout: Timeout in seconds for the tool loop (default 1000).
+            persist: If True, loop persists waiting for interjections after completion.
+            custom_system_prompt: Optional custom system prompt for the LLM.
+            tool_policy: Optional callable to control tool availability per step.
+            computer_primitives: Optional ComputerPrimitives instance.
+            images: Optional image references to include.
+            response_format: Optional Pydantic model for structured response.
+            model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
+                If None, uses SETTINGS.UNIFY_MODEL.
+            preprocess_msgs: Optional callback to modify messages before each LLM call.
+                Receives a list of message dicts and returns a modified list.
+            prompt_caching: Optional list of cache targets (e.g. ["system", "messages"]).
+                Enables Anthropic prompt caching for the specified components.
+        """
         self._initial_task_description = task_description
         self._tools = tools
         # Preserve caller-provided context for the *initial* loop start.
@@ -102,14 +134,16 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         self._persist = persist
         self._tool_policy = tool_policy
         self._computer_primitives = computer_primitives
+        self._preprocess_msgs = preprocess_msgs
+        self._prompt_caching = prompt_caching
 
         self._client = new_llm_client(
-            "claude-4.5-opus@anthropic",
+            model,  # None falls back to SETTINGS.UNIFY_MODEL
             reasoning_effort=None,
             service_tier=None,
         )
         self._ask_client = new_llm_client(
-            "claude-4.5-opus@anthropic",
+            model,  # None falls back to SETTINGS.UNIFY_MODEL
             reasoning_effort=None,
             service_tier=None,
         )
@@ -234,6 +268,8 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                     tool_policy=self._tool_policy,
                     response_format=self._response_format,
                     persist=bool(self._persist),
+                    preprocess_msgs=self._preprocess_msgs,
+                    prompt_caching=self._prompt_caching,
                 )
                 # Signal that _loop_handle is ready for delegation (e.g., next_notification)
                 self._loop_handle_ready.set()
