@@ -795,10 +795,14 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     action_query = action_data.get("query", f"Action {event.handle_id}")
     short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
 
+    # Pin action completion notifications so they persist across LLM runs.
+    # Action completions are FACTS about work done (not transient requests),
+    # and the CM should remember them until it communicates the result to the user.
     cm.notifications_bar.push_notif(
         "Action",
         f"Action completed: {short_desc}\nResult: {event.result}",
         event.timestamp,
+        pinned=True,
     )
     cm.in_flight_actions.pop(event.handle_id, None)
     await cm.request_llm_run()
