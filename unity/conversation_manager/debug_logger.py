@@ -69,7 +69,7 @@ def _resolve_vm_liveview(assistant_id: str, vm_type: str) -> str | None:
         print("[Liveview] Skipping: COMMS_URL or admin key not configured")
         return None
 
-    max_retries = 10  # More retries for VM boot (can take longer)
+    max_retries = 5
     for attempt in range(max_retries):
         print(
             f"\n\n[Liveview] Attempt {attempt + 1} to get {vm_type} VM status "
