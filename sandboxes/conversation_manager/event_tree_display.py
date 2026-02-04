@@ -43,11 +43,15 @@ class EventTreeDisplay:
         self._max_executions = int(max(1, max_executions))
         self._executions: list[TreeNode] = []
         self._current_root: TreeNode | None = None
-        self._current_handle_id: int | None = None  # Current handle context
+        # Map handle_id → root node for concurrent Actor handle tracking
+        self._handle_roots: dict[int, TreeNode] = {}
+        # Current handle context (set via set_handle_context)
+        self._current_handle_id: int | None = None
 
     def reset_tree(self) -> None:
         self._executions.clear()
         self._current_root = None
+        self._handle_roots.clear()
         self._current_handle_id = None
 
     def set_handle_context(self, *, handle_id: int | None) -> None:
@@ -97,8 +101,11 @@ class EventTreeDisplay:
                 handle_id=effective_handle_id,
             )
 
-        node = self._upsert_node(call_id=call_id, payload=payload)
-        node.handle_id = effective_handle_id
+        node = self._upsert_node(
+            call_id=call_id,
+            payload=payload,
+            handle_id=effective_handle_id,
+        )
 
         if phase == "outgoing":
             node.finished_at = time.time()
@@ -107,21 +114,69 @@ class EventTreeDisplay:
             )
             node.error = payload.error or None
 
-    def render_tree(self) -> str:
-        """Render the current tree as an ASCII snapshot (REPL)."""
-        root = self._current_root
-        if root is None:
-            return "📊 Event Tree (empty)"
-        lines: list[str] = []
-        lines.append("📊 Event Tree (Current State)")
-        lines.append("═" * 58)
-        lines.extend(self._render_node(root, prefix=""))
-        lines.append("═" * 58)
-        return "\n".join(lines)
+    def mark_handle_completed(self, handle_id: int) -> None:
+        """Mark a handle's tree as completed (all nodes finished)."""
+        root = self._handle_roots.get(handle_id)
+        if root is not None:
+            root.status = "completed"
+            root.finished_at = time.time()
+
+    def render_tree(self, *, show_all: bool = False) -> str:
+        """Render the tree(s) as an ASCII snapshot (REPL).
+
+        Args:
+            show_all: If True, render all active execution trees (for concurrent
+                      Actor handles). If False, only render the current tree.
+        """
+        if show_all:
+            active = self.get_active_trees()
+            if not active:
+                return "📊 Event Tree (empty)"
+            lines: list[str] = []
+            lines.append(f"📊 Event Tree ({len(active)} concurrent execution(s))")
+            lines.append("═" * 58)
+            for i, root in enumerate(active):
+                hid_label = (
+                    f" [Handle {root.handle_id}]" if root.handle_id is not None else ""
+                )
+                lines.append(f"── Execution {i + 1}{hid_label} ──")
+                lines.extend(self._render_node(root, prefix="", show_handle=True))
+                if i < len(active) - 1:
+                    lines.append("")  # Spacing between trees
+            lines.append("═" * 58)
+            return "\n".join(lines)
+        else:
+            root = self._current_root
+            if root is None:
+                return "📊 Event Tree (empty)"
+            lines: list[str] = []
+            lines.append("📊 Event Tree (Current State)")
+            lines.append("═" * 58)
+            lines.extend(self._render_node(root, prefix=""))
+            lines.append("═" * 58)
+            return "\n".join(lines)
 
     def get_tree_data(self) -> TreeNode | None:
-        """Return structured tree data for GUI widgets."""
+        """Return structured tree data for GUI widgets (legacy single-tree API)."""
         return self._current_root
+
+    def get_all_trees(self) -> list[TreeNode]:
+        """Return all execution trees (including concurrent ones)."""
+        return list(self._executions)
+
+    def get_active_trees(self) -> list[TreeNode]:
+        """Return only trees that are still in-progress."""
+        return [t for t in self._executions if t.status == "in_progress"]
+
+    def get_trees_by_handle(self) -> dict[int | None, list[TreeNode]]:
+        """Return trees grouped by handle_id for concurrent visualization."""
+        result: dict[int | None, list[TreeNode]] = {}
+        for tree in self._executions:
+            hid = tree.handle_id
+            if hid not in result:
+                result[hid] = []
+            result[hid].append(tree)
+        return result
 
     # ──────────────────────────────────────────────────────────────────
     # Internals
@@ -137,23 +192,43 @@ class EventTreeDisplay:
         root = TreeNode(
             label=label or "Execution",
             call_id=call_id,
-            started_at=time.time(),
             handle_id=handle_id,
+            started_at=time.time(),
         )
         self._executions.append(root)
         self._current_root = root
+        # Track by handle_id for concurrent access
+        if handle_id is not None:
+            self._handle_roots[handle_id] = root
         if len(self._executions) > self._max_executions:
+            # Clean up handle_roots for evicted trees
+            evicted = self._executions[: len(self._executions) - self._max_executions]
+            for t in evicted:
+                if t.handle_id is not None:
+                    self._handle_roots.pop(t.handle_id, None)
             self._executions = self._executions[-self._max_executions :]
 
-    def _upsert_node(self, *, call_id: str, payload: ManagerMethodPayload) -> TreeNode:
-        assert self._current_root is not None
+    def _upsert_node(
+        self,
+        *,
+        call_id: str,
+        payload: ManagerMethodPayload,
+        handle_id: int | None = None,
+    ) -> TreeNode:
+        # If we have a handle_id, try to find the corresponding root first
+        tree_root = None
+        if handle_id is not None:
+            tree_root = self._handle_roots.get(handle_id)
+        if tree_root is None:
+            tree_root = self._current_root
+        assert tree_root is not None
         hierarchy = list(payload.hierarchy or [])
         # Prefer readable labels if available.
         hierarchy_labels = (
             hierarchy if hierarchy else [payload.hierarchy_label or payload.manager]
         )
 
-        cur = self._current_root
+        cur = tree_root
         for part in hierarchy_labels:
             cur = cur.find_or_add_child(part or "?")
 
@@ -172,12 +247,20 @@ class EventTreeDisplay:
             cur.error = truncate(payload.error, 2000)
         return cur
 
-    def _render_node(self, node: TreeNode, *, prefix: str) -> list[str]:
+    def _render_node(
+        self,
+        node: TreeNode,
+        *,
+        prefix: str,
+        show_handle: bool = False,
+    ) -> list[str]:
         icon = {"completed": "✓", "in_progress": "⏳", "error": "❌"}.get(
             node.status,
             "•",
         )
         label = node.label
+        if show_handle and node.handle_id is not None:
+            label = f"[H{node.handle_id}] {label}"
         out: list[str] = []
         out.append(f"{prefix}{icon} {label}")
 
@@ -194,5 +277,7 @@ class EventTreeDisplay:
         for i, c in enumerate(node.children):
             is_last = i == len(node.children) - 1
             child_prefix = prefix + ("   " if is_last else "│  ")
-            out.extend(self._render_node(c, prefix=child_prefix))
+            out.extend(
+                self._render_node(c, prefix=child_prefix, show_handle=show_handle),
+            )
         return out
