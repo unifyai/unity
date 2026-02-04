@@ -386,6 +386,9 @@ class PromptParts:
         """Return the full prompt string by concatenating all parts."""
         return "".join(p["content"] for p in self._parts)
 
+    def __str__(self) -> str:
+        return self.flatten()
+
 
 def render_tools_block(tools: Dict[str, Callable]) -> str:
     """Render a labeled tools block with arg-specs as JSON."""
