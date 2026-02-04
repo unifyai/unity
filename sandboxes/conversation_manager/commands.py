@@ -27,6 +27,7 @@ CommandKind = Literal[
     "tree",
     "show_logs",
     "collapse_logs",
+    "agent_logs",
     # Scenario seeding
     "scenario_seed",
     "scenario_seed_voice",
@@ -69,6 +70,7 @@ Display commands:
   tree                Show current manager call event tree
   show_logs <cat>     Expand logs for category: cm | actor | manager | all
   collapse_logs <cat> Collapse logs for category: cm | actor | manager | all
+  agent_logs [N]      Show last N lines of sandbox-started agent-service logs (default: 80)
 
 Inbound event simulation:
   sms <msg>                     Simulate incoming SMS
@@ -150,6 +152,15 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
             raw=raw,
             name="collapse_logs",
             args=trimmed[len("collapse_logs ") :].strip(),
+        )
+    if lower == "agent_logs":
+        return ParsedCommand(kind="agent_logs", raw=raw, name="agent_logs", args="")
+    if lower.startswith("agent_logs "):
+        return ParsedCommand(
+            kind="agent_logs",
+            raw=raw,
+            name="agent_logs",
+            args=trimmed[len("agent_logs ") :].strip(),
         )
 
     # 2) Scenario commands — only when idle

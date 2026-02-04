@@ -196,7 +196,7 @@ async def test_stop_stops_gracefully(model):
         {"echo": echo},
     )
 
-    handle.stop()
+    await handle.stop()
 
     final = await handle.result()
     assert final == "processed stopped early, no result"
@@ -258,7 +258,7 @@ async def test_backfills_helper_call_reply(model) -> None:
     )
 
     # Cleanly stop the loop
-    handle.stop()
+    await handle.stop()
     final2 = await handle.result()
     assert final2 == "processed stopped early, no result"
 
@@ -866,7 +866,7 @@ async def test_backfills_prior_assistant_reply(model) -> None:
     next_msg = (client.messages or [])[assistant_idx + 1]
     assert next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == call_id
 
-    handle.stop()
+    await handle.stop()
     final2 = await handle.result()
     assert final2 == "processed stopped early, no result"
 

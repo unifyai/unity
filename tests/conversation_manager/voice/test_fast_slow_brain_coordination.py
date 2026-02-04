@@ -72,6 +72,7 @@ import pytest
 
 from unity.conversation_manager.events import (
     PhoneCallStarted,
+    PhoneCallSent,
     InboundPhoneUtterance,
     OutboundPhoneUtterance,
     CallGuidance,
@@ -188,14 +189,14 @@ class TestSlowBrainDecisionBoundaries:
         finally:
             initialized_cm.cm.event_broker.publish = original_publish
 
-    async def test_outbound_call_start_triggers_guidance(
+    async def test_outbound_call_sent_triggers_guidance(
         self,
         initialized_cm,
         boss_contact,
     ):
         """
-        When an OUTBOUND call starts, the slow brain SHOULD run to provide
-        initial guidance on what to say and why we're calling.
+        When an OUTBOUND call is initiated (PhoneCallSent), the slow brain SHOULD
+        run immediately to provide initial guidance on what to say.
 
         Unlike inbound calls (where the user initiates with their own agenda),
         outbound calls are initiated by the assistant with a specific purpose.
@@ -204,41 +205,62 @@ class TestSlowBrainDecisionBoundaries:
         - What information to convey or gather
         - Any relevant context from recent interactions
 
+        The LLM is triggered on PhoneCallSent (not PhoneCallStarted) to maximize
+        the time available for guidance generation:
+        - Subprocess startup time (2-5 seconds)
+        - Phone ringing time (variable)
+
         Flow for outbound calls:
-        1. PhoneCallSent triggers call_manager.start_call(outbound=True)
-        2. call_manager.is_outbound = True
-        3. Fast brain subprocess starts and waits for call_answered
-        4. PhoneCallStarted arrives, slow brain sees is_outbound=True
-        5. Slow brain runs immediately via request_llm_run(delay=0)
-        6. Slow brain generates call_guidance with purpose/context
-        7. Guidance is buffered by fast brain (in pending_guidance)
-        8. When call is answered, fast brain speaks with the guidance
+        1. PhoneCallSent arrives, call_manager.is_outbound = True
+        2. LLM runs immediately via request_llm_run(delay=0)
+        3. Slow brain generates call_guidance (is_outbound check allows this even
+           before mode is set to CALL)
+        4. Fast brain subprocess starts and buffers guidance
+        5. PhoneCallStarted arrives, mode set to CALL
+        6. When call is answered, fast brain applies guidance before first utterance
+
+        Note: Mode is set to CALL in PhoneCallStarted (not PhoneCallSent) for
+        consistency. The _run_llm method checks call_manager.is_outbound to handle
+        the case where LLM finishes before mode is set.
         """
         cm = initialized_cm.cm
 
-        # Simulate outbound call setup - set is_outbound BEFORE PhoneCallStarted
-        # In real flow, this happens in PhoneCallSent handler calling start_call(outbound=True)
-        cm.call_manager.is_outbound = True
+        # Mock start_call to avoid spawning actual subprocess
+        original_start_call = cm.call_manager.start_call
+
+        async def mock_start_call(contact, boss, outbound=False):
+            cm.call_manager.is_outbound = outbound
+
+        cm.call_manager.start_call = mock_start_call
 
         try:
-            # Simulate call starting (for outbound call)
-            event = PhoneCallStarted(contact=boss_contact)
+            # Simulate outbound call being sent
+            event = PhoneCallSent(contact=boss_contact)
             result = await initialized_cm.step(event)
+
+            # Mode is NOT set to CALL here - that happens in PhoneCallStarted.
+            # But is_outbound should be set.
+            assert (
+                cm.call_manager.is_outbound
+            ), "is_outbound should be True after PhoneCallSent"
 
             # The slow brain SHOULD run for outbound calls to provide initial guidance
             assert result.llm_ran, (
-                "Slow brain should run on PhoneCallStarted for OUTBOUND calls!\n"
+                "Slow brain should run on PhoneCallSent for OUTBOUND calls!\n"
                 "\n"
                 "Outbound calls are initiated by the assistant with a purpose.\n"
                 "The slow brain must provide initial guidance so the fast brain\n"
                 "knows what to say when the call is answered.\n"
                 "\n"
-                "Check that call_manager.is_outbound is True before PhoneCallStarted."
+                "The LLM is triggered on PhoneCallSent (not PhoneCallStarted) to\n"
+                "give maximum time for guidance generation before the user picks up."
             )
 
         finally:
-            # Reset outbound flag
+            # Reset state
+            cm.call_manager.start_call = original_start_call
             cm.call_manager.is_outbound = False
+            cm.mode = Mode.TEXT
 
     async def test_call_guidance_field_allows_empty_value(
         self,
@@ -1050,6 +1072,485 @@ class TestStaleGuidanceFiltering:
                 f"the follow-up question. This should definitely be sent.\n"
                 f"\n"
                 f"Published guidance: {[g['content'] for g in published_guidance]}\n"
+            )
+
+        finally:
+            cm.event_broker.publish = original_publish
+            cm._run_llm = original_run_llm
+
+
+# =============================================================================
+# Test: User corrections and restatements - guidance about wrong entity
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestUserCorrectionsAndRestatements:
+    """
+    Tests for when the user corrects or clarifies their request while slow brain is thinking.
+
+    This is different from a topic CHANGE - the user is still asking about the same
+    type of thing (e.g., "a meeting"), but they're correcting WHICH specific instance
+    they mean (e.g., "the Friday meeting, not Thursday").
+
+    The guidance filter currently checks for topic changes, but it may not catch
+    corrections where the general topic stays the same but the specific entity changes.
+
+    Example scenario:
+        User: "What time is the meeting?"
+        (slow brain starts thinking about THE meeting - assumes Thursday)
+        User: "I mean the Friday meeting, not Thursday"
+        Fast brain: "Got it, checking the Friday meeting"
+        Slow brain: "Meeting is at 3pm in Room A"  ← This is THURSDAY's meeting!
+
+    The guidance is about "a meeting" (same topic), but it's the WRONG meeting.
+    Sending this guidance would cause the fast brain to give incorrect information.
+    """
+
+    @pytest.fixture
+    def boss_contact(self):
+        """The boss contact (contact_id=1) who is on the call."""
+        return TEST_CONTACTS[1]
+
+    async def test_implicit_entity_correction_should_block_wrong_entity_guidance(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        SUBTLE TEST: When user implicitly switches to a different entity (without
+        explicitly rejecting the original), guidance about the original entity
+        should still be blocked.
+
+        This is harder than explicit correction ("not the Thursday one") because:
+        - User just mentions a DIFFERENT entity
+        - No explicit rejection of the original
+        - The filter must infer the correction from context
+
+        Scenario:
+            User: "What time is the status meeting?"
+            (slow brain starts thinking about status meeting)
+            User: "Oh wait, I meant the budget review"
+            Fast brain: "Checking the budget review..."
+            Slow brain: "The status meeting is at 2pm"  ← Should this be blocked?
+
+        The guidance filter might see:
+        - Both are about "meetings" (same general topic)
+        - User didn't explicitly say "not the status meeting"
+        - Example 2 in prompt says same-topic follow-ups should SEND
+
+        But the CORRECT behavior is:
+        - User switched to asking about a DIFFERENT meeting (budget review)
+        - Guidance about status meeting is now stale/irrelevant
+        - Should be BLOCKED
+
+        This tests whether the filter understands IMPLICIT entity corrections.
+        """
+        cm = initialized_cm.cm
+
+        # Start a call
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        assert cm.mode == Mode.CALL, "Should be in CALL mode"
+
+        # Track published guidance
+        published_guidance: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_guidance(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                try:
+                    data = json.loads(message)
+                    if "payload" in data:
+                        content = data["payload"].get("content", "")
+                    else:
+                        content = data.get("content", "")
+                    if content:
+                        published_guidance.append({"content": content})
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_guidance
+
+        try:
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 1: User asks about the "status meeting"
+            # ─────────────────────────────────────────────────────────────────
+            initial_question = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="What time is the status meeting?",
+            )
+            await EventHandler.handle_event(
+                initial_question,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Mock slow brain
+            original_run_llm = cm._run_llm
+            slow_brain_started = asyncio.Event()
+            slow_brain_can_finish = asyncio.Event()
+
+            async def slow_brain_with_status_meeting_guidance():
+                """
+                Simulates slow brain that:
+                1. Started thinking about "status meeting"
+                2. Produces guidance about the STATUS meeting
+                3. But user has since switched to asking about BUDGET REVIEW
+                """
+                from unity.common.prompt_helpers import now as prompt_now
+
+                contact_id = boss_contact["contact_id"]
+                conv_state = cm.contact_index.get_conversation_state(contact_id)
+                voice_medium = Medium.PHONE_CALL
+                voice_thread = list(conv_state.threads.get(voice_medium, []))
+
+                if voice_thread:
+                    last_msg = voice_thread[-1]
+                    slow_brain_start_time = last_msg.timestamp
+                else:
+                    slow_brain_start_time = prompt_now(as_string=False)
+
+                slow_brain_started.set()
+                await slow_brain_can_finish.wait()
+                await asyncio.sleep(0.1)
+
+                # Guidance is about STATUS meeting - but user switched to BUDGET REVIEW
+                # No explicit rejection, just a different entity mentioned
+                wrong_meeting_guidance = (
+                    "The status meeting is scheduled for 2pm in the Main Conference Room. "
+                    "The usual attendees are the engineering team leads."
+                )
+
+                should_send = await cm._check_guidance_relevance(
+                    wrong_meeting_guidance,
+                    slow_brain_start_time,
+                )
+
+                if should_send:
+                    guidance_event = CallGuidance(
+                        contact=boss_contact,
+                        content=wrong_meeting_guidance,
+                    )
+                    await cm.event_broker.publish(
+                        "app:call:call_guidance",
+                        guidance_event.to_json(),
+                    )
+
+                return None
+
+            cm._run_llm = slow_brain_with_status_meeting_guidance
+            await cm.flush_llm_requests()
+            await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 2: User IMPLICITLY switches to a different meeting
+            # Note: NO explicit "not the status meeting" - just mentions different one
+            # ─────────────────────────────────────────────────────────────────
+            await asyncio.sleep(0.2)
+            user_implicit_switch = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="Oh wait, I meant the budget review. When is that?",
+            )
+            await EventHandler.handle_event(
+                user_implicit_switch,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 3: Fast brain acknowledges and switches context
+            # ─────────────────────────────────────────────────────────────────
+            fast_brain_ack = OutboundPhoneUtterance(
+                contact=boss_contact,
+                content="Sure, let me look up the budget review meeting.",
+            )
+            await EventHandler.handle_event(
+                fast_brain_ack,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 4: Let slow brain finish with WRONG meeting guidance
+            # ─────────────────────────────────────────────────────────────────
+            slow_brain_can_finish.set()
+
+            # Wait for guidance filter (LLM call)
+            await asyncio.sleep(10.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 5: Verify guidance about WRONG meeting was blocked
+            # ─────────────────────────────────────────────────────────────────
+            status_meeting_guidance = [
+                g
+                for g in published_guidance
+                if "status meeting" in g["content"].lower()
+                or "2pm" in g["content"].lower()
+                or "engineering team" in g["content"].lower()
+            ]
+
+            # THE KEY ASSERTION: Guidance about the WRONG entity should be blocked
+            #
+            # This test may FAIL because:
+            # - The filter sees "meeting" in both guidance and conversation
+            # - User didn't explicitly say "not the status meeting"
+            # - Filter might think this is same-topic (both about meetings)
+            #
+            # But the user clearly switched to a DIFFERENT meeting (budget review).
+            # The guidance about status meeting is now irrelevant.
+            assert len(status_meeting_guidance) == 0, (
+                f"Guidance about WRONG meeting was sent to fast brain!\n"
+                f"\n"
+                f"The user implicitly switched: 'Oh wait, I meant the budget review'\n"
+                f"But slow brain guidance was about the status meeting.\n"
+                f"\n"
+                f"Published status meeting guidance:\n"
+                f"  {[g['content'] for g in status_meeting_guidance]}\n"
+                f"\n"
+                f"Conversation flow:\n"
+                f"  1. User: 'What time is the status meeting?'\n"
+                f"  2. (slow brain starts thinking about status meeting)\n"
+                f"  3. User: 'Oh wait, I meant the budget review. When is that?'\n"
+                f"  4. Fast brain: 'Sure, let me look up the budget review meeting.'\n"
+                f"  5. Slow brain: 'The status meeting is at 2pm...'  ← WRONG!\n"
+                f"\n"
+                f"Unlike explicit correction ('not the status meeting'), this was\n"
+                f"an IMPLICIT switch - user just mentioned a different meeting.\n"
+                f"The filter needs to recognize that 'status meeting' ≠ 'budget review'\n"
+                f"even though both are meetings (same general topic, different entity).\n"
+            )
+
+        finally:
+            cm.event_broker.publish = original_publish
+            cm._run_llm = original_run_llm
+
+
+# =============================================================================
+# Test: Fast brain incorrect information - slow brain correction should be sent
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestFastBrainIncorrectInformation:
+    """
+    Tests for when the fast brain provides incorrect information and the slow
+    brain has the correct answer.
+
+    The fast brain is a lightweight model optimized for responsiveness. It may
+    sometimes guess or hallucinate an answer while the slow brain is looking up
+    the actual data. When the slow brain returns with the correct information,
+    that guidance should be SENT even though the fast brain already "answered".
+
+    This tests the OPPOSITE failure mode from topic changes:
+    - Topic change tests: guidance should be BLOCKED (stale)
+    - This test: guidance should be SENT (correction/accurate data)
+
+    The risk is that the guidance filter sees "fast brain already answered" and
+    incorrectly blocks the slow brain's correction per Example 4 in the prompt.
+    """
+
+    @pytest.fixture
+    def boss_contact(self):
+        """The boss contact (contact_id=1) who is on the call."""
+        return TEST_CONTACTS[1]
+
+    async def test_slow_brain_correction_should_override_fast_brain_guess(
+        self,
+        initialized_cm,
+        boss_contact,
+    ):
+        """
+        When fast brain guesses wrong and slow brain has correct data, the
+        slow brain's guidance should be SENT (not blocked as "redundant").
+
+        Scenario:
+            User: "What time is the meeting with Alice?"
+            Fast brain: "I believe that's at 2pm!"  ← WRONG (guess/hallucination)
+            (slow brain actually checks calendar)
+            Slow brain: "The meeting with Alice is at 4pm"  ← CORRECT
+
+        The guidance filter might see:
+        - Fast brain mentioned a meeting time (2pm)
+        - Slow brain guidance also mentions meeting time (4pm)
+        - Example 4 in prompt: "BLOCK when fast brain already handled it"
+
+        But the CORRECT behavior is:
+        - The fast brain GUESSED (2pm) - this is wrong
+        - The slow brain has ACTUAL DATA (4pm) - this is correct
+        - The correction MUST be sent to avoid giving user wrong information
+
+        The filter should recognize that different times = correction, not redundancy.
+        """
+        cm = initialized_cm.cm
+
+        # Start a call
+        started_event = PhoneCallStarted(contact=boss_contact)
+        await initialized_cm.step(started_event)
+
+        assert cm.mode == Mode.CALL, "Should be in CALL mode"
+
+        # Track published guidance
+        published_guidance: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_guidance(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                try:
+                    data = json.loads(message)
+                    if "payload" in data:
+                        content = data["payload"].get("content", "")
+                    else:
+                        content = data.get("content", "")
+                    if content:
+                        published_guidance.append({"content": content})
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_guidance
+
+        try:
+            from unity.conversation_manager.domains.event_handlers import EventHandler
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 1: User asks about meeting time
+            # ─────────────────────────────────────────────────────────────────
+            user_question = InboundPhoneUtterance(
+                contact=boss_contact,
+                content="What time is the meeting with Alice?",
+            )
+            await EventHandler.handle_event(
+                user_question,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # Mock slow brain
+            original_run_llm = cm._run_llm
+            slow_brain_started = asyncio.Event()
+            slow_brain_can_finish = asyncio.Event()
+
+            async def slow_brain_with_correct_meeting_time():
+                """
+                Simulates slow brain that:
+                1. Started looking up the actual meeting time
+                2. Returns the CORRECT time (4pm)
+                3. But fast brain already guessed WRONG (2pm)
+                """
+                from unity.common.prompt_helpers import now as prompt_now
+
+                contact_id = boss_contact["contact_id"]
+                conv_state = cm.contact_index.get_conversation_state(contact_id)
+                voice_medium = Medium.PHONE_CALL
+                voice_thread = list(conv_state.threads.get(voice_medium, []))
+
+                if voice_thread:
+                    last_msg = voice_thread[-1]
+                    slow_brain_start_time = last_msg.timestamp
+                else:
+                    slow_brain_start_time = prompt_now(as_string=False)
+
+                slow_brain_started.set()
+                await slow_brain_can_finish.wait()
+                await asyncio.sleep(0.1)
+
+                # Slow brain has the CORRECT information from calendar lookup
+                correct_guidance = (
+                    "The meeting with Alice is at 4pm in the East Wing conference room. "
+                    "She confirmed attendance this morning."
+                )
+
+                should_send = await cm._check_guidance_relevance(
+                    correct_guidance,
+                    slow_brain_start_time,
+                )
+
+                if should_send:
+                    guidance_event = CallGuidance(
+                        contact=boss_contact,
+                        content=correct_guidance,
+                    )
+                    await cm.event_broker.publish(
+                        "app:call:call_guidance",
+                        guidance_event.to_json(),
+                    )
+
+                return None
+
+            cm._run_llm = slow_brain_with_correct_meeting_time
+            await cm.flush_llm_requests()
+            await asyncio.wait_for(slow_brain_started.wait(), timeout=2.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 2: Fast brain CONFIDENTLY states wrong info (hallucination)
+            # No hedging language - this makes it harder for the filter
+            # because it looks like a definitive answer, not a guess
+            # ─────────────────────────────────────────────────────────────────
+            await asyncio.sleep(0.2)
+            fast_brain_wrong_guess = OutboundPhoneUtterance(
+                contact=boss_contact,
+                content="The meeting with Alice is at 2pm.",
+            )
+            await EventHandler.handle_event(
+                fast_brain_wrong_guess,
+                cm,
+                is_voice_call=cm.call_manager.uses_realtime_api,
+            )
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 3: Let slow brain finish with CORRECT time
+            # ─────────────────────────────────────────────────────────────────
+            slow_brain_can_finish.set()
+
+            # Wait for guidance filter (LLM call)
+            await asyncio.sleep(10.0)
+
+            # ─────────────────────────────────────────────────────────────────
+            # Step 4: Verify CORRECT guidance was sent (not blocked)
+            # ─────────────────────────────────────────────────────────────────
+            correct_time_guidance = [
+                g
+                for g in published_guidance
+                if "4pm" in g["content"].lower() or "east wing" in g["content"].lower()
+            ]
+
+            # THE KEY ASSERTION: Correction guidance should be SENT
+            #
+            # This test may FAIL because:
+            # - Filter sees fast brain already mentioned meeting time
+            # - Example 4 in prompt says to block "already answered"
+            # - Filter might think "meeting with Alice" is same info
+            #
+            # But the slow brain's guidance is a CORRECTION:
+            # - Fast brain said 2pm (WRONG)
+            # - Slow brain says 4pm (CORRECT)
+            # - This is NOT redundancy, it's correction!
+            assert len(correct_time_guidance) >= 1, (
+                f"Slow brain's CORRECT guidance was blocked!\n"
+                f"\n"
+                f"Fast brain guessed: 'meeting at 2pm' (WRONG)\n"
+                f"Slow brain had: 'meeting at 4pm' (CORRECT)\n"
+                f"\n"
+                f"Published guidance: {[g['content'] for g in published_guidance]}\n"
+                f"\n"
+                f"Conversation flow:\n"
+                f"  1. User: 'What time is the meeting with Alice?'\n"
+                f"  2. (slow brain starts looking up actual time)\n"
+                f"  3. Fast brain: 'I believe it's at 2pm'  ← WRONG GUESS\n"
+                f"  4. Slow brain: 'Meeting is at 4pm'  ← CORRECT, should be sent!\n"
+                f"\n"
+                f"The filter incorrectly blocked the correction.\n"
+                f"It saw 'fast brain already answered about meeting time' and\n"
+                f"applied Example 4 (block redundant info). But 2pm ≠ 4pm!\n"
+                f"\n"
+                f"The filter needs to recognize CORRECTIONS vs REDUNDANCY:\n"
+                f"  - Redundancy: same information repeated\n"
+                f"  - Correction: different/conflicting information (should be sent!)\n"
             )
 
         finally:

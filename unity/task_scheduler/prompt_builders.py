@@ -18,13 +18,10 @@ from ..common.prompt_helpers import (
     tool_name,
     require_tools,
     get_custom_columns,
-    images_policy_block,
-    images_forwarding_block,
     # New standardized composer utilities
     PromptSpec,
     PromptParts,
     compose_system_prompt,
-    images_first_ask_for_tasks,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -168,9 +165,6 @@ def build_ask_prompt(
     ]
     positioning_lines = [ln for ln in positioning_lines if ln]
 
-    # Images extras (images‑first workflow)
-    images_extras = images_first_ask_for_tasks(ask_image_name=None)
-
     spec = PromptSpec(
         manager="TaskScheduler",
         method="ask",
@@ -190,9 +184,9 @@ def build_ask_prompt(
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
-        include_images_policy=True,
-        include_images_forwarding=True,
-        images_extras_block=images_extras,
+        include_images_policy=False,
+        include_images_forwarding=False,
+        images_extras_block=None,
         include_parallelism=True,
         schemas=[("Task", Task)],  # Full schema defines table columns
         special_blocks=[],
@@ -469,8 +463,8 @@ def build_update_prompt(
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
-        include_images_policy=True,
-        include_images_forwarding=True,
+        include_images_policy=False,
+        include_images_forwarding=False,
         images_extras_block=None,
         include_parallelism=True,
         schemas=[("Task", Task)],  # Full schema defines table columns

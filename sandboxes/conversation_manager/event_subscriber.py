@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from unity.conversation_manager.events import (
     CallGuidance,
@@ -36,6 +36,10 @@ from unity.events.types.manager_method import ManagerMethodPayload
 LG = logging.getLogger("conversation_manager_sandbox")
 
 DisplayCallback = Callable[[str], Awaitable[None]] | Callable[[str], None]
+EventCallback = (
+    Callable[[str, dict[str, Any]], Awaitable[None]]
+    | Callable[[str, dict[str, Any]], None]
+)
 
 
 def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[str]:
@@ -102,6 +106,7 @@ async def subscribe_to_responses(
     cm: object,
     sandbox_state: object,
     display_callback: DisplayCallback,
+    event_callback: EventCallback | None = None,
     include_call_guidance: bool = False,
     voice_enabled: bool = False,
     stop_event: asyncio.Event | None = None,
@@ -185,9 +190,17 @@ async def subscribe_to_responses(
                                         last_progress_hint_at = now
                         except Exception:
                             pass
-                        # Best-effort timeout-based completion
+                        # Best-effort timeout-based completion.
+                        #
+                        # IMPORTANT: never auto-clear while an Actor handle is in-flight.
+                        # Actor runs can legitimately be "quiet" for a while (long tool calls),
+                        # and steering must remain available in REPL during that time.
                         try:
-                            if getattr(sandbox_state, "brain_run_in_flight", False):
+                            if getattr(
+                                sandbox_state,
+                                "brain_run_in_flight",
+                                False,
+                            ) and (not actor_in_flight_ids):
                                 last = float(
                                     getattr(
                                         sandbox_state,
@@ -206,6 +219,21 @@ async def subscribe_to_responses(
                         event = Event.from_json(msg["data"])
                     except Exception:
                         continue
+
+                    # Optional raw event callback (used by IPC UIs to build their own panes).
+                    try:
+                        if event_callback is not None:
+                            ch_raw = msg.get("channel") or ""
+                            if isinstance(ch_raw, (bytes, bytearray)):
+                                ch = ch_raw.decode("utf-8", "ignore")
+                            else:
+                                ch = str(ch_raw)
+                            d = event.to_dict()
+                            ret = event_callback(ch, d)
+                            if asyncio.iscoroutine(ret):
+                                await ret  # type: ignore[misc]
+                    except Exception:
+                        pass
 
                     # Categorized logs (structured, high-signal) from broker channels.
                     try:
@@ -333,6 +361,33 @@ async def subscribe_to_responses(
                     except Exception:
                         pass
 
+                    # Surface clarification-waiting state to the sandbox UI when supported.
+                    try:
+                        setattr(
+                            sandbox_state,
+                            "pending_clarification",
+                            bool(actor_waiting_clarification_ids),
+                        )
+                    except Exception:
+                        pass
+
+                    # Update REPL steering availability.
+                    #
+                    # In REPL mode, steering commands (/ask, /i, /pause, ...) rely on
+                    # `sandbox_state.brain_run_in_flight` when CM does not expose a
+                    # stable `active_ask_handle` for the current Actor run.
+                    #
+                    # Key requirement: keep steering enabled for the *entire* duration
+                    # of an in-flight Actor handle, even if other events (e.g. CallGuidance)
+                    # are emitted in between.
+                    try:
+                        if actor_in_flight_ids:
+                            sandbox_state.brain_run_in_flight = True
+                        elif isinstance(event, ActorResult):
+                            sandbox_state.brain_run_in_flight = False
+                    except Exception:
+                        pass
+
                     rendered = _format_outbound_event(
                         event,
                         sandbox_state=sandbox_state,
@@ -340,9 +395,11 @@ async def subscribe_to_responses(
                     if rendered is None:
                         continue
 
-                    # Mark brain run complete on user-facing outbound.
+                    # Mark brain run complete on user-facing outbound (unless an Actor
+                    # handle is still in-flight).
                     try:
-                        sandbox_state.brain_run_in_flight = False
+                        if not actor_in_flight_ids:
+                            sandbox_state.brain_run_in_flight = False
                     except Exception:
                         pass
 
@@ -463,13 +520,13 @@ async def _ensure_manager_method_subscription(
             # Append manager-method logs (these back the GUI "Manager Logs" pane).
             try:
                 if isinstance(logs, LogAggregator):
-                    phase = (payload.phase or "").strip().lower()
+                    direction = (payload.phase or "").strip().lower()
                     # Include hierarchy_label when present (it’s the most informative),
                     # but keep it short for the log pane.
                     label = (payload.hierarchy_label or "").strip()
                     msg = f"{payload.manager}.{payload.method}"
-                    if phase:
-                        msg += f" [{phase}]"
+                    if direction:
+                        msg += f" [{direction}]"
                     if label:
                         msg += f" — {label}"
                     logs.handle_structured_event(category="manager", message=msg)

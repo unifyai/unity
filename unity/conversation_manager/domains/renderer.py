@@ -1055,12 +1055,7 @@ class Renderer:
         ]
         all_notifs = pinned_notifs + new_notifs
         rendered_notifs = "\n".join(
-            (
-                "[PINNED]"
-                if n.pinned
-                else ""
-                + f'[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}'
-            )
+            f'{"[PINNED] " if n.pinned else ""}[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}'
             for n in all_notifs
         )
         return f"<notifications>\n{rendered_notifs}\n</notifications>"

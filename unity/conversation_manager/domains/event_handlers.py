@@ -148,6 +148,15 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         timestamp=event.timestamp,
     )
 
+    # For outbound calls, trigger LLM run immediately to generate initial guidance.
+    # The mode is set to CALL for the _run_llm method to handle the case where
+    # the LLM finishes before PhoneCallStarted sets mode to CALL.
+    # This gives us subprocess startup + ringing time as buffer before the user picks
+    # up.
+    if isinstance(event, PhoneCallSent):
+        cm.mode = Mode.CALL
+        await cm.request_llm_run(delay=0, cancel_running=True)
+
 
 @EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
 async def _(
@@ -190,21 +199,15 @@ async def _(
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
 
-    # For OUTBOUND calls only: Trigger slow brain LLM run to generate initial
-    # call_guidance. The fast brain waits for call_answered before speaking,
-    # giving us time to generate guidance on what to say and why we're calling.
-    #
-    # For INBOUND calls: Do NOT trigger slow brain here. The fast brain handles
-    # the initial greeting autonomously. Triggering slow brain would cause
-    # unnecessary guidance (e.g., "Greet the user") leading to duplicate speech.
+    # NOTE: For OUTBOUND calls, the slow brain LLM run is triggered earlier on
+    # PhoneCallSent to give maximum time for guidance generation (subprocess
+    # startup + ringing time). See the PhoneCallSent handler above.
     #
     # The slow brain will be triggered later for all calls by:
     # - InboundPhoneUtterance (user says something)
     # - ActorResult (action completes)
     # - NotificationInjectedEvent (cross-channel notification)
     # - SMSReceived/EmailReceived while on call
-    if isinstance(event, PhoneCallStarted) and cm.call_manager.is_outbound:
-        await cm.request_llm_run(delay=0)
 
 
 @EventHandler.register(PhoneCallNotAnswered)
@@ -795,10 +798,14 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     action_query = action_data.get("query", f"Action {event.handle_id}")
     short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
 
+    # Pin action completion notifications so they persist across LLM runs.
+    # Action completions are FACTS about work done (not transient requests),
+    # and the CM should remember them until it communicates the result to the user.
     cm.notifications_bar.push_notif(
         "Action",
         f"Action completed: {short_desc}\nResult: {event.result}",
         event.timestamp,
+        pinned=True,
     )
     cm.in_flight_actions.pop(event.handle_id, None)
     await cm.request_llm_run()

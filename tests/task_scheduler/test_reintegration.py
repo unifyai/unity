@@ -108,7 +108,7 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     assert row_b2.status == Status.scheduled
 
     # Stop the active task with guidance to resume as originally scheduled
-    handle.stop(
+    await handle.stop(
         cancel=False,
         reason=(
             "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead"
@@ -189,7 +189,7 @@ async def test_starting_middle_detaches_and_links_neighbors():
     assert sc2.start_at is None
 
     # Stop the active task with guidance to resume as originally scheduled
-    handle.stop(
+    await handle.stop(
         cancel=False,
         reason=(
             "Actually this is taking longer than I expected, let's complete this task as per our original schedule instead"
@@ -233,7 +233,7 @@ async def test_reinstate_head_restores_head_and_start_at():
 
     # Activate head in isolation and then cancel
     handle = await ts.execute(task_id=head_id, isolated=True)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()
 
     # Reinstate the task back to its original head position
@@ -263,7 +263,7 @@ async def test_reinstate_middle_restores_links():
 
     # Activate middle task (B) in isolation and cancel it
     handle = await ts.execute(task_id=b, isolated=True)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()
 
     # Reinstate B → expect A→B→C restored
@@ -293,7 +293,7 @@ async def test_reinstate_with_deleted_next_fallback():
 
     # Activate head in isolation and cancel
     handle = await ts.execute(task_id=head_id, isolated=True)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()
 
     # Delete original next before reinstatement (drift)
@@ -314,7 +314,7 @@ async def test_reinstate_refuses_when_trigger_present():
     head_id, _ = await _make_ordered_queue(ts, ["TH", "TN"])  # type: ignore[misc]
 
     handle = await ts.execute(task_id=head_id, isolated=True)
-    handle.stop()
+    await handle.stop()
     await handle.result()
 
     # Auto‑reinstatement occurs on defer (cancel=False), so the head has a schedule again.
@@ -331,7 +331,7 @@ async def test_reinstate_head_with_all_neighbors_deleted_fallback():
 
     # Activate head and cancel to record reintegration plan (captures original start_at)
     handle = await ts.execute(task_id=head_id, isolated=True)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()
 
     # Delete both original neighbors before reinstatement (drift)
@@ -363,7 +363,7 @@ async def test_reinstate_refuses_while_active():
         ts._reinstate_task_to_previous_queue(task_id=head_id)
 
     # Clean up
-    handle.stop()
+    await handle.stop()
     await handle.result()
 
 
@@ -387,7 +387,7 @@ async def test_reinstate_primed_conflict_downgrades_to_queued():
 
     # Activate head and cancel
     handle = await ts.execute(task_id=h_id)
-    handle.stop(cancel=True)
+    await handle.stop(cancel=True)
     await handle.result()
 
     # Create a new task now – with no active and no primed, this becomes the new 'primed'
@@ -457,7 +457,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     await handle._active_task_done()
 
     # Start the second task (mid) and then request deferral "as originally scheduled"
-    handle.stop(
+    await handle.stop(
         cancel=False,
         reason="let's do the remaining tasks as per our original schedule",
     )

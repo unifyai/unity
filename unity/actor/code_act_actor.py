@@ -52,6 +52,7 @@ from unity.events.manager_event_logging import (
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
+    from unillm.types import PromptCacheParam
 
 
 _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
@@ -59,6 +60,54 @@ _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
         "code_act_current_sandbox",
     )
 )
+
+
+# ---------------------------------------------------------------------------
+# Agent context for tracking execution depth and providing handle access
+# ---------------------------------------------------------------------------
+from dataclasses import dataclass, field as dataclass_field
+
+
+@dataclass
+class AgentContext:
+    """Runtime context for agent execution, accessible via get_current_agent_context().
+
+    Attributes:
+        depth: Nesting level (0 = root agent, 1 = first subagent, etc.)
+        agent_id: Unique identifier for this agent run
+        handle: Reference to the ActorHandle (for accessing history, etc.)
+    """
+
+    depth: int = 0
+    agent_id: str = dataclass_field(default_factory=lambda: str(uuid.uuid4()))
+    handle: "ActorHandle | None" = None
+
+
+_CURRENT_AGENT_CONTEXT: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(
+    "code_act_agent_context",
+    default=AgentContext(),
+)
+
+
+def get_current_agent_context() -> AgentContext:
+    """Get the current agent execution context.
+
+    Use this inside service methods to:
+    - Check agent depth and prevent infinite recursion
+    - Access the current agent's handle for message history, etc.
+
+    Returns:
+        AgentContext with depth, agent_id, and handle
+
+    Example:
+        ctx = get_current_agent_context()
+        if ctx.depth >= 2:
+            raise RuntimeError("Max depth exceeded")
+        if ctx.handle:
+            history = ctx.handle.get_history()
+    """
+    return _CURRENT_AGENT_CONTEXT.get()
+
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +450,26 @@ def _ensure_stream_router_installed() -> None:
 # ---------------------------------------------------------------------------
 # Display function for rich output (images, etc.)
 # ---------------------------------------------------------------------------
+def _resize_image(img: Any, edge_max: int = 1500) -> Any:
+    """Resize image so longest edge is at most edge_max pixels.
+
+    Args:
+        img: PIL Image to resize.
+        edge_max: Maximum size for the longest edge (default: 1500).
+
+    Returns:
+        Resized PIL Image (or original if already smaller).
+    """
+    from PIL import Image
+
+    w, h = img.size
+    if max(w, h) <= edge_max:
+        return img
+    scale = edge_max / max(w, h)
+    new_size = (round(w * scale), round(h * scale))
+    return img.resize(new_size, Image.Resampling.LANCZOS)
+
+
 def _make_display(
     parts_var: contextvars.ContextVar[List[Union[TextPart, ImagePart]]],
 ) -> Callable[[Any], None]:
@@ -415,8 +484,9 @@ def _make_display(
         parts = parts_var.get()
 
         if Image is not None and isinstance(obj, Image.Image):
+            resized = _resize_image(obj)
             buf = io.BytesIO()
-            obj.save(buf, format="PNG")
+            resized.save(buf, format="PNG")
             b64_data = base64.b64encode(buf.getvalue()).decode("ascii")
             parts.append(ImagePart(mime="image/png", data=b64_data))
         elif isinstance(obj, str):
@@ -775,7 +845,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> SteerableToolHandle:
         status = "completed" if self.done() else "still running"
         client = new_llm_client()
@@ -801,7 +870,6 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> Optional[str]:
         # No-op for non-LLM entrypoint execution.
         return None
@@ -1660,6 +1728,9 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
+        model: Optional[str] = None,
+        preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
+        prompt_caching: Optional["PromptCacheParam"] = None,
     ):
         """
         Initializes the CodeActActor.
@@ -1674,6 +1745,14 @@ class CodeActActor(BaseCodeActActor):
                 The LLM can call these tools to discover and retrieve reusable function implementations.
             agent_server_url: URL for the agent server. For desktop mode, pass the
                 external VM's URL.
+            model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
+                If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
+            preprocess_msgs: Optional callback to modify messages before each LLM call.
+                Receives a list of message dicts and returns a modified list.
+                Useful for pruning old messages, adding context, or transforming content.
+            prompt_caching: Optional list of cache targets (e.g. ["system", "messages"]).
+                Enables Anthropic prompt caching for the specified components to reduce
+                costs and latency. Valid values: "tools", "system", "messages".
         """
         super().__init__(
             environments=environments,
@@ -1712,8 +1791,13 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
-        self._computer_tools = self._get_computer_tools()
-        # Register stable tools once; per-call sandboxes are bound via _CURRENT_SANDBOX.
+        self._model = model
+        self._preprocess_msgs = preprocess_msgs
+        self._prompt_caching = prompt_caching
+        self._browser_tools = self._get_browser_tools()
+        self._computer_tools = (
+            self._get_computer_tools()
+        )  # Register stable tools once; per-call sandboxes are bound via _CURRENT_SANDBOX.
         self.add_tools("act", self._build_tools())
 
         self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -2989,6 +3073,15 @@ class CodeActActor(BaseCodeActActor):
         # when it receives a _notification_up_q from the async tool loop.
         token = _CURRENT_SANDBOX.set(sandbox)
 
+        # Set agent context for depth tracking and handle access
+        parent_ctx = _CURRENT_AGENT_CONTEXT.get()
+        new_ctx = AgentContext(
+            depth=parent_ctx.depth + 1,
+            agent_id=str(uuid.uuid4()),
+            handle=None,  # Will be set after handle is created
+        )
+        ctx_token = _CURRENT_AGENT_CONTEXT.set(new_ctx)
+
         async def _cleanup() -> None:
             try:
                 # Best-effort cleanup
@@ -2998,6 +3091,10 @@ class CodeActActor(BaseCodeActActor):
                 pass
             try:
                 _CURRENT_SANDBOX.reset(token)
+            except Exception:
+                pass
+            try:
+                _CURRENT_AGENT_CONTEXT.reset(ctx_token)
             except Exception:
                 pass
             try:
@@ -3114,7 +3211,14 @@ class CodeActActor(BaseCodeActActor):
             computer_primitives=self._computer_primitives,
             images=images,
             response_format=response_format,
+            model=self._model,
+            preprocess_msgs=self._preprocess_msgs,
+            prompt_caching=self._prompt_caching,
         )
+
+        # Update agent context with handle reference
+        new_ctx.handle = handle
+
         return handle
 
     async def close(self):

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable, Optional
 
 from sandboxes.conversation_manager.actor_factory import ActorFactory
 from sandboxes.conversation_manager.config_manager import ActorConfig
@@ -34,7 +34,11 @@ _SIMULATION_GUIDANCE = (
 )
 
 
-async def initialize_cm(*, args: Any):
+async def initialize_cm(
+    *,
+    args: Any,
+    progress_callback: Optional[Callable[[str], None]] = None,
+):
     """
     Initialize ConversationManager for the sandbox.
 
@@ -86,14 +90,22 @@ async def initialize_cm(*, args: Any):
 
         # In real-comms mode, CM will usually be initialized by StartupEvent. For local dev
         # it's often desirable to have managers ready, so we eagerly init with the selected actor.
-        actor = ActorFactory.create_actor(cfg, args=args, progress_callback=print).actor
+        actor = ActorFactory.create_actor(
+            cfg,
+            args=args,
+            progress_callback=progress_callback or print,
+        ).actor
         await init_conv_manager(cm, actor=actor)
     else:
         # Simulated mode should not depend on COMMS_URL, GCP Pub/Sub, or provisioned numbers.
         apply_simulated_comms()
 
         # Inject selected actor; run_conversation_manager doesn't init managers when mocks are enabled.
-        actor = ActorFactory.create_actor(cfg, args=args, progress_callback=print).actor
+        actor = ActorFactory.create_actor(
+            cfg,
+            args=args,
+            progress_callback=progress_callback or print,
+        ).actor
         await init_conv_manager(cm, actor=actor)
 
         # Ensure the system user contact (contact_id=1) has basic identity details

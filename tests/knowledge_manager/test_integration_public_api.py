@@ -362,7 +362,7 @@ async def test_update_stop():
         "Batch A is in Sector 7. Module X weighs 30 kg. Device Y weighs 25 kg.",
     )
     await asyncio.sleep(0.05)
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done()
 
@@ -425,7 +425,7 @@ async def test_ask_stop():
     # Now retrieve with stop
     handle = await km.ask("List the capitals of the specified kingdoms.")
     await asyncio.sleep(0.05)
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done()
 

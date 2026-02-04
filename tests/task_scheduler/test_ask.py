@@ -163,7 +163,7 @@ async def test_ask_stop(
 
         # Give the LLM a moment to start processing, then stop it
         await asyncio.sleep(0.05)
-        handle.stop(cancel=True)
+        await handle.stop(cancel=True)
         await handle.result()
         assert handle.done()
     except Exception as exc:

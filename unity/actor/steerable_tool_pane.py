@@ -638,7 +638,6 @@ class SteerableToolPane:
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> Optional[str]:
         """Interject into a specific handle.
 
@@ -691,7 +690,6 @@ class SteerableToolPane:
                 handle.interject(
                     message,
                     _parent_chat_context_cont=_parent_chat_context_cont,
-                    images=images,
                 ),
             )
             await self._emit_event(
@@ -992,7 +990,6 @@ class SteerableToolPane:
         filter: BroadcastFilter | None = None,
         origin_tool_prefixes: list[str] | None = None,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
     ) -> dict[str, Any]:
         """Broadcast an interjection to a filtered set of in-flight handles."""
 
@@ -1035,7 +1032,6 @@ class SteerableToolPane:
                 hid,
                 message,
                 _parent_chat_context_cont=_parent_chat_context_cont,
-                images=images,
             )
 
         return {"targets": targets, "count": len(targets), "results": results}

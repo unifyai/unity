@@ -8,7 +8,6 @@ from ..common.async_tool_loop import SteerableToolHandle
 from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from .types.message import Message
 from .types.exchange import Exchange
 
@@ -39,7 +38,6 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[ImageRefs | List[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing transcripts** (read‑only) and obtain a live
@@ -95,16 +93,6 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
             supplied the LLM may push a follow‑up question onto
             *_clarification_up_q* and must read the human's answer from
             *_clarification_down_q*.
-        images : optional
-            Optional image references relevant to this transcript query. Provide numeric
-            ``image_id`` values (optionally annotated) to enable vision helpers like
-            ``ask_image`` or ``attach_image_raw`` within the tool loop.
-
-        Visual inputs policy
-        --------------------
-        • When delegating to another tool that declares an ``images`` parameter, forward the relevant images and
-          rewrite/augment their annotations so they align with the delegated question or action (not the original
-          user phrasing). Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
 
         Returns
         -------

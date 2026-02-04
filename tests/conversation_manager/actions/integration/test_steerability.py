@@ -87,7 +87,7 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
     handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
     # Stop the action deterministically and ensure CM no longer tracks it.
-    handle.stop(reason="test_stop")
+    await handle.stop(reason="test_stop")
     _ = await wait_for_actor_completion(cm, handle_id, timeout=30)
     cm.cm.in_flight_actions.pop(handle_id, None)
 

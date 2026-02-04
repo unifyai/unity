@@ -6,6 +6,10 @@ This module wires together:
 - in-process ConversationManager startup (simulated or real-comms)
 - outbound event subscription (prints CM responses)
 - either REPL mode (default) or Textual GUI mode (`--gui`)
+
+In GUI mode, the sandbox uses **two processes**:
+- a UI process (Textual) that stays responsive
+- a runtime process that runs CM/Actor and streams updates back to the UI
 """
 
 from __future__ import annotations
@@ -14,7 +18,10 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from contextlib import suppress
+from multiprocessing import get_context
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -30,12 +37,13 @@ from sandboxes.conversation_manager.config_manager import (
     ConfigurationManager,
 )
 from sandboxes.conversation_manager.agent_service_bootstrap import (
+    free_agent_service_port,
+    get_agent_service_log_path,
     try_start_agent_service_direct,
     try_auto_bootstrap_agent_service,
 )
 from sandboxes.conversation_manager.event_subscriber import subscribe_to_responses
 from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
-from sandboxes.conversation_manager.gui import run_gui_mode
 from sandboxes.conversation_manager.log_aggregator import LogAggregator
 from sandboxes.conversation_manager.repl import SandboxState, run_repl
 from sandboxes.conversation_manager.trace_display import TraceDisplay
@@ -64,7 +72,210 @@ def _suppress_litellm_noise() -> None:
         pass
 
 
+def _terminate_process_tree(proc: Any, *, timeout_s: float = 2.0) -> None:
+    """Terminate then kill a multiprocessing.Process best-effort."""
+
+    try:
+        if proc is None or not hasattr(proc, "is_alive"):
+            return
+        if not proc.is_alive():
+            return
+    except Exception:
+        # If we can't determine, still try terminate.
+        pass
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    try:
+        proc.join(timeout=float(timeout_s))
+    except Exception:
+        pass
+    try:
+        if hasattr(proc, "is_alive") and proc.is_alive():
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.join(timeout=0.5)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _build_worker_config(*, args: Any, actor_config: ActorConfig) -> dict:
+    """
+    Build the stable config dict passed to both UI + worker processes.
+
+    Keep this payload small and explicit. Extra keys are allowed but the UI/worker
+    should only rely on the documented fields.
+    """
+
+    cfg = {
+        # Primary mode selection
+        "actor_type": actor_config.actor_type,
+        "managers_mode": actor_config.managers_mode,
+        "computer_backend_mode": actor_config.computer_backend_mode,
+        # Computer backend / agent-service
+        "agent_server_url": getattr(args, "agent_server_url", "http://localhost:3000"),
+        "agent_mode": getattr(args, "agent_mode", "web"),
+        "headless": bool(getattr(args, "headless", False)),
+        # UX
+        "voice": bool(getattr(args, "voice", False)),
+        "debug": bool(getattr(args, "debug", False)),
+        # Project
+        "project_name": getattr(args, "project_name", "unity"),
+        "overwrite": bool(getattr(args, "overwrite", False)),
+        # Worker-only flags (still part of the stable config contract)
+        "agent_service_bootstrap": (
+            getattr(args, "agent_service_bootstrap", "guide") == "auto"
+        ),
+        "real_comms": bool(getattr(args, "real_comms", False)),
+        "auto_confirm": bool(getattr(args, "auto_confirm", False)),
+        # Nested copy for future-proofing (UI already prefers this when present).
+        "actor_config": actor_config.to_json_obj(),
+    }
+    return cfg
+
+
+async def _run_gui_mode_multiprocess(*, args: Any, config: dict) -> bool:
+    """
+    Run Textual GUI as a dedicated UI process + worker process (spawn context).
+
+    This function blocks until either process exits or shutdown is requested.
+    """
+
+    # Avoid importing Textual in environments where it isn't installed.
+    try:
+        from sandboxes.conversation_manager import gui as _gui_mod
+
+        if not bool(getattr(_gui_mod, "_TEXTUAL_AVAILABLE", False)):
+            print(
+                "⚠️ GUI mode unavailable (Textual not installed); falling back to REPL.",
+            )
+            args.gui = False
+            return False
+    except Exception:
+        print("⚠️ GUI mode unavailable (Textual import failed); falling back to REPL.")
+        args.gui = False
+        return False
+
+    from sandboxes.conversation_manager import gui_main, gui_worker
+    from sandboxes.conversation_manager.ipc_protocol import (
+        MessageType,
+        create_message,
+        new_message_id,
+    )
+
+    ctx = get_context("spawn")
+    ui_to_worker = ctx.Queue(maxsize=100)
+    worker_to_ui = ctx.Queue(maxsize=5000)
+
+    worker_process = ctx.Process(
+        target=gui_worker.main,
+        args=(ui_to_worker, worker_to_ui, config),
+    )
+
+    # Start worker first so UI can connect quickly.
+    worker_process.start()
+    ui_cfg = dict(config or {})
+    try:
+        ui_cfg["worker_pid"] = int(worker_process.pid or 0) or None
+    except Exception:
+        ui_cfg["worker_pid"] = None
+    ui_process = ctx.Process(
+        target=gui_main.main,
+        args=(ui_to_worker, worker_to_ui, ui_cfg),
+    )
+    ui_process.start()
+
+    # Exit triggers:
+    # - Ctrl+C / SIGTERM
+    shutdown_requested = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _request_shutdown() -> None:
+        shutdown_requested.set()
+
+    with suppress(NotImplementedError):
+        loop.add_signal_handler(signal.SIGINT, _request_shutdown)
+        loop.add_signal_handler(signal.SIGTERM, _request_shutdown)
+
+    async def _try_graceful_shutdown() -> None:
+        try:
+            ui_to_worker.put_nowait(
+                create_message(MessageType.SHUTDOWN, payload={}, id=new_message_id()),
+            )
+        except Exception:
+            pass
+
+    try:
+        while True:
+            if shutdown_requested.is_set():
+                break
+
+            ui_alive = ui_process.is_alive()
+            worker_alive = worker_process.is_alive()
+
+            if not ui_alive or not worker_alive:
+                # If the worker died, give the UI a moment to show an error state.
+                if ui_alive and (not worker_alive):
+                    try:
+                        worker_to_ui.put_nowait(
+                            create_message(
+                                MessageType.WORKER_EXIT,
+                                payload={"restart": False, "config": None},
+                                id=None,
+                            ),
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.8)
+                break
+
+            await asyncio.sleep(0.3)
+    finally:
+        # Ask the worker to shutdown first (best-effort) so it can cleanup agent-service.
+        await _try_graceful_shutdown()
+        # Give a short grace period for clean exit.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if (not ui_process.is_alive()) and (not worker_process.is_alive()):
+                break
+            await asyncio.sleep(0.1)
+
+        # Hard cleanup to avoid orphans.
+        _terminate_process_tree(ui_process)
+        _terminate_process_tree(worker_process)
+
+        # Best-effort cleanup: ensure agent-service is not left running if the
+        # runtime process was terminated before it could shut down.
+        try:
+            await asyncio.to_thread(
+                free_agent_service_port,
+                repo_root=Path(__file__).resolve().parents[2],
+                agent_server_url=str(
+                    config.get("agent_server_url") or "http://localhost:3000",
+                ),
+                progress=(lambda _m: None),
+            )
+        except Exception:
+            pass
+
+    # Restart detection: UI exits with a special code when it wants sandbox restart.
+    try:
+        return int(getattr(ui_process, "exitcode", 0) or 0) == 23
+    except Exception:
+        return False
+
+
 async def _main_async() -> None:
+    # Used for best-effort executor shutdown at the end of the run.
+    main_loop = asyncio.get_running_loop()
+    inactivity_shutdown = False
+
     parser = build_cli_parser("ConversationManager sandbox")
     parser.add_argument(
         "--gui",
@@ -166,6 +377,15 @@ async def _main_async() -> None:
         unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
     )
     LG.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    try:
+        LG.info(
+            "Sandbox starting pid=%s project=%s gui=%s",
+            os.getpid(),
+            args.project_name,
+            bool(getattr(args, "gui", False)),
+        )
+    except Exception:
+        pass
 
     # Keep sandbox logs readable by default. Full traces are still available via --debug.
     if not args.debug:
@@ -262,8 +482,28 @@ async def _main_async() -> None:
                     "agent_server_url",
                     "http://localhost:3000",
                 )
+                try:
+                    setattr(
+                        args,
+                        "_agent_service_log_path",
+                        str(
+                            get_agent_service_log_path(
+                                repo_root=project_root,
+                                agent_server_url=str(agent_server_url),
+                            ),
+                        ),
+                    )
+                except Exception:
+                    pass
 
                 try:
+                    # Best-effort port cleanup before attempting a restart.
+                    await asyncio.to_thread(
+                        free_agent_service_port,
+                        repo_root=project_root,
+                        agent_server_url=agent_server_url,
+                        progress=(lambda m: print(m)),
+                    )
                     print("\n[agent-service] Attempting to start (direct)...\n")
                     res1 = await asyncio.to_thread(
                         try_start_agent_service_direct,
@@ -313,13 +553,14 @@ async def _main_async() -> None:
                 except Exception as exc:
                     print(f"[agent-service] Auto-bootstrap failed: {exc}\n")
 
-            # Best-effort: if user asked for auto bootstrap and we're in Mode 3,
-            # attempt to bring up agent-service before validating.
-            if (
-                getattr(selected, "actor_type", None) == "codeact_real"
-                and getattr(args, "agent_service_bootstrap", "guide") == "auto"
-            ):
-                await _attempt_agent_service_recovery()
+            # In REPL mode, we can optionally attempt agent-service recovery before
+            # validation. In multi-process GUI mode, the worker owns this lifecycle.
+            if not bool(getattr(args, "gui", False)):
+                if (
+                    getattr(selected, "actor_type", None) == "codeact_real"
+                    and getattr(args, "agent_service_bootstrap", "guide") == "auto"
+                ):
+                    await _attempt_agent_service_recovery()
 
             vr = await asyncio.to_thread(
                 cfg_mgr.validate_config,
@@ -328,6 +569,12 @@ async def _main_async() -> None:
                     args,
                     "agent_server_url",
                     "http://localhost:3000",
+                ),
+                require_agent_service_running=(
+                    not (
+                        bool(getattr(args, "gui", False))
+                        and (not bool(getattr(args, "real_comms", False)))
+                    )
                 ),
             )
             if vr.ok:
@@ -346,7 +593,7 @@ async def _main_async() -> None:
                 print(getattr(vr, "help_text"))
             print("")
             print("Options:")
-            if _should_offer_agent_help():
+            if (not bool(getattr(args, "gui", False))) and _should_offer_agent_help():
                 print(
                     "1. Retry (attempt start agent-service, then bootstrap if needed)",
                 )
@@ -362,7 +609,9 @@ async def _main_async() -> None:
                 )
             ).strip()
             if choice == "1":
-                if _should_offer_agent_help():
+                if (
+                    not bool(getattr(args, "gui", False))
+                ) and _should_offer_agent_help():
                     await _attempt_agent_service_recovery()
                 continue
             if choice == "2":
@@ -372,6 +621,20 @@ async def _main_async() -> None:
 
         cfg_mgr.save_config(selected)
         setattr(args, "_actor_config", selected)
+
+        # GUI mode: do not initialize CM in this process.
+        if bool(getattr(args, "gui", False)) and not bool(
+            getattr(args, "real_comms", False),
+        ):
+            cfg = _build_worker_config(args=args, actor_config=selected)
+            # Run UI + worker processes; returns when they exit.
+            restart = await _run_gui_mode_multiprocess(args=args, config=cfg)
+            if restart:
+                # The runtime process persists the selected configuration to the
+                # project-local config file before requesting a restart.
+                selected = cfg_mgr.load_config()
+                continue
+            break
 
         cm = await initialize_cm(args=args)
         setattr(args, "_cm", cm)
@@ -412,8 +675,8 @@ async def _main_async() -> None:
                         pass
 
                 # IMPORTANT: the sandbox can "restart" within the same Python process.
-                # If we only wrap once, the wrapper will keep capturing into the old
-                # TraceDisplay instance, and the new UI will show "(no trace entries yet)".
+                # If we only wrap once, the wrapper will keep capturing into the previous
+                # TraceDisplay instance, and the active UI will show "(no trace entries yet)".
                 # Store the original execute once and re-wrap against the current display
                 # every time we (re)initialize the sandbox.
                 orig = getattr(executor, "_cm_sandbox_execute_orig", None)
@@ -499,25 +762,7 @@ async def _main_async() -> None:
                 print("⚠️ Real-comms mode requires REPL. Starting REPL instead.")
                 args.gui = False
 
-            async def _run_ui() -> None:
-                if args.gui:
-                    ran = False
-                    try:
-                        ran = await run_gui_mode(cm=cm, args=args, state=state)
-                    except Exception as exc:
-                        LG.warning(
-                            "GUI mode failed; falling back to REPL: %s",
-                            exc,
-                            exc_info=True,
-                        )
-                        ran = False
-                    if not ran:
-                        print("⚠️ GUI mode unavailable/failed; falling back to REPL.")
-                        await run_repl(args=args, state=state)
-                else:
-                    await run_repl(args=args, state=state)
-
-            ui_task = asyncio.create_task(_run_ui())
+            ui_task = asyncio.create_task(run_repl(args=args, state=state))
             cm_stop_task = None
             try:
                 cm_stop = getattr(cm, "stop", None)
@@ -570,6 +815,21 @@ async def _main_async() -> None:
                             pass
             except Exception:
                 pass
+            # Best-effort: ensure the configured port isn't left bound by a sandbox-started
+            # agent-service instance (or a stale previous one from this repo).
+            try:
+                await asyncio.to_thread(
+                    free_agent_service_port,
+                    repo_root=project_root,
+                    agent_server_url=getattr(
+                        args,
+                        "agent_server_url",
+                        "http://localhost:3000",
+                    ),
+                    progress=(lambda _m: None),
+                )
+            except Exception:
+                pass
 
         # Restart requested by REPL `config`.
         if bool(getattr(args, "_restart_requested", False)):
@@ -587,8 +847,8 @@ async def _main_async() -> None:
     # developer sandbox (not a long-lived service). We attempt a best-effort
     # executor shutdown and if it's still stuck, force-exit.
     try:
-        if hasattr(loop, "shutdown_default_executor"):
-            await asyncio.wait_for(loop.shutdown_default_executor(), timeout=2.0)
+        if hasattr(main_loop, "shutdown_default_executor"):
+            await asyncio.wait_for(main_loop.shutdown_default_executor(), timeout=2.0)
     except Exception:
         if inactivity_shutdown:
             os._exit(0)

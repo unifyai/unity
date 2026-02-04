@@ -74,6 +74,27 @@ def _terminate_process(proc: subprocess.Popen[str], *, timeout_s: float = 2.0) -
             return
     except Exception:
         return
+    # When started with `start_new_session=True`, `agent-service` is the leader
+    # of a new process group. Terminating only the parent (e.g. `npm exec`) can
+    # leave the child `node` process running, so prefer killing the whole group.
+    try:
+        import os as _os
+        import signal as _signal
+
+        pid = int(getattr(proc, "pid", 0) or 0)
+        if pid > 0:
+            try:
+                pgid = _os.getpgid(pid)
+            except Exception:
+                pgid = None
+            if pgid:
+                try:
+                    _os.killpg(pgid, _signal.SIGTERM)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     try:
         proc.terminate()
     except Exception:
@@ -82,9 +103,249 @@ def _terminate_process(proc: subprocess.Popen[str], *, timeout_s: float = 2.0) -
         proc.wait(timeout=float(timeout_s))
     except Exception:
         try:
+            import os as _os
+            import signal as _signal
+
+            pid = int(getattr(proc, "pid", 0) or 0)
+            if pid > 0:
+                try:
+                    pgid = _os.getpgid(pid)
+                except Exception:
+                    pgid = None
+                if pgid:
+                    try:
+                        _os.killpg(pgid, _signal.SIGKILL)
+                        return
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
             proc.kill()
         except Exception:
             pass
+
+
+def _agent_service_log_path(*, repo_root: Path, port: int) -> Path:
+    """
+    Return a stable log file path for sandbox-started agent-service instances.
+
+    We put this under `logs/` (gitignored) to avoid polluting the repo root and to
+    keep logs discoverable for debugging.
+    """
+    return Path(repo_root) / "logs" / "agent_service" / f"agent-service_{port}.log"
+
+
+def get_agent_service_log_path(*, repo_root: Path, agent_server_url: str) -> Path:
+    """
+    Public helper: return the sandbox log file path for `agent-service` at the given URL.
+
+    This mirrors the path used when the sandbox starts agent-service itself.
+    """
+    port_s = _parse_port(agent_server_url)
+    try:
+        port = int(port_s)
+    except Exception:
+        port = 3000
+    return _agent_service_log_path(repo_root=repo_root, port=port)
+
+
+def _open_agent_service_log(*, repo_root: Path, port: int):
+    path = _agent_service_log_path(repo_root=repo_root, port=port)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        fh = path.open("a", encoding="utf-8")
+    except Exception:
+        # Fallback: discard logs rather than breaking startup.
+        fh = open(os.devnull, "w")  # noqa: P201
+    return fh, path
+
+
+@dataclass(frozen=True)
+class PortReleaseResult:
+    """Outcome of a best-effort attempt to free a listening port."""
+
+    released: bool
+    summary: str
+    pid: Optional[int] = None
+
+
+def _extract_repo_path_markers(repo_root: Path) -> list[str]:
+    """
+    Return stable substrings used to identify processes belonging to this repo.
+
+    We keep these conservative: only match clearly repo-scoped paths.
+    """
+    rr = str(repo_root)
+    return [
+        str(Path(rr) / "agent-service"),
+        str(Path(rr) / "agent-service" / "src" / "index.ts"),
+    ]
+
+
+def _looks_like_repo_agent_service_process(
+    *,
+    repo_root: Path,
+    cmdline: str,
+    cwd: str,
+) -> bool:
+    markers = _extract_repo_path_markers(repo_root)
+    if any(m in cmdline for m in markers):
+        return True
+    if any(m in cwd for m in markers):
+        return True
+    # Also handle `cwd=.../agent-service` with cmdline like `ts-node src/index.ts`
+    if str(Path(repo_root) / "agent-service") in cwd and "src/index.ts" in cmdline:
+        return True
+    return False
+
+
+def _find_listening_pid(port: int) -> Optional[int]:
+    """
+    Return the PID of a process listening on `port` (best-effort).
+
+    Prefers psutil for portability; falls back to lsof if psutil is unavailable.
+    """
+    try:
+        import psutil  # type: ignore
+
+        # Prefer inet listeners (tcp/udp) and filter for LISTEN.
+        for c in psutil.net_connections(kind="inet"):
+            try:
+                if not c.laddr:
+                    continue
+                if int(getattr(c.laddr, "port", -1)) != int(port):
+                    continue
+                # psutil uses 'LISTEN' for TCP listeners; UDP may not have status.
+                if getattr(c, "status", None) not in (None, "LISTEN"):
+                    continue
+                pid = getattr(c, "pid", None)
+                if pid:
+                    return int(pid)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Fallback: lsof -t prints PIDs only.
+    try:
+        out = subprocess.check_output(
+            ["lsof", f"-iTCP:{int(port)}", "-sTCP:LISTEN", "-n", "-P", "-t"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        for line in (out or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                return int(line)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def free_agent_service_port(
+    *,
+    repo_root: Path,
+    agent_server_url: str,
+    progress: Optional[ProgressCallback] = None,
+) -> PortReleaseResult:
+    """
+    Best-effort: if the configured port is in use by *this repo's* agent-service,
+    terminate that process so a fresh instance can start.
+
+    Safety: we do **not** kill unrelated processes. If the port is in use by something
+    else, we return a helpful message instead.
+    """
+    progress = progress or (lambda _m: None)
+    port_s = _parse_port(agent_server_url)
+    try:
+        port = int(port_s)
+    except Exception:
+        return PortReleaseResult(
+            released=False,
+            summary=f"Invalid port in URL: {agent_server_url}",
+        )
+
+    pid = _find_listening_pid(port)
+    if not pid:
+        return PortReleaseResult(
+            released=True,
+            summary=f"Port {port} is free",
+            pid=None,
+        )
+
+    # Resolve process info and only terminate if it looks like repo agent-service.
+    try:
+        import psutil  # type: ignore
+
+        p = psutil.Process(pid)
+        cmdline = " ".join(p.cmdline() or [])
+        cwd = ""
+        try:
+            cwd = str(p.cwd() or "")
+        except Exception:
+            cwd = ""
+        name = ""
+        try:
+            name = str(p.name() or "")
+        except Exception:
+            name = ""
+
+        if not _looks_like_repo_agent_service_process(
+            repo_root=repo_root,
+            cmdline=cmdline,
+            cwd=cwd,
+        ):
+            return PortReleaseResult(
+                released=False,
+                summary=(
+                    f"Port {port} is already in use by PID {pid} ({name or 'unknown'}). "
+                    "Not stopping it automatically. Use --agent-server-url to choose a different port "
+                    "or stop the process manually."
+                ),
+                pid=pid,
+            )
+
+        progress(f"[agent-service] Port {port} is in use by PID {pid}; stopping it...")
+        try:
+            p.terminate()
+        except Exception:
+            pass
+        try:
+            p.wait(timeout=2.0)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+        # Verify the port is now free.
+        if _find_listening_pid(port) is None:
+            return PortReleaseResult(
+                released=True,
+                summary=f"Freed port {port} (stopped PID {pid})",
+                pid=pid,
+            )
+        return PortReleaseResult(
+            released=False,
+            summary=f"Failed to free port {port} (PID {pid} still listening)",
+            pid=pid,
+        )
+    except Exception:
+        return PortReleaseResult(
+            released=False,
+            summary=(
+                f"Port {port} is in use (PID {pid}), but the sandbox could not inspect/terminate it."
+            ),
+            pid=pid,
+        )
 
 
 def _validate_agent_service(
@@ -242,6 +503,22 @@ def try_start_agent_service_direct(
             process=None,
         )
 
+    # If the port is already bound, attempt to free it (only if it's our agent-service).
+    # This prevents confusing EADDRINUSE errors when the user retries Mode 3.
+    port_status = _probe_agent_service_noauth_status(agent_server_url=agent_server_url)
+    if port_status in {400, 401, 404}:
+        r = free_agent_service_port(
+            repo_root=repo_root,
+            agent_server_url=agent_server_url,
+            progress=progress,
+        )
+        if not r.released:
+            return AgentServiceBootstrapResult(
+                ok=False,
+                summary=r.summary,
+                process=None,
+            )
+
     agent_dir = repo_root / "agent-service"
     if not agent_dir.exists():
         return AgentServiceBootstrapResult(
@@ -254,15 +531,25 @@ def try_start_agent_service_direct(
     env = os.environ.copy()
     env.setdefault("PORT", port)
 
-    progress(f"[agent-service] Starting on port {env.get('PORT')} (direct)...")
+    port_int = int(env.get("PORT") or port)
+    log_fh, log_path = _open_agent_service_log(repo_root=repo_root, port=port_int)
+    progress(
+        f"[agent-service] Starting on port {env.get('PORT')} (direct). "
+        f"Logs: {log_path}",
+    )
     proc = subprocess.Popen(
         ["npx", "ts-node", "src/index.ts"],
         cwd=str(agent_dir),
         env=env,
-        stdout=None,
-        stderr=None,
+        stdout=log_fh,
+        stderr=log_fh,
         text=True,
+        start_new_session=True,
     )
+    try:
+        log_fh.close()
+    except Exception:
+        pass
     return _wait_for_ready_or_explain_auth(
         proc=proc,
         agent_server_url=agent_server_url,
@@ -451,6 +738,21 @@ def try_auto_bootstrap_agent_service(
             process=None,
         )
 
+    # If the port is already bound, attempt to free it (only if it's our agent-service).
+    port_status = _probe_agent_service_noauth_status(agent_server_url=agent_server_url)
+    if port_status in {400, 401, 404}:
+        r = free_agent_service_port(
+            repo_root=repo_root,
+            agent_server_url=agent_server_url,
+            progress=progress,
+        )
+        if not r.released:
+            return AgentServiceBootstrapResult(
+                ok=False,
+                summary=r.summary,
+                process=None,
+            )
+
     agent_dir = repo_root / "agent-service"
     magnitude_dir = repo_root / "magnitude"
     if not agent_dir.exists():
@@ -519,16 +821,25 @@ def try_auto_bootstrap_agent_service(
     env = os.environ.copy()
     env.setdefault("PORT", port)
 
-    progress(f"[agent-service] Starting on port {env.get('PORT')} (bootstrap)...")
+    port_int = int(env.get("PORT") or port)
+    log_fh, log_path = _open_agent_service_log(repo_root=repo_root, port=port_int)
+    progress(
+        f"[agent-service] Starting on port {env.get('PORT')} (bootstrap). "
+        f"Logs: {log_path}",
+    )
     proc = subprocess.Popen(
         ["npx", "ts-node", "src/index.ts"],
         cwd=str(agent_dir),
         env=env,
-        # Let logs flow to the sandbox terminal for visibility; users can stop/retry.
-        stdout=None,
-        stderr=None,
+        stdout=log_fh,
+        stderr=log_fh,
         text=True,
+        start_new_session=True,
     )
+    try:
+        log_fh.close()
+    except Exception:
+        pass
     return _wait_for_ready_or_explain_auth(
         proc=proc,
         agent_server_url=agent_server_url,

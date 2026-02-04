@@ -10,7 +10,6 @@ from .utils import maybe_await
 from ...constants import LOGGER
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
-from .images import append_images_with_source
 
 
 @contextmanager
@@ -480,7 +479,7 @@ async def forward_handle_call(
         for k in fallback_positional_keys:
             if kwargs and k in kwargs:
                 try:
-                    # Preserve additional kwargs (e.g., images) alongside the positional message
+                    # Preserve additional kwargs alongside the positional message
                     rest_kwargs = (
                         dict(normalised) if isinstance(normalised, dict) else {}
                     )
@@ -788,18 +787,6 @@ async def schedule_missing_for_message(
                         pass
                     scheduled.append(cid)
                     continue
-
-                # If helper arguments include images, append them to the live images registry immediately
-                with suppress(Exception):
-                    payload = (
-                        json.loads(args_json or "{}")
-                        if isinstance(args_json, str)
-                        else (args_json or {})
-                    )
-                    imgs = payload.get("images") if isinstance(payload, dict) else None
-                    if imgs is None and isinstance(payload, dict):
-                        imgs = payload.get("images")
-                    append_images_with_source(imgs)
 
                 # Other helpers: acknowledge but do not execute during backfill
                 try:

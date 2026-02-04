@@ -30,8 +30,7 @@ from ._async_tool.multi_handle import (
 from ._async_tool.tagging import tag_message_with_request
 
 if TYPE_CHECKING:
-    from ..image_manager.types.image_refs import ImageRefs
-
+    from unillm.types import PromptCacheParam
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +61,6 @@ class SteerableHandle(ABC):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
     ) -> "SteerableHandle":
         """
         Query the status or progress of this running task (async - result arrives on next turn).
@@ -79,20 +77,15 @@ class SteerableHandle(ABC):
         ----------
         question : str
             The follow-up user question.
-        images : ImageRefs | None, optional
-            Live image references to make available during this ask flow.
-            Implementations should forward these to any nested asks so inner
-            loops can attach/ask about images (optionally with new annotations).
         """
 
     @abstractmethod
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
-    ) -> Awaitable[Optional[str]] | Optional[str]:
+    ) -> Optional[str]:
         """Provide additional information or instructions to the running task.
 
         Use this to give the task new context, correct its approach, or add
@@ -102,8 +95,6 @@ class SteerableHandle(ABC):
         ----------
         message : str
             The user interjection to inject into the loop.
-        images : ImageRefs | None, optional
-            Live image references to make available during this interjection.
         """
 
 
@@ -117,12 +108,10 @@ class SteerableToolHandle(SteerableHandle):
         pass
 
     @abstractmethod
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        images: "Optional[ImageRefs]" = None,
-    ) -> Awaitable[Optional[str]] | Optional[str]:
+    ) -> Optional[str]:
         """Stop this task immediately, cancelling any pending work.
 
         Use this when the task should be terminated. This is a destructive
@@ -132,8 +121,6 @@ class SteerableToolHandle(SteerableHandle):
         ----------
         reason : str | None
             Optional human-readable reason for stopping.
-        images : ImageRefs | None, optional
-            Live image references to attach at the time of this stop command.
         """
 
     @abstractmethod
@@ -328,7 +315,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
         _return_reasoning_steps: bool = False,
         **kwargs,
     ) -> "SteerableToolHandle":
@@ -339,10 +325,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         When ``_parent_chat_context`` is provided, the context is included in the
         inspection loop's system message to provide additional context about the
         broader conversation that led to this question.
-
-        If ``images`` are provided, the spawned inspection loop receives live
-        images (helpers exposed, synthetic overview injected) and any nested asks
-        can receive images (with optional new annotations).
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
@@ -368,9 +350,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             class _StaticHandle(SteerableToolHandle):
                 def __init__(self): ...
 
-                async def interject(self, message: str): ...
+                async def interject(self, message: str, **kwargs): ...
 
-                def stop(self, reason: Optional[str] = None): ...
+                async def stop(self, reason: Optional[str] = None, **kwargs): ...
 
                 async def pause(self): ...
 
@@ -382,7 +364,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 async def result(self):
                     return await _static()
 
-                async def ask(self, question: str) -> "SteerableToolHandle":
+                async def ask(self, question: str, **kwargs) -> "SteerableToolHandle":
                     return self
 
                 # Inert stubs for required abstract event APIs
@@ -483,7 +465,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
             timeout=300,
-            images=images,
         )
 
         # Monkey-patch result() to record the assistant answer when available
@@ -504,7 +485,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             "method": "ask",
                             "kwargs": {
                                 "question": question,
-                                "images": images,
                                 **(kwargs or {}),
                             },
                         },
@@ -528,7 +508,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "method": "ask",
                         "kwargs": {
                             "question": question,
-                            "images": images,
                             **(kwargs or {}),
                         },
                     },
@@ -545,7 +524,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-        images: "Optional[ImageRefs]" = None,
         trigger_immediate_llm_turn: bool = True,
         **kwargs,
     ) -> None:
@@ -558,7 +536,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         payload = {
             "message": message,
             "_parent_chat_context_continued": _parent_chat_context_cont,
-            "images": images,
             "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
         }
         # Use put_nowait to ensure the interjection is registered *synchronously* before
@@ -574,7 +551,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "method": "interject",
                         "kwargs": {
                             "message": message,
-                            "images": images,
                             **(kwargs or {}),
                         },
                     },
@@ -584,11 +560,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             pass
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        images: "Optional[ImageRefs]" = None,
         **kwargs,
     ) -> None:
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
@@ -608,7 +582,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "method": "stop",
                         "kwargs": {
                             "reason": reason,
-                            "images": images,
                             **(kwargs or {}),
                         },
                     },
@@ -775,10 +748,10 @@ def start_async_tool_loop(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
-    images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,
     persist: bool = False,
     multi_handle: bool = False,
+    prompt_caching: Optional["PromptCacheParam"] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -892,9 +865,9 @@ def start_async_tool_loop(
                 outer_handle_container=outer_handle_container,
                 response_format=response_format,
                 max_parallel_tool_calls=max_parallel_tool_calls,
-                images=images,
                 persist=persist,
                 multi_handle_coordinator=multi_handle_coordinator,
+                prompt_caching=prompt_caching,
             )
         except asyncio.CancelledError:
             raise

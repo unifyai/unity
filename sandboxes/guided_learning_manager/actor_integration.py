@@ -315,14 +315,14 @@ class ActorIntegrationManager:
 
         try:
             # Step 1: Format interjection
-            transcript, images = step.to_actor_interject_args()
+            transcript = step.to_actor_interject_args()
 
             logger.info(
                 f"Processing step {self.step_count}: transcript='{transcript[:50]}...'",
             )
 
             # Step 2: Call actor interjection (blocking)
-            await self.actor_handle.interject(transcript, images=images)
+            await self.actor_handle.interject(transcript)
 
             # Step 3 & 4: Extract and format plan
             plan_state = self.plan_formatter.parse_plan_for_display(self.actor_handle)
