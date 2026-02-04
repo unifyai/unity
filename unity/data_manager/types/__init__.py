@@ -5,7 +5,7 @@ This module exports all Pydantic models used by DataManager for input/output typ
 """
 
 from unity.data_manager.types.table import TableDescription, TableSchema, ColumnInfo
-from unity.data_manager.types.plot import PlotConfig, PlotResult
+from unity.data_manager.types.plot import PlotConfig, PlotResult, PlotType
 
 __all__ = [
     "TableDescription",
@@ -13,4 +13,5 @@ __all__ = [
     "ColumnInfo",
     "PlotConfig",
     "PlotResult",
+    "PlotType",
 ]
