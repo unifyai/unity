@@ -212,6 +212,7 @@ def initialized_cm_codeact(
     # Clear any conversation state from previous tests.
     driver.contact_index.clear_conversations()
     driver.cm.in_flight_actions.clear()
+    driver.cm.completed_actions.clear()
     driver.cm.chat_history.clear()
 
     # Bind per-test actor.

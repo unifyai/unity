@@ -135,6 +135,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.mode = "text"
     cm.chat_history = []
     cm.in_flight_actions = {}
+    cm.completed_actions = {}
     cm.is_summarizing = False
     cm.memory_manager = None
 
@@ -913,8 +914,8 @@ class TestActorEventHandlers:
         mock_cm.request_llm_run.assert_called()
 
     @pytest.mark.asyncio
-    async def test_actor_result_removes_action_and_notifies(self, mock_cm):
-        """ActorResult removes action from in_flight_actions and notifies."""
+    async def test_actor_result_moves_action_to_completed_and_notifies(self, mock_cm):
+        """ActorResult moves action from in_flight_actions to completed_actions and notifies."""
         mock_cm.in_flight_actions = {
             1: {"query": "Test action", "handle_actions": []},
         }
@@ -927,6 +928,8 @@ class TestActorEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         assert 1 not in mock_cm.in_flight_actions
+        assert 1 in mock_cm.completed_actions
+        assert mock_cm.completed_actions[1]["query"] == "Test action"
         assert len(mock_cm.notifications_bar.notifications) == 1
         assert "Action completed" in mock_cm.notifications_bar.notifications[0].content
 
