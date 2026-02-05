@@ -520,7 +520,6 @@ def build_ask_handle_prompt(
     question: str,
     recent_transcript: str,
     response_format_schema: dict | None = None,
-    task_instructions: str | None = None,
 ) -> tuple[str, str]:
     """Build the system prompt for ConversationManagerHandle.ask().
 
@@ -536,21 +535,12 @@ def build_ask_handle_prompt(
         Recent transcript context (last ~20 messages).
     response_format_schema : dict | None
         JSON schema for the expected response format (if any).
-    task_instructions : str | None
-        Optional task-specific instructions to inject.
 
     Returns
     -------
     tuple[str, str]
         (static_prompt, dynamic_prompt) - static is cacheable, dynamic is question-specific.
     """
-    task_specific_section = ""
-    if task_instructions:
-        task_specific_section = f"""
-
-**Task-specific instructions:**
-{task_instructions}"""
-
     static_prompt = f"""You are determining the user's answer to a specific question.
 
 **Tools available:**
@@ -561,7 +551,7 @@ def build_ask_handle_prompt(
 1. First, check if the answer is already in the RECENT_TRANSCRIPT below.
 2. If you can confidently infer the answer from the transcript, provide it directly.
 3. If the transcript doesn't contain the answer or is ambiguous, use `ask_question` to ask the user.
-4. When asking the user, match their language (inferred from transcript).{task_specific_section}
+4. When asking the user, match their language (inferred from transcript).
 
 Current time: {now()}."""
 

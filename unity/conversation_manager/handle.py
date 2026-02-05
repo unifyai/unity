@@ -150,8 +150,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         question: str,
         *,
         response_format: Optional[Type[T]] = None,
-        overall_timeout: int = 300,
-        task_instructions: Optional[str] = None,
     ) -> SteerableToolHandle:
         """
         Asks a question to the user and returns a handle to the running sub-conversation.
@@ -159,8 +157,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         Args:
             question: The question to ask the user
             response_format: Optional Pydantic model or Enum type for structured responses
-            overall_timeout: Maximum time to wait for a response (seconds)
-            task_instructions: Optional specific instructions for this task to be injected into the prompt
         """
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped handle.")
@@ -202,7 +198,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         static_prompt, dynamic_prompt = build_ask_handle_prompt(
             question=question,
             recent_transcript=recent_transcript_for_prompt,
-            task_instructions=task_instructions,
         )
 
         # Build content array with optional handler context

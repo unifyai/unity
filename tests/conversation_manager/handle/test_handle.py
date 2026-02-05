@@ -556,47 +556,6 @@ async def test_ask_path1_sends_acknowledgment(initialized_cm):
     # Just verify it didn't crash
 
 
-@pytest.mark.asyncio
-@_handle_project
-async def test_ask_path1_with_task_instructions(initialized_cm):
-    """
-    PATH 1: task_instructions parameter influences inference behavior.
-
-    Custom instructions should be included in the prompt.
-    """
-    cm = initialized_cm
-    contact = TEST_CONTACTS[1]
-
-    # Set up email context
-    await cm.step_until_wait(
-        EmailReceived(
-            contact=contact,
-            subject="Urgent Request",
-            body="This is extremely time-sensitive, we need this resolved ASAP!",
-            email_id="urgent_001",
-        ),
-    )
-
-    handle = ConversationManagerHandle(
-        event_broker=cm.event_broker,
-        conversation_id="test_conv",
-        contact_id=contact["contact_id"],
-        conversation_manager=cm.cm,
-    )
-
-    # Ask with task_instructions to look for urgency indicators
-    ask_handle = await handle.ask(
-        "What category does this issue fall under?",
-        response_format=IssueCategoryResponse,
-        task_instructions="If the user mentions urgency, time-sensitivity, or ASAP, categorize as URGENT.",
-    )
-
-    result = await ask_handle.result()
-
-    assert isinstance(result, IssueCategoryResponse)
-    assert result.category == IssueCategory.URGENT
-
-
 # =============================================================================
 # Integration Tests: ask() with PATH 2 (Interactive)
 # =============================================================================
