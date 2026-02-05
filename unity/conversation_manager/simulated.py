@@ -161,7 +161,6 @@ class SimulatedConversationManagerHandle(
         question: str,
         *,
         response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """
         Asks a question to the simulated user in the conversation.
