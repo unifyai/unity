@@ -1381,3 +1381,79 @@ async def counting_workflow(target: int):
 
     # Clean up
     await handle.stop("test cleanup")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8. Dependency Resolution Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _create_dependency_functions(fm: FunctionManager) -> tuple[dict, dict]:
+    """Create a helper function and a main function that depends on it."""
+    helper_impl = '''
+def helper_multiply(x: int, y: int) -> int:
+    """Multiplies two numbers together."""
+    return x * y
+'''
+    main_impl = '''
+async def compute_with_helper(a: int, b: int, c: int) -> int:
+    """Computes (a * b) + c using the helper function."""
+    product = helper_multiply(a, b)
+    return product + c
+'''
+    # Add helper first
+    result = fm.add_functions(implementations=[helper_impl])
+    assert result.get("helper_multiply") in ("added", "skipped: already exists")
+
+    # Add main function (depends_on will be auto-detected)
+    result = fm.add_functions(implementations=[main_impl])
+    assert result.get("compute_with_helper") in ("added", "skipped: already exists")
+
+    functions = fm.list_functions(include_implementations=True)
+    return functions["helper_multiply"], functions["compute_with_helper"]
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dependency_resolution_by_id():
+    """Execute a function that depends on another function, retrieving by ID."""
+    fm = FunctionManager()
+    helper_func, main_func = _create_dependency_functions(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        function_id=main_func["function_id"],
+        call_kwargs={"a": 5, "b": 3, "c": 2},
+        verify=False,
+    )
+
+    result = await handle.result()
+    assert "17" in result, f"Expected 17 in result, got: {result}"  # (5 * 3) + 2 = 17
+    assert handle.done()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dependency_resolution_by_description():
+    """Execute a function that depends on another function, retrieving by semantic search."""
+    fm = FunctionManager()
+    helper_func, main_func = _create_dependency_functions(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="compute (a * b) + c, product plus addition",
+        call_kwargs={"a": 4, "b": 6, "c": 1},
+        verify=False,
+    )
+
+    result = await handle.result()
+    assert "25" in result, f"Expected 25 in result, got: {result}"  # (4 * 6) + 1 = 25
+    assert handle.done()

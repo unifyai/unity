@@ -92,8 +92,8 @@ class TestActContextPropagation:
 
             # Verify content matches (filtering may produce a new dict, so compare content)
             # The content should be equivalent since this snapshot has no in_flight_actions
-            assert (
-                context[0].get("content") == test_snapshot.get("content")
+            assert context[0].get("content") == test_snapshot.get(
+                "content",
             ), "_parent_chat_context content should match the original snapshot"
             assert (
                 context[0].get("_cm_state_snapshot") is True
