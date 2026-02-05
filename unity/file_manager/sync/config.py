@@ -49,6 +49,7 @@ class SyncConfig:
             "*.pyc",
             ".DS_Store",
             ".bisync/**",  # rclone's own state files
+            "Local/venvs/**",  # Virtual environments (managed via HTTP API)
         ],
     )
 
