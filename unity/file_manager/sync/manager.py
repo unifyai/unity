@@ -170,7 +170,7 @@ class SyncManager:
 
         assistant_id = SESSION_DETAILS.assistant.id
         user_id = SESSION_DETAILS.user_id
-        base_url = SETTINGS.UNIFY_BASE_URL
+        base_url = SETTINGS.ORCHESTRA_URL
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
         if not assistant_id:
@@ -182,7 +182,7 @@ class SyncManager:
             return None
 
         if not base_url:
-            print("[FileSync] No UNIFY_BASE_URL configured")
+            print("[FileSync] No ORCHESTRA_URL configured")
             return None
 
         if not admin_key:
