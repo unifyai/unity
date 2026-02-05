@@ -119,7 +119,7 @@ def _build_worker_config(*, args: Any, actor_config: ActorConfig) -> dict:
         "managers_mode": actor_config.managers_mode,
         "computer_backend_mode": actor_config.computer_backend_mode,
         # Computer backend / agent-service
-        "agent_server_url": getattr(args, "agent_server_url", "http://localhost:3000"),
+        "agent_server_url": getattr(args, "agent_server_url", None),
         "agent_mode": getattr(args, "agent_mode", "web"),
         "headless": bool(getattr(args, "headless", False)),
         # UX
@@ -256,9 +256,7 @@ async def _run_gui_mode_multiprocess(*, args: Any, config: dict) -> bool:
             await asyncio.to_thread(
                 free_agent_service_port,
                 repo_root=Path(__file__).resolve().parents[2],
-                agent_server_url=str(
-                    config.get("agent_server_url") or "http://localhost:3000",
-                ),
+                agent_server_url=config.get("agent_server_url"),
                 progress=(lambda _m: None),
             )
         except Exception:
@@ -286,9 +284,9 @@ async def _main_async() -> None:
     parser.add_argument(
         "--agent-server-url",
         dest="agent_server_url",
-        default="http://localhost:3000",
+        default=None,
         metavar="URL",
-        help="agent-service base URL (default: http://localhost:3000)",
+        help="Override agent-service URL (auto-resolved from desktop_url if not specified)",
     )
     parser.add_argument(
         "--agent-mode",
