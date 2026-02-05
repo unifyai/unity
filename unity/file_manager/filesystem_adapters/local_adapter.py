@@ -17,13 +17,15 @@ if TYPE_CHECKING:
 class LocalFileSystemAdapter(BaseFileSystemAdapter):
     """Adapter for a local directory tree with optional VM sync.
 
-    When sync is enabled and a managed VM is configured (via SESSION_DETAILS.desktop_url),
-    files in ~/Unity/Local are synchronized with /Unity/Local on the VM via rclone SFTP.
+    This adapter operates on ~/Unity/Local for user files. When sync is enabled
+    and a managed VM is configured (via SESSION_DETAILS.desktop_url), the parent
+    ~/Unity directory is synchronized with /Unity on the VM via rclone SFTP.
+    This captures both user files (~/Unity/Local) and functions (~/Unity/functions).
 
     Sync lifecycle:
-    - Job start: Pull files from VM (start_sync → sync_from_remote)
+    - Job start: Bidirectional sync with --resync (start_sync → bisync)
     - File write: Push changed file to VM (notify_file_write)
-    - Periodic: Bidirectional sync for remote changes (bisync)
+    - Periodic: Bidirectional sync for remote changes (bisync every 30s)
     - Job end: Final push to VM (stop_sync → sync_to_remote)
     """
 
