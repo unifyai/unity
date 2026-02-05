@@ -326,7 +326,8 @@ async def add_email_attachments(
 
 
 async def _get_signed_url_from_gs_url(
-    session: aiohttp.ClientSession, gs_url: str
+    session: aiohttp.ClientSession,
+    gs_url: str,
 ) -> str:
     """
     Request a signed URL from Orchestra for a gs:// path.

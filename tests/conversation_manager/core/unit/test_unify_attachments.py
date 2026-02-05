@@ -30,7 +30,6 @@ import pytest
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.events import UnifyMessageReceived, UnifyMessageSent
 
-
 # =============================================================================
 # Event Attachment Metadata Tests
 # =============================================================================
@@ -270,7 +269,7 @@ class TestAddUnifyMessageAttachments:
         # First call: signed URL generation, Second call: download
         mock_session.post = MagicMock(
             return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_signed_url_response)
+                __aenter__=AsyncMock(return_value=mock_signed_url_response),
             ),
         )
         mock_session.get = MagicMock(

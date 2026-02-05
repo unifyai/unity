@@ -1015,7 +1015,8 @@ class Renderer:
                 def get_filename(att):
                     if isinstance(att, dict):
                         return att.get(
-                            "filename", f"attachment_{att.get('id', 'unknown')}"
+                            "filename",
+                            f"attachment_{att.get('id', 'unknown')}",
                         )
                     return att  # Already a string
 
