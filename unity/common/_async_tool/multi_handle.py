@@ -341,8 +341,6 @@ class MultiRequestHandle:
     async def stop(
         self,
         reason: Optional[str] = None,
-        *,
-        _parent_chat_context_cont: list[dict] | None = None,
         **kwargs,
     ) -> None:
         """Stop/cancel this specific request.

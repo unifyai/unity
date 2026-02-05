@@ -346,8 +346,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
     async def stop(
         self,
         reason: str | None = None,
-        *,
-        _parent_chat_context_cont: list[dict] | None = None,
         **kwargs,
     ) -> None:
         """Stop the in-flight handle.
