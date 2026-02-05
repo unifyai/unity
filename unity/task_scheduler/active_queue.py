@@ -1071,7 +1071,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             async def result(self) -> str:
                 return self._text
 
-            async def ask(self, q: str, **kwargs) -> "SteerableToolHandle":  # type: ignore[override]
+            async def ask(self, question: str, **kwargs) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
             # New abstract event APIs – provide harmless stubs for the static handle
