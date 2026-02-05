@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -100,7 +101,7 @@ class TestSyncManagerStart:
                     manager._poll_task.cancel()
                     try:
                         await manager._poll_task
-                    except Exception:
+                    except asyncio.CancelledError:
                         pass
 
         # Verify bisync was called with force_resync=True
