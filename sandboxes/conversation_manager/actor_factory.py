@@ -124,7 +124,7 @@ class ActorFactory:
             computer_mode=(
                 "mock" if config.computer_backend_mode == "mock" else "magnitude"
             ),
-            agent_server_url=getattr(args, "agent_server_url", "http://localhost:3000"),
+            agent_server_url=getattr(args, "agent_server_url", None),
             headless=bool(getattr(args, "headless", False)),
         )
 
@@ -189,7 +189,7 @@ class ActorFactory:
             return cp
 
         # real
-        agent_server_url = getattr(args, "agent_server_url", "http://localhost:3000")
+        agent_server_url = getattr(args, "agent_server_url", None)
         progress("[computer] Connecting to agent-service...")
         cp = ComputerPrimitives(
             headless=bool(getattr(args, "headless", False)),

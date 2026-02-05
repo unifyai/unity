@@ -433,7 +433,7 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
     if not hasattr(args, "project_name"):
         setattr(args, "project_name", "unity")
     if not hasattr(args, "agent_server_url"):
-        setattr(args, "agent_server_url", "http://localhost:3000")
+        setattr(args, "agent_server_url", None)
     if not hasattr(args, "headless"):
         setattr(args, "headless", False)
     if not hasattr(args, "agent_mode"):
@@ -671,9 +671,7 @@ async def _ipc_loop(
                 vr = await asyncio.to_thread(
                     cfg_mgr.validate_config,
                     new_cfg,
-                    agent_server_url=str(
-                        getattr(args, "agent_server_url", "http://localhost:3000"),
-                    ),
+                    agent_server_url=getattr(args, "agent_server_url", None),
                     require_agent_service_running=False,
                 )
             except Exception as exc:
@@ -838,8 +836,10 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
     agent_proc = None
     try:
         if actor_cfg.actor_type == "codeact_real":
-            agent_server_url = str(
-                getattr(args, "agent_server_url", "http://localhost:3000"),
+            from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
+
+            agent_server_url = (
+                getattr(args, "agent_server_url", None) or DEFAULT_AGENT_SERVER_URL
             )
             # Always try to free the port first (only kills repo-owned agent-service).
             try:
@@ -1092,11 +1092,12 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         # Best-effort: free port after shutdown (only repo agent-service).
         try:
             if actor_cfg.actor_type == "codeact_real":
+                from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
+
                 free_agent_service_port(
                     repo_root=repo_root,
-                    agent_server_url=str(
-                        getattr(args, "agent_server_url", "http://localhost:3000"),
-                    ),
+                    agent_server_url=getattr(args, "agent_server_url", None)
+                    or DEFAULT_AGENT_SERVER_URL,
                     progress=lambda _m: None,
                 )
         except Exception:

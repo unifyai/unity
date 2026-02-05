@@ -154,7 +154,7 @@ class ConfigurationManager:
         self,
         config: ActorConfig,
         *,
-        agent_server_url: str = "http://localhost:3000",
+        agent_server_url: str | None = None,
         require_agent_service_running: bool = True,
     ) -> ValidationResult:
         """
@@ -162,6 +162,11 @@ class ConfigurationManager:
 
         This is intentionally conservative: we only validate hard prerequisites.
         """
+        from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
+
+        # Resolve URL for validation (use default for sandbox/local dev)
+        resolved_url = agent_server_url or DEFAULT_AGENT_SERVER_URL
+
         if config.actor_type == "codeact_real":
             if not os.environ.get("UNIFY_KEY"):
                 return ValidationResult(
@@ -170,7 +175,7 @@ class ConfigurationManager:
                     error="UNIFY_KEY is not set (required for agent-service authentication)",
                     help_text=diagnose_agent_service_setup(
                         repo_root=self._project_root,
-                        agent_server_url=agent_server_url,
+                        agent_server_url=resolved_url,
                     ).help_text,
                 )
             # Real computer interface requires agent-service.
@@ -179,11 +184,11 @@ class ConfigurationManager:
             # failures in the UI. In that mode, we don't require agent-service to be
             # running *before* spawning the runtime.
             if require_agent_service_running:
-                ok = self._validate_agent_service(agent_server_url)
+                ok = self._validate_agent_service(resolved_url)
                 if not ok:
                     diag = diagnose_agent_service_setup(
                         repo_root=self._project_root,
-                        agent_server_url=agent_server_url,
+                        agent_server_url=resolved_url,
                     )
                     return ValidationResult(
                         ok=False,
