@@ -41,7 +41,6 @@ from unity.actor.base import (
     BaseActor,
     BaseActorHandle,
 )
-from unity.task_scheduler.base import BaseActiveTask
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
@@ -2236,7 +2235,7 @@ class _VenvFunctionProxy:
             raise
 
 
-class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
+class HierarchicalActorHandle(BaseActorHandle):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
 

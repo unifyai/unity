@@ -791,7 +791,7 @@ if _TEXTUAL_AVAILABLE:
                                 pass
 
                             # Show the full trajectory across the session so earlier turns
-                            # remain visible even after the sandbox starts a new ActorHandle
+                            # remain visible even after the sandbox starts a new actor loop
                             # (which resets per-event turn numbering).
                             try:
                                 tr.write(td.render_all(group_by_handle=group_traces))

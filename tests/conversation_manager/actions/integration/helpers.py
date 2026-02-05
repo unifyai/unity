@@ -367,7 +367,7 @@ async def wait_for_clarification(
         raise AssertionError(
             f"Expected dict clarification, got: {type(clar).__name__}: {clar!r}",
         )
-    # Some handles (e.g., ActorHandle) intentionally omit call_id; they treat it as opaque/ignored.
+    # Some handles intentionally omit call_id; they treat it as opaque/ignored.
     call_id = str(clar.get("call_id") or "")
     question = str(clar.get("question") or "")
     assert question, f"Clarification missing question: {clar}"

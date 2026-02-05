@@ -97,10 +97,10 @@ class TestGetHandlePausedState:
         assert result is None
 
     def test_with_pause_event_proxy(self):
-        """Works with proxy objects that expose is_set() (e.g., ActorHandle pattern)."""
+        """Works with proxy objects that expose is_set()."""
 
         class _PauseStateProxy:
-            """Minimal proxy like ActorHandle._pause_event."""
+            """Minimal proxy exposing is_set()."""
 
             def __init__(self, paused: bool):
                 self._paused = paused
