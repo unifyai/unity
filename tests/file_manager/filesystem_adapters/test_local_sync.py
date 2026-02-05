@@ -92,7 +92,7 @@ class TestLocalFileSystemAdapterAsyncSync:
         mock_manager.enabled = False  # No desktop_url configured
 
         with patch(
-            "unity.file_manager.filesystem_adapters.local_adapter.SyncManager",
+            "unity.file_manager.sync.SyncManager",
             return_value=mock_manager,
         ):
             result = await adapter.start_sync()
@@ -112,7 +112,7 @@ class TestLocalFileSystemAdapterAsyncSync:
         mock_manager.start = AsyncMock(return_value=True)
 
         with patch(
-            "unity.file_manager.filesystem_adapters.local_adapter.SyncManager",
+            "unity.file_manager.sync.SyncManager",
             return_value=mock_manager,
         ):
             result = await adapter.start_sync()
