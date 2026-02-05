@@ -13,6 +13,7 @@ Context Propagation:
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING, Any
 
 from unity.contact_manager.types import ContactDetailsEmail, ContactDetailsPhone
@@ -77,6 +78,46 @@ def _check_outbound_allowed(contact: dict | None) -> str | None:
             f"Check the contact's response_policy for details or ask your boss for guidance."
         )
     return None
+
+
+# Pattern matching <in_flight_actions>...</in_flight_actions> sections.
+# These contain CM-level steering tools that should not be exposed to the Actor.
+_IN_FLIGHT_ACTIONS_PATTERN = re.compile(
+    r"<in_flight_actions>.*?</in_flight_actions>\s*",
+    re.DOTALL,
+)
+
+
+def _filter_cm_state_for_actor(state_snapshot: dict) -> dict:
+    """Filter CM state snapshot before passing to Actor as parent context.
+
+    The CM state snapshot contains <in_flight_actions> with <steering_tools>
+    listing CM-level tools (stop_, pause_, interject_, ask_) for each action.
+    These are CM brain tools that exist only in the CM's tool surface.
+
+    If passed verbatim to the Actor, the Actor LLM may interpret these tool
+    names as callable functions and generate code like:
+        await stop_search_the_web_for__1()
+    This causes NameError since these tools don't exist in the Actor's scope.
+
+    This function strips the <in_flight_actions> section while preserving
+    other useful context (notifications, active_conversations).
+
+    Args:
+        state_snapshot: The CM state snapshot dict with "content" key.
+
+    Returns:
+        A filtered copy of the snapshot with in_flight_actions removed.
+    """
+    if not state_snapshot:
+        return state_snapshot
+
+    content = state_snapshot.get("content", "")
+    if not content:
+        return state_snapshot
+
+    filtered_content = _IN_FLIGHT_ACTIONS_PATTERN.sub("", content)
+    return {**state_snapshot, "content": filtered_content}
 
 
 def _check_contact_has_address(
@@ -744,10 +785,10 @@ class ConversationManagerBrainActionTools:
 
         await managers_utils.wait_for_initialization(self._cm)
 
-        # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
-        # This is the exact state the brain saw when making this decision.
+        # Pass the fresh rendered state snapshot as context for the Actor.
+        # Filter to remove CM-internal elements (steering tools) that don't exist in Actor scope.
         parent_context = (
-            [self._cm._current_state_snapshot]
+            [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
             if self._cm._current_state_snapshot
             else None
         )
