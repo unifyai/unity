@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Literal, Optional, Type, Any
+from typing import Optional, Type, Any
 from pydantic import BaseModel
 import unillm
 
@@ -117,7 +117,6 @@ class SimulatedConversationManagerHandle(
         self,
         content: str,
         *,
-        level: Literal["info", "warning", "urgent"] = "info",
         source: str = "system",
         interjection_id: Optional[str] = None,
         pinned: bool = False,
@@ -132,7 +131,6 @@ class SimulatedConversationManagerHandle(
 
         prompt = f"""A notification has been sent to the conversation. Acknowledge it by updating your internal state and returning a JSON confirmation.
 - **Content:** {content}
-- **Level:** {level}
 - **Source:** {source}
 - **Pinned:** {pinned}
 - **Interjection ID:** {interjection_id}
