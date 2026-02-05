@@ -465,7 +465,11 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
                 _HandleState.IDLE,
             )
         if name == "ask":
-            return self._state in (_HandleState.RUNNING, _HandleState.PAUSED)
+            return self._state in (
+                _HandleState.RUNNING,
+                _HandleState.PAUSED,
+                _HandleState.COMPLETED,
+            )
         return False
 
     @functools.wraps(BaseActiveTask.stop, updated=())
