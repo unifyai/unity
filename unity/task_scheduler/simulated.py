@@ -225,7 +225,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         *,
         cancel: bool = False,
         **kwargs,
-    ) -> str:
+    ) -> None:
         """Cancel further processing so `.result()` raises.
 
         The `cancel` flag is accepted for compatibility with TaskScheduler-style
@@ -243,7 +243,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done_event.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:
@@ -680,15 +679,14 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 cancel: bool = False,
                 reason: Optional[str] = None,
                 **kwargs,
-            ) -> Optional[str]:  # type: ignore[override]
+            ) -> None:  # type: ignore[override]
                 self._log_stop(reason)
-                ret = await forward_handle_call(
+                await forward_handle_call(
                     self._inner,
                     "stop",
                     {"reason": reason, "cancel": cancel},
                     fallback_positional_keys=("reason",),
                 )
-                return ret if ret is not None else "Stopped."
 
             async def pause(self) -> Optional[str]:  # type: ignore[override]
                 self._log_pause()

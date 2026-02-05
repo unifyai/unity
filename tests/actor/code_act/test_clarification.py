@@ -43,7 +43,8 @@ async def test_clarification_flow():
             # In mocked environment, the LLM might not call request_clarification.
             pass
 
-        final_result = await active_task.stop("Test complete")
+        await active_task.stop("Test complete")
+        final_result = await active_task.result()
         assert not str(final_result).startswith(
             "Error:",
         ), f"Unexpected error: {final_result}"

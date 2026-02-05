@@ -5079,7 +5079,8 @@ async def main_plan():
 
         elif decision.action == "complete_task":
             self.action_log.append("Executing decision: complete_task.")
-            return await self.stop(final_result="Plan completed by user instruction.")
+            await self.stop(final_result="Plan completed by user instruction.")
+            return "Plan completed by user instruction."
 
         # If the LLM chooses modify_task without patches, treat it as "no plan change needed".
         if decision.action == "modify_task" and not decision.patches:
@@ -5096,7 +5097,7 @@ async def main_plan():
         *,
         reason: str | None = None,
         cancel: bool | None = None,
-    ) -> str:
+    ) -> None:
         """
         Stops the plan's execution permanently.
         In persist mode, this is a graceful shutdown. Otherwise, it is a hard cancel.
@@ -5111,9 +5112,6 @@ async def main_plan():
             If True, perform a hard cancel (STOPPED). If False, perform a
             graceful stop (COMPLETED). If None, preserve legacy behaviour:
             COMPLETED when `persist` is True, else STOPPED.
-
-        Returns:
-            A status message.
         """
 
         if self.dedicated_computer_primitives is not None:
@@ -5145,7 +5143,7 @@ async def main_plan():
         ):
             await self._cancel_and_wait_for_task(exec_task, "plan stop() called")
         if self._is_complete:
-            return f"Plan already in terminal state: {self._state.name}."
+            return
 
         # Cleanup pane (watchers) best-effort.
         try:
@@ -5204,7 +5202,6 @@ async def main_plan():
             self.runtime.resume()
         except Exception:
             pass
-        return result_str
 
     async def pause(self, immediate: bool = False) -> str:
         """

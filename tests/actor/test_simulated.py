@@ -131,8 +131,7 @@ async def test_handle_stop(monkeypatch):
     actor = SimulatedActor()
     handle = await actor.act("Generate a long report.")
     await asyncio.sleep(0.05)
-    stop_msg = await handle.stop("Not needed")
-    assert "stopped" in stop_msg.lower()
+    await handle.stop("Not needed")
     result = await handle.result()
     assert isinstance(result, str) and result.strip()
     assert handle.done(), "Handle should report done after stop()"

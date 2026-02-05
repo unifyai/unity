@@ -499,8 +499,7 @@ async def test_handle_stop_cancels_execution():
     await asyncio.sleep(0.05)
     assert not handle.done()
 
-    stop_result = await handle.stop("Test cancellation")
-    assert "stopped" in stop_result.lower()
+    await handle.stop("Test cancellation")
     assert handle.done()
 
 
@@ -863,8 +862,7 @@ async def slow_venv_task() -> str:
     await asyncio.sleep(0.5)
     assert not handle.done()
 
-    stop_result = await handle.stop("Test cancellation")
-    assert "stopped" in stop_result.lower()
+    await handle.stop("Test cancellation")
     assert handle.done()
 
 

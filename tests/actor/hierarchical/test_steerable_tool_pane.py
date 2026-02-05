@@ -75,9 +75,8 @@ class _MockHandle:
         reason: str | None = None,
         *,
         _parent_chat_context_cont=None,
-    ) -> str | None:  # noqa: ARG002
+    ) -> None:  # noqa: ARG002
         self.stop_calls.append(reason)
-        return "stopped"
 
     def interject(
         self,
@@ -127,7 +126,7 @@ class _ClarifyingHandle(SteerableToolHandle):
         return None
 
     def stop(self, reason: str | None = None, **kwargs):  # noqa: ARG002
-        return None
+        pass
 
     async def pause(self) -> str | None:
         return "paused"
@@ -356,7 +355,7 @@ async def test_pane_steering_targeted_and_broadcast_and_answer_clarification() -
         # Pause/resume/stop are safe and return underlying results.
         assert await pane.pause("H1") == "paused"
         assert await pane.resume("H1") == "resumed"
-        assert await pane.stop("H1", "done") == "stopped"
+        await pane.stop("H1", "done")
 
         # After stop, targeted interject is a safe no-op (but recorded).
         await pane.interject("H1", "later")
@@ -730,7 +729,7 @@ async def test_steering_after_completion_is_noop_and_logged() -> None:
         assert await pane.interject("H1", "too late") is None
         assert await pane.pause("H1") is None
         assert await pane.resume("H1") is None
-        assert await pane.stop("H1", "done") is None
+        await pane.stop("H1", "done")
 
         assert h1.interject_calls == []
         assert h1.pause_calls == 0

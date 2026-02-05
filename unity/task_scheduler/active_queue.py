@@ -755,11 +755,11 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     self._queued_interjections.setdefault(tid, []).append(instr)
         return
 
-    async def stop(self, *, cancel: bool = False, reason: Optional[str] = None, **kwargs) -> Optional[str]:  # type: ignore[override]
+    async def stop(self, *, cancel: bool = False, reason: Optional[str] = None, **kwargs) -> None:  # type: ignore[override]
         try:
-            return await self._current_handle.stop(cancel=cancel, reason=reason)
+            await self._current_handle.stop(cancel=cancel, reason=reason)
         except Exception:
-            return "Stopped."
+            pass
 
     async def pause(self) -> Optional[str]:  # type: ignore[override]
         try:

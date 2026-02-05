@@ -1184,7 +1184,6 @@ async def test_outer_stop_calls_inner_stop_on_cancel(model):
         def stop(self, reason: str | None = None, **kwargs):
             stop_called["count"] += 1
             self._done_event.set()
-            return "stopped"
 
         def pause(self, **kwargs):
             pass

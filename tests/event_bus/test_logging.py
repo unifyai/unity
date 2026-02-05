@@ -37,7 +37,6 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         _parent_chat_context_cont: list[dict] | None = None,
     ):
         self._done = True
-        return "Stopped"
 
     async def pause(self):
         self._paused = True
@@ -80,7 +79,7 @@ class _PrivateAttrHandle(SteerableToolHandle):
         return None
 
     async def stop(self, reason: str | None = None):  # type: ignore[override]
-        return "stopped"
+        pass
 
     async def pause(self):  # type: ignore[override]
         return "paused"
@@ -191,11 +190,10 @@ class _CustomArgsHandle(SteerableToolHandle):
         *,
         reason: str | None = None,
         abandon: bool = False,
-    ) -> str | None:
+    ) -> None:
         """Stop execution with an optional reason; abandon toggles cancellation semantics."""
         self.stop_calls.append({"reason": reason, "abandon": abandon})
         self._done_ev.set()
-        return "stopped"
 
     # Pause/Resume with required/optional kwargs
     async def pause(self, *, reason: str, log_to_backend: bool = False) -> str | None:
@@ -278,8 +276,7 @@ async def test_stop_invokes_inner():
         "execute",
     )
 
-    ret = await logged.stop(reason="please-stop")
-    assert ret == "stopped"
+    await logged.stop(reason="please-stop")
     # inner recorded call with our reason; abandon defaults to False
     assert inner.stop_calls and inner.stop_calls[-1]["reason"] == "please-stop"
     assert inner.stop_calls[-1]["abandon"] is False

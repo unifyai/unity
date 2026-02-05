@@ -290,7 +290,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
             # Delegate standard lifecycle methods
             async def stop(self, reason: Optional[str] = None, **kwargs):
-                return await inner_handle.stop(reason, **kwargs)
+                await inner_handle.stop(reason, **kwargs)
 
             async def pause(self):
                 return await inner_handle.pause()
@@ -432,15 +432,14 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             "interjection_id": interjection_id,
         }
 
-    async def stop(self, reason: Optional[str] = None, **kwargs) -> str:
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         """Stops the handle."""
         if self._stopped:
-            return "Handle already stopped."
+            return
         self._stopped = True
         self._final_result = (
             f"Handle stopped. Reason: {reason or 'No reason provided.'}"
         )
-        return self._final_result
 
     def done(self) -> bool:
         return self._stopped

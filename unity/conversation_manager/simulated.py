@@ -306,14 +306,13 @@ class SimulatedConversationManagerHandle(
         self._paused = False
         return "Simulated conversation is resumed."
 
-    async def stop(self, reason: Optional[str] = None, **kwargs) -> str:
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         """Stops the simulated conversation."""
         self._log_stop(reason)
         self._stopped = True
         self._final_result = (
             f"Conversation stopped. Reason: {reason or 'No reason provided.'}"
         )
-        return self._final_result
 
     def done(self) -> bool:
         """Checks if the conversation is stopped."""

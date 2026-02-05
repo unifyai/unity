@@ -200,9 +200,9 @@ async def test_execute_stop(monkeypatch):
     orig_stop = SimulatedActorHandle.stop
 
     @functools.wraps(orig_stop)
-    def spy_stop(self, reason: str | None = None) -> str:  # type: ignore[override]
+    async def spy_stop(self, reason: str | None = None, **kwargs) -> None:  # type: ignore[override]
         called["stop"] += 1
-        return orig_stop(self, reason=reason)
+        await orig_stop(self, reason=reason, **kwargs)
 
     monkeypatch.setattr(SimulatedActorHandle, "stop", spy_stop, raising=True)
 
@@ -214,7 +214,6 @@ async def test_execute_stop(monkeypatch):
     result = await task.result()
 
     assert called["stop"] == 1, "stop must be invoked exactly once"
-    assert "stopped" in result.lower()
     assert task.done(), "`done()` should report True after stopping"
 
 
@@ -235,9 +234,7 @@ async def test_execute_result_and_done():
     # Perform an interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
     await task.stop(cancel=False)
-    result = await task.result()
 
-    assert "stopped" in result.lower()
     assert task.done(), "`done()` must return True after explicit stop"
 
 

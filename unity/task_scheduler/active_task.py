@@ -299,7 +299,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         cancel: bool = False,
         reason: Optional[str] = None,
         **kwargs,
-    ) -> Optional[str]:
+    ) -> None:
         """Stop the running activity with explicit intent.
 
         When ``cancel`` is True the task instance is marked cancelled. When False, the
@@ -311,14 +311,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         # does not accept (e.g. ``cancel``), avoiding fragile try/except
         # TypeError cascades.  See the signature extension contract documented
         # on SteerableHandle.
-        ret = await forward_handle_call(
+        await forward_handle_call(
             self._actor_handle,
             "stop",
             {"reason": reason, "cancel": cancel},
             fallback_positional_keys=("reason",),
         )
-        if ret is None:
-            ret = "Stopped."
         self._was_stopped = True
 
         final_status = "cancelled" if cancel else "stopped"
@@ -338,7 +336,6 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         asyncio.create_task(self._save_final_summary(final_status))
 
         self._clear_active_pointer()
-        return ret
 
     @functools.wraps(BaseActiveTask.pause, updated=())
     async def pause(self) -> Optional[str]:

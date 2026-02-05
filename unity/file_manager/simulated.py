@@ -194,7 +194,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         reason: str | None = None,
         **kwargs,
-    ) -> str:
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
@@ -207,7 +207,6 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done_event.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:

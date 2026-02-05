@@ -139,7 +139,7 @@ class _MockContactManager:
 
         class _StaticHandle:
             def stop(self, reason: str | None = None, **kw):  # type: ignore[override]
-                return "Stopped."
+                pass
 
             async def pause(self):  # type: ignore[override]
                 return "Paused."

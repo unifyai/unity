@@ -41,7 +41,7 @@ async def test_code_act_persist_keeps_loop_alive_until_stopped():
         ), "persist=True should keep the loop alive after interjections"
 
         # Stop should terminate the loop.
-        _ = await asyncio.wait_for(handle.stop("test complete"), timeout=30)
+        await asyncio.wait_for(handle.stop("test complete"), timeout=30)
         assert handle.done()
     finally:
         try:

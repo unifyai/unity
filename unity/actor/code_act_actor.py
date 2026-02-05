@@ -882,20 +882,20 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
     async def stop(
         self,
         reason: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         if self._completion_event.is_set():
-            return self._result_str
+            return
         self._stopped = True
+        self._result_str = (
+            f"Entrypoint {self._entrypoint_id} stopped."
+            if not reason
+            else f"Entrypoint {self._entrypoint_id} stopped: {reason}"
+        )
         self._execution_task.cancel()
         try:
             await asyncio.wait_for(self._completion_event.wait(), timeout=5.0)
         except asyncio.TimeoutError:
             pass
-        return (
-            f"Entrypoint {self._entrypoint_id} stopped."
-            if not reason
-            else f"Entrypoint {self._entrypoint_id} stopped: {reason}"
-        )
 
     async def pause(self) -> Optional[str]:
         return None

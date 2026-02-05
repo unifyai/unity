@@ -892,7 +892,7 @@ class SteerableToolPane:
         self,
         handle_id: str,
         reason: str | None = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Stop a specific handle (safe no-op for terminal handles)."""
 
         truncated_reason = (reason or "")[:200]
@@ -933,10 +933,10 @@ class SteerableToolPane:
 
         if no_op_event is not None:
             await self._emit_event(no_op_event)
-            return None
+            return
 
         try:
-            result = await maybe_await(
+            await maybe_await(
                 handle.stop(reason),
             )
             async with self._lock:
@@ -957,7 +957,6 @@ class SteerableToolPane:
             )
             # After stopping, cancel watcher and clean indices (do not emit completed).
             await self._cleanup_handle(handle_id, emit_completed=False)
-            return result
         except Exception as e:
             logger.error(
                 "stop failed for handle_id=%s: %s",
@@ -979,7 +978,6 @@ class SteerableToolPane:
                     },
                 },
             )
-            return None
 
     async def broadcast_interject(
         self,

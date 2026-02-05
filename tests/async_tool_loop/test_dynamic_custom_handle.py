@@ -60,10 +60,9 @@ class CustomArgsHandle(SteerableToolHandle):
         *,
         reason: Optional[str] = None,
         abandon: bool = False,
-    ) -> Optional[str]:
+    ) -> None:
         self.stop_calls.append({"reason": reason, "abandon": abandon})
         self._done_ev.set()
-        return "stopped"
 
     async def pause(
         self,
@@ -310,7 +309,7 @@ async def test_dynamic_helpers_use_base_docstrings(client):
             return None
 
         def stop(self, reason: Optional[str] = None):
-            return "stopped"
+            pass
 
         async def pause(self):
             return "paused"
@@ -416,7 +415,6 @@ async def test_dynamic_helpers_use_overridden_docstrings(client):
 
         def stop(self, reason: Optional[str] = None):
             """Stop override doc: stop only if safe to cancel."""
-            return "stopped"
 
         async def pause(self, *, gate: Optional[str] = None):
             """Pause override doc: only pause if XYZ precondition holds."""
@@ -511,7 +509,7 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
             return None
 
         def stop(self, reason: Optional[str] = None):
-            return "stopped"
+            pass
 
         async def pause(self):
             return "paused"
@@ -619,7 +617,7 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
             return None
 
         def stop(self, reason: str | None = None):  # type: ignore[override]
-            return "stopped"
+            pass
 
         async def pause(self):  # type: ignore[override]
             return "paused"
@@ -760,7 +758,7 @@ async def test_dynamic_factory_ignores_internal_introspection_methods(model):
             pass
 
         def stop(self, r=None):
-            return "stopped"
+            pass
 
         async def pause(self):
             return "paused"
