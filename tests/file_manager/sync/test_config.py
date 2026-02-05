@@ -15,18 +15,21 @@ class TestSyncConfig:
         assert config.ssh_host == ""
         assert config.ssh_port == 2222
         assert config.ssh_user == ""
-        assert config.remote_root == "/Unity/Local"
+        assert config.remote_root == "/Unity"
         assert config.sync_on_write is True
         assert config.conflict_resolution == "latest"
         assert config.max_retries == 3
         assert config.poll_interval_seconds == 30.0
 
     def test_local_root_default(self):
-        """Test local_root defaults to ~/Unity/Local."""
+        """Test local_root defaults to ~/Unity."""
         config = SyncConfig()
-        assert config.local_root.endswith("/Unity/Local") or config.local_root.endswith(
-            "\\Unity\\Local",
+        # Should end with /Unity but NOT /Unity/Local
+        assert config.local_root.endswith("/Unity") or config.local_root.endswith(
+            "\\Unity",
         )
+        assert not config.local_root.endswith("/Unity/Local")
+        assert not config.local_root.endswith("\\Unity\\Local")
 
     def test_exclude_patterns(self):
         """Test default exclude patterns."""
