@@ -325,14 +325,43 @@ async def add_email_attachments(
                 print(f"Failed to fetch/write attachment '{att}': {e}")
 
 
+async def _get_signed_url_from_gs_url(
+    session: aiohttp.ClientSession, gs_url: str
+) -> str:
+    """
+    Request a signed URL from Orchestra for a gs:// path.
+
+    Args:
+        session: aiohttp session for making requests
+        gs_url: The gs:// URL to get a signed URL for
+
+    Returns:
+        The signed HTTPS URL for downloading the file
+    """
+    orchestra_url = SETTINGS.ORCHESTRA_URL
+    async with session.post(
+        f"{orchestra_url}/v0/storage/signed-url",
+        headers=headers,
+        json={"gcs_uri": gs_url},
+    ) as resp:
+        resp.raise_for_status()
+        result = await resp.json()
+        return result.get("signed_url", "")
+
+
 async def add_unify_message_attachments(
     attachments: list[dict[str, str]],
 ) -> None:
     """
     Download attachments from Unify console messages and save to Downloads folder.
 
-    Each attachment item should be of the form: {"id": str, "filename": str, "url": str}
-    where url points to the downloadable file content.
+    Each attachment item should be of the form:
+        {"id": str, "filename": str, "url": str}
+    or with gs_url for on-demand signed URL generation:
+        {"id": str, "filename": str, "gs_url": str}
+
+    If gs_url is present but url is not, a signed URL will be generated
+    from Orchestra before downloading.
     """
     if not attachments:
         return
@@ -346,13 +375,24 @@ async def add_unify_message_attachments(
                 # very basic filename sanitization
                 safe_filename = os.path.basename(raw_filename)
 
-                # Download from the provided URL
+                # Determine download URL
                 url = att.get("url")
+                gs_url = att.get("gs_url")
+
+                # If no direct URL but we have gs_url, generate signed URL
+                if not url and gs_url:
+                    try:
+                        url = await _get_signed_url_from_gs_url(session, gs_url)
+                    except Exception as e:
+                        print(f"Failed to get signed URL for {gs_url}: {e}")
+                        url = None
+
+                # Download from the URL
                 if url:
                     async with session.get(url, headers=headers) as resp:
                         data = await resp.read()
                 else:
-                    # No URL provided - use empty placeholder
+                    # No URL available - use empty placeholder
                     data = b""
 
                 from unity.file_manager.managers.local import (

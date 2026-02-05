@@ -307,7 +307,7 @@ async def test_unify_message_with_attachment_visible(initialized_cm):
         UnifyMessageReceived(
             contact=contact,
             content="I've attached the quarterly report. Can you confirm you received it?",
-            attachments=["quarterly_report.pdf"],
+            attachments=[{"id": "att-1", "filename": "quarterly_report.pdf"}],
         ),
     )
 

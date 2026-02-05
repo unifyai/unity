@@ -201,15 +201,15 @@ class SMSReceived(Event):
 class UnifyMessageReceived(Event):
     """A message was received via the Unify console chat interface.
 
-    Attachments are downloaded asynchronously to the Downloads folder. The
-    ``attachments`` field contains only filenames (not paths or binary data) so
-    the LLM can acknowledge them and, if needed, access them via FileManager.
+    Attachments are downloaded asynchronously to the Downloads folder.
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
+    The actual files are saved to Downloads/ and can be accessed via FileManager.
     """
 
     contact: dict
     content: str
-    # List of attachment filenames (actual files are saved to Downloads/).
-    attachments: list[str] = field(default_factory=list)
+    # List of attachment dicts with full metadata (files are saved to Downloads/).
+    attachments: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -281,14 +281,14 @@ class SMSSent(Event):
 class UnifyMessageSent(Event):
     """A message was sent via the Unify console chat interface.
 
-    Attachments are specified by filepath and uploaded to GCS. The
-    ``attachments`` field contains only filenames (not paths) for display.
+    Attachments are uploaded to GCS. Each attachment is a dict with keys:
+    id, filename, gs_url, content_type, size_bytes.
     """
 
     contact: dict
     content: str
-    # List of attachment filenames that were sent with the message.
-    attachments: list[str] = field(default_factory=list)
+    # List of attachment dicts with full metadata.
+    attachments: list[dict] = field(default_factory=list)
 
 
 @dataclass

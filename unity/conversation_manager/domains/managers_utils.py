@@ -246,15 +246,21 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
             # call_utterance_timestamp = event.call_utterance_timestamp
             # call_url = event.call_url
 
+            # Extract attachments from event if present (now always list[dict])
+            attachments = getattr(event, "attachments", [])
+
             if exchange_id == UNASSIGNED:
+                msg_data = {
+                    "medium": medium,
+                    "sender_id": sender_id,
+                    "receiver_ids": receiver_ids,
+                    "timestamp": event.timestamp,
+                    "content": content,
+                }
+                if attachments:
+                    msg_data["attachments"] = attachments
                 exchange_id = cm.transcript_manager.log_first_message_in_new_exchange(
-                    {
-                        "medium": medium,
-                        "sender_id": sender_id,
-                        "receiver_ids": receiver_ids,
-                        "timestamp": event.timestamp,
-                        "content": content,
-                    },
+                    msg_data,
                 )
                 # Cache the exchange_id for subsequent pre-hire messages in the batch
                 if isinstance(event, PreHireMessage):
@@ -264,19 +270,22 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
                     )
             else:
                 metadata = getattr(event, "metadata", None)
+                msg_data = {
+                    "medium": medium,
+                    "sender_id": sender_id,
+                    "receiver_ids": receiver_ids,
+                    # not sure if this is right but that's how it is in the code in main
+                    "timestamp": event.timestamp,
+                    "content": content,
+                    "exchange_id": exchange_id,
+                    # "call_utterance_timestamp": call_utterance_timestamp,
+                    # "call_url": call_url,
+                    "_metadata": metadata,
+                }
+                if attachments:
+                    msg_data["attachments"] = attachments
                 cm.transcript_manager.log_messages(
-                    {
-                        "medium": medium,
-                        "sender_id": sender_id,
-                        "receiver_ids": receiver_ids,
-                        # not sure if this is right but that's how it is in the code in main
-                        "timestamp": event.timestamp,
-                        "content": content,
-                        "exchange_id": exchange_id,
-                        # "call_utterance_timestamp": call_utterance_timestamp,
-                        # "call_url": call_url,
-                        "_metadata": metadata,
-                    },
+                    msg_data,
                     synchronous=True,
                 )
 

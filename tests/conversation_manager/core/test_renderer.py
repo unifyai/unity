@@ -413,7 +413,10 @@ class TestRendererUnifyMessage:
             content="Here's the document.",
             timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
             role="user",
-            attachments=["report.pdf", "data.xlsx"],
+            attachments=[
+                {"id": "att-1", "filename": "report.pdf"},
+                {"id": "att-2", "filename": "data.xlsx"},
+            ],
         )
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
         result = renderer.render_message(message, last_snapshot)
@@ -430,7 +433,7 @@ class TestRendererUnifyMessage:
             content="Here's the analysis.",
             timestamp=datetime(2025, 6, 13, 12, 5, 0, tzinfo=timezone.utc),
             role="assistant",
-            attachments=["analysis.pdf"],
+            attachments=[{"id": "att-1", "filename": "analysis.pdf"}],
         )
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
         result = renderer.render_message(message, last_snapshot)
