@@ -4317,7 +4317,7 @@ async def main_plan():
     async def interject(
         self,
         message: str,
-    ) -> str:
+    ) -> None:
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
         """
@@ -4334,7 +4334,7 @@ async def main_plan():
             f"INTERJECT: Interjection received {message}. Current state: {self._state.name}",
         )
         if not self._is_valid_method("interject"):
-            return "Cannot interject: plan not running."
+            return
 
         async with self._interject_lock:
             # Preserve explicit user pause state across interjection handling.
@@ -4424,12 +4424,11 @@ async def main_plan():
                 if routing_status:
                     status_message = f"{status_message}\n{routing_status}"
 
-                return status_message
+                self.action_log.append(f"Interjection processed: {status_message}")
 
             except Exception as e:
                 logger.error(f"Error during interjection handling: {e}", exc_info=True)
                 self.action_log.append(f"ERROR during interjection: {e}")
-                return f"Error processing interjection: {e}"
             finally:
                 # Resume by default after interjection handling, except when we are
                 # intentionally waiting for follow-up user input or replacing the plan.

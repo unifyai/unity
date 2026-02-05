@@ -297,12 +297,11 @@ class TestInterject:
             conversation_manager=mock_cm,
         )
 
-        result = await handle.interject(
+        await handle.interject(
             "User correction incoming",
             pinned=True,
         )
 
-        assert result["status"] == "ok"
         mock_broker.publish.assert_called_once()
 
 
@@ -1419,8 +1418,12 @@ async def test_unpin_interjection_publishes_event(initialized_cm):
         conversation_manager=cm.cm,
     )
 
-    # First pin something
-    pin_result = await handle.interject("Pinned message", pinned=True)
+    # First pin something via send_notification (interject returns None)
+    pin_result = await handle.send_notification(
+        "Pinned message",
+        source="interjection",
+        pinned=True,
+    )
     interjection_id = pin_result["interjection_id"]
 
     # Now unpin

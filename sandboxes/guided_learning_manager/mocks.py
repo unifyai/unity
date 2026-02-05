@@ -111,9 +111,8 @@ class MockStateManagerHandle(SteerableToolHandle):
         """No-op stop."""
         return None
 
-    def interject(self, message: str) -> "MockStateManagerHandle":
-        """No-op interject, returns self."""
-        return self
+    async def interject(self, message: str) -> None:
+        """No-op interject."""
 
     async def pause(self) -> Optional[str]:
         """No-op pause."""

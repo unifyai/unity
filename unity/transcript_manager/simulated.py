@@ -174,7 +174,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> str:
+    ) -> None:
         """Interject a message into the in-flight handle.
 
         Args:
@@ -183,10 +183,9 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 Accepted for API parity with real handles but not currently used.
         """
         if self._cancelled:
-            return "Interaction has been stopped."
+            return
         self._log_interject(message)
         self._extra_user_msgs.append(message)
-        return "Acknowledged."
 
     async def stop(
         self,

@@ -152,11 +152,10 @@ async def main_plan():
                 "Use 'Hi <FirstName>,' (first name only) and avoid 'Dear'. "
                 "Sign off with 'Cheers' or 'Best' instead of 'Best regards'."
             )
-            interject_status = await asyncio.wait_for(
+            await asyncio.wait_for(
                 h.interject(interject_msg),
                 timeout=INTERJECT_TIMEOUT,
             )
-            assert isinstance(interject_status, str) and interject_status.strip()
 
             e_transcripts = await wait_for_pane_steering_event(
                 h,
@@ -325,11 +324,10 @@ async def main_plan():
                 "5 new messages about holiday schedules and Q1 planning; "
                 "updated metrics show a 15% increase in customer engagement."
             )
-            interject_status = await asyncio.wait_for(
+            await asyncio.wait_for(
                 h.interject(interject_msg),
                 timeout=INTERJECT_TIMEOUT,
             )
-            assert isinstance(interject_status, str) and interject_status.strip()
 
             # Broadcast intent: ensure all three in-flight handles received the interjection.
             for hid in (contacts_hid, transcripts_hid, knowledge_hid):
@@ -475,11 +473,10 @@ async def main_plan():
                 "High priority means enterprise customers ($500K+ ARR) or strategic partners. "
                 "Exclude medium and low priority contacts."
             )
-            interject_status = await asyncio.wait_for(
+            await asyncio.wait_for(
                 h.interject(interject_msg),
                 timeout=INTERJECT_TIMEOUT,
             )
-            assert isinstance(interject_status, str) and interject_status.strip()
 
             # Must at least apply to the contacts analysis handle.
             await wait_for_pane_steering_event(

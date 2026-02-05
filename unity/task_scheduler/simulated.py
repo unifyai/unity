@@ -206,7 +206,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> str:
+    ) -> None:
         """Append a follow-up message that will be folded into the prompt.
 
         Args:
@@ -215,10 +215,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 Accepted for API parity with real handles but not currently used.
         """
         if self._cancelled:
-            return "Interaction already stopped."
+            return
         self._log_interject(message)
         self._interjections.append(message)
-        return "Acknowledged."
 
     async def stop(
         self,

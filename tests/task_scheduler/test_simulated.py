@@ -13,7 +13,6 @@ from unity.task_scheduler.simulated import (
 # Helper identical to the one used elsewhere in the test-suite
 from tests.helpers import (
     _handle_project,
-    _ack_ok,
     _assert_blocks_while_paused,
     DEFAULT_TIMEOUT,
     _normalize_alnum_lower,
@@ -139,8 +138,7 @@ async def test_interject(monkeypatch):
     handle = await ts.ask("Give me a summary of all tasks.")
     # Send a follow-up while it is “running”
     await asyncio.sleep(0.05)
-    reply = await handle.interject("Also include any deadlines, please.")
-    assert _ack_ok(reply)
+    await handle.interject("Also include any deadlines, please.")
 
     await handle.result()
     assert counts["interject"] == 1, ".interject should be called exactly once"

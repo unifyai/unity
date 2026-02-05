@@ -143,8 +143,7 @@ async def test_otf_plan_interject_targeted_while_waiting_for_user_confirmation(
                 "Actually, make the outreach much more casual and friendly. "
                 "Use 'Hey <FirstName>,' and avoid 'Dear'. Keep it short."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             # Wait for *any* interject steering event for the transcripts handle, then
             # assert that it was applied (ok) or safely ignored (no-op) if the handle
@@ -291,8 +290,7 @@ async def test_otf_plan_pause_broadcast_interject_resume_then_finish(
                 "Important: for everything you're producing right now, focus ONLY on Q4 (Oct/Nov/Dec). "
                 "Ignore Q3 entirely and don't mention it."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             # We expect this global constraint to be relevant to multiple in-flight summaries.
             for hid in (contacts_hid, transcripts_hid, knowledge_hid):

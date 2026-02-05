@@ -16,7 +16,6 @@ from unity.web_searcher.simulated import (
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import (
     _handle_project,
-    _ack_ok,
     _assert_blocks_while_paused,
     DEFAULT_TIMEOUT,
 )
@@ -108,8 +107,7 @@ async def test_interject(monkeypatch):
     ws = SimulatedWebSearcher()
     h = await ws.ask("Summarize latest announcements from major vendors.")
     await asyncio.sleep(0.05)
-    reply = await h.interject("Prefer primary sources and release notes.")
-    assert _ack_ok(reply)
+    await h.interject("Prefer primary sources and release notes.")
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 

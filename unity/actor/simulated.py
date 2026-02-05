@@ -38,8 +38,8 @@ class _StaticAnswerHandle(SteerableToolHandle):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> Optional[str]:
-        return None
+    ) -> None:
+        pass
 
     async def stop(
         self,

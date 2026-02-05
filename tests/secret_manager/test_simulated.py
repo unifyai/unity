@@ -12,7 +12,6 @@ from unity.secret_manager.simulated import (
 
 from tests.helpers import (
     _handle_project,
-    _ack_ok,
     _assert_blocks_while_paused,
     DEFAULT_TIMEOUT,
 )
@@ -113,8 +112,7 @@ async def test_handle_interject(monkeypatch):
     sm = SimulatedSecretManager()
     h = await sm.ask("Show me recent secret activity.")
     await asyncio.sleep(0.05)
-    reply = await h.interject("Also mention any new keys created today.")
-    assert _ack_ok(reply)
+    await h.interject("Also mention any new keys created today.")
     await h.result()
     assert calls["interject"] == 1
 

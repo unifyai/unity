@@ -226,10 +226,9 @@ async def test_replace_interjection_discards_plan_and_starts_fresh():
         )
 
         await asyncio.sleep(1)
-        status = await active_task.interject(
+        await active_task.interject(
             "Forget that. Please go to wikipedia.org and find the page for 'Asynchronous programming'.",
         )
-        assert "re-" in status.lower() or "new goal" in status.lower()
 
         if not active_task.done():
             await active_task.stop("Test complete - replace_task verified")
@@ -593,7 +592,7 @@ async def test_modify_interjection_merges_new_code_into_existing_plan():
         )
 
         await wait_for_log_entry(active_task, "allrecipes.com", timeout=15)
-        status = await active_task.interject(
+        await active_task.interject(
             "Great, now that you're on the homepage, type vegetarian lasagna into the search bar and click search.",
         )
         await wait_for_log_entry(active_task, "vegetarian lasagna", timeout=30)

@@ -260,7 +260,7 @@ class SimulatedConversationManagerHandle(
         *,
         pinned: bool = False,
         interjection_id: Optional[str] = None,
-    ) -> dict:
+    ) -> None:
         """
         Send an interjection to the conversation.
 
@@ -268,12 +268,9 @@ class SimulatedConversationManagerHandle(
             message: The message content to inject
             pinned: If True, the interjection persists for the entire session
             interjection_id: Optional explicit ID (auto-generated if not provided)
-
-        Returns:
-            Dict with status and the interjection_id
         """
         self._log_interject(message)
-        return await self.send_notification(
+        await self.send_notification(
             message,
             source="external_interjection",
             interjection_id=interjection_id,

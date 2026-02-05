@@ -12,7 +12,6 @@ from unity.contact_manager.simulated import (
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import (
     _handle_project,
-    _ack_ok,
     _assert_blocks_while_paused,
     DEFAULT_TIMEOUT,
 )
@@ -129,8 +128,7 @@ async def test_handle_interject(monkeypatch):
     cm = SimulatedContactManager()
     h = await cm.ask("Show me all contacts created this quarter.")
     await asyncio.sleep(0.05)
-    reply = await h.interject("Filter only VIP customers.")
-    assert _ack_ok(reply)
+    await h.interject("Filter only VIP customers.")
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 

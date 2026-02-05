@@ -94,14 +94,13 @@ class BrainRunController:
             pass
         return "🛑 Stopped (best-effort) — returning to idle"
 
-    async def interject(self, message: str) -> str:
+    async def interject(self, message: str) -> None:
         # Best-effort: publish an inbound event that contains the interjection.
         # Use phone utterance when on call, otherwise SMS.
         if getattr(self.state, "in_call", False):
             await self.publisher.publish_phone_utterance(message)
         else:
             await self.publisher.publish_sms(message)
-        return "✅ Interjection sent (triggered a fresh brain run)"
 
     async def ask(self, question: str) -> str:
         """
@@ -216,7 +215,8 @@ class SteeringController:
                 return "⚠️ Usage: /i <message>"
             # Production-faithful: interjections are *user utterances* handled by CM.
             brain = BrainRunController(publisher=self.publisher, state=self.state)
-            return await brain.interject(arg.strip())
+            await brain.interject(arg.strip())
+            return "💬 Interjected"
         if cmd in {"ask", "?"}:
             brain = BrainRunController(publisher=self.publisher, state=self.state)
             return await brain.ask(arg)
@@ -250,7 +250,8 @@ class SteeringController:
         if cmd in {"i", "interject"}:
             if not arg.strip():
                 return "⚠️ Usage: /i <message>"
-            return await brain.interject(arg)
+            await brain.interject(arg)
+            return "💬 Interjected"
         if cmd in {"ask", "?"}:
             if not arg.strip():
                 return "⚠️ Usage: /ask <question>"
@@ -260,5 +261,6 @@ class SteeringController:
         if cmd == "freeform":
             if not arg.strip():
                 return "⚠️ Usage: /freeform <text>"
-            return await brain.interject(arg)
+            await brain.interject(arg)
+            return "💬 Interjected"
         return f"⚠️ Unknown steering command: /{cmd}. Try /help."

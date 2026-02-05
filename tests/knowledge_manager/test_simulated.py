@@ -12,7 +12,6 @@ from unity.knowledge_manager.simulated import (
 # helper that wraps each test in its own Unify project / trace context
 from tests.helpers import (
     _handle_project,
-    _ack_ok,
     _assert_blocks_while_paused,
     DEFAULT_TIMEOUT,
 )
@@ -158,8 +157,7 @@ async def test_interject_simulated_km(monkeypatch):
     km = SimulatedKnowledgeManager()
     handle = await km.ask("Show me all facts about Zebulon.")
     await asyncio.sleep(0.05)
-    reply = await handle.interject("Only include historical facts.")
-    assert _ack_ok(reply)
+    await handle.interject("Only include historical facts.")
     await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
 

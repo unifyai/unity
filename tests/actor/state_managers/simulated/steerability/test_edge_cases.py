@@ -80,13 +80,9 @@ async def main_plan():
             assert isinstance(result, str) and result.strip()
 
             # Interject after completion should be a graceful no-op.
-            status = await asyncio.wait_for(
+            await asyncio.wait_for(
                 h.interject("One more thing: keep the format concise."),
                 timeout=INTERJECT_TIMEOUT,
-            )
-            assert isinstance(status, str) and status.strip()
-            assert (
-                "cannot interject" in status.lower() or "not running" in status.lower()
             )
 
         finally:
@@ -275,13 +271,12 @@ async def main_plan():
             _ = await asyncio.wait_for(h.clarification_up_q.get(), timeout=CLARIFICATION_TIMEOUT)  # type: ignore[union-attr]
 
             # Interject while we are waiting for the clarification answer.
-            interject_status = await asyncio.wait_for(
+            await asyncio.wait_for(
                 h.interject(
                     "When choosing the matching David, use the most recently active record if possible.",
                 ),
                 timeout=INTERJECT_TIMEOUT,
             )
-            assert isinstance(interject_status, str) and interject_status.strip()
 
             await wait_for_pane_steering_event(
                 h,
@@ -366,13 +361,11 @@ async def main_plan():
                 timeout=HANDLE_REGISTRATION_TIMEOUT,
             )
 
-            s1 = await asyncio.wait_for(h.interject(""), timeout=INTERJECT_TIMEOUT)
-            s2 = await asyncio.wait_for(
+            await asyncio.wait_for(h.interject(""), timeout=INTERJECT_TIMEOUT)
+            await asyncio.wait_for(
                 h.interject("um... maybe change something?"),
                 timeout=INTERJECT_TIMEOUT,
             )
-            assert isinstance(s1, str)
-            assert isinstance(s2, str)
 
             # Keep this invariant strict: meaningless interjections should not trigger disruptive patching.
             assert h.plan_source_code == original_plan_source

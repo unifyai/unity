@@ -32,8 +32,8 @@ class _ThrottledHandle(SteerableToolHandle):
     async def ask(self, question: str, **kwargs):  # type: ignore[override]
         return await self._inner.ask(question, **kwargs)
 
-    def interject(self, message: str, **kwargs):  # type: ignore[override]
-        return self._inner.interject(message, **kwargs)
+    async def interject(self, message: str, **kwargs):  # type: ignore[override]
+        await self._inner.interject(message, **kwargs)
 
     async def pause(self):  # type: ignore[override]
         return await self._inner.pause()

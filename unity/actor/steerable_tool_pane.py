@@ -638,7 +638,7 @@ class SteerableToolPane:
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Interject into a specific handle.
 
         Safe no-op for terminal handles (`completed`, `failed`, `stopped`), but still
@@ -683,10 +683,10 @@ class SteerableToolPane:
 
         if no_op_event is not None:
             await self._emit_event(no_op_event)
-            return None
+            return
 
         try:
-            result = await maybe_await(
+            await maybe_await(
                 handle.interject(
                     message,
                     _parent_chat_context_cont=_parent_chat_context_cont,
@@ -704,7 +704,6 @@ class SteerableToolPane:
                     },
                 },
             )
-            return result
         except Exception as e:
             logger.error(
                 "interject failed for handle_id=%s: %s",
@@ -726,7 +725,6 @@ class SteerableToolPane:
                     },
                 },
             )
-            return None
 
     async def pause(self, handle_id: str) -> Optional[str]:
         """Pause a specific handle (safe no-op for terminal handles)."""
@@ -1026,15 +1024,14 @@ class SteerableToolPane:
                 continue
             targets.append(m.handle_id)
 
-        results: dict[str, Any] = {}
         for hid in targets:
-            results[hid] = await self.interject(
+            await self.interject(
                 hid,
                 message,
                 _parent_chat_context_cont=_parent_chat_context_cont,
             )
 
-        return {"targets": targets, "count": len(targets), "results": results}
+        return {"targets": targets, "count": len(targets)}
 
     async def answer_clarification(
         self,
