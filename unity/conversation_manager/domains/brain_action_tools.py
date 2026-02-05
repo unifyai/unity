@@ -379,10 +379,12 @@ class ConversationManagerBrainActionTools:
                 or contact
                 or {}
             )
+            # Use full attachment metadata if available, otherwise empty list
+            attachments_for_event = [attachment] if attachment else []
             event = UnifyMessageSent(
                 contact=fresh_contact,
                 content=content,
-                attachments=[attachment_filename] if attachment_filename else [],
+                attachments=attachments_for_event,
             )
         else:
             event = Error("Failed to send unify message")

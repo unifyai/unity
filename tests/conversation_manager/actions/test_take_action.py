@@ -648,7 +648,7 @@ async def test_unify_message_summarize_attachment_triggers_act_with_filepath(
         UnifyMessageReceived(
             contact=BOSS,
             content="Please summarize this PDF for me.",
-            attachments=["quarterly_report.pdf"],
+            attachments=[{"id": "att-1", "filename": "quarterly_report.pdf"}],
         ),
     )
 

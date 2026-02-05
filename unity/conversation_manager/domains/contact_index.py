@@ -61,13 +61,16 @@ class EmailMessage(CommsMessage):
 
 @dataclass
 class UnifyMessage(CommsMessage):
-    """A message from the Unify console chat interface, optionally with attachments."""
+    """A message from the Unify console chat interface, optionally with attachments.
+
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
+    """
 
     name: str
     content: str
     timestamp: datetime
     role: str  # "user" or "assistant"
-    attachments: list[str] = field(default_factory=list)
+    attachments: list[dict] = field(default_factory=list)
 
 
 @dataclass

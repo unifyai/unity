@@ -1011,14 +1011,22 @@ class Renderer:
         if isinstance(message, UnifyMessage):
             attachments_line = ""
             if message.attachments:
+                # Extract filename from attachment (supports both dict and string format)
+                def get_filename(att):
+                    if isinstance(att, dict):
+                        return att.get(
+                            "filename", f"attachment_{att.get('id', 'unknown')}"
+                        )
+                    return att  # Already a string
+
                 if message.name == "You":
                     attachment_details = [
-                        f"{fname} (attached)" for fname in message.attachments
+                        f"{get_filename(att)} (attached)" for att in message.attachments
                     ]
                 else:
                     attachment_details = [
-                        f"{fname} (auto-downloaded to Downloads/{fname})"
-                        for fname in message.attachments
+                        f"{get_filename(att)} (auto-downloaded to Downloads/{get_filename(att)})"
+                        for att in message.attachments
                     ]
                 attachments_line = f" [Attachments: {', '.join(attachment_details)}]"
 

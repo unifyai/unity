@@ -468,19 +468,15 @@ class CommsManager:
                         message.ack()
                         return
 
-                    # Extract attachment filenames for the event
+                    # Extract attachments with full metadata for the event
                     attachments = event.get("attachments") or []
-                    attachment_filenames = [
-                        att.get("filename") or f"attachment_{att.get('id', 'unknown')}"
-                        for att in attachments
-                    ]
 
                     self._publish_from_callback(
                         f"app:comms:{thread}_message",
                         events_map[thread](
                             content=content,
                             contact=contact,
-                            attachments=attachment_filenames,
+                            attachments=attachments,  # Pass full metadata
                         ).to_json(),
                     )
 

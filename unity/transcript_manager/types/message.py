@@ -41,6 +41,13 @@ class Message(BaseModel):
             "List of annotated image references aligned to the text. Each entry must be an AnnotatedImageRef."
         ),
     )
+    attachments: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "List of file attachments with metadata. Each attachment is a dict with keys: "
+            "id, filename, gs_url, content_type, size_bytes."
+        ),
+    )
 
     # Central, single source of truth for shorthand aliases (full → shorthand)
     SHORTHAND_MAP: ClassVar[dict[str, str]] = {
@@ -52,6 +59,7 @@ class Message(BaseModel):
         "content": "c",
         "exchange_id": "xid",
         "images": "imgs",
+        "attachments": "atts",
     }
 
     @classmethod
@@ -92,6 +100,7 @@ class Message(BaseModel):
         # JSON serializer prunes empty fields. This avoids later reconstruction
         # paths treating missing keys as None (which fails validation).
         payload.setdefault("images", [])
+        payload.setdefault("attachments", [])
 
         return payload
 
