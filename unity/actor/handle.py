@@ -476,6 +476,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
     async def stop(
         self,
         reason: Optional[str] = None,
+        **kwargs,
     ) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
@@ -499,7 +500,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            self._loop_handle.stop(reason)
+            await self._loop_handle.stop(reason=reason)
         elif (
             previous_state == _HandleState.IDLE and not self._completion_event.is_set()
         ):
@@ -539,7 +540,7 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
             logger.info(
                 f"Handle {self._task_id}: Stopping internal loop for pause.",
             )
-            self._loop_handle.stop()
+            await self._loop_handle.stop()
         else:
             logger.warning(
                 f"Handle {self._task_id}: Pause called but no active loop to stop.",
@@ -586,13 +587,10 @@ class ActorHandle(BaseActiveTask, BaseActorHandle):
         logger.info(
             f"Handle {self._task_id}: Interjecting: '{message}'",
         )
-        try:
-            await self._loop_handle.interject(
-                message=message,
-                _parent_chat_context_cont=_parent_chat_context_cont,
-            )
-        except TypeError:
-            await self._loop_handle.interject(message)
+        await self._loop_handle.interject(
+            message=message,
+            _parent_chat_context_cont=_parent_chat_context_cont,
+        )
         return f"Interjection sent to handle {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
