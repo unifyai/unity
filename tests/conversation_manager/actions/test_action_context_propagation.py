@@ -665,3 +665,108 @@ class TestContextContent:
 
         finally:
             handle.interject = original_interject
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_act_context_excludes_cm_steering_tools(self, initialized_cm):
+        """
+        Regression test: Verify that context passed to Actor does NOT contain
+        CM-level steering tools like stop_<name>__<id>, pause_<name>__<id>, etc.
+
+        Background:
+        The CM state snapshot includes <in_flight_actions> with <steering_tools>
+        listing CM-level tools (stop, pause, interject, ask) for each action.
+        These are CM brain tools, NOT Actor primitives.
+
+        If these are passed verbatim to the Actor, the Actor LLM may attempt
+        to call them (e.g., `await stop_search_the_web_for__1()`), resulting
+        in NameError since they don't exist in the Actor's execution scope.
+
+        This test ensures the context is filtered before being passed to Actor.
+        """
+        cm = initialized_cm.cm
+
+        # Create a state snapshot with in_flight_actions containing steering tools
+        # This simulates the exact scenario that caused the bug
+        test_snapshot = {
+            "role": "user",
+            "content": """<notifications>
+[PINNED] Previous action completed successfully.
+</notifications>
+
+<in_flight_actions>
+<action id='1' short_name='search_the_web_for' status='executing'>
+<original_request>Search the web for backend engineer job openings at OpenAI.</original_request>
+<steering_tools>
+  - ask_search_the_web_for__1: Query the status or progress of this running task.
+  - stop_search_the_web_for__1: Stop this task immediately, cancelling any pending work.
+  - interject_search_the_web_for__1: Provide additional information or instructions.
+  - pause_search_the_web_for__1: Pause this task temporarily without cancelling it.
+</steering_tools>
+</action>
+</in_flight_actions>
+
+<active_conversations>
+<contact contact_id="1" first_name="User">
+<threads>
+<global>
+[User @ Wednesday, February 04, 2026]: Search for frontend engineer roles instead.
+</global>
+</threads>
+</contact>
+</active_conversations>""",
+            "_cm_state_snapshot": True,
+        }
+        cm._current_state_snapshot = test_snapshot
+
+        # Capture what's passed to actor.act()
+        captured_context = []
+        original_act = cm.actor.act
+
+        async def capturing_act(query, **kwargs):
+            captured_context.append(kwargs.get("_parent_chat_context"))
+            handle = await original_act(query, **kwargs)
+            return handle
+
+        cm.actor.act = capturing_act
+
+        try:
+            # Create brain action tools and call act directly
+            brain_tools = ConversationManagerBrainActionTools(cm)
+            await brain_tools.act(query="Search for frontend engineer roles")
+
+            # Verify context was captured
+            assert len(captured_context) == 1, "act() should have been called once"
+            context = captured_context[0]
+
+            assert context is not None, "_parent_chat_context should not be None"
+            assert len(context) == 1, "_parent_chat_context should have one element"
+
+            content = context[0].get("content", "")
+
+            # CRITICAL: Verify CM steering tools are NOT in the context
+            # These tool names would cause NameError if Actor tries to call them
+            cm_steering_patterns = [
+                "stop_search_the_web_for__1",
+                "pause_search_the_web_for__1",
+                "interject_search_the_web_for__1",
+                "ask_search_the_web_for__1",
+                "<steering_tools>",
+            ]
+
+            for pattern in cm_steering_patterns:
+                assert pattern not in content, (
+                    f"CM steering tool '{pattern}' should NOT be in Actor context. "
+                    f"These are CM-level tools that don't exist in Actor scope. "
+                    f"Content excerpt: {content[:1000]}..."
+                )
+
+            # Verify useful context IS preserved (conversation content)
+            assert (
+                "frontend engineer" in content.lower()
+                or "<active_conversations>" in content
+            ), "Useful conversation context should still be present"
+
+        finally:
+            cm.actor.act = original_act
+            cm._current_state_snapshot = None
