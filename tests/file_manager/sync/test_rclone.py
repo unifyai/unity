@@ -19,8 +19,8 @@ def sync_config(tmp_path):
         ssh_port=2222,
         ssh_user="testuser",
         ssh_key_path=str(tmp_path / "test_key"),
-        local_root=str(tmp_path / "local"),
-        remote_root="/Unity/Local",
+        local_root=str(tmp_path / "unity"),
+        remote_root="/Unity",
     )
 
 
@@ -56,7 +56,7 @@ class TestBisync:
         """Test that force_resync=True adds --resync flag."""
         # Setup required state
         rclone_sync._config_path = str(tmp_path / "rclone.conf")
-        (tmp_path / "local").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "unity").mkdir(parents=True, exist_ok=True)
 
         captured_cmd = []
 
@@ -77,7 +77,7 @@ class TestBisync:
     async def test_bisync_without_force_resync_no_flag(self, rclone_sync, tmp_path):
         """Test that force_resync=False doesn't add --resync flag initially."""
         rclone_sync._config_path = str(tmp_path / "rclone.conf")
-        (tmp_path / "local").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "unity").mkdir(parents=True, exist_ok=True)
 
         captured_cmd = []
 
@@ -97,7 +97,7 @@ class TestBisync:
     async def test_bisync_auto_recovery_on_resync_error(self, rclone_sync, tmp_path):
         """Test that bisync auto-recovers with --resync on failure."""
         rclone_sync._config_path = str(tmp_path / "rclone.conf")
-        (tmp_path / "local").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "unity").mkdir(parents=True, exist_ok=True)
 
         call_count = 0
         captured_cmds = []
@@ -165,7 +165,7 @@ class TestOperationLock:
     async def test_bisync_acquires_lock(self, rclone_sync, tmp_path):
         """Test that bisync acquires the lock."""
         rclone_sync._config_path = str(tmp_path / "rclone.conf")
-        (tmp_path / "local").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "unity").mkdir(parents=True, exist_ok=True)
 
         lock_was_held = False
 
@@ -184,7 +184,7 @@ class TestOperationLock:
     async def test_operations_are_serialized(self, rclone_sync, tmp_path):
         """Test that concurrent operations are serialized."""
         rclone_sync._config_path = str(tmp_path / "rclone.conf")
-        (tmp_path / "local").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "unity").mkdir(parents=True, exist_ok=True)
 
         execution_order = []
         operation_active = False
