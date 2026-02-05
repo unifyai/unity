@@ -18,6 +18,7 @@ from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.task_execution_context import current_task_execution_delegate
+from unity.common._async_tool.messages import forward_handle_call
 from .types.status import Status
 from ..common.llm_client import new_llm_client
 import logging
@@ -231,24 +232,20 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
 
         # If the interjection semantically requests stopping, enforce correct lifecycle handling.
         if intent in ("cancel", "defer"):
-            # Stop the underlying actor handle. Some handle implementations expose stop() as async;
-            # we must not drop the coroutine. Also, some stop() variants accept (reason=..., cancel=...).
+            # Forward stop to the underlying actor handle via forward_handle_call
+            # which introspects the target signature and handles kwargs the actor
+            # may not accept (e.g. ``cancel``).  Fire-and-forget via create_task
+            # since the interject path should not block on the stop completing.
             stop_reason = reason or message
-            try:
-                if hasattr(self._actor_handle, "stop"):
-                    try:
-                        ret = self._actor_handle.stop(  # type: ignore[call-arg]
-                            reason=stop_reason,
-                            cancel=(intent == "cancel"),
-                        )
-                    except TypeError:
-                        # Legacy signature: stop(reason: str | None = None)
-                        ret = self._actor_handle.stop(stop_reason)  # type: ignore[call-arg]
-
-                    if asyncio.iscoroutine(ret):
-                        asyncio.create_task(ret)
-            except Exception:
-                pass
+            if hasattr(self._actor_handle, "stop"):
+                asyncio.create_task(
+                    forward_handle_call(
+                        self._actor_handle,
+                        "stop",
+                        {"reason": stop_reason, "cancel": (intent == "cancel")},
+                        fallback_positional_keys=("reason",),
+                    ),
+                )
 
             self._was_stopped = True  # prevents result() from marking 'completed'
 
@@ -309,15 +306,18 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         task is deferred and we attempt to reinstate it to its previous queue/schedule
         position using the stored reintegration plan (when available).
         """
-        # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
-        try:
-            # Prefer passing cancel/reason when supported, but fall back for compatibility.
-            try:
-                ret = await self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
-            except TypeError:
-                # Legacy signature: stop(reason: str | None = None)
-                ret = await self._actor_handle.stop(reason)  # type: ignore[call-arg]
-        except Exception:
+        # Forward stop to the underlying actor handle.  forward_handle_call
+        # introspects the target signature and silently drops kwargs the actor
+        # does not accept (e.g. ``cancel``), avoiding fragile try/except
+        # TypeError cascades.  See the signature extension contract documented
+        # on SteerableHandle.
+        ret = await forward_handle_call(
+            self._actor_handle,
+            "stop",
+            {"reason": reason, "cancel": cancel},
+            fallback_positional_keys=("reason",),
+        )
+        if ret is None:
             ret = "Stopped."
         self._was_stopped = True
 
