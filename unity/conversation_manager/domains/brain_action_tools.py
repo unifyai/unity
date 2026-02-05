@@ -1171,7 +1171,6 @@ class ConversationManagerBrainActionTools:
                         await handle.interject(
                             param_value,
                             _parent_chat_context_cont=parent_context_cont,
-                            images=kwargs.get("images"),
                         )
                         result = "Interjected successfully"
                     case "stop":
