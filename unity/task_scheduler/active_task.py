@@ -176,12 +176,12 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(
         self,
-        message: str,
+        question: str,
         *,
         _return_reasoning_steps: bool = False,
     ) -> SteerableToolHandle:
         """Answer a read-only question about the live activity and return a handle."""
-        return await self._actor_handle.ask(message)
+        return await self._actor_handle.ask(question)
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(
