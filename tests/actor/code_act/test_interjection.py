@@ -65,7 +65,8 @@ async def test_interjection_incremental_teaching_session():
             pass
 
         # Stop the session from the outside
-        final_result = await plan.stop("Session complete.")
+        await plan.stop("Session complete.")
+        final_result = await plan.result()
 
         assert not str(final_result).startswith(
             "Error:",

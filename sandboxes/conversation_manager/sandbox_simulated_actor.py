@@ -41,8 +41,8 @@ class _ThrottledHandle(SteerableToolHandle):
     async def resume(self):  # type: ignore[override]
         return await self._inner.resume()
 
-    def stop(self, reason: str | None = None, **kwargs):  # type: ignore[override]
-        return self._inner.stop(reason, **kwargs)
+    async def stop(self, reason: str | None = None, **kwargs) -> None:  # type: ignore[override]
+        await self._inner.stop(reason, **kwargs)
 
     async def result(self):  # type: ignore[override]
         return await self._inner.result()

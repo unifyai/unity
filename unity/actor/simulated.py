@@ -45,8 +45,8 @@ class _StaticAnswerHandle(SteerableToolHandle):
         self,
         reason: Optional[str] = None,
         **kwargs,
-    ) -> Optional[str]:
-        return None
+    ) -> None:
+        pass
 
     async def pause(self) -> str:
         return "Already completed."
@@ -344,16 +344,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self,
         reason: Optional[str] = None,
         **kwargs,
-    ) -> str:
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
             reason: Optional reason for stopping.
         """
         if self._done_event.is_set():
-            return (
-                self._result_str or "Already stopped."
-            )  # Return existing result if done
+            return
         if not self._description:
             raise Exception("No actions are currently being performed.")
         msg = f"Stopped '{self._description}' for reason: {reason}"
@@ -368,7 +366,6 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._complete(msg)
-        return msg
 
     async def interject(
         self,

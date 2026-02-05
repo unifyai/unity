@@ -214,11 +214,12 @@ class SingleFunctionActorHandle(BaseActorHandle):
     async def stop(
         self,
         reason: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Stop the function execution. Forwards to inner handle if steerable."""
         # If we already have an inner handle, forward to it
         if self._inner_handle is not None:
-            return await self._inner_handle.stop(reason)
+            await self._inner_handle.stop(reason)
+            return
 
         # If function hasn't returned yet, cancel the task
         if not self._function_returned.is_set():
@@ -236,10 +237,6 @@ class SingleFunctionActorHandle(BaseActorHandle):
                 if not reason
                 else f"Function '{self._function_name}' stopped: {reason}"
             )
-            return self._result_str
-
-        # Non-steerable and already complete
-        return f"Function '{self._function_name}' already completed."
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     async def pause(self) -> Optional[str]:

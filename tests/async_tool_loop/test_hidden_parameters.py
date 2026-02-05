@@ -160,7 +160,7 @@ async def test_dynamic_factory_adopts_custom_interject_args() -> None:
             return self
 
         def stop(self, r=None, **kw):
-            return "stopped"
+            pass
 
         async def pause(self):
             return "paused"

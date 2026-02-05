@@ -1343,7 +1343,7 @@ async def test_dynamic_helper_append_is_exposed_and_callable():
             return None
 
         def stop(self, *, cancel: bool = False, reason: str | None = None):  # type: ignore[override]
-            return "stopped"
+            pass
 
         async def pause(self):  # type: ignore[override]
             return "paused"

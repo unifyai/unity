@@ -145,7 +145,7 @@ class SteerableToolHandle(SteerableHandle):
     async def stop(
         self,
         reason: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Stop this task immediately, cancelling any pending work.
 
         Use this when the task should be terminated. This is a destructive

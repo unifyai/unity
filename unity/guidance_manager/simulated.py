@@ -188,7 +188,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         reason: str | None = None,
         **kwargs,
-    ) -> str:
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
@@ -201,7 +201,6 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:

@@ -349,7 +349,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         *,
         _parent_chat_context_cont: list[dict] | None = None,
         **kwargs,
-    ) -> str:
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
@@ -364,7 +364,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:

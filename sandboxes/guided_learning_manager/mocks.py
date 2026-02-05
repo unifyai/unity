@@ -107,9 +107,8 @@ class MockStateManagerHandle(SteerableToolHandle):
         """Always returns True (mock completes immediately)."""
         return self._done
 
-    async def stop(self, reason: Optional[str] = None, **kwargs) -> Optional[str]:
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         """No-op stop."""
-        return None
 
     async def interject(self, message: str) -> None:
         """No-op interject."""

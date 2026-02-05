@@ -347,7 +347,9 @@ class TestHandleLifecycle:
             conversation_manager=mock_cm,
         )
 
-        result = await handle.stop(reason="task completed")
+        await handle.stop(reason="task completed")
+        assert handle._stopped
+        result = await handle.result()
         assert "task completed" in result
 
     @pytest.mark.asyncio
@@ -366,8 +368,8 @@ class TestHandleLifecycle:
         )
 
         await handle.stop(reason="first")
-        result = await handle.stop(reason="second")
-        assert "already stopped" in result.lower()
+        await handle.stop(reason="second")
+        assert handle._stopped
 
     @pytest.mark.asyncio
     async def test_result_waits_for_stop(self):

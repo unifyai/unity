@@ -84,7 +84,7 @@ class BrainRunController:
             return f"▶️ Resumed (flushed {flushed} queued event(s))"
         return "▶️ Resumed"
 
-    async def stop(self) -> str:
+    async def stop(self) -> None:
         # Best-effort: we can't cancel mid-generation, but we can return the UI to idle.
         self.state.brain_run_in_flight = False
         self.state.paused = False
@@ -92,7 +92,6 @@ class BrainRunController:
             self.state.queued_events.clear()
         except Exception:
             pass
-        return "🛑 Stopped (best-effort) — returning to idle"
 
     async def interject(self, message: str) -> None:
         # Best-effort: publish an inbound event that contains the interjection.
@@ -257,7 +256,8 @@ class SteeringController:
                 return "⚠️ Usage: /ask <question>"
             return await brain.ask(arg)
         if cmd in {"stop", "cancel"}:
-            return await brain.stop()
+            await brain.stop()
+            return "Stopped."
         if cmd == "freeform":
             if not arg.strip():
                 return "⚠️ Usage: /freeform <text>"

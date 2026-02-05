@@ -191,7 +191,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         reason: Optional[str] = None,
         **kwargs,
-    ) -> str:
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
@@ -204,7 +204,6 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:

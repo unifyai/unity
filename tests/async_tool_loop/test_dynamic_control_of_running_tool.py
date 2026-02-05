@@ -702,7 +702,6 @@ async def test_helpers_hide_notification_clarification(client):
 
         def stop(self, reason: str | None = None):
             self._done.set()
-            return "stopped"
 
         async def pause(self):
             return "paused"

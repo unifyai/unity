@@ -37,7 +37,7 @@ class BaseActiveTask(SteerableToolHandle, ABC):
         *,
         cancel: bool,
         reason: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Stop the live activity with explicit intent.
 
         Parameters
