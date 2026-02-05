@@ -261,8 +261,8 @@ async def test_can_you_use_my_computer(initialized_cm):
         user_question="I need help with something on my laptop — can you actually access it?",
         assistant_response=reply,
         criteria=(
-            "Should confirm that remote access to the user's machine is possible, "
-            "and/or offer to help directly if access is granted."
+            "Should confirm remote access is possible and mention a quick install "
+            "or setup step (from unify.ai) to enable it."
         ),
         anti_criteria=(
             "Should NOT refuse or say it's impossible. Should NOT give a long "
