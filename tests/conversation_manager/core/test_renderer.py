@@ -806,6 +806,141 @@ class TestRenderStateWithTracking:
 
 
 # =============================================================================
+# Tests for Completed Actions Rendering
+# =============================================================================
+
+
+class TestRenderCompletedActions:
+    """Tests for render_completed_actions method."""
+
+    @pytest.fixture
+    def renderer(self):
+        return Renderer()
+
+    def test_empty_completed_actions(self, renderer):
+        """Empty completed_actions renders placeholder text."""
+        result = renderer.render_completed_actions({})
+        assert "<completed_actions>" in result
+        assert "No completed actions." in result
+        assert "</completed_actions>" in result
+
+    def test_none_completed_actions(self, renderer):
+        """None completed_actions renders placeholder text."""
+        result = renderer.render_completed_actions(None)
+        assert "<completed_actions>" in result
+        assert "No completed actions." in result
+        assert "</completed_actions>" in result
+
+    def test_single_completed_action(self, renderer):
+        """Single completed action renders with ask-only steering tool."""
+        completed_actions = {
+            0: {
+                "handle": MagicMock(),
+                "query": "Find all contacts in Berlin",
+                "handle_actions": [],
+            },
+        }
+
+        result = renderer.render_completed_actions(completed_actions)
+
+        assert "<completed_actions>" in result
+        assert "</completed_actions>" in result
+        assert "id='0'" in result
+        assert "status='completed'" in result
+        assert "Find all contacts in Berlin" in result
+        # Should only have ask steering tool (not stop, pause, resume, interject)
+        assert "ask_" in result
+        assert "stop_" not in result
+        assert "pause_" not in result
+        assert "resume_" not in result
+        assert "interject_" not in result
+
+    def test_multiple_completed_actions(self, renderer):
+        """Multiple completed actions render correctly."""
+        completed_actions = {
+            0: {
+                "handle": MagicMock(),
+                "query": "Search for engineering contacts",
+                "handle_actions": [],
+            },
+            1: {
+                "handle": MagicMock(),
+                "query": "Create a task for follow-up",
+                "handle_actions": [],
+            },
+        }
+
+        result = renderer.render_completed_actions(completed_actions)
+
+        assert "<completed_actions>" in result
+        assert "</completed_actions>" in result
+        assert "id='0'" in result
+        assert "id='1'" in result
+        assert "Search for engineering contacts" in result
+        assert "Create a task for follow-up" in result
+
+    def test_render_state_includes_completed_actions(
+        self,
+        renderer,
+    ):
+        """render_state includes completed_actions section."""
+        from unity.conversation_manager.domains.contact_index import ContactIndex
+        from unity.conversation_manager.domains.notifications import NotificationBar
+
+        contact_index = ContactIndex()
+        notification_bar = NotificationBar()
+        completed_actions = {
+            0: {
+                "handle": MagicMock(),
+                "query": "Test completed action",
+                "handle_actions": [],
+            },
+        }
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            completed_actions=completed_actions,
+            last_snapshot=last_snapshot,
+        )
+
+        assert "<completed_actions>" in result
+        assert "Test completed action" in result
+
+    def test_render_state_with_tracking_includes_completed_actions(
+        self,
+        renderer,
+    ):
+        """render_state_with_tracking includes completed_actions section."""
+        from unity.conversation_manager.domains.contact_index import ContactIndex
+        from unity.conversation_manager.domains.notifications import NotificationBar
+
+        contact_index = ContactIndex()
+        notification_bar = NotificationBar()
+        completed_actions = {
+            0: {
+                "handle": MagicMock(),
+                "query": "Test completed action",
+                "handle_actions": [],
+            },
+        }
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state_with_tracking(
+            contact_index,
+            notification_bar,
+            in_flight_actions={},
+            completed_actions=completed_actions,
+            last_snapshot=last_snapshot,
+        )
+
+        assert "<completed_actions>" in result.full_render
+        assert "Test completed action" in result.full_render
+
+
+# =============================================================================
 # Tests for Participant Timezone Rendering
 # =============================================================================
 

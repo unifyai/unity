@@ -81,6 +81,7 @@ def mock_cm():
     cm.mode = "text"
     cm.contact_index = ContactIndex()
     cm.in_flight_actions = {}
+    cm.completed_actions = {}
     cm.notifications_bar = NotificationBar()
     cm.chat_history = []
     cm.assistant_number = "+15555550000"
@@ -1223,8 +1224,9 @@ class TestMakeSteeringTool:
 
     @pytest.mark.asyncio
     async def test_stop_operation_calls_handle_stop(self, brain_action_tools, mock_cm):
-        """Stop operation calls handle.stop and removes action."""
+        """Stop operation calls handle.stop and moves action to completed_actions."""
         mock_handle = MagicMock()
+        mock_handle.stop = AsyncMock()
 
         mock_cm.in_flight_actions = {
             0: {
@@ -1245,7 +1247,10 @@ class TestMakeSteeringTool:
         result = await tool(reason="No longer needed")
         mock_handle.stop.assert_called_once_with(reason="No longer needed")
         assert result["operation"] == "stop"
-        assert 0 not in mock_cm.in_flight_actions  # Action should be removed
+        assert (
+            0 not in mock_cm.in_flight_actions
+        )  # Action should be removed from in_flight
+        assert 0 in mock_cm.completed_actions  # Action should be in completed_actions
 
     @pytest.mark.asyncio
     async def test_interject_operation_calls_handle_interject(

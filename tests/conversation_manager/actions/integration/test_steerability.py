@@ -15,6 +15,7 @@ from tests.conversation_manager.conftest import BOSS
 from tests.conversation_manager.actions.integration.helpers import (
     assert_no_errors,
     get_actor_started_event,
+    inject_actor_result,
     wait_for_actor_completion,
     wait_for_condition,
 )
@@ -86,12 +87,21 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
     handle_id = actor_event.handle_id
     handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
-    # Stop the action deterministically and ensure CM no longer tracks it.
+    # Stop the action deterministically and ensure CM moves it to completed_actions.
     await handle.stop(reason="test_stop")
-    _ = await wait_for_actor_completion(cm, handle_id, timeout=30)
-    cm.cm.in_flight_actions.pop(handle_id, None)
+    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=30)
+
+    # Manually inject the ActorResult event to trigger CM's event handler
+    # (CMStepDriver patches the event broker and doesn't auto-forward background events).
+    await inject_actor_result(
+        cm,
+        handle_id=handle_id,
+        result=actor_result,
+        success=True,
+    )
 
     assert handle_id not in cm.cm.in_flight_actions
+    assert handle_id in cm.cm.completed_actions
     assert_no_errors(result)
 
 
@@ -187,3 +197,71 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
     await handle_a.stop(reason="test_concurrency_cleanup")
     _ = await wait_for_actor_completion(cm, handle_id_a, timeout=60)
     assert_no_errors(result_a)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+@_handle_project
+async def test_ask_completed_action_about_trajectory(initialized_cm_codeact):
+    """
+    User asks about a completed action's trajectory/reasoning.
+
+    This validates the completed_actions registry: handles persist after
+    completion and remain available for ask queries via ask_* steering tools.
+
+    Flow:
+    1. User requests an action (triggers act)
+    2. Action completes and moves to completed_actions
+    3. User asks about how the action was performed
+    4. Verify ask_* tool is available and can query the completed action
+    """
+    cm = initialized_cm_codeact
+
+    # Step 1: Start an action that will complete
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Find all my contacts and list their names.",
+        ),
+    )
+
+    actor_event = get_actor_started_event(result)
+    handle_id = actor_event.handle_id
+
+    # Wait for action to complete
+    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=90)
+
+    # Inject the ActorResult event to trigger CM's event handler
+    # (test driver patches event broker and doesn't forward background events)
+    await inject_actor_result(
+        cm,
+        handle_id=handle_id,
+        result=actor_result,
+        success=True,
+    )
+
+    # Verify handle moved to completed_actions
+    assert (
+        handle_id not in cm.cm.in_flight_actions
+    ), f"Handle {handle_id} should be removed from in_flight_actions after completion"
+    assert (
+        handle_id in cm.cm.completed_actions
+    ), f"Handle {handle_id} should be in completed_actions after completion"
+
+    # Verify the completed action data is preserved
+    completed_data = cm.cm.completed_actions[handle_id]
+    assert "handle" in completed_data, "Completed action should preserve handle"
+    assert "query" in completed_data, "Completed action should preserve query"
+    assert completed_data["query"], "Completed action query should not be empty"
+
+    # Verify the handle's ask method is still functional (trajectory preserved)
+    handle = completed_data["handle"]
+    assert handle is not None, "Completed action handle should not be None"
+
+    # Test that ask() works on the completed handle
+    ask_handle = await handle.ask("What contacts did you find?")
+    ask_result = await ask_handle.result()
+    assert ask_result is not None, "Ask on completed handle should return a result"
+    assert len(ask_result) > 0, "Ask result should not be empty"
+
+    assert_no_errors(result)

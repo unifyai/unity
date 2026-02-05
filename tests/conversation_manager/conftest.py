@@ -278,6 +278,7 @@ def _complete_in_flight_actions(cm: "CMStepDriver") -> None:
         if handle and hasattr(handle, "trigger_completion"):
             handle.trigger_completion()
     cm.cm.in_flight_actions.clear()
+    cm.cm.completed_actions.clear()
 
 
 @pytest.fixture
