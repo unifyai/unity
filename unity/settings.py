@@ -62,7 +62,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_MODEL: str = "claude-4.5-opus@anthropic"
+    UNIFY_MODEL: str = "claude-4.6-opus@anthropic"
     UNIFY_CACHE: bool | str = True
 
     # ─────────────────────────────────────────────────────────────────────────
