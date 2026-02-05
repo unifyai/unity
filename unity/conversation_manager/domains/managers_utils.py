@@ -740,9 +740,6 @@ async def init_conv_manager(
                     ).to_json(),
                 )
 
-            # Start file sync with managed VM (non-blocking)
-            await _start_file_sync()
-
             # Mark as initialized
             cm.initialized = True
 
