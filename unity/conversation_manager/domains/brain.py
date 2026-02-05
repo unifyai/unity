@@ -119,6 +119,7 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
         cm.contact_index,
         cm.notifications_bar,
         cm.in_flight_actions,
+        cm.completed_actions,
         cm.last_snapshot,
     )
 

@@ -13,6 +13,7 @@ Context Propagation:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,7 @@ from unity.common._async_tool.utils import get_handle_paused_state
 from unity.conversation_manager.types import Medium
 from unity.conversation_manager.task_actions import (
     STEERING_OPERATIONS,
+    OPERATION_MAP,
     derive_short_name,
     build_action_name,
     safe_call_id_suffix,
@@ -927,6 +929,120 @@ class ConversationManagerBrainActionTools:
 
         return tools
 
+    def build_completed_action_tools(self) -> dict[str, "Callable[..., Any]"]:
+        """Build ask-only tools for completed actions.
+
+        Completed actions preserve their trajectory and remain available
+        for `ask` queries about their execution and results.
+        """
+        tools: dict[str, Callable[..., Any]] = {}
+
+        for handle_id, handle_data in (self._cm.completed_actions or {}).items():
+            query = handle_data.get("query", "")
+            short_name = derive_short_name(query)
+            handle = handle_data.get("handle")
+
+            # Only build the ask tool for completed actions
+            ask_op = OPERATION_MAP["ask"]
+            tool_name = build_action_name(ask_op.name, short_name, handle_id)
+            tool_fn = self._make_completed_action_ask_tool(
+                handle_id,
+                handle,
+                ask_op.param_name,
+                ask_op.get_docstring(),
+                query,
+            )
+            tools[tool_name] = tool_fn
+
+        return tools
+
+    def _make_completed_action_ask_tool(
+        self,
+        handle_id: int,
+        handle: Any,
+        param_name: str,
+        docstring: str,
+        query: str,
+    ) -> "Callable[..., Any]":
+        """Create an ask tool closure for a completed action."""
+
+        cm = self._cm
+        event_broker = cm.event_broker
+
+        async def ask_completed_action(
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            param_value = kwargs.get(param_name, "") if param_name else ""
+
+            # Get handle_data from completed_actions
+            handle_data = cm.completed_actions.get(handle_id)
+
+            # Record action with pending status
+            if handle_data:
+                handle_data["handle_actions"].append(
+                    {
+                        "action_name": f"ask_{handle_id}",
+                        "query": param_value,
+                        "status": "pending",
+                    },
+                )
+
+            _handle = handle
+            _param_value = param_value
+            _handle_id = handle_id
+            _parent_context = (
+                [cm._current_state_snapshot] if cm._current_state_snapshot else None
+            )
+
+            async def _perform_ask_and_emit():
+                try:
+                    ask_handle = await _handle.ask(
+                        _param_value,
+                        _parent_chat_context=_parent_context,
+                    )
+                    ask_result = await ask_handle.result()
+                except Exception as e:
+                    ask_result = f"Error: {e}"
+                await event_broker.publish(
+                    f"app:actor:handle_response_{_handle_id}",
+                    ActorHandleResponse(
+                        handle_id=_handle_id,
+                        action_name="ask",
+                        query=_param_value,
+                        response=ask_result,
+                        call_id="",
+                    ).to_json(),
+                )
+
+            asyncio.create_task(_perform_ask_and_emit())
+
+            return {
+                "status": "ok",
+                "operation": "ask",
+                "result": (
+                    "Query submitted. You will receive another turn "
+                    "when the answer is ready."
+                ),
+            }
+
+        # Build signature with proper parameter name
+        if param_name:
+            params = [
+                inspect.Parameter(
+                    param_name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    annotation=str,
+                ),
+            ]
+        else:
+            params = []
+
+        ask_completed_action.__signature__ = inspect.Signature(params)
+        ask_completed_action.__doc__ = (
+            docstring or f"Ask about completed action: {query}"
+        )
+        return ask_completed_action
+
     def _make_steering_tool(
         self,
         handle_id: int,
@@ -1066,7 +1182,10 @@ class ConversationManagerBrainActionTools:
                             )
                         await handle.stop(reason=param_value or None)
                         result = "Action stopped"
-                        cm.in_flight_actions.pop(handle_id, None)
+                        # Move to completed_actions (preserves handle for post-completion ask queries)
+                        stopped = cm.in_flight_actions.pop(handle_id, None)
+                        if stopped:
+                            cm.completed_actions[handle_id] = stopped
                     case "pause":
                         if handle_data:
                             handle_data["handle_actions"].append(

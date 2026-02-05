@@ -295,3 +295,26 @@ def iter_steering_tools_for_action(
             actions.append((name, desc))
 
     return actions
+
+
+def iter_steering_tools_for_completed_action(
+    handle_id: int,
+    query: str,
+) -> list[tuple[str, str]]:
+    """Generate (action_name, description) pairs for a completed action.
+
+    Completed actions only expose the `ask` tool for querying
+    the preserved trajectory.
+
+    Args:
+        handle_id: The action handle ID
+        query: The original action query
+
+    Returns:
+        List of (action_name, description) tuples (only contains ask)
+    """
+    short_name = derive_short_name(query)
+    ask_op = OPERATION_MAP["ask"]
+    name = build_action_name(ask_op.name, short_name, handle_id)
+    desc = ask_op.get_docstring() or "Ask about this completed action"
+    return [(name, desc)]
