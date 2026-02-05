@@ -49,11 +49,12 @@ class TestActContextPropagation:
 
         Assert:
         - _parent_chat_context is a list with one element
-        - That element is exactly _current_state_snapshot
+        - That element has content derived from _current_state_snapshot
+          (may be a filtered copy to remove CM-internal steering tools)
         """
         cm = initialized_cm.cm
 
-        # Create a known state snapshot
+        # Create a known state snapshot (without in_flight_actions, so content unchanged)
         test_snapshot = {
             "role": "user",
             "content": "<notifications></notifications>\n<test>unique_test_content_12345</test>",
@@ -89,10 +90,14 @@ class TestActContextPropagation:
                 len(context) == 1
             ), "_parent_chat_context should have exactly one element"
 
-            # Verify it's exactly our snapshot
+            # Verify content matches (filtering may produce a new dict, so compare content)
+            # The content should be equivalent since this snapshot has no in_flight_actions
             assert (
-                context[0] is test_snapshot
-            ), "_parent_chat_context[0] should be the exact _current_state_snapshot object"
+                context[0].get("content") == test_snapshot.get("content")
+            ), "_parent_chat_context content should match the original snapshot"
+            assert (
+                context[0].get("_cm_state_snapshot") is True
+            ), "_parent_chat_context should preserve _cm_state_snapshot marker"
 
         finally:
             cm.actor.act = original_act
@@ -670,24 +675,22 @@ class TestContextContent:
     @_handle_project
     async def test_act_context_excludes_cm_steering_tools(self, initialized_cm):
         """
-        Regression test: Verify that context passed to Actor does NOT contain
-        CM-level steering tools like stop_<name>__<id>, pause_<name>__<id>, etc.
+        Verify that context passed to Actor does NOT contain CM-level steering tools.
 
-        Background:
         The CM state snapshot includes <in_flight_actions> with <steering_tools>
-        listing CM-level tools (stop, pause, interject, ask) for each action.
-        These are CM brain tools, NOT Actor primitives.
+        listing CM-level tools (stop_, pause_, interject_, ask_) for each action.
+        These exist only in the CM's tool surface, not in the Actor's scope.
 
-        If these are passed verbatim to the Actor, the Actor LLM may attempt
-        to call them (e.g., `await stop_search_the_web_for__1()`), resulting
-        in NameError since they don't exist in the Actor's execution scope.
+        If passed verbatim, the Actor LLM may interpret these as callable functions
+        and generate code like `await stop_search_the_web_for__1()`, which would
+        raise NameError.
 
-        This test ensures the context is filtered before being passed to Actor.
+        This test verifies that in_flight_actions are filtered before passing
+        the state snapshot to the Actor as parent context.
         """
         cm = initialized_cm.cm
 
-        # Create a state snapshot with in_flight_actions containing steering tools
-        # This simulates the exact scenario that caused the bug
+        # State snapshot containing in_flight_actions with steering tools
         test_snapshot = {
             "role": "user",
             "content": """<notifications>
@@ -744,8 +747,7 @@ class TestContextContent:
 
             content = context[0].get("content", "")
 
-            # CRITICAL: Verify CM steering tools are NOT in the context
-            # These tool names would cause NameError if Actor tries to call them
+            # Verify CM steering tools are filtered out
             cm_steering_patterns = [
                 "stop_search_the_web_for__1",
                 "pause_search_the_web_for__1",
