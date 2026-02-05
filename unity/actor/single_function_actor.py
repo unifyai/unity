@@ -437,7 +437,7 @@ class SingleFunctionActor(BaseActor):
         headless: bool = True,
         computer_mode: str = "magnitude",
         agent_mode: str = "web",
-        agent_server_url: str = "http://localhost:3000",
+        agent_server_url: str | None = None,
     ):
         """
         Initialize the SingleFunctionActor.

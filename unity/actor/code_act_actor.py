@@ -1722,7 +1722,7 @@ class CodeActActor(BaseCodeActActor):
         computer_mode: str = "magnitude",
         timeout: float = 1000,
         agent_mode: str = "web",
-        agent_server_url: str = "http://localhost:3000",
+        agent_server_url: str | None = None,
         computer_primitives: Optional["ComputerPrimitives"] = None,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
