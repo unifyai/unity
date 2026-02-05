@@ -12,6 +12,7 @@ class DependencyVisitor(ast.NodeVisitor):
     - Direct calls: `foo()`
     - Indirect calls via variable assignment: `f = foo; f()`
     - Returned function references: `return foo` or `return f` (where f maps to foo)
+    - Callables passed as arguments: `bar(callback=foo)` or `bar(foo)`
     """
 
     def __init__(self, known_function_names: Set[str]):
@@ -50,7 +51,25 @@ class DependencyVisitor(ast.NodeVisitor):
         if called_name:
             self.dependencies.add(called_name)
 
+        self._collect_callable_args(node)
         self.generic_visit(node)
+
+    def _collect_callable_args(self, node: ast.Call):
+        """Collect function references passed as positional or keyword arguments."""
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                if arg.id in self.known_function_names:
+                    self.dependencies.add(arg.id)
+                elif arg.id in self._assignment_map:
+                    self.dependencies.add(self._assignment_map[arg.id])
+
+        for keyword in node.keywords:
+            if isinstance(keyword.value, ast.Name):
+                name = keyword.value.id
+                if name in self.known_function_names:
+                    self.dependencies.add(name)
+                elif name in self._assignment_map:
+                    self.dependencies.add(self._assignment_map[name])
 
     def visit_Return(self, node: ast.Return):
         # Return statement -> return func_name or return var
