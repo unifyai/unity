@@ -32,7 +32,7 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
     Smoke: CM → CodeActActor clarification contract works end-to-end.
 
     We do NOT rely on any manager prompt behavior. Instead, we verify the public
-    ActorHandle clarification surface that CM relies on:
+    actor handle clarification surface that CM relies on:
     - `handle.next_clarification()` yields a question
     - `handle.answer_clarification(call_id, answer)` delivers the answer
     """

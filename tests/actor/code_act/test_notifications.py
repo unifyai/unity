@@ -79,13 +79,13 @@ async def test_execute_code_notifications_with_notification_queue():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(120)
-async def test_actor_handle_delegates_next_notification_to_inner_loop():
+async def test_tool_loop_handle_next_notification():
     """
-    ActorHandle.next_notification() should delegate to the inner loop handle
-    once it's ready. This tests the standard async tool loop pattern where
-    notifications bubble up through the loop.
+    AsyncToolLoopHandle.next_notification() should surface notifications
+    emitted by tools running inside the loop.
     """
-    from unity.actor.handle import ActorHandle
+    from unity.common.async_tool_loop import start_async_tool_loop
+    from unity.common.llm_client import new_llm_client
 
     # Create a simple tool that emits a notification
     async def notifying_tool(
@@ -100,21 +100,20 @@ async def test_actor_handle_delegates_next_notification_to_inner_loop():
             )
         return f"Processed: {message}"
 
-    handle: ActorHandle | None = None
+    client = new_llm_client()
+    client.set_system_message(
+        "You are a helpful assistant. When asked to call a tool, call it with the "
+        "specified arguments. Do not ask for clarification - just call the tool.",
+    )
+
+    handle = start_async_tool_loop(
+        client,
+        "Call notifying_tool with message='hello'",
+        {"notifying_tool": notifying_tool},
+        timeout=60,
+    )
+
     try:
-        handle = ActorHandle(
-            task_description="Call notifying_tool with message='hello'",
-            tools={"notifying_tool": notifying_tool},
-            timeout=60,
-            custom_system_prompt=(
-                "You are a helpful assistant. When asked to call a tool, call it with the "
-                "specified arguments. Do not ask for clarification - just call the tool."
-            ),
-        )
-
-        # Wait for the inner loop handle to be ready
-        await asyncio.wait_for(handle._loop_handle_ready.wait(), timeout=30)
-
         # The inner loop should eventually call the tool and emit a notification.
         # The tool loop wraps notifications with tool_name and call_id, but the original
         # payload (including 'type') is merged in via **event_payload.
@@ -125,7 +124,7 @@ async def test_actor_handle_delegates_next_notification_to_inner_loop():
         assert "hello" in str(event.get("message", ""))
 
     finally:
-        if handle and not handle.done():
+        if not handle.done():
             try:
                 await handle.stop("cleanup")
             except Exception:

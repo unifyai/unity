@@ -30,8 +30,13 @@ from typing import (
 from pydantic import BaseModel, Field
 
 from unity.actor.base import BaseCodeActActor
-from unity.actor.handle import ActorHandle
-from unity.common.async_tool_loop import SteerableToolHandle, start_async_tool_loop
+from unity.common.async_tool_loop import (
+    AsyncToolLoopHandle,
+    ChatContextPropagation,
+    SteerableToolHandle,
+    start_async_tool_loop,
+)
+from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
@@ -75,12 +80,12 @@ class AgentContext:
     Attributes:
         depth: Nesting level (0 = root agent, 1 = first subagent, etc.)
         agent_id: Unique identifier for this agent run
-        handle: Reference to the ActorHandle (for accessing history, etc.)
+        handle: Reference to the AsyncToolLoopHandle (for accessing history, etc.)
     """
 
     depth: int = 0
     agent_id: str = dataclass_field(default_factory=lambda: str(uuid.uuid4()))
-    handle: "ActorHandle | None" = None
+    handle: "AsyncToolLoopHandle | None" = None
 
 
 _CURRENT_AGENT_CONTEXT: contextvars.ContextVar[AgentContext] = contextvars.ContextVar(
@@ -3194,26 +3199,56 @@ class CodeActActor(BaseCodeActActor):
 
         tool_policy = _tool_policy
 
-        handle = ActorHandle(
-            task_description=description or initial_prompt,
-            tools=dict(self.get_tools("act")),
-            parent_chat_context=_parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
-            call_id=_call_id,
-            on_finally=_cleanup,
-            main_event_loop=self._main_event_loop,
+        # Build an LLM client for this act() call
+        client = new_llm_client(
+            self._model,
+            reasoning_effort=None,
+            service_tier=None,
+        )
+        if system_prompt:
+            client.set_system_message(system_prompt)
+        if _parent_chat_context:
+            client.append_messages(_parent_chat_context)
+
+        # Add clarification tool when queues are supplied
+        tools = dict(self.get_tools("act"))
+        if clarification_up_q is not None and clarification_down_q is not None:
+            add_clarification_tool_with_events(
+                tools,
+                clarification_up_q,
+                clarification_down_q,
+                manager="CodeActActor",
+                method="act",
+                call_id=_call_id,
+            )
+
+        handle = start_async_tool_loop(
+            client,
+            description or initial_prompt,
+            tools,
+            loop_id=f"CodeActActor.act",
+            propagate_chat_context=ChatContextPropagation.ALWAYS,
+            interrupt_llm_with_interjections=True,
+            log_steps=True,
+            max_steps=100,
             timeout=self._timeout,
-            persist=persist,
-            custom_system_prompt=system_prompt,
             tool_policy=tool_policy,
-            computer_primitives=self._computer_primitives,
-            images=images,
             response_format=response_format,
-            model=self._model,
+            persist=persist,
             preprocess_msgs=self._preprocess_msgs,
             prompt_caching=self._prompt_caching,
         )
+
+        # Wrap result() to run cleanup when the loop finishes
+        _original_result = handle.result
+
+        async def _result_with_cleanup() -> str:
+            try:
+                return await _original_result()
+            finally:
+                await _cleanup()
+
+        handle.result = _result_with_cleanup  # type: ignore[assignment]
 
         # Update agent context with handle reference
         new_ctx.handle = handle

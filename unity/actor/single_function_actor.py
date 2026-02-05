@@ -40,7 +40,6 @@ from unity.function_manager.execution_env import create_execution_globals
 from unity.manager_registry import ManagerRegistry
 from unity.function_manager.primitives import get_primitive_callable
 
-from ..task_scheduler.base import BaseActiveTask
 from unity.function_manager.primitives import ComputerPrimitives
 from .base import BaseActor, BaseActorHandle
 
@@ -63,7 +62,7 @@ class SingleFunctionVerificationResult(BaseModel):
     )
 
 
-class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
+class SingleFunctionActorHandle(BaseActorHandle):
     """
     A handle for a single function execution with steerable forwarding support.
 
@@ -190,7 +189,6 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
             # Always signal that the function call has returned
             self._function_returned.set()
 
-    @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
         # Wait for the function to return first
         await self._function_returned.wait()
@@ -205,7 +203,6 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
             return f"Error: {self._error_str}"
         return self._result_str or f"Function '{self._function_name}' completed."
 
-    @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
         # If we have an inner handle, delegate to it
         if self._inner_handle is not None:
@@ -335,7 +332,7 @@ class SingleFunctionActorHandle(BaseActiveTask, BaseActorHandle):
             timeout=30,
         )
 
-    # Additional BaseActiveTask methods that may be expected
+    # Event APIs
 
     async def next_clarification(self) -> dict:
         """Get next clarification. Forwards to inner handle if steerable."""
