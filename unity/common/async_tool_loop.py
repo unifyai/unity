@@ -53,6 +53,27 @@ class SteerableHandle(ABC):
       a fresh inspection loop. Since ``ask`` spawns a new loop, it needs initial
       context, not a continuation. Hidden from LLM schemas via underscore prefix;
       orchestrating code injects this based on the LLM's ``include_parent_chat_context`` choice.
+
+    Signature extension contract
+    ----------------------------
+    Derived classes **may** extend any steering method signature with additional
+    keyword arguments that are specific to their domain.  For example,
+    ``BaseActiveTask.stop`` adds a ``cancel`` kwarg that does not exist on the
+    base ``stop(reason)`` signature, and ``ConversationManagerHandle.interject``
+    replaces ``_parent_chat_context_cont`` with ``pinned`` / ``interjection_id``.
+
+    The signatures defined on this class (and on ``SteerableToolHandle``)
+    represent the **minimum universal contract** — the set of parameters that
+    every handle is guaranteed to accept.  Callers that hold a reference typed
+    as ``SteerableHandle`` or ``SteerableToolHandle`` may safely pass only
+    these base parameters.
+
+    When dispatching a steering call to a handle whose concrete type is
+    unknown, use ``forward_handle_call`` (from
+    ``unity.common._async_tool.messages``).  It introspects the target
+    method's actual signature, filters out kwargs the target does not accept,
+    and applies positional fallbacks — removing the need for hand-written
+    ``try/except TypeError`` cascades at every delegation boundary.
     """
 
     @abstractmethod
@@ -99,7 +120,20 @@ class SteerableHandle(ABC):
 
 
 class SteerableToolHandle(SteerableHandle):
-    """Abstract base class for steerable tool handles."""
+    """Abstract base class for steerable tool handles.
+
+    This class extends :class:`SteerableHandle` with lifecycle methods
+    (``stop``, ``pause``, ``resume``), completion queries (``done``,
+    ``result``), and event APIs (``next_clarification``,
+    ``next_notification``, ``answer_clarification``).
+
+    The **signature extension contract** documented on
+    :class:`SteerableHandle` applies equally here: derived classes may add
+    domain-specific keyword arguments to any method (e.g. ``cancel`` on
+    ``stop``).  Callers that delegate to a handle of unknown concrete type
+    should use ``forward_handle_call`` rather than inline ``try/except``
+    fallbacks to accommodate these extensions safely.
+    """
 
     @abstractmethod
     def __init__(

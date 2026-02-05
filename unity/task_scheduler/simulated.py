@@ -16,6 +16,7 @@ import unillm
 from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
+from ..common._async_tool.messages import forward_handle_call
 from ..constants import LOGGER
 from .base import BaseTaskScheduler
 from .prompt_builders import (
@@ -664,17 +665,15 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 _parent_chat_context_cont: list[dict] | None = None,
             ) -> None:  # type: ignore[override]
                 self._log_interject(message)
-                try:
-                    # Prefer forwarding full steerable signature when supported.
-                    try:
-                        await self._inner.interject(  # type: ignore[arg-type]
-                            message,
-                            _parent_chat_context_cont=_parent_chat_context_cont,
-                        )
-                    except TypeError:
-                        await self._inner.interject(message)  # type: ignore[arg-type]
-                except Exception:
-                    return None
+                await forward_handle_call(
+                    self._inner,
+                    "interject",
+                    {
+                        "message": message,
+                        "_parent_chat_context_cont": _parent_chat_context_cont,
+                    },
+                    fallback_positional_keys=("message",),
+                )
 
             async def stop(
                 self,
@@ -684,16 +683,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 **kwargs,
             ) -> Optional[str]:  # type: ignore[override]
                 self._log_stop(reason)
-                # Prefer actor-style stop(reason) but tolerate both signatures
-                try:
-                    return await self._inner.stop(reason)  # type: ignore[call-arg]
-                except TypeError:
-                    try:
-                        return await self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
-                    except Exception:
-                        return "Stopped."
-                except Exception:
-                    return "Stopped."
+                ret = await forward_handle_call(
+                    self._inner,
+                    "stop",
+                    {"reason": reason, "cancel": cancel},
+                    fallback_positional_keys=("reason",),
+                )
+                return ret if ret is not None else "Stopped."
 
             async def pause(self) -> Optional[str]:  # type: ignore[override]
                 self._log_pause()
