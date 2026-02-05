@@ -664,6 +664,13 @@ async def _start_file_sync() -> None:
 
     Runs asynchronously and logs success/failure.
     """
+    from unity.session_details import SESSION_DETAILS
+
+    # Only sync when a desktop_url is configured
+    if not SESSION_DETAILS.assistant.desktop_url:
+        print("[ManagersWorker] No desktop_url configured, skipping file sync")
+        return
+
     try:
         from unity.file_manager.managers.local import LocalFileManager
 
