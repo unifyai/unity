@@ -58,6 +58,9 @@ logger = logging.getLogger(__name__)
 # ComputerPrimitives - Computer Use (Web/Desktop) Control
 # ────────────────────────────────────────────────────────────────────────────
 
+# Default agent-service URL for local development
+DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
+
 
 class ComputerPrimitives:
     """
@@ -79,24 +82,50 @@ class ComputerPrimitives:
     # All primitive methods (used for discovery)
     _PRIMITIVE_METHODS = _DYNAMIC_METHODS + _STATIC_METHODS
 
+    @staticmethod
+    def _resolve_agent_server_url(explicit_url: str | None) -> str:
+        """
+        Resolve agent_server_url with priority:
+        1. Explicit non-default override (user's personal desktop)
+        2. SESSION_DETAILS.assistant.desktop_url (managed VM)
+        3. Fallback to DEFAULT_AGENT_SERVER_URL (local dev)
+        """
+        # If user explicitly provided a non-default URL, honor it
+        if explicit_url is not None and explicit_url != DEFAULT_AGENT_SERVER_URL:
+            return explicit_url
+
+        # Try SESSION_DETAILS.assistant.desktop_url
+        try:
+            from unity.session_details import SESSION_DETAILS
+
+            if SESSION_DETAILS.assistant.desktop_url:
+                return SESSION_DETAILS.assistant.desktop_url.rstrip("/") + "/api"
+        except Exception:
+            pass
+
+        return DEFAULT_AGENT_SERVER_URL
+
     def __init__(
         self,
         headless: bool = False,
         computer_mode: str = "magnitude",
         agent_mode: str = "web",
-        agent_server_url: str = "http://localhost:3000",
+        agent_server_url: str | None = None,
         *,
         connect_now: bool = False,
         # Deprecated parameters (kept for backward compatibility, ignored)
         session_connect_url: str | None = None,
         controller_mode: str = "hybrid",
     ):
+        # Resolve URL centrally from SESSION_DETAILS or explicit override
+        resolved_url = self._resolve_agent_server_url(agent_server_url)
+
         # Cache computer configuration for lazy initialization
         computer_kwargs = {
             "magnitude": {
                 "headless": headless,
                 "agent_mode": agent_mode,
-                "agent_server_url": agent_server_url,
+                "agent_server_url": resolved_url,
             },
             "mock": {
                 # MockComputerBackend accepts optional url, screenshot, etc.
