@@ -695,21 +695,32 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
     await cm.request_llm_run(delay=2)
 
 
+async def _startup_sequence(cm: "ConversationManager"):
+    """Run job startup logging then file sync in sequence.
+
+    File sync depends on VM connectivity details that log_job_startup resolves,
+    so we must wait for job startup to complete before starting file sync.
+    """
+    await asyncio.to_thread(
+        debug_logger.log_job_startup,
+        job_name=cm.job_name,
+        user_id=cm.user_id,
+        assistant_id=cm.assistant_id,
+    )
+    await managers_utils._start_file_sync()
+
+
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info("startup", "Received startup event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
     cm.call_manager.set_config(cm.get_call_config())
-    asyncio.create_task(
-        asyncio.to_thread(
-            debug_logger.log_job_startup,
-            job_name=cm.job_name,
-            user_id=cm.user_id,
-            assistant_id=cm.assistant_id,
-        ),
-    )
 
+    # Job logging + file sync run in sequence (file sync needs VM details from job startup)
+    asyncio.create_task(_startup_sequence(cm))
+
+    # Manager initialization runs in parallel
     asyncio.create_task(managers_utils.init_conv_manager(cm))
     asyncio.create_task(managers_utils.listen_to_operations(cm))
 
