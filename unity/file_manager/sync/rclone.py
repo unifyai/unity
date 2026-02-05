@@ -68,7 +68,7 @@ class RcloneSync:
 type = sftp
 host = {self.config.ssh_host}
 port = {self.config.ssh_port}
-user = unifyuser
+user = {self.config.ssh_user}
 key_file = {self.config.ssh_key_path}
 """
                 Path(self._config_path).write_text(rclone_config)
