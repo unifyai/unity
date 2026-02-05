@@ -214,7 +214,7 @@ A: Yes. Show me once — walk me through it on a call, send me a document, or ju
 A: I have my own computer and can download and use whatever software is needed to get things done.
 
 **Q: Can you access my computer directly?**
-A: Yes, you can give me remote access to your laptop or desktop if you'd like me to work directly on your machine.
+A: Yes — just install a quick remote access tool from unify.ai and I can work directly on your laptop or desktop.
 
 **Q: Can you learn new things?**
 A: Absolutely. Send me documents, links, or anything else you'd share with a new hire. I'll go away and digest them.
