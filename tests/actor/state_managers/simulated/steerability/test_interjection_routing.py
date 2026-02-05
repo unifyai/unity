@@ -104,8 +104,7 @@ async def main_plan():
                 "For the contact lookup you’re doing right now, please use the full name "
                 "(first + last) and include the email domain explicitly."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             e_contacts = await wait_for_pane_steering_event(
                 h,
@@ -202,8 +201,7 @@ async def main_plan():
                 "For the Berlin contact lookup, if there are multiple candidates, please prioritize anyone who has "
                 "'manager' or 'lead' in their role."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             await wait_for_pane_steering_event(
                 h,
@@ -309,8 +307,7 @@ async def main_plan():
                 "For the message history you’re pulling right now, please only include items "
                 "from the last 30 days and focus on technical updates."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             await wait_for_pane_steering_event(
                 h,
@@ -410,8 +407,7 @@ async def main_plan():
                 "Across everything you’re working on right now, please keep responses concise "
                 "and include only essential details."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             for hid in (contacts_hid, transcripts_hid, knowledge_hid):
                 await wait_for_pane_steering_event(
@@ -513,8 +509,7 @@ async def main_plan():
                 "For any contact-related info you’re listing right now, please use full names "
                 "and include the office location in parentheses."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             await wait_for_pane_steering_event(
                 h,

@@ -106,7 +106,7 @@ class SteerableHandle(ABC):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Provide additional information or instructions to the running task.
 
         Use this to give the task new context, correct its approach, or add

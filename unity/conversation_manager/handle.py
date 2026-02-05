@@ -324,8 +324,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 if not user_reply_future.done():
                     user_reply_future.set_result(message)
 
-                return "Interjection processed"
-
             async def result(self):
                 try:
                     raw_result = await inner_handle.result()
@@ -393,7 +391,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         *,
         pinned: bool = False,
         interjection_id: Optional[str] = None,
-    ) -> dict:
+    ) -> None:
         """
         Send an interjection to the conversation.
 
@@ -401,11 +399,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             message: The message content to inject
             pinned: If True, the interjection persists for the entire session
             interjection_id: Optional explicit ID (auto-generated if not provided)
-
-        Returns:
-            Dict with status and the interjection_id
         """
-        return await self.send_notification(
+        await self.send_notification(
             message,
             source="interjection",
             interjection_id=interjection_id,

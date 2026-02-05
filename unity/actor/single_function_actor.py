@@ -271,20 +271,17 @@ class SingleFunctionActorHandle(BaseActorHandle):
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Interject into the execution. Forwards to inner handle if steerable."""
         # Wait for function to return so we know if it's steerable
         await self._function_returned.wait()
 
         # If steerable, forward to inner handle
         if self._inner_handle is not None:
-            return await self._inner_handle.interject(
+            await self._inner_handle.interject(
                 message,
                 _parent_chat_context_cont=_parent_chat_context_cont,
             )
-
-        # Non-steerable: no-op
-        return f"Interjection acknowledged (no effect on non-steerable function '{self._function_name}')."
 
     @functools.wraps(SteerableHandle.ask, updated=())
     async def ask(

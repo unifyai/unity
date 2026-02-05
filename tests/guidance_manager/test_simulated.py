@@ -12,7 +12,6 @@ from unity.guidance_manager.simulated import (
 # keeps each test isolated in its own Unify project / trace context
 from tests.helpers import (
     _handle_project,
-    _ack_ok,
     _assert_blocks_while_paused,
     DEFAULT_TIMEOUT,
     _unique_token,
@@ -124,8 +123,7 @@ async def test_handle_interject(monkeypatch):
     gm = SimulatedGuidanceManager()
     h = await gm.ask("Summarize our onboarding guidance.")
     await asyncio.sleep(0.05)
-    reply = await h.interject("Focus on European enterprise scenarios.")
-    assert _ack_ok(reply)
+    await h.interject("Focus on European enterprise scenarios.")
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 

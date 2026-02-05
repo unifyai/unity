@@ -144,8 +144,7 @@ async def main_plan():
                 "Actually, for this quarterly sync, let’s focus only on the Berlin office. "
                 "When you list the active contacts, include only Berlin contacts."
             )
-            status = await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
-            assert isinstance(status, str) and status.strip()
+            await asyncio.wait_for(h.interject(msg), timeout=INTERJECT_TIMEOUT)
 
             e_contacts = await wait_for_pane_steering_event(
                 h,

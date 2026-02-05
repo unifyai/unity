@@ -875,9 +875,9 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         message: str,
         *,
         _parent_chat_context_cont: list[dict] | None = None,
-    ) -> Optional[str]:
+    ) -> None:
         # No-op for non-LLM entrypoint execution.
-        return None
+        pass
 
     async def stop(
         self,

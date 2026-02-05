@@ -1005,9 +1005,9 @@ async def test_interject_does_not_require_computer_env_for_interrupt() -> None:
     handle._cancel_all_background_tasks = AsyncMock(return_value=None)
     handle.pause = AsyncMock(return_value=None)
 
-    result = await handle.interject("hello")
-    assert "Error processing interjection" in result
-    assert "stop here" in result
+    await handle.interject("hello")
+    assert any("ERROR during interjection" in e for e in handle.action_log)
+    assert any("stop here" in e for e in handle.action_log)
 
 
 @pytest.mark.asyncio
@@ -1452,8 +1452,7 @@ async def main_plan():
         ), "Expected actor to populate idempotency_cache after tool call."
 
         # Trigger interjection; patched prompt builder will stop execution after capturing args.
-        status = await active_task.interject("Be concise")
-        assert "Error processing interjection" in status or "captured" in status.lower()
+        await active_task.interject("Be concise")
 
         await asyncio.wait_for(called.wait(), timeout=30)
 
@@ -1702,7 +1701,7 @@ async def main_plan():
         ), "Expected idempotency_cache populated by primitives tool call."
 
         # Trigger interjection to force prompt build; error is expected due to sentinel.
-        _status = await active_task.interject("Be concise")
+        await active_task.interject("Be concise")
         await asyncio.wait_for(called.wait(), timeout=30)
 
         cache = captured.get("idempotency_cache")

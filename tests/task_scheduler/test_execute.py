@@ -122,9 +122,9 @@ async def test_execute_interject(monkeypatch):
     original_interject = SimulatedActorHandle.interject
 
     @functools.wraps(original_interject)
-    async def spy_interject(self, instruction: str, *, images=None) -> str:  # type: ignore[override]
+    async def spy_interject(self, instruction: str, *, images=None) -> None:  # type: ignore[override]
         calls["interject"] += 1
-        return await original_interject(self, instruction, images=images)
+        await original_interject(self, instruction, images=images)
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
 

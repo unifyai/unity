@@ -1695,8 +1695,7 @@ async def main_plan():
             "Please broadcast this instruction to all in-flight handles: "
             "be concise and do not ask clarifying questions."
         )
-        status = await asyncio.wait_for(h.interject(msg), timeout=120.0)
-        assert isinstance(status, str) and status
+        await asyncio.wait_for(h.interject(msg), timeout=120.0)
 
         async def _broadcast_applied() -> bool:
             events = h.pane.get_recent_events(n=500)
@@ -1833,8 +1832,7 @@ async def main_plan():
             f"Route this interjection ONLY to handle_id {hid}: "
             "please be concise in your response."
         )
-        status = await asyncio.wait_for(h.interject(msg), timeout=120.0)
-        assert isinstance(status, str) and status
+        await asyncio.wait_for(h.interject(msg), timeout=120.0)
 
         async def _targeted_applied() -> bool:
             events = h.pane.get_recent_events(n=500)

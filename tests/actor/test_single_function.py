@@ -474,11 +474,7 @@ async def test_handle_interject_is_noop():
     function_id = simple_sync_function["function_id"]
     handle = await actor.act(function_id=function_id)
 
-    interject_result = await handle.interject("change something")
-    assert (
-        "acknowledged" in interject_result.lower()
-        or "no effect" in interject_result.lower()
-    )
+    await handle.interject("change something")
 
     result = await handle.result()
     assert "Hello" in result
@@ -1369,15 +1365,9 @@ async def counting_workflow(target: int):
     ), "Inner handle should be SteerableHandle"
 
     # Test interjection passthrough - this should forward to the inner CodeActActor
-    interjection_result = await handle.interject(
+    await handle.interject(
         "Actually, skip ahead and just say the final number directly.",
     )
-
-    # Interjection should have been processed (not a no-op message)
-    assert interjection_result is not None
-    assert (
-        "no effect" not in interjection_result.lower()
-    ), f"Interjection should pass through to inner handle, got: {interjection_result}"
 
     # Clean up
     await handle.stop("test cleanup")
