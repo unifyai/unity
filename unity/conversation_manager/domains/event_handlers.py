@@ -818,7 +818,10 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
         event.timestamp,
         pinned=True,
     )
-    cm.in_flight_actions.pop(event.handle_id, None)
+    # Move to completed_actions (preserves handle for post-completion ask queries)
+    completed = cm.in_flight_actions.pop(event.handle_id, None)
+    if completed:
+        cm.completed_actions[event.handle_id] = completed
     await cm.request_llm_run()
 
 

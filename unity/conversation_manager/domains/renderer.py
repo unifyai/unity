@@ -27,6 +27,7 @@ from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.task_actions import (
     derive_short_name,
     iter_steering_tools_for_action,
+    iter_steering_tools_for_completed_action,
     build_action_name,
     safe_call_id_suffix,
 )
@@ -446,12 +447,14 @@ class Renderer:
         contact_index: ContactIndex,
         notification_bar: NotificationBar = None,
         in_flight_actions: dict = None,
+        completed_actions: dict = None,
         last_snapshot: datetime = None,
     ) -> str:
         """Render the full state as a string (backward compatible)."""
         return (
             f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
             f"{self.render_in_flight_actions(in_flight_actions)}\n\n"
+            f"{self.render_completed_actions(completed_actions)}\n\n"
             f"{self.render_active_conversations(contact_index, last_snapshot=last_snapshot)}"
         )
 
@@ -460,6 +463,7 @@ class Renderer:
         contact_index: ContactIndex,
         notification_bar: NotificationBar = None,
         in_flight_actions: dict = None,
+        completed_actions: dict = None,
         last_snapshot: datetime = None,
     ) -> SnapshotState:
         """Render state and return SnapshotState with constituent element tracking.
@@ -486,6 +490,9 @@ class Renderer:
             elements_out=action_elements,
         )
 
+        # Render completed actions (no element tracking needed)
+        completed_render = self.render_completed_actions(completed_actions)
+
         # Render active conversations with tracking
         convs_render = self._render_active_conversations_with_tracking(
             contact_index,
@@ -493,7 +500,7 @@ class Renderer:
             elements_out=message_elements,
         )
 
-        full_render = f"{notif_render}\n\n{actions_render}\n\n{convs_render}"
+        full_render = f"{notif_render}\n\n{actions_render}\n\n{completed_render}\n\n{convs_render}"
 
         return SnapshotState(
             full_render=full_render,
@@ -1144,4 +1151,36 @@ class Renderer:
 
                 out += "</action>\n"
         out += "</in_flight_actions>"
+        return out
+
+    def render_completed_actions(self, completed_actions: dict):
+        """Render completed actions that are available for querying.
+
+        These actions have finished execution but remain available for
+        `ask` queries about their trajectory/results.
+        """
+        out = "<completed_actions>\n"
+        if not completed_actions:
+            out += "No completed actions.\n"
+        else:
+            for handle_id, handle_data in completed_actions.items():
+                query = handle_data.get("query", "")
+                short_name = derive_short_name(query)
+
+                out += f"<action id='{handle_id}' short_name='{short_name}' status='completed'>\n"
+                out += f"<original_request>{query}</original_request>\n"
+
+                out += "<steering_tools>\n"
+                for (
+                    action_name,
+                    description,
+                ) in iter_steering_tools_for_completed_action(
+                    handle_id,
+                    query,
+                ):
+                    out += f"  - {action_name}: {description}\n"
+                out += "</steering_tools>\n"
+
+                out += "</action>\n"
+        out += "</completed_actions>"
         return out

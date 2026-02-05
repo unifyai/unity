@@ -147,6 +147,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.in_flight_actions: dict[int, dict] = (
             {}
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
+        self.completed_actions: dict[int, dict] = (
+            {}
+        )  # Finished actions, kept for post-completion ask() queries
         self.last_snapshot = prompt_now(as_string=False)
         self._current_snapshot = None
         self._current_state_snapshot = (
@@ -542,6 +545,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self.contact_index,
             self.notifications_bar,
             self.in_flight_actions,
+            self.completed_actions,
             self.last_snapshot,
         )
 
@@ -558,6 +562,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **brain_tools.as_tools(),
             **action_tools.as_tools(),
             **action_tools.build_action_steering_tools(),
+            **action_tools.build_completed_action_tools(),
         }
 
         # Single-shot LLM call: one decision, one action
