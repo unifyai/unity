@@ -1794,7 +1794,6 @@ class CodeActActor(BaseCodeActActor):
         self._model = model
         self._preprocess_msgs = preprocess_msgs
         self._prompt_caching = prompt_caching
-        self._browser_tools = self._get_browser_tools()
         self._computer_tools = (
             self._get_computer_tools()
         )  # Register stable tools once; per-call sandboxes are bound via _CURRENT_SANDBOX.
