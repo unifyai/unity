@@ -273,7 +273,7 @@ async def test_email_missing_attachment_detected(initialized_cm):
     email = filter_events_by_type(result.output_events, EmailSent)[0]
     # The reply should mention that the attachment is missing
     # Normalize curly apostrophes to straight apostrophes for matching
-    body_lower = email.body.lower().replace("'", "'").replace("'", "'")
+    body_lower = email.body.lower().replace("\u2018", "'").replace("\u2019", "'")
     assert any(
         term in body_lower
         for term in [
@@ -368,8 +368,8 @@ async def test_unify_message_missing_attachment_detected(initialized_cm):
     assert_has_one(result.output_events, UnifyMessageSent)
     msg = filter_events_by_type(result.output_events, UnifyMessageSent)[0]
     # The reply should mention that the attachment is missing
-    # Normalize curly apostrophes to straight apostrophes for matching
-    content_lower = msg.content.lower().replace("'", "'").replace("'", "'")
+    # Normalize curly apostrophes (U+2018, U+2019) to straight apostrophes for matching
+    content_lower = msg.content.lower().replace("\u2018", "'").replace("\u2019", "'")
     assert any(
         term in content_lower
         for term in [
