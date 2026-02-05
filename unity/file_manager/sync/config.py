@@ -13,8 +13,12 @@ class SyncConfig:
     """Configuration for managed VM file sync via rclone SFTP.
 
     Paths:
-    - local_root: ~/Unity/Local (assistant container)
-    - remote_root: /Unity/Local (VM, chrooted via SFTP)
+    - local_root: ~/Unity (assistant container)
+    - remote_root: /Unity (VM, chrooted via SFTP)
+
+    Syncs the entire ~/Unity directory, which includes:
+    - ~/Unity/Local - user files (LocalFileSystemAdapter root)
+    - ~/Unity/functions - custom functions (FunctionManager)
 
     Conflict resolution: Latest wins (by modification time)
     """
@@ -29,9 +33,9 @@ class SyncConfig:
 
     # Paths
     local_root: str = field(
-        default_factory=lambda: str(Path.home() / "Unity" / "Local"),
+        default_factory=lambda: str(Path.home() / "Unity"),
     )
-    remote_root: str = "/Unity/Local"
+    remote_root: str = "/Unity"
 
     # Sync behavior
     sync_on_write: bool = True
@@ -83,7 +87,7 @@ class SyncConfig:
 
         print(
             f"[FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
-            f"local=~/Unity/Local, remote=/Unity/Local",
+            f"local=~/Unity, remote=/Unity",
         )
 
         return cls(
