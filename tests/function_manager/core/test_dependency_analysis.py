@@ -2,8 +2,6 @@
 Tests for dependency_analysis module.
 """
 
-import pytest
-
 from unity.function_manager.dependency_analysis import (
     collect_dependencies_from_source,
 )

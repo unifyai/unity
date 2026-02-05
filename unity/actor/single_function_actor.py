@@ -467,13 +467,23 @@ class SingleFunctionActor(BaseActor):
             function_manager or ManagerRegistry.get_function_manager()
         )
 
-    def _get_function_by_id(self, function_id: int) -> Dict[str, Any]:
-        """Get a user-defined function by its ID (not for primitives)."""
-        functions = self._function_manager.list_functions(include_implementations=True)
-        for name, data in functions.items():
-            if data.get("function_id") == function_id:
-                return {"name": name, **data}
-        raise ValueError(f"No function found with ID {function_id}")
+    def _get_function_by_id(
+        self,
+        function_id: int,
+        namespace: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Get a user-defined function by its ID, injecting dependencies into namespace."""
+        result = self._function_manager.filter_functions(
+            filter=f"function_id == {function_id}",
+            include_implementations=True,
+            return_callable=True,
+            namespace=namespace,
+            also_return_metadata=True,
+        )
+        metadata = result.get("metadata", [])
+        if not metadata:
+            raise ValueError(f"No function found with ID {function_id}")
+        return metadata[0]
 
     def _get_primitive_by_name(self, primitive_name: str) -> Dict[str, Any]:
         """Get a primitive by its qualified name (e.g., 'ContactManager.ask')."""
@@ -486,17 +496,22 @@ class SingleFunctionActor(BaseActor):
     def _search_function(
         self,
         description: str,
+        namespace: Dict[str, Any],
         include_primitives: bool = True,
     ) -> Dict[str, Any]:
-        """Search for the best matching function or primitive by description."""
-        results = self._function_manager.search_functions(
+        """Search for the best matching function, injecting dependencies into namespace."""
+        result = self._function_manager.search_functions(
             query=description,
             n=1,
             include_primitives=include_primitives,
+            return_callable=True,
+            namespace=namespace,
+            also_return_metadata=True,
         )
-        if not results:
+        metadata = result.get("metadata", [])
+        if not metadata:
             raise ValueError(f"No function found matching description: {description}")
-        return results[0]
+        return metadata[0]
 
     def _create_execution_globals(self) -> Dict[str, Any]:
         """Create the globals dict for function execution."""
@@ -525,9 +540,10 @@ class SingleFunctionActor(BaseActor):
     async def _execute_function(
         self,
         function_data: Dict[str, Any],
+        namespace: Dict[str, Any],
         **call_kwargs,
     ) -> Any:
-        """Execute a user-defined function with the given data."""
+        """Execute a user-defined function."""
         implementation = function_data.get("implementation")
         name = function_data.get("name")
         venv_id = function_data.get("venv_id")
@@ -535,7 +551,6 @@ class SingleFunctionActor(BaseActor):
         if not implementation:
             raise ValueError(f"Function '{name}' has no implementation")
 
-        # Check if function should run in a custom venv
         if venv_id is not None:
             return await self._execute_in_custom_venv(
                 implementation=implementation,
@@ -544,10 +559,10 @@ class SingleFunctionActor(BaseActor):
                 call_kwargs=call_kwargs,
             )
 
-        # Default: execute in-process
         return await self._execute_in_process(
             implementation=implementation,
             name=name,
+            namespace=namespace,
             call_kwargs=call_kwargs,
         )
 
@@ -555,21 +570,17 @@ class SingleFunctionActor(BaseActor):
         self,
         implementation: str,
         name: str,
+        namespace: Dict[str, Any],
         call_kwargs: Dict[str, Any],
     ) -> Any:
-        """Execute a function in the current process (default behavior)."""
-        globals_dict = self._create_execution_globals()
+        """Execute a function in the current process."""
+        exec(implementation, namespace)
 
-        # Compile and exec the function definition
-        exec(implementation, globals_dict)
-
-        # Get the function object - for user functions, use the short name
         short_name = name.split(".")[-1] if "." in name else name
-        fn = globals_dict.get(short_name)
+        fn = namespace.get(short_name)
         if fn is None:
             raise ValueError(f"Function '{short_name}' not found after execution")
 
-        # Call the function
         if inspect.iscoroutinefunction(fn):
             return await fn(**call_kwargs)
         else:
@@ -739,30 +750,31 @@ class SingleFunctionActor(BaseActor):
         """
         call_kwargs = call_kwargs or {}
 
-        # Validate that at least one selection method is provided
         if function_id is None and primitive_name is None and description is None:
             raise ValueError(
                 "Must provide at least one of: description, function_id, or primitive_name",
             )
 
-        # Find the function or primitive
+        globals_dict = self._create_execution_globals()
+
         if primitive_name is not None:
-            # Explicit primitive by name
             function_data = self._get_primitive_by_name(primitive_name)
             logger.info(
                 f"SingleFunctionActor: Executing primitive '{primitive_name}'",
             )
         elif function_id is not None:
-            # Explicit user-defined function by ID
-            function_data = self._get_function_by_id(function_id)
+            function_data = self._get_function_by_id(
+                function_id,
+                namespace=globals_dict,
+            )
             logger.info(
                 f"SingleFunctionActor: Executing function ID {function_id} "
                 f"({function_data.get('name')})",
             )
         else:
-            # Search by description (may return function or primitive)
             function_data = self._search_function(
                 description,
+                namespace=globals_dict,
                 include_primitives=include_primitives,
             )
             logger.info(
@@ -775,9 +787,7 @@ class SingleFunctionActor(BaseActor):
         fid = function_data.get("function_id")
         docstring = function_data.get("docstring")
 
-        # Determine if verification should run
         if verify is None:
-            # Use the function's own verify flag (default True for user functions)
             should_verify = (
                 function_data.get("verify", True) if not is_primitive else False
             )
@@ -787,17 +797,15 @@ class SingleFunctionActor(BaseActor):
         if should_verify:
             logger.info(f"Verification enabled for '{function_name}'")
 
-        # Create the execution task based on type
         if is_primitive:
             execution_task = asyncio.create_task(
                 self._execute_primitive(function_data, **call_kwargs),
             )
         else:
             execution_task = asyncio.create_task(
-                self._execute_function(function_data, **call_kwargs),
+                self._execute_function(function_data, globals_dict, **call_kwargs),
             )
 
-        # Return the handle
         return SingleFunctionActorHandle(
             function_name=function_name,
             function_id=fid,
