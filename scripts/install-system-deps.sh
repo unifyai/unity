@@ -153,6 +153,11 @@ if [ "$MINIMAL" = false ]; then
         libsecret-1-0 \
         libhyphen0 \
         libmanette-0.2-0
+
+    # =========================================================================
+    # RCLONE (for file sync between assistant and managed VM)
+    # =========================================================================
+    curl https://rclone.org/install.sh | bash
 fi
 
 # Cleanup apt cache
