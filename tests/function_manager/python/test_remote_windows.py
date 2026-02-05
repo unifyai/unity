@@ -2,9 +2,8 @@
 Tests for remote Windows execution in FunctionManager.
 
 Tests the complete remote execution flow including:
-- Path conversion (Unix → Windows)
 - Routing logic (when to execute remotely)
-- Data upload/download (multipart)
+- FileSync integration (sync before/after execution)
 - Venv preparation (uv sync)
 - Script execution with arguments
 - Result capture and error handling
@@ -29,22 +28,6 @@ SIMPLE_WINDOWS_FUNC = """
 def process_data(input_path: str) -> dict:
     \"\"\"Process data from input path.\"\"\"
     return {"processed": True, "path": input_path}
-""".strip()
-
-ASYNC_WINDOWS_FUNC = """
-async def async_process(x: int) -> int:
-    \"\"\"Async function for testing.\"\"\"
-    import asyncio
-    await asyncio.sleep(0.01)
-    return x * 2
-""".strip()
-
-WINDOWS_WITH_DATA = """
-def extract_data(input_dir: str, output_dir: str) -> dict:
-    \"\"\"Extract data with input/output directories.\"\"\"
-    import os
-    files = os.listdir(input_dir)
-    return {"files_found": len(files), "output": output_dir}
 """.strip()
 
 MINIMAL_VENV_CONTENT = """
@@ -115,34 +98,6 @@ def mock_session_details_ubuntu(monkeypatch):
     )
 
     yield SESSION_DETAILS
-
-
-@pytest.fixture
-def temp_data_files(tmp_path):
-    """Create temporary test files for upload/download tests."""
-    # Single file
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    test_file = data_dir / "input.xlsx"
-    test_file.write_bytes(b"test excel content")
-
-    # Nested directory
-    nested = tmp_path / "nested"
-    subdir = nested / "subdir"
-    subdir.mkdir(parents=True)
-    (nested / "root_file.txt").write_text("root content")
-    (subdir / "nested_file.txt").write_text("nested content")
-
-    # Empty directory
-    empty_dir = tmp_path / "empty"
-    empty_dir.mkdir()
-
-    yield {
-        "file": test_file,
-        "directory": nested,
-        "empty_dir": empty_dir,
-        "root": tmp_path,
-    }
 
 
 class MockResponse:
@@ -267,56 +222,7 @@ def skip_vm_wait(monkeypatch):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1. Path Conversion Tests
-# ────────────────────────────────────────────────────────────────────────────
-
-
-class TestLocalToRemotePath:
-    """Tests for _local_to_remote_path path conversion."""
-
-    @_handle_project
-    def test_converts_absolute_unix_path(self, function_manager_factory):
-        """Convert absolute Unix path to Windows equivalent."""
-        fm = function_manager_factory()
-        result = fm._local_to_remote_path("/Users/julia/data/file.xlsx")
-        assert result == "C:\\Unity\\Users\\julia\\data\\file.xlsx"
-
-    @_handle_project
-    def test_handles_nested_directories(self, function_manager_factory):
-        """Deep paths are preserved correctly."""
-        fm = function_manager_factory()
-        result = fm._local_to_remote_path("/a/b/c/d/e/file.txt")
-        assert result == "C:\\Unity\\a\\b\\c\\d\\e\\file.txt"
-
-    @_handle_project
-    def test_handles_single_component_path(self, function_manager_factory):
-        """Single-level path conversion."""
-        fm = function_manager_factory()
-        result = fm._local_to_remote_path("/data")
-        assert result == "C:\\Unity\\data"
-
-    @_handle_project
-    def test_handles_path_with_spaces(self, function_manager_factory):
-        """Paths with spaces are preserved."""
-        fm = function_manager_factory()
-        result = fm._local_to_remote_path("/Users/My User/Documents/file name.xlsx")
-        assert result == "C:\\Unity\\Users\\My User\\Documents\\file name.xlsx"
-
-    @_handle_project
-    def test_handles_tmp_path(self, function_manager_factory, tmp_path):
-        """Real tmp_path conversion works correctly."""
-        fm = function_manager_factory()
-        local_path = str(tmp_path / "test" / "file.txt")
-        result = fm._local_to_remote_path(local_path)
-
-        # Should start with C:\Unity\ and contain the path components
-        assert result.startswith("C:\\Unity\\")
-        assert "test" in result
-        assert "file.txt" in result
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 2. Routing Logic Tests
+# 1. Routing Logic Tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -369,7 +275,7 @@ class TestRemoteWindowsRoutingLogic:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 3. Wait Time Calculation Tests
+# 2. Wait Time Calculation Tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -414,200 +320,7 @@ class TestCalculateWaitTime:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 4. Data Upload Tests
-# ────────────────────────────────────────────────────────────────────────────
-
-
-class TestUploadDataToRemote:
-    """Tests for _upload_data_to_remote."""
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_raises_on_nonexistent_path(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-    ):
-        """FileNotFoundError for missing paths."""
-        fm = function_manager_factory()
-
-        with pytest.raises(FileNotFoundError, match="does not exist"):
-            await fm._upload_data_to_remote(
-                session=mock_aiohttp_session,
-                desktop_url="https://test-vm.unify.ai",
-                headers={"Authorization": "Bearer test"},
-                local_path="/nonexistent/path/file.txt",
-            )
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_returns_correct_remote_path_for_file(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        temp_data_files,
-    ):
-        """Return value is Windows path equivalent for file."""
-        fm = function_manager_factory()
-
-        result = await fm._upload_data_to_remote(
-            session=mock_aiohttp_session,
-            desktop_url="https://test-vm.unify.ai",
-            headers={"Authorization": "Bearer test"},
-            local_path=str(temp_data_files["file"]),
-        )
-
-        # Should be Windows path under C:\Unity
-        assert result.startswith("C:\\Unity\\")
-        assert "input.xlsx" in result
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_returns_correct_remote_path_for_directory(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        temp_data_files,
-    ):
-        """Return value is Windows path equivalent for directory."""
-        fm = function_manager_factory()
-
-        result = await fm._upload_data_to_remote(
-            session=mock_aiohttp_session,
-            desktop_url="https://test-vm.unify.ai",
-            headers={"Authorization": "Bearer test"},
-            local_path=str(temp_data_files["directory"]),
-        )
-
-        # Should be Windows path under C:\Unity
-        assert result.startswith("C:\\Unity\\")
-        assert "nested" in result
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_handles_empty_directory(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        temp_data_files,
-    ):
-        """Empty directory returns remote path without HTTP call."""
-        fm = function_manager_factory()
-        initial_request_count = len(mock_aiohttp_session.requests)
-
-        result = await fm._upload_data_to_remote(
-            session=mock_aiohttp_session,
-            desktop_url="https://test-vm.unify.ai",
-            headers={"Authorization": "Bearer test"},
-            local_path=str(temp_data_files["empty_dir"]),
-        )
-
-        # Should return remote path
-        assert result.startswith("C:\\Unity\\")
-        # No HTTP requests should have been made (no files to upload)
-        assert len(mock_aiohttp_session.requests) == initial_request_count
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_uploads_via_multipart(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        temp_data_files,
-    ):
-        """Files are uploaded via multipart form data."""
-        fm = function_manager_factory()
-
-        await fm._upload_data_to_remote(
-            session=mock_aiohttp_session,
-            desktop_url="https://test-vm.unify.ai",
-            headers={"Authorization": "Bearer test"},
-            local_path=str(temp_data_files["file"]),
-        )
-
-        # Should have made a POST request to /api/files
-        assert len(mock_aiohttp_session.requests) >= 1
-        request = mock_aiohttp_session.requests[-1]
-        assert request["method"] == "POST"
-        assert "/api/files" in request["url"]
-        # Should have form data (multipart)
-        assert "data" in request
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 5. Data Download Tests
-# ────────────────────────────────────────────────────────────────────────────
-
-
-class TestDownloadDataFromRemote:
-    """Tests for _download_data_from_remote."""
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_handles_empty_listing(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        tmp_path,
-    ):
-        """No error when remote directory is empty."""
-        fm = function_manager_factory()
-
-        # Set up response for empty directory listing
-        mock_aiohttp_session.set_response(
-            "/api/files",
-            MockResponse({"files": [], "path": "test"}),
-        )
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        # Should not raise
-        await fm._download_data_from_remote(
-            session=mock_aiohttp_session,
-            desktop_url="https://test-vm.unify.ai",
-            headers={"Authorization": "Bearer test"},
-            local_path=str(output_dir),
-        )
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_handles_list_failure(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        tmp_path,
-    ):
-        """No error when listing fails (e.g., path doesn't exist on remote)."""
-        fm = function_manager_factory()
-
-        # Set up failed response for directory listing
-        mock_aiohttp_session.set_response(
-            "/api/files",
-            MockResponse({"error": "not found"}, status=404),
-        )
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        # Should not raise, just log and return
-        await fm._download_data_from_remote(
-            session=mock_aiohttp_session,
-            desktop_url="https://test-vm.unify.ai",
-            headers={"Authorization": "Bearer test"},
-            local_path=str(output_dir),
-        )
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 6. Venv Preparation Tests
+# 3. Venv Preparation Tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -650,7 +363,8 @@ class TestPrepareVenvOnRemoteWindows:
                 venv_id=venv_id,
             )
 
-            # Should return python path
+            # Should return python path with new Local\venvs path
+            assert "Local\\venvs\\venv_" in result
             assert ".venv\\Scripts\\python.exe" in result
 
             # Should have made requests for:
@@ -675,7 +389,7 @@ class TestPrepareVenvOnRemoteWindows:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 7. Full Execution Flow Tests
+# 4. Full Execution Flow Tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -801,90 +515,9 @@ class TestExecutePythonFunctionOnRemoteWindows:
         exec_json = exec_requests[-1].get("json", {})
         assert exec_json.get("user_session") is True
 
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_handles_data_required(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        temp_data_files,
-        skip_vm_wait,
-    ):
-        """data_required paths are uploaded before execution."""
-        fm = function_manager_factory()
-
-        func_data = {
-            "name": "test_func",
-            "windows_os_required": True,
-            "data_required": ["input_dir"],
-        }
-
-        result = await fm._execute_python_function_on_remote_windows(
-            func_data=func_data,
-            implementation=WINDOWS_WITH_DATA,
-            call_kwargs={
-                "input_dir": str(temp_data_files["directory"]),
-                "output_dir": "/tmp/output",
-            },
-        )
-
-        # Should have made upload request before exec
-        requests = mock_aiohttp_session.requests
-
-        # Find the upload request (multipart to /api/files)
-        upload_requests = [
-            r for r in requests if "/api/files" in r["url"] and "data" in r
-        ]
-
-        # Should have uploaded the directory
-        assert len(upload_requests) >= 1
-
-    @_handle_project
-    @pytest.mark.asyncio
-    async def test_handles_data_output(
-        self,
-        function_manager_factory,
-        mock_session_details_windows,
-        mock_aiohttp_session,
-        temp_data_files,
-        tmp_path,
-        skip_vm_wait,
-    ):
-        """data_output paths are downloaded after execution."""
-        fm = function_manager_factory()
-
-        output_dir = tmp_path / "output"
-        output_dir.mkdir()
-
-        func_data = {
-            "name": "test_func",
-            "windows_os_required": True,
-            "data_output": ["output_dir"],
-        }
-
-        await fm._execute_python_function_on_remote_windows(
-            func_data=func_data,
-            implementation=WINDOWS_WITH_DATA,
-            call_kwargs={
-                "input_dir": "/remote/input",
-                "output_dir": str(output_dir),
-            },
-        )
-
-        # Should have made download requests (list + read for each file)
-        list_requests = [
-            r
-            for r in mock_aiohttp_session.requests
-            if "/api/files" in r["url"] and r.get("json", {}).get("action") == "list"
-        ]
-
-        # At least one list request for the output directory
-        assert len(list_requests) >= 1
-
 
 # ────────────────────────────────────────────────────────────────────────────
-# 8. Integration Tests (execute_function routing)
+# 5. Integration Tests (execute_function routing)
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -958,3 +591,94 @@ class TestExecuteFunctionRemoteRouting:
 
         # Should have a result (local execution worked)
         assert "result" in result or "error" in result
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 6. FileSync Integration Tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestSyncIntegration:
+    """Tests for FileSync integration with remote execution."""
+
+    @_handle_project
+    @pytest.mark.asyncio
+    async def test_sync_called_before_and_after_execution(
+        self,
+        function_manager_factory,
+        mock_session_details_windows,
+        mock_aiohttp_session,
+        skip_vm_wait,
+        monkeypatch,
+    ):
+        """Verify sync_to_remote and sync_from_remote are called."""
+        fm = function_manager_factory()
+        sync_calls = []
+
+        async def mock_sync_to_remote(self):
+            sync_calls.append("sync_to_remote")
+            return True
+
+        async def mock_sync_from_remote(self):
+            sync_calls.append("sync_from_remote")
+            return True
+
+        monkeypatch.setattr(
+            FunctionManager,
+            "_sync_to_remote",
+            mock_sync_to_remote,
+        )
+        monkeypatch.setattr(
+            FunctionManager,
+            "_sync_from_remote",
+            mock_sync_from_remote,
+        )
+
+        func_data = {"name": "test_func", "windows_os_required": True}
+
+        await fm._execute_python_function_on_remote_windows(
+            func_data=func_data,
+            implementation=SIMPLE_WINDOWS_FUNC,
+            call_kwargs={"input_path": "/Unity/data/file.txt"},
+        )
+
+        # Verify sync order
+        assert sync_calls == ["sync_to_remote", "sync_from_remote"]
+
+    @_handle_project
+    @pytest.mark.asyncio
+    async def test_execution_continues_without_sync_manager(
+        self,
+        function_manager_factory,
+        mock_session_details_windows,
+        mock_aiohttp_session,
+        skip_vm_wait,
+        monkeypatch,
+    ):
+        """Execution proceeds if no SyncManager available."""
+        fm = function_manager_factory()
+
+        # Ensure no sync manager
+        monkeypatch.setattr(fm, "_get_sync_manager", lambda: None)
+
+        func_data = {"name": "test_func", "windows_os_required": True}
+
+        # Should not raise
+        await fm._execute_python_function_on_remote_windows(
+            func_data=func_data,
+            implementation=SIMPLE_WINDOWS_FUNC,
+            call_kwargs={"input_path": "/Unity/data/file.txt"},
+        )
+
+        # HTTP requests still made (script write + exec + result read)
+        assert len(mock_aiohttp_session.requests) > 0
+
+    @_handle_project
+    def test_get_sync_manager_returns_none_without_file_manager(
+        self,
+        function_manager_factory,
+    ):
+        """_get_sync_manager returns None when no FileManager."""
+        fm = function_manager_factory()
+        fm._fm = None
+        assert fm._get_sync_manager() is None

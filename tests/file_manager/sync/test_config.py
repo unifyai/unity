@@ -38,6 +38,7 @@ class TestSyncConfig:
         assert "__pycache__/**" in config.exclude_patterns
         assert "*.pyc" in config.exclude_patterns
         assert ".bisync/**" in config.exclude_patterns
+        assert "Local/venvs/**" in config.exclude_patterns
 
 
 class TestExtractHost:
