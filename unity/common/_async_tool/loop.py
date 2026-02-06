@@ -1799,9 +1799,10 @@ async def async_tool_loop_inner(
             if response_format is not None and tool_choice_mode != "required":
                 tool_choice_mode = "required"
 
-            # When tools are in-flight, force tool_choice=required so the LLM must
-            # explicitly call final_answer to terminate (making the termination
-            # decision explicit and visible via the tool's warning docstring).
+            # When tools are in-flight, force tool_choice=required so the LLM
+            # must call a real tool (check_status_*, cancel_*, etc.) rather
+            # than ending the loop.  `final_answer` is masked in this
+            # situation (see below), so the only options are real tools.
             _has_pending_tools = bool(tools_data.pending)
             if _has_pending_tools and tool_choice_mode != "required":
                 tool_choice_mode = "required"
@@ -1819,21 +1820,23 @@ async def async_tool_loop_inner(
                 if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
 
-            # Inject `final_answer` tool in two scenarios:
-            # 1. When response_format is set (structured output mode)
-            # 2. When tools are in-flight (explicit termination required)
-            # This ensures the LLM always has a clear, documented way to terminate
-            # that warns about cancelling in-flight work.
-            #
-            # Shared description suffix (format-agnostic guidance):
-            _final_answer_suffix = (
-                "The answer can be a complete response, a partial response, "
-                "or a message indicating you cannot proceed "
-                "(e.g., 'I cannot help with that.'). "
-                "Calling this tool terminates the conversation. "
-                "WARNING: Any running tools will be immediately cancelled."
-            )
-            if response_format is not None:
+            # Inject `final_answer` tool when response_format is set AND no
+            # other tools are in-flight.  `final_answer` is semantically
+            # equivalent to "end the loop" (the tool-call analogue of a bare
+            # text response).  When tools are still running we intentionally
+            # mask it so the LLM must interact with them (via check_status_*,
+            # cancel_*, etc.) rather than silently killing them.
+            if response_format is not None and not _has_pending_tools:
+                _final_answer_desc = (
+                    "Submit your final answer in the required JSON format. "
+                    "The answer can be a complete response, a partial response, "
+                    "or a message indicating you cannot proceed "
+                    "(e.g., 'I cannot help with that.'). "
+                )
+                if not persist:
+                    _final_answer_desc += (
+                        "Calling this tool terminates the conversation."
+                    )
                 try:
                     _answer_schema = _check_valid_response_format(response_format)
 
@@ -1843,10 +1846,7 @@ async def async_tool_loop_inner(
                             "strict": True,
                             "function": {
                                 "name": "final_answer",
-                                "description": (
-                                    "Submit your final answer in the required JSON format. "
-                                    + _final_answer_suffix
-                                ),
+                                "description": _final_answer_desc,
                                 "parameters": {
                                     "type": "object",
                                     "properties": {"answer": _answer_schema},
@@ -1859,31 +1859,6 @@ async def async_tool_loop_inner(
                     logger.error(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
-            elif _has_pending_tools:
-                # Generic final_answer for termination when tools are in-flight
-                # (no response_format, so answer is free-form text)
-                visible_base_tools_schema.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "final_answer",
-                            "description": (
-                                "Submit your final text response. "
-                                + _final_answer_suffix
-                            ),
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "answer": {
-                                        "type": "string",
-                                        "description": "Your response (any content is valid).",
-                                    },
-                                },
-                                "required": ["answer"],
-                            },
-                        },
-                    },
-                )
 
             # Inject multi-handle `final_answer` tool when coordinator is present.
             # This tool requires request_id to specify which request is being answered.
@@ -2337,6 +2312,8 @@ async def async_tool_loop_inner(
                     }
                     await _msg_dispatcher.append_msgs([sys_notice])
 
+                _persist_final_answer_emitted = False
+
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
@@ -2359,10 +2336,11 @@ async def async_tool_loop_inner(
                             # Validate payload with the provided Pydantic model.
                             response_format.model_validate(payload)
 
-                            # Cancel any in-flight tools before returning the final answer.
-                            # This ensures clean termination when the LLM decides to answer
-                            # early (e.g., user interjection provided the needed info).
-                            if tools_data.pending:
+                            # Cancel any in-flight tools before returning.
+                            # In persist mode this block should be unreachable
+                            # (final_answer is masked while tools are pending)
+                            # but guard defensively.
+                            if tools_data.pending and not persist:
                                 logger.info(
                                     f"final_answer called while {len(tools_data.pending)} "
                                     f"task(s) are in-flight. Auto-cancelling to terminate.",
@@ -2384,6 +2362,10 @@ async def async_tool_loop_inner(
                                 _msg_dispatcher,
                             )
 
+                            if persist:
+                                # Treat as current-turn response; don't terminate.
+                                _persist_final_answer_emitted = True
+                                break  # exit the for-loop over tool_calls
                             return json.dumps(payload)
                         except Exception as _exc:
                             tool_msg = create_tool_call_message(
@@ -2404,7 +2386,8 @@ async def async_tool_loop_inner(
                             continue
 
                     # Special-case: handle generic `final_answer` tool (no response_format)
-                    # This is used when tools are in-flight and the LLM wants to terminate.
+                    # With the injection branch removed, this path is only reachable
+                    # if the LLM hallucinates a final_answer call.  Handle defensively.
                     if (
                         name == "final_answer"
                         and response_format is None
@@ -2414,8 +2397,8 @@ async def async_tool_loop_inner(
                         if answer is None:
                             answer = str(args) if args else ""
 
-                        # Cancel any in-flight tools before returning the final answer.
-                        if tools_data.pending:
+                        # Cancel any in-flight tools before returning.
+                        if tools_data.pending and not persist:
                             logger.info(
                                 f"final_answer called while {len(tools_data.pending)} "
                                 f"task(s) are in-flight. Auto-cancelling to terminate.",
@@ -2437,6 +2420,9 @@ async def async_tool_loop_inner(
                             _msg_dispatcher,
                         )
 
+                        if persist:
+                            _persist_final_answer_emitted = True
+                            break
                         return answer
 
                     # Special-case: handle multi-handle `final_answer` tool
@@ -3170,27 +3156,30 @@ async def async_tool_loop_inner(
                             initial_paused=not pause_event.is_set(),
                         )
 
-                # metadata for orderly insertion
-                assistant_meta[id(msg)] = {
-                    "results_count": 0,
-                }
+                if _persist_final_answer_emitted:
+                    pass  # fall through to section F → persist wait
+                else:
+                    # metadata for orderly insertion
+                    assistant_meta[id(msg)] = {
+                        "results_count": 0,
+                    }
 
-                # Immediately insert placeholder tool replies for every newly scheduled call
-                #  to satisfy API ordering even if a user interjection arrives instantly.
-                try:
-                    await ensure_placeholders_for_pending(
-                        assistant_msg=msg,
-                        tools_data=tools_data,
-                        assistant_meta=assistant_meta,
-                        client=client,
-                        msg_dispatcher=_msg_dispatcher,
-                    )
-                except Exception as _ph_exc:
-                    logger.error(
-                        f"Failed to insert immediate placeholders: {_ph_exc!r}",
-                    )
+                    # Immediately insert placeholder tool replies for every newly scheduled call
+                    #  to satisfy API ordering even if a user interjection arrives instantly.
+                    try:
+                        await ensure_placeholders_for_pending(
+                            assistant_msg=msg,
+                            tools_data=tools_data,
+                            assistant_meta=assistant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                        )
+                    except Exception as _ph_exc:
+                        logger.error(
+                            f"Failed to insert immediate placeholders: {_ph_exc!r}",
+                        )
 
-                continue  # finished scheduling tools, back to the very top
+                    continue  # finished scheduling tools, back to the very top
 
             # ── F.  No new tool calls  ──────────────────────────────────────
             # NOTE: Three scenarios reach this block:
@@ -3233,6 +3222,12 @@ async def async_tool_loop_inner(
                         tools_data.pending.discard(t)
                     # Fall through to return the final answer
                 else:
+                    if persist:
+                        # In persist mode, never cancel in-flight tools due
+                        # to a bare text response.  Loop back to Section A
+                        # which properly races tool completions,
+                        # notifications, interjections, and cancellation.
+                        continue
                     # LLM gave text-only response while tools are in-flight.
                     # This is a valid termination signal - cancel all running
                     # tasks and return the LLM's response.
