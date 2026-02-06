@@ -65,6 +65,70 @@ async def test_email_unknown_contact_triggers_act(initialized_cm):
     ), f"act query should mention David or email, got: {task_event.query}"
 
 
+@pytest.mark.asyncio
+@_handle_project
+async def test_sms_unknown_contact_triggers_act(initialized_cm):
+    """
+    Boss asks to text someone not in contacts (no number given) -> should call act.
+
+    "Send David a text about the meeting" — David is not in
+    active_conversations and no phone number is provided, so the LLM
+    must use act to find David's contact details.
+    """
+    cm = initialized_cm
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Send David a text letting him know the meeting is confirmed",
+        ),
+    )
+
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
+    assert len(actor_events) >= 1, (
+        f"Expected act to be called (ActorHandleStarted event), "
+        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    )
+
+    task_event = actor_events[0]
+    assert (
+        "david" in task_event.query.lower()
+        or "sms" in task_event.query.lower()
+        or "text" in task_event.query.lower()
+    ), f"act query should mention David or texting, got: {task_event.query}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_call_unknown_contact_triggers_act(initialized_cm):
+    """
+    Boss asks to call someone not in contacts (no number given) -> should call act.
+
+    "Give David a call about the meeting" — David is not in
+    active_conversations and no phone number is provided, so the LLM
+    must use act to find David's contact details.
+    """
+    cm = initialized_cm
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="Give David a call and tell him the meeting is confirmed",
+        ),
+    )
+
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
+    assert len(actor_events) >= 1, (
+        f"Expected act to be called (ActorHandleStarted event), "
+        f"got events: {[type(e).__name__ for e in result.output_events]}"
+    )
+
+    task_event = actor_events[0]
+    assert (
+        "david" in task_event.query.lower() or "call" in task_event.query.lower()
+    ), f"act query should mention David or calling, got: {task_event.query}"
+
+
 # ---------------------------------------------------------------------------
 #  Outbound with inline contact details still triggers act
 #
