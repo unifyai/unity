@@ -463,3 +463,40 @@ async def test_similarity_search_return_callable_forward_ref_annotations_just_wo
     assert "NoneType" in group_by_str
     assert time_period_name == "TimePeriod"
     assert return_name == "MetricResult"
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_dep_added_after_root_does_not_backfill_depends_on():
+    fm = FunctionManager()
+
+    a_src = "async def a(x: int) -> int:\n    return (await b(x=x)) + 1\n"
+    b_src = "async def b(x: int) -> int:\n    return x + 10\n"
+
+    # Add root first (b doesn't exist yet) → depends_on for a will NOT include b
+    fm.add_functions(implementations=[a_src])
+    fm.add_functions(implementations=[b_src])
+
+    ns = create_base_globals()
+    callables = fm.filter_functions(
+        filter="name == 'a'",
+        limit=1,
+        return_callable=True,
+        namespace=ns,
+    )
+    assert "b" not in ns
+    with pytest.raises(NameError):
+        await callables[0](x=1)
+
+    # Now overwrite a AFTER b exists → depends_on is recomputed and injection works
+    fm.add_functions(implementations=[a_src], overwrite=True)
+
+    ns2 = create_base_globals()
+    callables2 = fm.filter_functions(
+        filter="name == 'a'",
+        limit=1,
+        return_callable=True,
+        namespace=ns2,
+    )
+    assert "b" in ns2
+    assert await callables2[0](x=1) == 12
