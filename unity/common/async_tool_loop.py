@@ -366,53 +366,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, _parent_chat_context)
 
-        # 0.  Defensive guard: if the outer loop has already finished we can
-        #     just answer from the final transcript without starting another
-        #     loop.
-        if self.done():
-            LOGGER.warning(
-                "AsyncToolLoopHandle.ask() called on an already-finished "
-                "loop – returning a synthetic handle with a static answer.",
-            )
-
-            async def _static() -> str:  # type: ignore[return-type]
-                return (
-                    "Parent loop is already complete; no additional "
-                    "information available."
-                )
-
-            class _StaticHandle(SteerableToolHandle):
-                def __init__(self): ...
-
-                async def interject(self, message: str, **kwargs): ...
-
-                async def stop(self, reason: Optional[str] = None, **kwargs): ...
-
-                async def pause(self): ...
-
-                async def resume(self): ...
-
-                def done(self):
-                    return True
-
-                async def result(self):
-                    return await _static()
-
-                async def ask(self, question: str, **kwargs) -> "SteerableToolHandle":
-                    return self
-
-                # Inert stubs for required abstract event APIs
-                async def next_clarification(self) -> dict:
-                    return {}
-
-                async def next_notification(self) -> dict:
-                    return {}
-
-                async def answer_clarification(self, call_id: str, answer: str) -> None:
-                    return None
-
-            return _StaticHandle()  # pragma: no cover
-
         # 1.  Gather a *read-only* snapshot of the parent chat.
         parent_ctx = []
         with suppress(Exception):
