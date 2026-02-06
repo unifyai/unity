@@ -225,6 +225,19 @@ Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available wh
 
 The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
 
+### Parallel Development with Clones
+
+Cursor's worktree mode (parallel agents) has a known limitation: `.cursor/rules/` files with `alwaysApply: true` are not injected into the agent's context. This means worktree agents operate without any of your project rules.
+
+The workaround is to run multiple independent clones in local mode, where rules work correctly:
+
+```bash
+./clone_adjacent.sh fix_loop_tests    # → ../unity_fix_loop_tests
+./clone_adjacent.sh refactor_actor    # → ../unity_refactor_actor
+```
+
+Each clone checks out `staging`, inits submodules, copies `.env`, and symlinks `.venv` — ready to open in a separate Cursor window with full rule support. The script uses `--reference` to borrow local git objects, so cloning is near-instant.
+
 ### Cursor Cloud Agent Secrets (Required)
 
 Cursor Cloud Agents run in isolated VMs and need user-specific secrets. Add these in **Cursor Settings → Cloud Agents → Secrets**:
