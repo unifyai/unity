@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 import time
 import inspect
 from typing import Optional, Type, TypeVar, TYPE_CHECKING
@@ -105,40 +104,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             "status": "ok",
             "messages": messages,
             "count": len(messages),
-        }
-
-    async def send_notification(
-        self,
-        content: str,
-        *,
-        source: str = "system",
-        interjection_id: Optional[str] = None,
-        pinned: bool = False,
-    ) -> dict:
-        """
-        Sends a notification to the live conversation by publishing an event.
-        """
-        if self._stopped:
-            return {"status": "error", "message": "Handle is stopped."}
-
-        # Generate ID if not provided
-        if interjection_id is None:
-            interjection_id = str(uuid.uuid4().hex[:12])
-
-        event = NotificationInjectedEvent(
-            content=content,
-            source=source,
-            target_conversation_id=self.conversation_id,
-            interjection_id=interjection_id,
-            pinned=pinned,
-        )
-        # Publish to unified steering channel (picked up by app:comms:* subscription)
-        await self.event_broker.publish(self._steering_channel, event.to_json())
-
-        return {
-            "status": "ok",
-            "message": "Notification event published.",
-            "interjection_id": interjection_id,
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -385,27 +350,29 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         return wrapped_handle
 
-    async def interject(
-        self,
-        message: str,
-        *,
-        pinned: bool = False,
-        interjection_id: Optional[str] = None,
-    ) -> None:
-        """
-        Send an interjection to the conversation.
+    async def interject(self, message: str, **kwargs) -> str:
+        """Provide additional information or instructions to the conversation.
 
-        Args:
-            message: The message content to inject
-            pinned: If True, the interjection persists for the entire session
-            interjection_id: Optional explicit ID (auto-generated if not provided)
+        Publishes a ``NotificationInjectedEvent`` to the steering channel so
+        the CM brain can incorporate the message.  Plumbing kwargs (e.g.
+        ``_parent_chat_context_cont``) are accepted but unused -- the CM handle
+        does not maintain an LLM loop to inject context into.
+
+        Returns
+        -------
+        str
+            The ``interjection_id`` assigned to this interjection.  Pass it to
+            :pymeth:`unpin_interjection` to remove a pinned interjection later.
         """
-        await self.send_notification(
-            message,
+        if self._stopped:
+            return ""
+        event = NotificationInjectedEvent(
+            content=message,
             source="interjection",
-            interjection_id=interjection_id,
-            pinned=pinned,
+            target_conversation_id=self.conversation_id,
         )
+        await self.event_broker.publish(self._steering_channel, event.to_json())
+        return event.interjection_id
 
     async def unpin_interjection(self, interjection_id: str) -> dict:
         """
