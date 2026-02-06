@@ -127,22 +127,11 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
 
     _ensure_project_exists(api_key)
 
-    # Resolve liveview URL first (this can take a while)
-    try:
-        if _is_managed_vm():
-            vm_type = SESSION_DETAILS.assistant.desktop_mode
-            liveview_url = _resolve_vm_liveview(assistant_id, vm_type)
-        else:
-            # User's own desktop - no liveview URL to resolve
-            liveview_url = None
-    except Exception as e:
-        print(f"[Liveview] Error resolving liveview URL: {e}")
-        traceback.print_exc()
-        liveview_url = None
-
     # Update the existing record (created by adapter) with job_name and liveview_url
     try:
-        print(f"[debug_logger] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}")
+        print(
+            f"[debug_logger] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}"
+        )
         existing_logs = unify.get_logs(
             project="AssistantJobs",
             context="startup_events",
@@ -157,11 +146,8 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
 
         if existing_logs:
             log = existing_logs[0]
-            log.update_entries(job_name=job_name, liveview_url=liveview_url)
-            print(
-                f"[debug_logger] Updated record with job_name={job_name}, "
-                f"liveview_url={liveview_url}",
-            )
+            log.update_entries(job_name=job_name)
+            print(f"[debug_logger] Updated record with job_name={job_name}")
         else:
             # No record found - adapter's mark_job_running() must have failed
             # Log warning but don't fail; liveview just won't be tracked
@@ -173,6 +159,21 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     except Exception as e:
         print(f"[debug_logger] Error updating job record: {e}")
         traceback.print_exc()
+
+    # Resolve liveview URL first (this can take a while)
+    try:
+        if _is_managed_vm():
+            vm_type = SESSION_DETAILS.assistant.desktop_mode
+            liveview_url = _resolve_vm_liveview(assistant_id, vm_type)
+        else:
+            # User's own desktop - no liveview URL to resolve
+            liveview_url = None
+    except Exception as e:
+        print(f"[Liveview] Error resolving liveview URL: {e}")
+        traceback.print_exc()
+        liveview_url = None
+    log.update_entries(liveview_url=liveview_url)
+    print(f"[debug_logger] Updated record with liveview_url={liveview_url}")
 
 
 def _stop_vm(assistant_id: str, vm_type: str) -> None:
