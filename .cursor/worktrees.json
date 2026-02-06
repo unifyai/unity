@@ -1,5 +1,6 @@
 {
   "setup-worktree": [
+    "git submodule update --init --recursive",
     "cp \"$ROOT_WORKTREE_PATH/.env\" .env",
     "ln -sf \"$ROOT_WORKTREE_PATH/.venv\" .venv",
     "mkdir -p logs/pytest && ln -sf \"$ROOT_WORKTREE_PATH/logs/pytest\" logs/pytest/_root",
