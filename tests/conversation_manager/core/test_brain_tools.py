@@ -29,7 +29,6 @@ from unity.conversation_manager.domains.brain_tools import (
 )
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
-    _get_or_create_contact,
 )
 from unity.conversation_manager.domains.notifications import (
     NotificationBar,
@@ -336,8 +335,8 @@ class TestSendSmsTool:
     """Tests for send_sms tool."""
 
     @pytest.mark.asyncio
-    async def test_requires_recipient(self, brain_action_tools):
-        """Raises TypeError if recipient not provided."""
+    async def test_requires_contact_id(self, brain_action_tools):
+        """Raises TypeError if contact_id not provided."""
         with pytest.raises(TypeError):
             await brain_action_tools.send_sms(content="Hello")
 
@@ -348,12 +347,12 @@ class TestSendSmsTool:
         assert "SMS" in brain_action_tools.send_sms.__doc__
 
     @pytest.mark.asyncio
-    async def test_accepts_contact_id_as_recipient(
+    async def test_sends_sms_to_contact(
         self,
         brain_action_tools,
         mock_cm,
     ):
-        """Accepts integer contact_id as recipient."""
+        """Sends SMS when given a valid contact_id with phone number."""
         contact = {
             "contact_id": 5,
             "first_name": "Test",
@@ -364,23 +363,7 @@ class TestSendSmsTool:
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
         result = await brain_action_tools.send_sms(
-            recipient=5,
-            content="Hello",
-        )
-
-        assert result["status"] == "ok"
-
-    @pytest.mark.asyncio
-    async def test_accepts_phone_number_as_recipient(
-        self,
-        brain_action_tools,
-        mock_cm,
-    ):
-        """Accepts phone number string as recipient."""
-        # SimulatedContactManager will create the contact automatically
-        # when _get_or_create_contact is called with a phone number
-        result = await brain_action_tools.send_sms(
-            recipient="+1987654321",
+            contact_id=5,
             content="Hello",
         )
 
@@ -393,19 +376,17 @@ class TestSendSmsTool:
         mock_cm,
     ):
         """Returns error when contact has no phone number."""
-        # Set up contact without phone number
         contact_without_phone = {
             "contact_id": 5,
             "first_name": "NoPhone",
             "surname": "Person",
             "email_address": "nophone@example.com",
             "should_respond": True,
-            # No phone_number field
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
         result = await brain_action_tools.send_sms(
-            recipient=5,
+            contact_id=5,
             content="Hello",
         )
 
@@ -627,30 +608,6 @@ class TestSendEmailTool:
             assert mock_send.call_args.kwargs["to"] == ["alice@example.com"]
 
     @pytest.mark.asyncio
-    async def test_accepts_email_address_directly(
-        self,
-        brain_action_tools,
-        mock_cm,
-        sample_contacts,
-    ):
-        """Accepts email address strings directly in to list."""
-        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
-
-        with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
-        ) as mock_send:
-            mock_send.return_value = {"success": True, "id": "sent-email-123"}
-
-            result = await brain_action_tools.send_email(
-                to=["external@example.com"],
-                subject="Test",
-                body="Hello",
-            )
-
-            assert result["status"] == "ok"
-            assert mock_send.call_args.kwargs["to"] == ["external@example.com"]
-
-    @pytest.mark.asyncio
     async def test_returns_error_for_file_not_found(
         self,
         brain_action_tools,
@@ -798,7 +755,7 @@ class TestSendEmailTool:
         mock_cm,
         sample_contacts,
     ):
-        """Deduplicates when same recipient appears in multiple fields or formats."""
+        """Deduplicates when same contact_id appears multiple times."""
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
 
         with patch(
@@ -806,9 +763,9 @@ class TestSendEmailTool:
         ) as mock_send:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
-            # Provide same recipient as both contact_id and email string
+            # Provide same contact_id twice
             result = await brain_action_tools.send_email(
-                to=[1, "alice@example.com"],  # Both resolve to alice@example.com
+                to=[1, 1],  # Both resolve to alice@example.com
                 subject="Test",
                 body="Hello",
             )
@@ -825,11 +782,8 @@ class TestSendEmailTool:
         mock_cm,
         sample_contacts,
     ):
-        """Handles multiple recipients in to, cc, and bcc simultaneously."""
+        """Handles multiple contact_ids in to, cc, and bcc simultaneously."""
         _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
-
-        # SimulatedContactManager will create contacts for external email addresses
-        # when _get_or_create_contact is called with emails not in the store
 
         with patch(
             "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
@@ -837,27 +791,25 @@ class TestSendEmailTool:
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
             result = await brain_action_tools.send_email(
-                to=[1, "external1@example.com"],
-                cc=[2, "external2@example.com"],
-                bcc=["external3@example.com", "external4@example.com"],
+                to=[1],
+                cc=[2],
+                bcc=[1],  # duplicate with to — will deduplicate
                 subject="Team Update",
                 body="Update for everyone.",
             )
 
             assert result["status"] == "ok"
             mock_send.assert_called_once()
-            # Verify all fields populated
-            assert len(mock_send.call_args.kwargs["to"]) == 2
-            assert len(mock_send.call_args.kwargs["cc"]) == 2
-            assert len(mock_send.call_args.kwargs["bcc"]) == 2
+            assert len(mock_send.call_args.kwargs["to"]) == 1
+            assert len(mock_send.call_args.kwargs["cc"]) == 1
 
 
 class TestMakeCallTool:
     """Tests for make_call tool."""
 
     @pytest.mark.asyncio
-    async def test_requires_recipient(self, brain_action_tools):
-        """Raises TypeError if recipient not provided."""
+    async def test_requires_contact_id(self, brain_action_tools):
+        """Raises TypeError if contact_id not provided."""
         with pytest.raises(TypeError):
             await brain_action_tools.make_call()
 
@@ -867,12 +819,12 @@ class TestMakeCallTool:
         assert "call" in brain_action_tools.make_call.__doc__.lower()
 
     @pytest.mark.asyncio
-    async def test_accepts_contact_id_as_recipient(
+    async def test_calls_contact(
         self,
         brain_action_tools,
         mock_cm,
     ):
-        """Accepts integer contact_id as recipient."""
+        """Makes call when given a valid contact_id with phone number."""
         contact = {
             "contact_id": 5,
             "first_name": "Test",
@@ -882,20 +834,7 @@ class TestMakeCallTool:
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
-        result = await brain_action_tools.make_call(recipient=5)
-
-        assert result["status"] == "ok"
-
-    @pytest.mark.asyncio
-    async def test_accepts_phone_number_as_recipient(
-        self,
-        brain_action_tools,
-        mock_cm,
-    ):
-        """Accepts phone number string as recipient."""
-        # SimulatedContactManager will create the contact automatically
-        # when _get_or_create_contact is called with a phone number
-        result = await brain_action_tools.make_call(recipient="+1987654321")
+        result = await brain_action_tools.make_call(contact_id=5)
 
         assert result["status"] == "ok"
 
@@ -906,18 +845,16 @@ class TestMakeCallTool:
         mock_cm,
     ):
         """Returns error when contact has no phone number."""
-        # Set up contact without phone number
         contact_without_phone = {
             "contact_id": 5,
             "first_name": "NoPhone",
             "surname": "Person",
             "email_address": "nophone@example.com",
             "should_respond": True,
-            # No phone_number field
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
-        result = await brain_action_tools.make_call(recipient=5)
+        result = await brain_action_tools.make_call(contact_id=5)
 
         assert result["status"] == "error"
         assert "does not have" in result["error"]
@@ -1432,36 +1369,6 @@ class TestMakeSteeringTool:
         )
         result = await tool()
         assert "Error" in result["result"]
-
-
-# =============================================================================
-# _get_or_create_contact Helper Tests
-# =============================================================================
-
-
-class TestGetOrCreateContact:
-    """Tests for _get_or_create_contact helper function."""
-
-    @pytest.mark.asyncio
-    async def test_raises_without_contact_id_or_details(self, mock_cm):
-        """Raises ValueError if neither contact_id nor details provided."""
-        with pytest.raises(ValueError, match="Either contact_id or details"):
-            await _get_or_create_contact(mock_cm)
-
-    @pytest.mark.asyncio
-    async def test_retrieves_by_contact_id(self, mock_cm, sample_contacts):
-        """Retrieves contact by ID when provided."""
-        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
-        result = await _get_or_create_contact(mock_cm, contact_id=1)
-        assert result is not None
-        assert result["contact_id"] == 1
-
-    @pytest.mark.asyncio
-    async def test_returns_none_for_unknown_contact_id(self, mock_cm, sample_contacts):
-        """Returns None when contact_id not found."""
-        _setup_mock_contacts(mock_cm.contact_index, sample_contacts)
-        result = await _get_or_create_contact(mock_cm, contact_id=999)
-        assert result is None
 
 
 # =============================================================================
