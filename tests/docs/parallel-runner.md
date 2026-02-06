@@ -210,7 +210,6 @@ Settings are organized in two classes with inheritance:
 | `UNIFY_TESTS_RAND_PROJ` | bool | `false` | Use random project names (isolated per session) |
 | `UNIFY_TESTS_DELETE_PROJ_ON_START` | bool | `true` | Delete project before session starts (clean slate) |
 | `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` | bool | `false` | Delete random project when session exits |
-| `UNIFY_CACHE_BENCHMARK` | bool | `false` | Enable cache hit/miss benchmarking |
 | `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging |
 | `UNIFY_SKIP_SESSION_SETUP` | bool | `false` | Skip project/context creation (pre-done) |
 
