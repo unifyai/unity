@@ -535,7 +535,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    if SETTINGS.UNIFY_CACHE_STATS:
+    if SETTINGS.UNITY_CACHE_STATS:
         import unillm
 
         stats = unillm.get_cache_stats()
@@ -660,7 +660,7 @@ def pytest_runtest_teardown(item, nextitem=None):
 
 
 def pytest_html_results_summary(prefix, summary, postfix):
-    if SETTINGS.UNIFY_CACHE_STATS:
+    if SETTINGS.UNITY_CACHE_STATS:
         import unillm
 
         stats = unillm.get_cache_stats()
