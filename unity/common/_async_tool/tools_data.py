@@ -151,13 +151,20 @@ class ToolsData:
         # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
         # Set by the loop after the factory is initialised each turn.
         self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
+        self._completed_ask_handles: Dict[str, Callable] = {}
+        self._task_ask_keys: Dict[asyncio.Task, str] = {}
 
     def get_ask_tools(self) -> Dict[str, Callable]:
-        """Return a snapshot of currently available ``ask_*`` dynamic tools."""
+        """Return a snapshot of currently available ``ask_*`` dynamic tools.
+
+        Merges retained ask tools from completed tasks with live ones,
+        giving precedence to live entries when keys overlap.
+        """
+        result = dict(self._completed_ask_handles)
         dt = self._dynamic_tools_ref
-        if not dt or not isinstance(dt, dict):
-            return {}
-        return {k: v for k, v in dt.items() if k.startswith("ask_")}
+        if dt and isinstance(dt, dict):
+            result.update({k: v for k, v in dt.items() if k.startswith("ask_")})
+        return result
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
@@ -235,6 +242,12 @@ class ToolsData:
         self.info[coro] = metadata
 
     def pop_task(self, coro: asyncio.Task) -> ToolCallMetadata:
+        # Before removing, retain the ask_* dynamic tool handle for this task so handle.ask() can propagate post-completion.
+        ask_name = self._task_ask_keys.pop(coro, None)
+        if ask_name is not None:
+            dt = self._dynamic_tools_ref
+            if dt and isinstance(dt, dict) and ask_name in dt:
+                self._completed_ask_handles[ask_name] = dt[ask_name]
         self.pending.discard(coro)
         return self.info.pop(coro, None)
 

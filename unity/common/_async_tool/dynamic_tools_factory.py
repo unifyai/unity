@@ -311,7 +311,7 @@ class DynamicToolFactory:
         self,
         tool_context: _ToolContext,
         handle: Any,
-    ) -> None:
+    ) -> str | None:
         """
         Expose a synthetic helper to invoke the handle's `ask` method for inspection.
 
@@ -343,11 +343,15 @@ class DynamicToolFactory:
         with suppress(Exception):
             self._adopt_signature_and_annotations(getattr(handle, "ask"), _ask)
 
+        func_name = f"ask_{tool_context.fn_name}_{tool_context.safe_call_id}"
+
         self._register_tool(
-            func_name=f"ask_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            func_name=func_name,
             fallback_doc=_ask.__doc__,
             fn=_ask,
         )
+
+        return func_name
 
     def _create_clarify_tool(
         self,
@@ -650,7 +654,9 @@ class DynamicToolFactory:
 
         # Synthetic `ask` helper for LLM-accessible inspection
         if handle_available:
-            self._create_ask_tool(create_tool_ctx, handle)
+            result = self._create_ask_tool(create_tool_ctx, handle)
+            if result is not None:
+                self.tools_data._task_ask_keys[task] = result
 
         # Determine capability and current pause state; expose only one helper at a time
         cap_pause = (handle_available and hasattr(handle, "pause")) or (
