@@ -81,7 +81,7 @@ async def my_steerable_workflow(goal: str):
     assert isinstance(handle, SteerableToolHandle)
 
     # Clean up - stop the handle
-    handle.stop("test cleanup")
+    await handle.stop("test cleanup")
     try:
         await asyncio.wait_for(handle.result(), timeout=5.0)
     except Exception:
@@ -214,7 +214,7 @@ async def typed_steerable_workflow(goal: str) -> SteerableHandle:
     assert isinstance(handle, SteerableHandle)
 
     # Clean up
-    handle.stop("cleanup")
+    await handle.stop("cleanup")
     try:
         await asyncio.wait_for(handle.result(), timeout=5.0)
     except Exception:
@@ -283,7 +283,7 @@ async def codeact_workflow(goal: str) -> SteerableHandle:
     assert hasattr(handle, "result")
 
     # Clean up - stop the actor
-    handle.stop("test cleanup")
+    await handle.stop("test cleanup")
     try:
         await asyncio.wait_for(handle.result(), timeout=10.0)
     except Exception:
