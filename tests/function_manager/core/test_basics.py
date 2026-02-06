@@ -197,7 +197,7 @@ def test_add_mixed_new_and_duplicate():
 )
 def test_validation_errors(source: str, exp_msg: str):
     fm = FunctionManager()
-    results = fm.add_functions(implementations=source)
+    results = fm.add_functions(implementations=source, raise_on_error=False)
     assert any(
         "error" in str(v) and exp_msg in str(v) for v in results.values()
     ), f"Expected error containing '{exp_msg}' in results: {results}"
