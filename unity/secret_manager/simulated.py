@@ -27,7 +27,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..constants import LOGGER
+from ..logger import LOGGER
 
 
 class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):

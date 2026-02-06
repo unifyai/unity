@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common._async_tool.messages import forward_handle_call
-from ..constants import LOGGER
+from ..logger import LOGGER
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,

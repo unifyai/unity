@@ -132,7 +132,7 @@ class SimulatedLog:
     @staticmethod
     def log_request(kind: str, label: str, text: str = "") -> None:
         try:
-            from unity.constants import LOGGER  # noqa: WPS433
+            from unity.logger import LOGGER  # noqa: WPS433
         except Exception:
             return
         try:
@@ -152,7 +152,7 @@ class SimulatedLog:
     def log_clarification_request(label: str, question: str) -> None:
         """Emit a standardised clarification-request log line."""
         try:
-            from unity.constants import LOGGER  # noqa: WPS433
+            from unity.logger import LOGGER  # noqa: WPS433
         except Exception:
             return
         try:
@@ -165,7 +165,7 @@ class SimulatedLog:
     def log_clarification_answer(label: str, answer: str) -> None:
         """Emit a standardised clarification-answer log line."""
         try:
-            from unity.constants import LOGGER  # noqa: WPS433
+            from unity.logger import LOGGER  # noqa: WPS433
         except Exception:
             return
         try:
@@ -178,7 +178,7 @@ class SimulatedLog:
     def log_notification(label: str, message: str) -> None:
         """Emit a standardised notification log line."""
         try:
-            from unity.constants import LOGGER  # noqa: WPS433
+            from unity.logger import LOGGER  # noqa: WPS433
         except Exception:
             return
         try:
@@ -199,7 +199,7 @@ def maybe_tool_log_scheduled(segment: str, method: str, args: dict):
     try:
         if SimulatedLineage.has_outer():
             return None
-        from unity.constants import LOGGER  # noqa: WPS433
+        from unity.logger import LOGGER  # noqa: WPS433
         import json as _json  # noqa: WPS433
         import time as _time  # noqa: WPS433
 
@@ -224,7 +224,7 @@ def maybe_tool_log_scheduled_with_label(label: str, method: str, args: dict):
     try:
         if SimulatedLineage.has_outer():
             return None
-        from unity.constants import LOGGER  # noqa: WPS433
+        from unity.logger import LOGGER  # noqa: WPS433
         import json as _json  # noqa: WPS433
         import time as _time  # noqa: WPS433
 
@@ -253,7 +253,7 @@ def maybe_tool_log_completed(
     try:
         if SimulatedLineage.has_outer():
             return
-        from unity.constants import LOGGER  # noqa: WPS433
+        from unity.logger import LOGGER  # noqa: WPS433
         import json as _json  # noqa: WPS433
         import time as _time  # noqa: WPS433
 
@@ -292,7 +292,7 @@ async def simulated_llm_roundtrip(
         the LLM's response_format is set before generation and reset after.
     """
     try:
-        from unity.constants import LOGGER  # noqa: WPS433
+        from unity.logger import LOGGER  # noqa: WPS433
     except Exception:
         LOGGER = None  # type: ignore
 
@@ -400,7 +400,7 @@ class SimulatedHandleMixin:
 
     def _log_stop(self, reason: str | None) -> None:
         try:
-            from unity.constants import LOGGER  # noqa: WPS433
+            from unity.logger import LOGGER  # noqa: WPS433
         except Exception:
             return
         try:

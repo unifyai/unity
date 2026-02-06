@@ -21,7 +21,7 @@ from ..common.simulated import (
 from .base import BaseWebSearcher
 from ..common.async_tool_loop import SteerableToolHandle
 import functools
-from ..constants import LOGGER
+from ..logger import LOGGER
 
 
 class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):

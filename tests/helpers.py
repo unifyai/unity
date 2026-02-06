@@ -142,7 +142,7 @@ def _get_llm_io_dir() -> Path | None:
         logs/unillm/{datetime}_{socket_name}/{session_id}/
     """
     try:
-        from unity.constants import SESSION_ID
+        from unity.logger import SESSION_ID
     except ImportError:
         return None
 

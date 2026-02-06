@@ -8,7 +8,7 @@ import functools
 from typing import Any, Optional, Type
 from pydantic import BaseModel
 from unity.manager_registry import ManagerRegistry
-from unity.constants import LOGGER
+from unity.logger import LOGGER
 from unity.common.simulated import (
     SimulatedLineage,
     SimulatedLog,
