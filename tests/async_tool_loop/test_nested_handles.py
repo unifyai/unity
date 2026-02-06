@@ -411,15 +411,15 @@ async def test_clarification_nested_handle(llm_config):
     # ── top-level loop – the assistant must answer the clar request ——––
     client = new_llm_client(**llm_config)
     client.set_system_message(
-        "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
-        "If waiting is still needed, call the `wait` helper; do not reply to the user yet.\n"
-        "Finally say 'all done'.",
+        "Call `outer_tool` (once only).  When it asks a question, answer with 'blue' via the clarify helper.\n"
+        "If waiting is still needed, call the `wait` helper; do not reply yet.\n"
+        "Once outer_tool completes, say 'all done'.",
     )
 
     top_handle = start_async_tool_loop(
         client,
         message="start",
-        tools={"outer_tool": outer_tool},
+        tools={"outer_tool": ToolSpec(fn=outer_tool, max_total_calls=1)},
         max_steps=20,
         timeout=240,
     )
