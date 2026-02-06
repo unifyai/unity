@@ -389,8 +389,10 @@ async def add_unify_message_attachments(
                         url = None
 
                 # Download from the URL
+                # Don't pass auth headers to signed URLs - they're self-authenticating
                 if url:
-                    async with session.get(url, headers=headers) as resp:
+                    async with session.get(url) as resp:
+                        resp.raise_for_status()
                         data = await resp.read()
                 else:
                     # No URL available - use empty placeholder
