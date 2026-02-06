@@ -889,9 +889,9 @@ class TestBidirectionalCommunication:
             lambda: len(server._pending_messages) >= 1,
             timeout=2.0,
         )
-        assert len(server._pending_messages) == 1, (
-            "Server should buffer the message when no clients are connected"
-        )
+        assert (
+            len(server._pending_messages) == 1
+        ), "Server should buffer the message when no clients are connected"
 
         # Now a client connects (simulates subprocess startup)
         client = CallEventSocketClient(server.socket_path)
