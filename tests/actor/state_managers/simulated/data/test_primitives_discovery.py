@@ -72,31 +72,34 @@ def test_data_manager_has_expected_methods():
 
 
 def test_data_manager_metadata_registered():
-    """DataManager metadata should be in MANAGER_METADATA."""
-    from unity.function_manager.primitives import MANAGER_METADATA
+    """DataManager metadata should be in ToolSurfaceRegistry."""
+    from unity.function_manager.primitives import get_registry
 
-    assert "data" in MANAGER_METADATA
-    meta = MANAGER_METADATA["data"]
-    assert meta["domain"] == "Data Operations & Pipelines"
-    assert "filter" in meta["methods"]
-    assert "search" in meta["methods"]
-    assert "reduce" in meta["methods"]
-
-
-def test_data_manager_in_primitive_classes():
-    """DataManager should be in PRIMITIVE_CLASSES."""
-    from unity.function_manager.primitives import PRIMITIVE_CLASSES
-    from unity.data_manager.data_manager import DataManager
-
-    assert DataManager in PRIMITIVE_CLASSES
+    registry = get_registry()
+    spec = registry.get_manager_spec("data")
+    assert spec is not None
+    assert spec.domain == "Data Operations & Pipelines"
+    assert "filter" in spec.method_descriptions
+    assert "search" in spec.method_descriptions
+    assert "reduce" in spec.method_descriptions
 
 
-def test_data_manager_class_to_getter():
-    """DataManager should have entry in _CLASS_TO_GETTER."""
-    from unity.function_manager.primitives import _CLASS_TO_GETTER
+def test_data_manager_in_primitive_registry():
+    """DataManager should be registered in ToolSurfaceRegistry."""
+    from unity.function_manager.primitives import get_registry
 
-    assert "DataManager" in _CLASS_TO_GETTER
-    assert _CLASS_TO_GETTER["DataManager"] == "get_data_manager"
+    registry = get_registry()
+    spec = registry.get_manager_spec("data")
+    assert spec is not None
+    assert spec.primitive_class_path == "unity.data_manager.data_manager.DataManager"
+
+
+def test_data_manager_alias_to_getter():
+    """DataManager should have entry in _ALIAS_TO_GETTER."""
+    from unity.function_manager.primitives.runtime import _ALIAS_TO_GETTER
+
+    assert "data" in _ALIAS_TO_GETTER
+    assert _ALIAS_TO_GETTER["data"] == "get_data_manager"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -179,9 +182,9 @@ def test_async_patching_is_idempotent():
 
     dm = ManagerRegistry.get_data_manager()
 
-    # Create two wrappers
-    wrapper1 = _create_async_wrapper(dm, "DataManager")
-    wrapper2 = _create_async_wrapper(dm, "DataManager")
+    # Create two wrappers (using manager alias, not class name)
+    wrapper1 = _create_async_wrapper(dm, "data")
+    wrapper2 = _create_async_wrapper(dm, "data")
 
     # Both wrappers should work
     assert asyncio.iscoroutinefunction(wrapper1.filter)
