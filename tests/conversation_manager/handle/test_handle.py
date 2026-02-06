@@ -188,16 +188,16 @@ class TestHandleInitialization:
 
 
 # =============================================================================
-# Unit Tests: send_notification and interject
+# Unit Tests: interject
 # =============================================================================
 
 
-class TestSendNotification:
-    """Tests for send_notification method."""
+class TestInterject:
+    """Tests for interject method (publishes NotificationInjectedEvent)."""
 
     @pytest.mark.asyncio
-    async def test_send_notification_publishes_event(self):
-        """send_notification publishes NotificationInjectedEvent to broker."""
+    async def test_interject_publishes_event(self):
+        """interject publishes NotificationInjectedEvent to the steering channel."""
         mock_broker = AsyncMock()
         mock_broker.publish = AsyncMock(return_value=1)
         mock_cm = MagicMock()
@@ -211,55 +211,29 @@ class TestSendNotification:
             conversation_manager=mock_cm,
         )
 
-        result = await handle.send_notification(
-            "Task completed successfully",
-            source="test_system",
-        )
+        interjection_id = await handle.interject("Task completed successfully")
 
-        assert result["status"] == "ok"
-        assert "interjection_id" in result
+        # Returns a non-empty interjection_id
+        assert isinstance(interjection_id, str) and interjection_id
+
         mock_broker.publish.assert_called_once()
 
-        # Verify the published event
+        # Verify the published event goes to the steering channel
         call_args = mock_broker.publish.call_args
         channel = call_args[0][0]
         assert channel == "app:comms:steering"
 
-    @pytest.mark.asyncio
-    async def test_send_notification_with_pinned(self):
-        """send_notification respects pinned parameter."""
-        mock_broker = AsyncMock()
-        mock_broker.publish = AsyncMock(return_value=1)
-        mock_cm = MagicMock()
-        mock_cm.call_manager = MagicMock()
-        mock_cm.contact_index = MagicMock()
-
-        handle = ConversationManagerHandle(
-            event_broker=mock_broker,
-            conversation_id="conv_123",
-            contact_id=1,
-            conversation_manager=mock_cm,
-        )
-
-        result = await handle.send_notification(
-            "Important reminder",
-            pinned=True,
-            interjection_id="custom_id_123",
-        )
-
-        assert result["status"] == "ok"
-        assert result["interjection_id"] == "custom_id_123"
-
-        # Verify pinned flag was included
-        call_args = mock_broker.publish.call_args
+        # Verify event payload contains the message
         message_json = call_args[0][1]
         event_data = json.loads(message_json)
-        assert event_data["payload"]["pinned"] is True
+        assert event_data["payload"]["content"] == "Task completed successfully"
+        assert event_data["payload"]["source"] == "interjection"
 
     @pytest.mark.asyncio
-    async def test_send_notification_fails_when_stopped(self):
-        """send_notification returns error when handle is stopped."""
+    async def test_interject_returns_empty_when_stopped(self):
+        """interject returns empty string and does nothing when handle is stopped."""
         mock_broker = AsyncMock()
+        mock_broker.publish = AsyncMock(return_value=1)
         mock_cm = MagicMock()
         mock_cm.call_manager = MagicMock()
         mock_cm.contact_index = MagicMock()
@@ -272,18 +246,14 @@ class TestSendNotification:
         )
         await handle.stop(reason="test")
 
-        result = await handle.send_notification("Should fail")
+        result = await handle.interject("Should be ignored")
 
-        assert result["status"] == "error"
-        assert "stopped" in result["message"].lower()
-
-
-class TestInterject:
-    """Tests for interject method (wrapper around send_notification)."""
+        assert result == ""
+        mock_broker.publish.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_interject_delegates_to_send_notification(self):
-        """interject calls send_notification with correct parameters."""
+    async def test_interject_accepts_extra_kwargs(self):
+        """interject tolerates extra kwargs without crashing."""
         mock_broker = AsyncMock()
         mock_broker.publish = AsyncMock(return_value=1)
         mock_cm = MagicMock()
@@ -297,11 +267,13 @@ class TestInterject:
             conversation_manager=mock_cm,
         )
 
-        await handle.interject(
+        # Should not raise even with plumbing kwargs
+        interjection_id = await handle.interject(
             "User correction incoming",
-            pinned=True,
+            _parent_chat_context_cont=[{"role": "user", "content": "hi"}],
         )
 
+        assert isinstance(interjection_id, str) and interjection_id
         mock_broker.publish.assert_called_once()
 
 
@@ -1420,15 +1392,9 @@ async def test_unpin_interjection_publishes_event(initialized_cm):
         conversation_manager=cm.cm,
     )
 
-    # First pin something via send_notification (interject returns None)
-    pin_result = await handle.send_notification(
-        "Pinned message",
-        source="interjection",
-        pinned=True,
-    )
-    interjection_id = pin_result["interjection_id"]
-
-    # Now unpin
+    # Interject to get a real interjection_id, then unpin it
+    interjection_id = await handle.interject("Pinned reminder")
+    assert interjection_id  # non-empty
     unpin_result = await handle.unpin_interjection(interjection_id)
 
     assert unpin_result["status"] == "ok"

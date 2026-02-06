@@ -82,8 +82,7 @@ Key methods:
 
 A steerable handle that external components (e.g., the Actor) use to interact with the live conversation:
 - `ask(question, response_format)` — Ask the user a question and wait for their answer
-- `interject(message)` — Inject a message into the conversation
-- `send_notification(content)` — Send a notification to the Main CM Brain
+- `interject(message)` — Inject information into the conversation (publishes a steering event)
 - `get_full_transcript()` — Retrieve recent conversation history
 
 ### `EventHandler` (`domains/event_handlers.py`)

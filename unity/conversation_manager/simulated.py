@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from typing import Optional, Type, Any
 from pydantic import BaseModel
 import unillm
@@ -101,54 +100,13 @@ class SimulatedConversationManagerHandle(
 ### Core Responsibilities
 1.  **Maintain Internal State:** You must remember the conversation history, the user's mood, and any notifications you receive.
 2.  **Respond to `ask`:** When you receive a question via `ask`, provide a plausible, in-character response from the simulated user. The response should be concise and directly answer the question.
-3.  **Acknowledge `send_notification`:** When a notification is sent, incorporate its content into your internal state and provide a simple JSON confirmation. For example, if you receive "Task 'X' is complete," your subsequent `ask` responses should reflect this knowledge.
+3.  **Acknowledge `interject`:** When an interjection is received, incorporate its content into your internal state. For example, if you receive "Task 'X' is complete," your subsequent `ask` responses should reflect this knowledge.
 4.  **Adhere to Simulation Guidance:** {self._simulation_guidance or "No specific guidance provided."}
 
 ### Response Formats
 - For `ask` calls, provide a direct, first-person answer as the simulated user.
-- For `send_notification` calls, respond with a JSON object like: `{{"status": "ok", "notification_id": "...", "timestamp": "..."}}`
+- For `interject` calls, acknowledge and incorporate the information into your state.
 """
-
-    # ─────────────────────────────────────────────────────────────
-    # Conversation-Specific Operations (Minimal Set)
-    # ─────────────────────────────────────────────────────────────
-
-    async def send_notification(
-        self,
-        content: str,
-        *,
-        source: str = "system",
-        interjection_id: Optional[str] = None,
-        pinned: bool = False,
-    ) -> dict:
-        """Simulates sending a notification to the conversation."""
-        if self._stopped:
-            return {"status": "error", "message": "Handle is stopped."}
-
-        # Generate ID if not provided
-        if interjection_id is None:
-            interjection_id = str(uuid.uuid4().hex[:12])
-
-        prompt = f"""A notification has been sent to the conversation. Acknowledge it by updating your internal state and returning a JSON confirmation.
-- **Content:** {content}
-- **Source:** {source}
-- **Pinned:** {pinned}
-- **Interjection ID:** {interjection_id}
-"""
-        response = await self._llm.generate(prompt)
-
-        try:
-            result = json.loads(response)
-            result["interjection_id"] = interjection_id
-            return result
-        except json.JSONDecodeError:
-            # Fallback for non-JSON LLM responses
-            return {
-                "status": "ok",
-                "interjection_id": interjection_id,
-                "timestamp": "2024-01-01T00:00:00Z",
-                "acknowledged": True,
-            }
 
     # ─────────────────────────────────────────────────────────────
     # Standard SteerableToolHandle Methods
@@ -254,28 +212,30 @@ class SimulatedConversationManagerHandle(
 
         return _AnswerHandle(self._llm, prompt, response_format, ask_label)
 
-    async def interject(
-        self,
-        message: str,
-        *,
-        pinned: bool = False,
-        interjection_id: Optional[str] = None,
-    ) -> None:
-        """
-        Send an interjection to the conversation.
+    async def interject(self, message: str, **kwargs) -> str:
+        """Provide additional information or instructions to the conversation.
 
-        Args:
-            message: The message content to inject
-            pinned: If True, the interjection persists for the entire session
-            interjection_id: Optional explicit ID (auto-generated if not provided)
+        Feeds ``message`` into the stateful LLM so subsequent ``ask`` calls
+        reflect the new information.  Plumbing kwargs (e.g.
+        ``_parent_chat_context_cont``) are accepted but unused.
+
+        Returns
+        -------
+        str
+            A synthetic ``interjection_id`` for parity with the real handle.
         """
+        if self._stopped:
+            return ""
         self._log_interject(message)
-        await self.send_notification(
-            message,
-            source="external_interjection",
-            interjection_id=interjection_id,
-            pinned=pinned,
+        prompt = (
+            "An interjection has been received. Incorporate the following "
+            "information into your internal state for future questions.\n"
+            f"- **Content:** {message}"
         )
+        await self._llm.generate(prompt)
+        import uuid as _uuid
+
+        return _uuid.uuid4().hex[:12]
 
     async def unpin_interjection(self, interjection_id: str) -> dict:
         """

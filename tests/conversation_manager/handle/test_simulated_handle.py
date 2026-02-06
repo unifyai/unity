@@ -97,25 +97,21 @@ async def test_stateful_memory_serial_asks():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 3.  Notification then ask – state propagated
+# 3.  Interject then ask – state propagated
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stateful_notification_then_ask():
+async def test_stateful_interject_then_ask():
     """
-    A .send_notification() call should influence a subsequent .ask() call.
+    A .interject() call should influence a subsequent .ask() call.
     """
     cm_handle = SimulatedConversationManagerHandle(
         assistant_id="test_assistant",
         contact_id="test_contact",
     )
-    notification_content = "The user's meeting has been rescheduled to 4 PM."
 
     # 1) Tell the manager about a schedule change
-    await cm_handle.send_notification(
-        notification_content,
-        source="test_system",
-    )
+    await cm_handle.interject("The user's meeting has been rescheduled to 4 PM.")
 
     # 2) Ask about the meeting time – it should know about the update
     h_q = await cm_handle.ask("What time is my meeting now?")
@@ -123,7 +119,7 @@ async def test_stateful_notification_then_ask():
 
     assert (
         "4 pm" in answer or "4:00" in answer
-    ), "Answer should reflect the notification"
+    ), "Answer should reflect the interjected information"
 
 
 # ────────────────────────────────────────────────────────────────────────────
