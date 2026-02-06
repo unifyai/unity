@@ -880,7 +880,7 @@ class TestMakeCallTool:
 
         guidance_text = "Confirm the Thursday 3pm meeting"
         result = await brain_action_tools.make_call(
-            recipient=5,
+            contact_id=5,
             context=guidance_text,
         )
 
@@ -906,7 +906,7 @@ class TestMakeCallTool:
         # Preset to empty to track whether it's written
         mock_cm.call_manager.initial_call_guidance = ""
 
-        result = await brain_action_tools.make_call(recipient=5)
+        result = await brain_action_tools.make_call(contact_id=5)
 
         assert result["status"] == "ok"
         # Should remain empty — the code only writes when context is truthy
