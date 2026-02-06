@@ -1162,6 +1162,175 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume(llm_config):
 
 
 @pytest.mark.asyncio
+async def test_outer_handle_ask_propagates_to_inner_ask():
+    """
+    ``outer_handle.ask()`` should propagate to the in-flight inner
+    handle's ``ask()``, not just inspect the outer transcript.
+    """
+
+    llm_config = {
+        "model": "gpt-5.2@openai",
+        "reasoning_effort": "high",
+        "service_tier": "priority",
+    }
+
+    ask_calls = {"count": 0}
+    inner_gate = asyncio.Event()
+
+    async def inner_task() -> str:
+        await asyncio.wait_for(inner_gate.wait(), timeout=120)
+        return "solver-result"
+
+    inner_task.__name__ = "inner_task"
+    inner_task.__qualname__ = "inner_task"
+
+    async def solver() -> AsyncToolLoopHandle:
+        inner_client = new_llm_client(**llm_config)
+        inner_client.set_system_message(
+            "1️⃣ Call `inner_task`.\n"
+            "2️⃣ Wait for it to finish.\n"
+            "3️⃣ Reply with exactly 'done'.",
+        )
+        h = start_async_tool_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_task": inner_task},
+            max_steps=10,
+            timeout=120,
+        )
+
+        orig_ask = h.ask
+
+        async def _wrapped_ask(question, **kwargs):
+            ask_calls["count"] += 1
+            return await orig_ask(question, **kwargs)
+
+        setattr(h, "ask", _wrapped_ask)
+        return h
+
+    solver.__name__ = "solver"
+    solver.__qualname__ = "solver"
+
+    client = new_llm_client(**llm_config)
+    client.set_system_message(
+        "Call `solver` with no arguments, then wait until it completes.",
+    )
+
+    outer_handle = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"solver": solver},
+        max_steps=20,
+        timeout=240,
+    )
+
+    await _wait_for_tool_request(client, "solver")
+    await _wait_for_tool_result(client, tool_name="solver", min_results=1)
+
+    # Call ask() on the OUTER handle — should propagate to inner handle's ask()
+    ask_handle = await outer_handle.ask("How is it going with the solver?")
+    ask_result = await ask_handle.result()
+    assert ask_result is not None, "ask() should return a result"
+
+    inner_gate.set()
+    await outer_handle.result()
+
+    assert (
+        ask_calls["count"] >= 1
+    ), "inner handle ask() was not called — outer_handle.ask() did not propagate"
+
+
+@pytest.mark.asyncio
+async def test_outer_handle_ask_propagates_to_completed_inner_ask(llm_config):
+    """
+    After the solver completes, ``outer_handle.ask()`` should still
+    propagate to the completed inner handle's ``ask()``.
+
+    The solver performs opaque multi-step reasoning (fetch_data →
+    compute_answer) invisible from the outer transcript — only the
+    inner handle's transcript can answer "how did you get to 42?".
+    """
+
+    ask_calls = {"count": 0}
+
+    def fetch_data() -> str:
+        """Retrieve the raw dataset needed for the computation."""
+        return "raw data: [10, 15, 17]"
+
+    def compute_answer(data: str) -> str:
+        """Compute the final numeric answer from the fetched data.
+
+        Parameters
+        ----------
+        data : str
+            The raw data string returned by fetch_data.
+        """
+        return "42"
+
+    async def solver() -> AsyncToolLoopHandle:
+        inner_client = new_llm_client(**llm_config)
+        inner_client.set_system_message(
+            "You are a solver. Perform these steps in order:\n"
+            "1️⃣ Call `fetch_data` to get the raw dataset.\n"
+            "2️⃣ Call `compute_answer` passing the data you received.\n"
+            "3️⃣ Reply with **only** the numeric result returned by "
+            "`compute_answer` — nothing else, no explanation.",
+        )
+        h = start_async_tool_loop(
+            client=inner_client,
+            message="start",
+            tools={
+                "fetch_data": fetch_data,
+                "compute_answer": compute_answer,
+            },
+            max_steps=10,
+            timeout=120,
+        )
+
+        orig_ask = h.ask
+
+        async def _wrapped_ask(question, **kwargs):
+            ask_calls["count"] += 1
+            return await orig_ask(question, **kwargs)
+
+        setattr(h, "ask", _wrapped_ask)
+        return h
+
+    solver.__name__ = "solver"
+    solver.__qualname__ = "solver"
+
+    client = new_llm_client(**llm_config)
+    client.set_system_message(
+        "Call `solver` with no arguments, then wait until it completes.\n"
+        "Once it completes, reply with exactly 'all done'.",
+    )
+
+    outer_handle = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"solver": solver},
+        max_steps=20,
+        timeout=240,
+    )
+
+    final_reply = await outer_handle.result()
+    assert final_reply is not None, "Outer loop should complete with a response"
+
+    # Now ask *after* the loop has completed.  The outer transcript only
+    # contains "solver → 42" — no trace of fetch_data / compute_answer.
+    # Answering this meaningfully requires delegating to the inner handle.
+    ask_handle = await outer_handle.ask(
+        "What steps did the solver take to reach 42?",
+    )
+    ask_result = await ask_handle.result()
+    assert ask_result is not None, "ask() should return a result"
+
+    assert (
+        ask_calls["count"] >= 1
+    ), "inner handle ask() was not called — outer_handle.ask() did not propagate"
+
+
+@pytest.mark.asyncio
 @_handle_project
 async def test_outer_stop_calls_inner_stop_on_cancel(llm_config):
     """
