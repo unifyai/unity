@@ -1162,17 +1162,11 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume(llm_config):
 
 
 @pytest.mark.asyncio
-async def test_outer_handle_ask_propagates_to_inner_ask():
+async def test_outer_handle_ask_propagates_to_inner_ask(llm_config):
     """
     ``outer_handle.ask()`` should propagate to the in-flight inner
     handle's ``ask()``, not just inspect the outer transcript.
     """
-
-    llm_config = {
-        "model": "gpt-5.2@openai",
-        "reasoning_effort": "high",
-        "service_tier": "priority",
-    }
 
     ask_calls = {"count": 0}
     inner_gate = asyncio.Event()
