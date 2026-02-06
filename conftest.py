@@ -18,11 +18,11 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 # Early Environment Setup (MUST be before any unity/unify imports)
 # ─────────────────────────────────────────────────────────────────────────────
-# Set UNIFY_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
+# Set UNILLM_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
 # This ensures all worktrees share the same LLM cache (.cache.ndjson) for
-# consistent cache hits. This must happen before unify is imported because
+# consistent cache hits. This must happen before unillm is imported because
 # the cache directory is captured at class definition time.
-if "UNIFY_CACHE_DIR" not in os.environ:
+if "UNILLM_CACHE_DIR" not in os.environ:
     repo_root = Path(__file__).resolve().parent
     git_path = repo_root / ".git"
     # Check if we're in a worktree (.git is a file, not a directory)
@@ -38,7 +38,7 @@ if "UNIFY_CACHE_DIR" not in os.environ:
                     repo_root = main_repo
         except Exception:
             pass  # Fall back to current repo root
-    os.environ["UNIFY_CACHE_DIR"] = str(repo_root)
+    os.environ["UNILLM_CACHE_DIR"] = str(repo_root)
 
 from unity.settings import SETTINGS
 
