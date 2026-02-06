@@ -230,36 +230,11 @@ _create_orchestra_log_symlinks() {
 
   [[ -f "$config_file" ]] || return 0
 
-  local current_log_dir current_otel_dir
-  current_log_dir=$(grep "^ORCHESTRA_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
+  local current_otel_dir
   current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
 
   # Ensure logs/ directory exists in worktree
   mkdir -p "$REPO_ROOT/logs"
-
-  # Symlink logs/orchestra/ → main repo's logs/orchestra/
-  # ORCHESTRA_LOG_DIR includes timestamp subfolder, so we go up one level
-  if [[ -n "$current_log_dir" ]]; then
-    local target_dir
-    target_dir=$(dirname "$current_log_dir")  # Strip timestamp subfolder
-    local link_path="$REPO_ROOT/logs/orchestra"
-
-    if [[ -L "$link_path" ]]; then
-      # Symlink exists - update if pointing elsewhere
-      local current_target
-      current_target=$(readlink "$link_path")
-      if [[ "$current_target" != "$target_dir" ]]; then
-        rm "$link_path"
-        ln -s "$target_dir" "$link_path"
-        echo "  Updated symlink: logs/orchestra → $target_dir"
-      fi
-    elif [[ ! -e "$link_path" ]]; then
-      # Create new symlink
-      ln -s "$target_dir" "$link_path"
-      echo "  Created symlink: logs/orchestra → $target_dir"
-    fi
-    # If it's a real directory, leave it alone (user may have customized)
-  fi
 
   # Symlink logs/all/ → main repo's logs/all/ (for OTEL trace correlation)
   # This ensures unity/unify/unillm spans from worktree end up in same dir as orchestra spans
@@ -308,10 +283,10 @@ if _is_local_url "${ORCHESTRA_URL:-}"; then
     export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
     export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
 
-    # Set up log directories (created lazily by local.sh)
-    _orchestra_logs_dir="$REPO_ROOT/logs/orchestra"
-    _timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
-    export ORCHESTRA_LOG_DIR="$_orchestra_logs_dir/$_timestamp"
+    # Set up OTEL log directory for cross-repo trace correlation (logs/all/).
+    # Note: ORCHESTRA_LOG_DIR (per-request JSON traces to logs/orchestra/) is
+    # intentionally NOT set. Those traces duplicate the OTEL spans in logs/all/
+    # and add ~370MB to CI artifacts. Orchestra's own CI still uses it.
     export ORCHESTRA_OTEL_LOG_DIR="$REPO_ROOT/logs/all"
 
     # Check if local orchestra is already running
@@ -322,15 +297,10 @@ if _is_local_url "${ORCHESTRA_URL:-}"; then
 
       if [[ -f "$_config_file" ]]; then
         # Read current config and compare with desired logging dirs
-        _current_log_dir=$(grep "^ORCHESTRA_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
         _current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
 
         # Check if OTEL dir points to our logs/all directory
         if [[ "$_current_otel_dir" != "$ORCHESTRA_OTEL_LOG_DIR" ]]; then
-          _needs_restart=true
-        fi
-        # Check if per-request log dir points inside our logs/orchestra directory
-        if [[ -z "$_current_log_dir" || "$_current_log_dir" != "$_orchestra_logs_dir"/* ]]; then
           _needs_restart=true
         fi
       else
@@ -362,12 +332,10 @@ if _is_local_url "${ORCHESTRA_URL:-}"; then
         fi
       else
         # Logging already configured correctly, reuse existing instance
-        # Update ORCHESTRA_LOG_DIR to match what's currently configured
-        export ORCHESTRA_LOG_DIR="$_current_log_dir"
         echo "Local orchestra already running with logging enabled: $_local_url"
         export ORCHESTRA_URL="$_local_url"
       fi
-      unset _config_file _needs_restart _current_log_dir _current_otel_dir
+      unset _config_file _needs_restart _current_otel_dir
     else
       # Not running - need to start it
       # Stop any stale orchestra state first
@@ -410,7 +378,7 @@ if _is_local_url "${ORCHESTRA_URL:-}"; then
     echo "Warning: Orchestra script not found at $_local_orchestra_script" >&2
     echo "  Set ORCHESTRA_REPO_PATH or clone orchestra repo to ../orchestra" >&2
   fi
-  unset _local_url _orchestra_logs_dir _timestamp
+  unset _local_url
 else
   echo "Using remote orchestra: $ORCHESTRA_URL"
 fi
