@@ -1794,14 +1794,14 @@ async def async_tool_loop_inner(
                 policy_tools_norm = tools_data.normalized
 
             # Force tool usage when a response_format is required so the model
-            # must submit the final JSON via the strongly-typed `final_answer` tool.
+            # must submit the final JSON via the response-submission tool.
             # This preserves flexible tool use while guaranteeing typed completion.
             if response_format is not None and tool_choice_mode != "required":
                 tool_choice_mode = "required"
 
             # When tools are in-flight, force tool_choice=required so the LLM
             # must call a real tool (check_status_*, cancel_*, etc.) rather
-            # than ending the loop.  `final_answer` is masked in this
+            # than ending the loop.  The response tool is masked in this
             # situation (see below), so the only options are real tools.
             _has_pending_tools = bool(tools_data.pending)
             if _has_pending_tools and tool_choice_mode != "required":
@@ -1820,21 +1820,35 @@ async def async_tool_loop_inner(
                 if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
 
-            # Inject `final_answer` tool when response_format is set AND no
-            # other tools are in-flight.  `final_answer` is semantically
-            # equivalent to "end the loop" (the tool-call analogue of a bare
-            # text response).  When tools are still running we intentionally
-            # mask it so the LLM must interact with them (via check_status_*,
+            # Inject the response-submission tool when response_format is set
+            # AND no other tools are in-flight.  This tool is semantically
+            # "end the current turn" (the tool-call analogue of a bare text
+            # response).  When tools are still running we intentionally mask
+            # it so the LLM must interact with them (via check_status_*,
             # cancel_*, etc.) rather than silently killing them.
+            #
+            # Name varies by mode:
+            #   persist=True  → "send_response"  (signals turn completion,
+            #                    loop continues waiting for next interjection)
+            #   persist=False → "final_response"  (terminates the loop)
+            _response_tool_name = "send_response" if persist else "final_response"
+
             if response_format is not None and not _has_pending_tools:
-                _final_answer_desc = (
-                    "Submit your final answer in the required JSON format. "
-                    "The answer can be a complete response, a partial response, "
-                    "or a message indicating you cannot proceed "
-                    "(e.g., 'I cannot help with that.'). "
-                )
-                if not persist:
-                    _final_answer_desc += (
+                if persist:
+                    _response_tool_desc = (
+                        "Submit your structured response for the current "
+                        "request in the required JSON format. This signals "
+                        "that you have completed the current work and are "
+                        "ready for the next instruction. Do not use this "
+                        "for progress updates — those should be sent via "
+                        "notifications while work is still ongoing."
+                    )
+                else:
+                    _response_tool_desc = (
+                        "Submit your final response in the required JSON "
+                        "format. The response can be a complete result, a "
+                        "partial result, or a message indicating you cannot "
+                        "proceed (e.g., 'I cannot help with that.'). "
                         "Calling this tool terminates the conversation."
                     )
                 try:
@@ -1845,8 +1859,8 @@ async def async_tool_loop_inner(
                             "type": "function",
                             "strict": True,
                             "function": {
-                                "name": "final_answer",
-                                "description": _final_answer_desc,
+                                "name": _response_tool_name,
+                                "description": _response_tool_desc,
                                 "parameters": {
                                     "type": "object",
                                     "properties": {"answer": _answer_schema},
@@ -1857,10 +1871,10 @@ async def async_tool_loop_inner(
                     )
                 except Exception as _injection_exc:  # noqa: BLE001
                     logger.error(
-                        f"Failed to inject final_answer tool: {_injection_exc!r}",
+                        f"Failed to inject {_response_tool_name} tool: {_injection_exc!r}",
                     )
 
-            # Inject multi-handle `final_answer` tool when coordinator is present.
+            # Inject multi-handle `final_response` tool when coordinator is present.
             # This tool requires request_id to specify which request is being answered.
             # Unlike response_format mode, this is always available (tools may be shared).
             if multi_handle_coordinator is not None:
@@ -1868,10 +1882,10 @@ async def async_tool_loop_inner(
                     {
                         "type": "function",
                         "function": {
-                            "name": "final_answer",
+                            "name": "final_response",
                             "description": (
-                                "Submit the final answer for a specific request. "
-                                "Use this to complete a request when you have the final response. "
+                                "Submit the final response for a specific request. "
+                                "Use this to complete a request when you have the result. "
                                 "Each request must be answered exactly once."
                             ),
                             "parameters": {
@@ -2312,7 +2326,7 @@ async def async_tool_loop_inner(
                     }
                     await _msg_dispatcher.append_msgs([sys_notice])
 
-                _persist_final_answer_emitted = False
+                _persist_response_emitted = False
 
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
@@ -2324,8 +2338,13 @@ async def async_tool_loop_inner(
                     else:
                         args = _raw_args if isinstance(_raw_args, dict) else {}
 
-                    # Special-case: handle synthetic `final_answer` tool
-                    if name == "final_answer" and response_format is not None:
+                    # Special-case: handle response-submission tool
+                    # (send_response in persist mode, final_response otherwise)
+                    _is_response_tool = (
+                        name in ("final_response", "send_response")
+                        and response_format is not None
+                    )
+                    if _is_response_tool:
                         try:
                             payload = (
                                 args.get("answer") if isinstance(args, dict) else None
@@ -2338,18 +2357,18 @@ async def async_tool_loop_inner(
 
                             # Cancel any in-flight tools before returning.
                             # In persist mode this block should be unreachable
-                            # (final_answer is masked while tools are pending)
+                            # (response tool is masked while tools are pending)
                             # but guard defensively.
                             if tools_data.pending and not persist:
                                 logger.info(
-                                    f"final_answer called while {len(tools_data.pending)} "
+                                    f"{name} called while {len(tools_data.pending)} "
                                     f"task(s) are in-flight. Auto-cancelling to terminate.",
                                     prefix="🔚",
                                 )
                                 await tools_data.cancel_pending_tasks()
 
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
                                 content=_dumps(payload, indent=4),
                             )
@@ -2364,12 +2383,12 @@ async def async_tool_loop_inner(
 
                             if persist:
                                 # Treat as current-turn response; don't terminate.
-                                _persist_final_answer_emitted = True
+                                _persist_response_emitted = True
                                 break  # exit the for-loop over tool_calls
                             return json.dumps(payload)
                         except Exception as _exc:
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
                                 content=(
                                     "⚠️ Validation failed – proceeding with standard formatting step.\n"
@@ -2385,14 +2404,15 @@ async def async_tool_loop_inner(
                             )
                             continue
 
-                    # Special-case: handle generic `final_answer` tool (no response_format)
+                    # Special-case: handle generic response tool (no response_format)
                     # With the injection branch removed, this path is only reachable
-                    # if the LLM hallucinates a final_answer call.  Handle defensively.
-                    if (
-                        name == "final_answer"
+                    # if the LLM hallucinates a response tool call.  Handle defensively.
+                    _is_generic_response = (
+                        name in ("final_response", "send_response")
                         and response_format is None
                         and multi_handle_coordinator is None
-                    ):
+                    )
+                    if _is_generic_response:
                         answer = args.get("answer") if isinstance(args, dict) else None
                         if answer is None:
                             answer = str(args) if args else ""
@@ -2400,14 +2420,14 @@ async def async_tool_loop_inner(
                         # Cancel any in-flight tools before returning.
                         if tools_data.pending and not persist:
                             logger.info(
-                                f"final_answer called while {len(tools_data.pending)} "
+                                f"{name} called while {len(tools_data.pending)} "
                                 f"task(s) are in-flight. Auto-cancelling to terminate.",
                                 prefix="🔚",
                             )
                             await tools_data.cancel_pending_tasks()
 
                         tool_msg = create_tool_call_message(
-                            name="final_answer",
+                            name=name,
                             call_id=call["id"],
                             content=answer,
                         )
@@ -2421,12 +2441,16 @@ async def async_tool_loop_inner(
                         )
 
                         if persist:
-                            _persist_final_answer_emitted = True
+                            _persist_response_emitted = True
                             break
                         return answer
 
-                    # Special-case: handle multi-handle `final_answer` tool
-                    if name == "final_answer" and multi_handle_coordinator is not None:
+                    # Special-case: handle multi-handle response tool
+                    _is_multi_response = (
+                        name == "final_response"
+                        and multi_handle_coordinator is not None
+                    )
+                    if _is_multi_response:
                         try:
                             request_id = args.get("request_id")
                             answer = args.get("answer")
@@ -2446,7 +2470,7 @@ async def async_tool_loop_inner(
                             )
                             if error_msg:
                                 tool_msg = create_tool_call_message(
-                                    name="final_answer",
+                                    name=name,
                                     call_id=call["id"],
                                     content=f"⚠️ Error: {error_msg}",
                                 )
@@ -2466,7 +2490,7 @@ async def async_tool_loop_inner(
                             )
 
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
                                 content=f"Request {request_id} completed successfully.",
                             )
@@ -2489,9 +2513,9 @@ async def async_tool_loop_inner(
 
                         except Exception as _exc:
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
-                                content=f"⚠️ Error processing final_answer: {_exc}",
+                                content=f"⚠️ Error processing {name}: {_exc}",
                             )
                             await insert_tool_message_after_assistant(
                                 assistant_meta,
@@ -3156,7 +3180,7 @@ async def async_tool_loop_inner(
                             initial_paused=not pause_event.is_set(),
                         )
 
-                if _persist_final_answer_emitted:
+                if _persist_response_emitted:
                     pass  # fall through to section F → persist wait
                 else:
                     # metadata for orderly insertion
@@ -3259,7 +3283,7 @@ async def async_tool_loop_inner(
                     f"max_steps ({max_steps}) exceeded",
                 )
 
-            final_answer = msg["content"]
+            final_content = msg["content"]
 
             # ── multi-handle mode: check if all requests are done ──
             if multi_handle_coordinator is not None:
@@ -3270,7 +3294,7 @@ async def async_tool_loop_inner(
                         prefix="✅",
                     )
                     multi_handle_coordinator.close()
-                    return final_answer  # Return last assistant content (may be empty)
+                    return final_content  # Return last assistant content (may be empty)
                 else:
                     # Still have pending requests - continue waiting
                     logger.info(
@@ -3324,7 +3348,7 @@ async def async_tool_loop_inner(
                 timer.reset()
                 continue  # Back to top of loop to process the interjection
 
-            return final_answer  # DONE!
+            return final_content  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
         # NOTE: Caller (or parent task) requested cancellation.  We propagate
