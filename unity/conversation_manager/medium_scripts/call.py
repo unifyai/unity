@@ -166,16 +166,20 @@ async def entrypoint(ctx: agents.JobContext):
     llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="minimal")
 
     # Build Voice Agent prompt (used by both TTS and STS modes)
+    assistant_name = SESSION_DETAILS.assistant.name
     system_prompt = build_voice_agent_prompt(
         bio=assistant_bio,
+        assistant_name=assistant_name or None,
         boss_first_name=boss.get("first_name", ""),
         boss_surname=boss.get("surname", ""),
         boss_email_address=boss.get("email_address", ""),
         boss_phone_number=boss.get("phone_number", ""),
+        boss_bio=boss.get("bio") or None,
         contact_first_name=contact.get("first_name", ""),
         contact_surname=contact.get("surname", ""),
         contact_phone_number=contact.get("phone_number", ""),
         contact_email=contact.get("email_address", ""),
+        contact_bio=contact.get("bio") or None,
         is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
     )
