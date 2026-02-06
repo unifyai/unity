@@ -19,6 +19,7 @@ _EXPECTED_FWD = {
     "content": "c",
     "exchange_id": "xid",
     "images": "imgs",
+    "attachments": "atts",
 }
 
 _EXPECTED_INV = {v: k for k, v in _EXPECTED_FWD.items()}
