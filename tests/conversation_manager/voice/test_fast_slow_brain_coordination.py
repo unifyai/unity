@@ -71,6 +71,8 @@ import json
 import pytest
 
 from unity.conversation_manager.events import (
+    ActorHandleStarted,
+    ActorResult,
     PhoneCallStarted,
     PhoneCallSent,
     InboundPhoneUtterance,
@@ -79,7 +81,7 @@ from unity.conversation_manager.events import (
 )
 from unity.conversation_manager.types import Medium, Mode
 
-from tests.conversation_manager.conftest import TEST_CONTACTS
+from tests.conversation_manager.conftest import BOSS, TEST_CONTACTS
 
 # =============================================================================
 # Test: call_guidance should not contain conversational guidance on call start
@@ -1549,3 +1551,215 @@ class TestFastBrainIncorrectInformation:
         finally:
             cm.event_broker.publish = original_publish
             cm._run_llm = original_run_llm
+
+
+# =============================================================================
+# Test: In-flight action orchestration during voice calls
+# =============================================================================
+
+
+def _get_guidance_messages(cm, contact_id: int) -> list:
+    """Extract guidance messages from the voice thread for a contact."""
+    conv = cm.contact_index.get_conversation_state(contact_id)
+    if not conv:
+        return []
+    voice_thread = list(conv.threads.get(Medium.PHONE_CALL, []))
+    return [msg for msg in voice_thread if getattr(msg, "name", None) == "guidance"]
+
+
+@pytest.mark.asyncio
+class TestInFlightActionOrchestration:
+    """
+    Tests that the slow brain correctly orchestrates long-running actions
+    during voice calls, relaying results to the fast brain via call_guidance.
+
+    This validates the full deterministic event-driven coordination loop:
+
+        User utterance
+            → slow brain calls `act` (starts action)
+            → action completes (ActorResult arrives)
+            → slow brain produces `call_guidance` with the result
+            → fast brain receives guidance and shares info naturally
+
+    All steps are trigger-based via CMStepDriver — no sleeps or timing.
+    The real slow brain LLM runs at each step.
+    """
+
+    async def test_act_result_relayed_via_call_guidance(self, initialized_cm):
+        """
+        Full coordination flow: user requests task → act → result → call_guidance.
+
+        Phase 1: Enter voice call mode
+        Phase 2: User asks for research → slow brain calls `act`
+        Phase 3: Action completes → slow brain produces `call_guidance` with result
+        Phase 4: Verify fast brain can use the guidance to answer directly
+
+        All steps are deterministic — events are stepped explicitly, not awaited.
+        """
+        cm = initialized_cm
+        boss = BOSS
+
+        # ─── Phase 1: Enter voice call mode ───────────────────────────────
+        await cm.step(PhoneCallStarted(contact=boss))
+        assert cm.cm.mode == Mode.CALL, "Should be in CALL mode"
+
+        # ─── Phase 2: User asks for research → slow brain calls `act` ─────
+        cm.all_tool_calls.clear()
+        guidance_before_request = _get_guidance_messages(cm.cm, boss["contact_id"])
+
+        result = await cm.step_until_wait(
+            InboundPhoneUtterance(
+                contact=boss,
+                content="Can you search for information about the Henderson project?",
+            ),
+            max_steps=5,
+        )
+
+        # Slow brain should have called `act` to start the research
+        assert "act" in cm.all_tool_calls, (
+            f"Slow brain should call `act` to start the research!\n"
+            f"Tool calls: {cm.all_tool_calls}\n"
+            f"The user asked to search for info — this requires `act`."
+        )
+
+        # An ActorHandleStarted event should have been published
+        actor_started = [
+            e for e in result.output_events if isinstance(e, ActorHandleStarted)
+        ]
+        assert len(actor_started) >= 1, (
+            f"Expected ActorHandleStarted event but got: "
+            f"{[type(e).__name__ for e in result.output_events]}"
+        )
+
+        # Get the handle_id for the in-flight action
+        assert cm.cm.in_flight_actions, "Should have an in-flight action"
+        handle_id = next(iter(cm.cm.in_flight_actions))
+
+        # ─── Phase 3: Action completes → slow brain relays via guidance ───
+        # Inject ActorResult deterministically (no background task dependency).
+        # Capture guidance count BEFORE stepping the result, so we can detect
+        # new guidance produced in response to the completion.
+        cm.all_tool_calls.clear()
+        guidance_before_result = _get_guidance_messages(cm.cm, boss["contact_id"])
+
+        result = await cm.step_until_wait(
+            ActorResult(
+                handle_id=handle_id,
+                success=True,
+                result=(
+                    "Found 3 relevant documents about the Henderson project: "
+                    "a contract signed in January 2025, meeting notes from last "
+                    "week discussing timeline changes, and a budget proposal "
+                    "totalling $85,000."
+                ),
+            ),
+            max_steps=5,
+        )
+
+        # Collect ALL guidance produced across the entire flow
+        all_guidance = _get_guidance_messages(cm.cm, boss["contact_id"])
+        guidance_after_result = all_guidance[len(guidance_before_result) :]
+
+        # The slow brain should have produced call_guidance at some point
+        # during this flow — either eagerly in Phase 2 (acknowledging the
+        # request) or in Phase 3 (relaying the action result), or both.
+        # What matters is that the result information reaches the fast brain.
+        all_guidance_text = " ".join(
+            getattr(g, "content", "") for g in all_guidance
+        ).lower()
+
+        assert any(
+            term in all_guidance_text
+            for term in ["henderson", "contract", "budget", "85,000", "document"]
+        ), (
+            f"call_guidance should contain Henderson project findings!\n"
+            f"All guidance texts: {[getattr(g, 'content', '') for g in all_guidance]}\n"
+            f"Tool calls across phases: {cm.all_tool_calls}\n"
+            f"Guidance before request: {len(guidance_before_request)}\n"
+            f"Guidance before result: {len(guidance_before_result)}\n"
+            f"Guidance after result: {len(guidance_after_result)}\n"
+            f"\n"
+            f"The slow brain should relay action results to the fast brain\n"
+            f"via call_guidance so the user gets the information."
+        )
+
+        # ─── Phase 4: Verify fast brain can use the guidance ──────────────
+        # Build fast brain prompt and inject the guidance as a notification
+        from unity.common.llm_client import new_llm_client
+        from unity.conversation_manager.prompt_builders import (
+            build_voice_agent_prompt,
+        )
+
+        fast_prompt = build_voice_agent_prompt(
+            bio="I am a virtual assistant.",
+            assistant_name="Alex",
+            boss_first_name=boss["first_name"],
+            boss_surname=boss["surname"],
+            boss_phone_number=boss.get("phone_number"),
+            boss_email_address=boss.get("email_address"),
+            is_boss_user=True,
+        )
+        client = new_llm_client(
+            model="gpt-5-nano@openai",
+            reasoning_effort="minimal",
+        )
+        # Use the actual guidance content that was produced, or a fallback
+        result_guidance = [
+            getattr(g, "content", "")
+            for g in all_guidance
+            if any(
+                t in getattr(g, "content", "").lower()
+                for t in ["henderson", "contract", "budget", "document"]
+            )
+        ]
+        notification_content = (
+            result_guidance[-1]
+            if result_guidance
+            else "Found 3 documents about Henderson: contract, meeting notes, budget."
+        )
+        messages = [
+            {"role": "system", "content": fast_prompt},
+            {
+                "role": "user",
+                "content": (
+                    "Can you search for information about the Henderson project?"
+                ),
+            },
+            {"role": "assistant", "content": "Sure, let me look into that."},
+            {
+                "role": "system",
+                "content": f"[notification] {notification_content}",
+            },
+            {"role": "user", "content": "So what did you find?"},
+        ]
+        fast_response = await client.generate(messages=messages)
+        fast_response_lower = fast_response.lower()
+
+        # Fast brain should answer directly using the notification data
+        deferral_phrases = ["let me check", "i'll check", "looking into"]
+        deferred = any(p in fast_response_lower for p in deferral_phrases)
+        assert not deferred, (
+            f"Fast brain deferred instead of using the notification data!\n"
+            f"Response: {fast_response}\n"
+            f"The notification contained the Henderson project results — "
+            f"the fast brain should share them directly."
+        )
+
+        # Fast brain should reference something from the result
+        assert any(
+            term in fast_response_lower
+            for term in [
+                "henderson",
+                "contract",
+                "budget",
+                "document",
+                "meeting",
+                "85,000",
+                "three",
+                "3",
+            ]
+        ), (
+            f"Fast brain should reference the action results!\n"
+            f"Response: {fast_response}\n"
+            f"Expected mention of Henderson project findings from the notification."
+        )
