@@ -226,14 +226,10 @@ def create_actor_with_primitives():
             cp.observe = AsyncMock(side_effect=_mock_observe)
             # cp.reason = AsyncMock(side_effect=_mock_reason)
 
-        # ensure the StateManagerEnvironment uses the *test-provided* primitives
+        # Ensure the StateManagerEnvironment uses the *test-provided* primitives
         # (including clarification-forcing simulated managers).
         try:
-            sm_env = actor.environments.get("primitives")
-            if isinstance(sm_env, StateManagerEnvironment):
-                sm_env._primitives = primitives  # type: ignore[attr-defined]
-            else:
-                actor.environments["primitives"] = StateManagerEnvironment(primitives)
+            actor.environments["primitives"] = StateManagerEnvironment(primitives)
         except Exception:
             # Best-effort; tests will fail loudly if primitives aren't wired.
             pass

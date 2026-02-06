@@ -174,7 +174,11 @@ class ActorIntegrationManager:
             ComputerEnvironment,
             StateManagerEnvironment,
         )
-        from unity.function_manager.primitives import ComputerPrimitives, Primitives
+        from unity.function_manager.primitives import (
+            ComputerPrimitives,
+            Primitives,
+            PrimitiveScope,
+        )
 
         self.config = config
 
@@ -197,8 +201,22 @@ class ActorIntegrationManager:
         )
         # MockComputerBackend provides safe, canned responses for all methods
 
-        # Step 2: Create Primitives (state managers) with simulated managers
-        primitives = Primitives()
+        # Step 2: Create Primitives (state managers) with scoped managers
+        # Use scope to exclude 'files' which has resolution issues
+        scope = PrimitiveScope(
+            scoped_managers=frozenset(
+                {
+                    "contacts",
+                    "knowledge",
+                    "tasks",
+                    "transcripts",
+                    "guidance",
+                    "secrets",
+                    "web",
+                },
+            ),
+        )
+        primitives = Primitives(primitive_scope=scope)
 
         # Apply simulated managers for safe, side-effect-free execution
         if config.mock_state_managers:
@@ -233,20 +251,7 @@ class ActorIntegrationManager:
             )
 
         # Step 3: Create HierarchicalActor with both environments
-        # Use exposed_managers to exclude 'files' which has resolution issues
-        state_manager_env = StateManagerEnvironment(
-            primitives,
-            exposed_managers={
-                "contacts",
-                "knowledge",
-                "tasks",
-                "transcripts",
-                "guidance",
-                "secrets",
-                "web",
-            },
-        )
-
+        state_manager_env = StateManagerEnvironment(primitives)
         self.actor = HierarchicalActor(
             headless=config.headless,
             computer_mode=config.computer_mode,

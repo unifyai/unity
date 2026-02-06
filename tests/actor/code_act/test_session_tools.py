@@ -8,13 +8,11 @@ from unity.actor.code_act_actor import (
     _CURRENT_SANDBOX,
 )
 from unity.actor.environments.state_managers import StateManagerEnvironment
-from unity.function_manager.primitives import Primitives
 
 
 @pytest.mark.asyncio
 async def test_session_tools_list_inspect_and_close():
-    primitives = Primitives()
-    actor = CodeActActor(environments=[StateManagerEnvironment(primitives)])
+    actor = CodeActActor(environments=[StateManagerEnvironment()])
 
     sandbox = PythonExecutionSession(environments=actor.environments, venv_pool=actor._venv_pool, shell_pool=actor._shell_pool)  # type: ignore[attr-defined]
     sandbox.global_state["foo"] = 123
@@ -59,8 +57,7 @@ async def test_session_tools_list_inspect_and_close():
 
 @pytest.mark.asyncio
 async def test_session_tools_close_all_sessions():
-    primitives = Primitives()
-    actor = CodeActActor(environments=[StateManagerEnvironment(primitives)])
+    actor = CodeActActor(environments=[StateManagerEnvironment()])
 
     sandbox = PythonExecutionSession(environments=actor.environments, venv_pool=actor._venv_pool, shell_pool=actor._shell_pool)  # type: ignore[attr-defined]
     token = _CURRENT_SANDBOX.set(sandbox)
