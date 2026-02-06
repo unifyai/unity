@@ -37,9 +37,9 @@ Most tests sit **somewhere between** these extremes:
 
 Think of each test as having a "slider" between symbolic and eval—not a binary classification.
 
-## Caching and Determinism (`UNIFY_CACHE`)
+## Caching and Determinism (`UNILLM_CACHE`)
 
-When `UNIFY_CACHE="true"` (the default), all LLM responses are cached:
+When `UNILLM_CACHE="true"` (the default), all LLM responses are cached:
 
 1. **First run**: LLM executes normally; responses stored in cache
 2. **Subsequent runs**: Cached responses replayed—no actual LLM calls
@@ -48,7 +48,7 @@ When `UNIFY_CACHE="true"` (the default), all LLM responses are cached:
 - Both symbolic and eval tests become deterministic once the cache is populated
 - After caching, both test types effectively verify that *symbolic logic has not regressed*
 - Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
-- To re-evaluate LLM behavior: delete `.cache.ndjson`, set `UNIFY_CACHE="false"`, or use `--no-cache`
+- To re-evaluate LLM behavior: delete `.cache.ndjson`, set `UNILLM_CACHE="false"`, or use `--no-cache`
 
 ## Tagging Tests as Eval
 

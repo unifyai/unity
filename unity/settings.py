@@ -29,20 +29,6 @@ from unity.transcript_manager.settings import TranscriptSettings
 from unity.web_searcher.settings import WebSettings
 
 
-def _parse_bool_or_str(v: Any) -> bool | str:
-    """Parse a value that can be bool, bool-string, or pass-through string."""
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str):
-        lower = v.lower()
-        if lower in ("true", "yes", "1"):
-            return True
-        if lower in ("false", "no", "0"):
-            return False
-        return v  # Pass through for special cache modes like "read-only"
-    return bool(v)
-
-
 def _parse_bool(v: Any) -> bool:
     """Parse a value as boolean."""
     if isinstance(v, bool):
@@ -63,7 +49,6 @@ class ProductionSettings(BaseSettings):
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
     UNIFY_MODEL: str = "claude-4.6-opus@anthropic"
-    UNIFY_CACHE: bool | str = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # LLM Provider Credentials
@@ -178,11 +163,6 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
-    @field_validator("UNIFY_CACHE", mode="before")
-    @classmethod
-    def parse_cache(cls, v: Any) -> bool | str:
-        return _parse_bool_or_str(v)
-
     @field_validator(
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",

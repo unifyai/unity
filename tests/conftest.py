@@ -154,6 +154,7 @@ def pytest_report_header(config):
         f"orchestra_url={os.environ.get('ORCHESTRA_URL')}",
         f"unity_comms_url={os.environ.get('UNITY_COMMS_URL')}",
         f"unify_project={unify.active_project()}",
+        f"UNILLM_CACHE={os.environ.get('UNILLM_CACHE', 'not set')}",
     ] + settings_str
 
 

@@ -12,14 +12,6 @@ from unity.settings import SETTINGS
 DEFAULT_MODEL = SETTINGS.UNIFY_MODEL
 
 
-def get_cache_setting() -> bool | str:
-    """Return the cache setting from SETTINGS.
-
-    Backward-compatible wrapper. New code should use SETTINGS.UNIFY_CACHE directly.
-    """
-    return SETTINGS.UNIFY_CACHE
-
-
 def new_llm_client(
     model: str | None = None,
     *,
@@ -32,6 +24,7 @@ def new_llm_client(
 
     If model is not specified, uses UNIFY_MODEL from settings (default: claude-4.6-opus@anthropic).
     Defaults to low reasoning_effort and priority service_tier where applicable.
+    Caching is controlled by the UNILLM_CACHE env var (owned by unillm).
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
     """
@@ -39,7 +32,6 @@ def new_llm_client(
         model = SETTINGS.UNIFY_MODEL
 
     config = {
-        "cache": SETTINGS.UNIFY_CACHE,
         "reasoning_effort": "low",
         "service_tier": "priority",
         "stateful": stateful,

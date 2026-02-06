@@ -79,13 +79,13 @@ Most tests sit somewhere between these extremes.
 
 ### Caching and Determinism
 
-When `UNIFY_CACHE="true"` (the default), all LLM responses are cached:
+When `UNILLM_CACHE="true"` (the default), all LLM responses are cached:
 - **First run**: LLM executes normally; responses stored in `.cache.ndjson`
 - **Subsequent runs**: Cached responses replayed—no actual LLM calls
 
 Both test types become deterministic after caching. To re-evaluate LLM behavior:
 ```bash
-parallel_run --env UNIFY_CACHE=false tests
+parallel_run --env UNILLM_CACHE=false tests
 ```
 
 ### Marking Tests as Eval
@@ -194,7 +194,7 @@ kill_server --global  # Kill ALL tmux servers
 
 ```bash
 # Disable caching for fresh LLM calls
-parallel_run --env UNIFY_CACHE=false tests
+parallel_run --env UNILLM_CACHE=false tests
 
 # Use isolated projects per test
 parallel_run --env UNIFY_TESTS_RAND_PROJ=true tests
@@ -236,7 +236,7 @@ parallel_cloud_run.sh tests/contact_manager
 parallel_cloud_run.sh .
 
 # Override a setting from .env
-parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
+parallel_cloud_run.sh --env UNILLM_CACHE=false tests/
 ```
 
 The script automatically:

@@ -13,7 +13,7 @@ Run tests across all combinations of settings values. This is useful for:
 grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/contact_manager/
 
 # Grid search across models AND cache settings (2×2 = 4 combinations)
-grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNIFY_CACHE="true|false" tests/
+grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNILLM_CACHE="true|false" tests/
 ```
 
 ---
@@ -69,17 +69,17 @@ Each run is **automatically tagged** with all `--env` values passed to `grid_sea
 **Example:**
 
 ```bash
-grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNILLM_CACHE="true|false" tests/
 ```
 
 Generates 4 runs with these auto-tags:
 
 | Run | Tags |
 |-----|------|
-| 1 | `UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true` |
-| 2 | `UNIFY_MODEL=gpt-4o,UNIFY_CACHE=false` |
-| 3 | `UNIFY_MODEL=claude-3,UNIFY_CACHE=true` |
-| 4 | `UNIFY_MODEL=claude-3,UNIFY_CACHE=false` |
+| 1 | `UNIFY_MODEL=gpt-4o,UNILLM_CACHE=true` |
+| 2 | `UNIFY_MODEL=gpt-4o,UNILLM_CACHE=false` |
+| 3 | `UNIFY_MODEL=claude-3,UNILLM_CACHE=true` |
+| 4 | `UNIFY_MODEL=claude-3,UNILLM_CACHE=false` |
 
 With a constant variable:
 
@@ -103,7 +103,7 @@ Generates 2 runs:
 ```bash
 grid_search.sh \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic|gemini-2.5-pro@google" \
-  --env UNIFY_CACHE="false" \
+  --env UNILLM_CACHE="false" \
   --eval-only \
   tests/contact_manager/
 ```
@@ -126,7 +126,7 @@ This generates 4 runs (2×2 grid) testing all combinations of these two feature 
 ```bash
 grid_search.sh -n \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
-  --env UNIFY_CACHE="true|false" \
+  --env UNILLM_CACHE="true|false" \
   tests/
 ```
 
@@ -137,20 +137,20 @@ Grid Search Configuration
 =========================
 Grid variables:
   UNIFY_MODEL: gpt-4o@openai | claude-sonnet-4-20250514@anthropic
-  UNIFY_CACHE: true | false
+  UNILLM_CACHE: true | false
 
 Total combinations: 4
 
 Generated runs:
-  [1/4] UNIFY_MODEL=gpt-4o@openai UNIFY_CACHE=true
-  [2/4] UNIFY_MODEL=gpt-4o@openai UNIFY_CACHE=false
-  [3/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNIFY_CACHE=true
-  [4/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNIFY_CACHE=false
+  [1/4] UNIFY_MODEL=gpt-4o@openai UNILLM_CACHE=true
+  [2/4] UNIFY_MODEL=gpt-4o@openai UNILLM_CACHE=false
+  [3/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNILLM_CACHE=true
+  [4/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNILLM_CACHE=false
 
 Dry run - commands that would be executed:
 
-  parallel_run --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=true tests/
-  parallel_run --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=false tests/
+  parallel_run --env UNIFY_MODEL=gpt-4o@openai --env UNILLM_CACHE=true --tags UNIFY_MODEL=gpt-4o@openai,UNILLM_CACHE=true tests/
+  parallel_run --env UNIFY_MODEL=gpt-4o@openai --env UNILLM_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNILLM_CACHE=false tests/
   ...
 ```
 
@@ -170,7 +170,7 @@ logs = unify.get_logs(context="Combined")
 for log in logs:
     tags = log.get("tags", [])
     duration = log.get("duration", 0)
-    # Tags are like ["UNIFY_MODEL=gpt-4o", "UNIFY_CACHE=true"]
+    # Tags are like ["UNIFY_MODEL=gpt-4o", "UNILLM_CACHE=true"]
     print(f"{tags}: {duration:.2f}s")
 
 # Or filter by specific tag values
@@ -189,7 +189,7 @@ Grid search composes with all `parallel_run` features:
 # Grid + eval-only + repeat for statistical sampling
 grid_search.sh \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
-  --env UNIFY_CACHE="false" \
+  --env UNILLM_CACHE="false" \
   --eval-only \
   --repeat 5 \
   tests/contact_manager/test_ask.py

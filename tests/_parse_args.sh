@@ -78,7 +78,7 @@ parse_test_args() {
           ENV_OVERRIDES+=( "$2" )
           shift 2
         else
-          echo "Error: -e|--env requires KEY=VALUE argument (e.g., --env UNIFY_CACHE=false)." >&2
+          echo "Error: -e|--env requires KEY=VALUE argument (e.g., --env UNILLM_CACHE=false)." >&2
           return 2
         fi
         ;;
@@ -292,7 +292,7 @@ Examples:
   $script_name -s tests/                # Serial mode (per-file)
   $script_name -j 8 tests/              # Limit to 8 concurrent
   $script_name --eval-only tests/       # Only eval tests
-  $script_name -e UNIFY_CACHE=false tests/
+  $script_name -e UNILLM_CACHE=false tests/
   $script_name tests/ -- -v --tb=short  # Pass args to pytest
   $script_name tests/ -- -k 'gpt-5'     # Filter by test name pattern
 EOF

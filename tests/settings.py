@@ -42,7 +42,7 @@ class TestMemorySettings(MemorySettings):
 class TestingSettings(ProductionSettings):
     """Test environment settings - inherits all production settings.
 
-    Production settings (UNIFY_MODEL, UNIFY_CACHE, etc.) are inherited from
+    Production settings (UNIFY_MODEL, etc.) are inherited from
     ProductionSettings. This class adds test-only settings.
     """
 
