@@ -208,7 +208,8 @@ jobs:
         #
         # Leaf discovery (Option A algorithm):
         # - Leaf directories (test files, no test subdirs) → one job per directory
-        # - Non-leaf directories with test files → one job per individual test file
+        # - Mixed directories (test files AND test subdirs) → one bundled job for
+        #   all direct test files (space-separated), plus recursive jobs for subdirs
         # This maximizes parallelism regardless of how paths are specified.
 
         PARALLEL_CMD="${{ needs.should-run-tests.outputs.parallel_run_cmd }}"
@@ -656,13 +657,28 @@ jobs:
     - name: Normalize test path
       id: normalize-path
       run: |
-        # Each matrix entry is a single test path
-        echo "test_args=${{ matrix.test_path }}" >> $GITHUB_OUTPUT
+        # Each matrix entry is either a single test path or a space-separated
+        # bundle of files (from mixed directories with both files and subdirs)
+        RAW_PATH='${{ matrix.test_path }}'
+        echo "test_args=$RAW_PATH" >> $GITHUB_OUTPUT
 
-        # Normalize for artifact naming
-        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/||' | tr '/' '_')
+        # Normalize for artifact naming and display
+        if [[ "$RAW_PATH" == *" "* ]]; then
+          # Bundled multi-file entry: derive name from common parent directory
+          first_file="${RAW_PATH%% *}"
+          parent_dir=$(dirname "$first_file")
+          file_count=$(echo "$RAW_PATH" | wc -w | tr -d ' ')
+          normalized=$(echo "$parent_dir" | sed 's|^tests/||' | tr '/' '_')
+          normalized="${normalized}_${file_count}_files"
+          display_name="${parent_dir} (${file_count} files)"
+        else
+          normalized=$(echo "$RAW_PATH" | sed 's|^tests/||' | tr '/' '_')
+          display_name="$RAW_PATH"
+        fi
+
         if [[ -z "$normalized" || "$normalized" == "." ]]; then normalized="all"; fi
         echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
+        echo "display_name=$display_name" >> $GITHUB_OUTPUT
 
         # Calculate timeout in seconds (default 120 minutes)
         TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
@@ -801,8 +817,9 @@ jobs:
         # parallel_run.sh handles starting local orchestra automatically
         # Note: TEST_PATH must come before EXTRA_ARGS because EXTRA_ARGS may contain
         # "-- pytest-args" and everything after -- is treated as pytest arguments
+        # TEST_PATH is unquoted to allow word splitting for bundled multi-file entries
         echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $EXTRA_ARGS"
-        tests/parallel_run.sh --timeout "$TIMEOUT" "$TEST_PATH" $EXTRA_ARGS
+        tests/parallel_run.sh --timeout "$TIMEOUT" $TEST_PATH $EXTRA_ARGS
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
@@ -878,7 +895,7 @@ jobs:
         echo "Download logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
-        echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## ❌ Test Failures: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -913,7 +930,7 @@ jobs:
 
         # Fail if no tests ran - this indicates a problem (path resolution, collection error, etc.)
         if [ "$log_count" -eq 0 ]; then
-          echo "## ⚠️ No Tests Ran: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚠️ No Tests Ran: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**0 tests executed** — this likely indicates a problem with test discovery." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -931,7 +948,7 @@ jobs:
         echo "View logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
-        echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ All Tests Passed: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
