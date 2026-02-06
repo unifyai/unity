@@ -31,6 +31,19 @@ from tests.conversation_manager.conftest import (
     BOSS,
     HELPFUL_RESPONSE_POLICY,
 )
+
+
+def _make_contacts_visible(cm, *contact_ids: int) -> None:
+    """Add contacts to active_conversations so the LLM can see their contact_ids.
+
+    Use this in tests that are about email routing mechanics (to/cc/bcc),
+    not about contact resolution.  The contacts must already exist in the
+    ContactManager (e.g., via TEST_CONTACTS in conftest).
+    """
+    for cid in contact_ids:
+        cm.contact_index.get_or_create_conversation(cid)
+
+
 from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
@@ -774,12 +787,14 @@ async def test_email_with_cc(initialized_cm):
     """Boss sends email with CC recipient."""
     cm = initialized_cm
 
+    _make_contacts_visible(cm, 2, 3)  # Alice, Bob
+
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Could you email Alice at alice@example.com and tell her the meeting "
-                "is confirmed for 3pm tomorrow. CC Bob at bob@example.com."
+                "Could you email Alice and tell her the meeting "
+                "is confirmed for 3pm tomorrow. CC Bob."
             ),
         ),
     )
@@ -802,13 +817,14 @@ async def test_email_with_cc(initialized_cm):
 async def test_email_with_bcc(initialized_cm):
     """Boss sends email with BCC recipient."""
     cm = initialized_cm
+    _make_contacts_visible(cm, 2, 4)  # Alice, Charlie
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Could you email Alice at alice@example.com and tell her the budget "
-                "has been approved. BCC Charlie at charlie@example.com."
+                "Could you email Alice and tell her the budget "
+                "has been approved. BCC Charlie."
             ),
         ),
     )
@@ -831,13 +847,14 @@ async def test_email_with_bcc(initialized_cm):
 async def test_email_with_multiple_cc(initialized_cm):
     """Boss sends email with multiple CC recipients."""
     cm = initialized_cm
+    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Could you email Alice at alice@example.com and tell her the quarterly "
-                "results look great. CC Bob at bob@example.com and Charlie at charlie@example.com."
+                "Could you email Alice and tell her the quarterly "
+                "results look great. CC Bob and Charlie."
             ),
         ),
     )
@@ -863,13 +880,14 @@ async def test_email_with_multiple_cc(initialized_cm):
 async def test_email_with_cc_and_bcc(initialized_cm):
     """Boss sends email with TO, CC, and BCC recipients."""
     cm = initialized_cm
+    _make_contacts_visible(cm, 2, 3, 5)  # Alice, Bob, Diana
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Could you email Alice at alice@example.com and tell her the project "
-                "deadline is Friday. CC Bob at bob@example.com and BCC Diana at diana@example.com."
+                "Could you email Alice and tell her the project "
+                "deadline is Friday. CC Bob and BCC Diana."
             ),
         ),
     )
@@ -895,12 +913,13 @@ async def test_email_with_cc_and_bcc(initialized_cm):
 async def test_email_to_multiple_recipients(initialized_cm):
     """Boss sends email to multiple TO recipients."""
     cm = initialized_cm
+    _make_contacts_visible(cm, 2, 3)  # Alice, Bob
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Could you email both partner1@acme.com and partner2@acme.com "
+                "Could you email both Alice and Bob "
                 "and tell them we're excited to move forward with the partnership."
             ),
         ),
@@ -913,11 +932,11 @@ async def test_email_to_multiple_recipients(initialized_cm):
     # Verify both addresses are in recipients
     all_recipients = email.to + email.cc
     assert (
-        "partner1@acme.com" in all_recipients
-    ), f"Expected partner1@acme.com in recipients, got to={email.to}, cc={email.cc}"
+        "alice@example.com" in all_recipients
+    ), f"Expected alice@example.com in recipients, got to={email.to}, cc={email.cc}"
     assert (
-        "partner2@acme.com" in all_recipients
-    ), f"Expected partner2@acme.com in recipients, got to={email.to}, cc={email.cc}"
+        "bob@example.com" in all_recipients
+    ), f"Expected bob@example.com in recipients, got to={email.to}, cc={email.cc}"
 
 
 @pytest.mark.asyncio
@@ -925,13 +944,14 @@ async def test_email_to_multiple_recipients(initialized_cm):
 async def test_email_with_multiple_bcc(initialized_cm):
     """Boss sends email with multiple BCC recipients."""
     cm = initialized_cm
+    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Could you email Alice at alice@example.com and tell her the contract "
-                "is ready for signature. BCC legal@acme.com and compliance@acme.com "
+                "Could you email Alice and tell her the contract "
+                "is ready for signature. BCC Bob and Charlie "
                 "for their records."
             ),
         ),
@@ -948,27 +968,28 @@ async def test_email_with_multiple_bcc(initialized_cm):
 
     # Verify both BCC recipients
     assert (
-        "legal@acme.com" in email.bcc
-    ), f"Expected legal@acme.com in 'bcc', got bcc={email.bcc}"
+        "bob@example.com" in email.bcc
+    ), f"Expected bob@example.com in 'bcc', got bcc={email.bcc}"
     assert (
-        "compliance@acme.com" in email.bcc
-    ), f"Expected compliance@acme.com in 'bcc', got bcc={email.bcc}"
+        "charlie@example.com" in email.bcc
+    ), f"Expected charlie@example.com in 'bcc', got bcc={email.bcc}"
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_email_with_all_plural_recipients(initialized_cm):
-    """Boss sends email with multiple TO, CC, and BCC recipients."""
+    """Boss sends email with TO, CC, and BCC all populated."""
     cm = initialized_cm
+    _make_contacts_visible(cm, 2, 3, 4, 5)  # Alice, Bob, Charlie, Diana
 
     result = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content=(
-                "Send an email to alice@example.com and bob@example.com "
+                "Send an email to Alice and Bob "
                 "telling them the board meeting is scheduled for Monday at 10am. "
-                "CC charlie@example.com and diana@example.com for visibility, "
-                "and BCC legal@acme.com and exec@acme.com for records."
+                "CC Charlie for visibility, "
+                "and BCC Diana for records."
             ),
         ),
     )
@@ -977,7 +998,7 @@ async def test_email_with_all_plural_recipients(initialized_cm):
     assert_has_one(result.output_events, EmailSent)
     email = filter_events_by_type(result.output_events, EmailSent)[0]
 
-    # Verify multiple TO recipients
+    # Verify TO recipients
     all_to_cc = email.to + email.cc
     assert (
         "alice@example.com" in all_to_cc
@@ -986,18 +1007,12 @@ async def test_email_with_all_plural_recipients(initialized_cm):
         "bob@example.com" in all_to_cc
     ), f"Expected bob@example.com in to/cc, got to={email.to}, cc={email.cc}"
 
-    # Verify CC recipients (may be in to or cc depending on LLM interpretation)
+    # Verify CC recipient
     assert (
         "charlie@example.com" in all_to_cc
     ), f"Expected charlie@example.com in to/cc, got to={email.to}, cc={email.cc}"
-    assert (
-        "diana@example.com" in all_to_cc
-    ), f"Expected diana@example.com in to/cc, got to={email.to}, cc={email.cc}"
 
-    # Verify BCC recipients
+    # Verify BCC recipient
     assert (
-        "legal@acme.com" in email.bcc
-    ), f"Expected legal@acme.com in 'bcc', got bcc={email.bcc}"
-    assert (
-        "exec@acme.com" in email.bcc
-    ), f"Expected exec@acme.com in 'bcc', got bcc={email.bcc}"
+        "diana@example.com" in email.bcc
+    ), f"Expected diana@example.com in 'bcc', got bcc={email.bcc}"
