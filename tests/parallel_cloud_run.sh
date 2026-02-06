@@ -20,7 +20,7 @@ set -euo pipefail
 #   parallel_cloud_run.sh .                    # All tests
 #   parallel_cloud_run.sh -s                   # All tests, serial mode (implicit ".")
 #   parallel_cloud_run.sh -s tests/            # Specific path, serial mode
-#   parallel_cloud_run.sh --env UNIFY_CACHE=false tests/  # Override .env
+#   parallel_cloud_run.sh --env UNILLM_CACHE=false tests/  # Override .env
 #   parallel_cloud_run.sh --push-local tests/  # Include local uncommitted/unpushed changes
 
 REPO="unifyai/unity"

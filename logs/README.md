@@ -274,7 +274,7 @@ Every test logs a summary record to the shared `Combined` context within the `Un
 - **LLM debugging**: Inspect the full LLM I/O for any test without re-running it
 - **Tagging experiments**: Use `--tags "experiment-A,gpt-4"` to label runs for later filtering
 
-**Example query:** "Show all tests where `UNIFY_CACHE=false` and duration > 10s"
+**Example query:** "Show all tests where `UNILLM_CACHE=false` and duration > 10s"
 
 ### Per-Test Contexts (State Manager Data)
 

@@ -540,6 +540,8 @@ jobs:
       UNIFY_TESTS_RAND_PROJ: "false"              # Shared project mode
       UNIFY_TESTS_DELETE_PROJ_ON_START: "false"   # Handled by setup job at workflow level
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
+      # LLM response caching (owned by unillm, read from env)
+      UNILLM_CACHE: "true"
       # Local orchestra path (cloned into workspace, not sibling directory)
       ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
       # API credentials

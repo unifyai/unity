@@ -168,7 +168,7 @@ tests/parallel_run.sh tests/actor/state_managers/real/
 tests/parallel_run.sh tests/actor/state_managers/simulated/contacts/
 
 # Run with fresh LLM calls (no cache)
-tests/parallel_run.sh --env UNIFY_CACHE=false tests/actor/state_managers/
+tests/parallel_run.sh --env UNILLM_CACHE=false tests/actor/state_managers/
 ```
 
 ## Debugging Tips

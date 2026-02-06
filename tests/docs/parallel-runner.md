@@ -172,10 +172,10 @@ The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions
 
 ```bash
 # Single override
-parallel_run --env UNIFY_CACHE=false tests
+parallel_run --env UNILLM_CACHE=false tests
 
 # Multiple overrides (flag can be repeated)
-parallel_run -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+parallel_run -e UNILLM_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
 
 # Use isolated random projects (each session gets its own project)
 parallel_run --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
@@ -192,7 +192,7 @@ Settings are organized in two classes with inheritance:
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `UNIFY_MODEL` | str | `gpt-5.2@openai` | LLM model to use |
-| `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
+| `UNILLM_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
 | `LLM_IO_DEBUG` | bool | `true` | Log full LLM request/response payloads |
 | `ASYNCIO_DEBUG` | bool | `false` | Enable asyncio debug mode |
 | `ASYNCIO_VERBOSE_DEBUG` | bool | `false` | Verbose asyncio logging |
@@ -230,14 +230,14 @@ This matches files like `test_contact_tool_docstrings.py`, `test_guidance_tool_d
 
 ## Statistical Sampling (`--repeat`)
 
-The `--repeat N` flag runs each test target N times. **The primary use case is for eval tests with `UNIFY_CACHE=false`**:
+The `--repeat N` flag runs each test target N times. **The primary use case is for eval tests with `UNILLM_CACHE=false`**:
 
 ```bash
 # Run a specific eval test 10 times without caching
-parallel_run --env UNIFY_CACHE=false --repeat 10 --eval-only tests/contact_manager/test_ask.py
+parallel_run --env UNILLM_CACHE=false --repeat 10 --eval-only tests/contact_manager/test_ask.py
 
 # Run all eval tests 5 times each
-parallel_run --env UNIFY_CACHE=false --repeat 5 --eval-only tests
+parallel_run --env UNILLM_CACHE=false --repeat 5 --eval-only tests
 ```
 
 **Use cases:**
@@ -324,7 +324,7 @@ parallel_run --tags "experiment-1" tests
 
 # Combine options
 parallel_run --eval-only tests/contact_manager
-parallel_run --env UNIFY_CACHE=false --eval-only tests/contact_manager
+parallel_run --env UNILLM_CACHE=false --eval-only tests/contact_manager
 ```
 
 ---
