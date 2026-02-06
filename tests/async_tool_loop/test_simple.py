@@ -131,7 +131,7 @@ async def test_concurrent_tools_waits_for_all_results(model):
     # Manually constructing to support inheritance, but mirroring new_llm_client defaults
     client = InstrumentedClient(
         model,
-        reasoning_effort="high",
+        reasoning_effort="low",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
     )

@@ -30,7 +30,7 @@ def new_llm_client(
     """
     Create a configured Unify client.
 
-    If model is not specified, uses UNIFY_MODEL from settings (default: claude-4.5-opus@anthropic).
+    If model is not specified, uses UNIFY_MODEL from settings (default: claude-4.6-opus@anthropic).
     Defaults to low reasoning_effort and priority service_tier where applicable.
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
