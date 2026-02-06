@@ -550,9 +550,9 @@ jobs:
       # Communication service URL (auto-selected based on branch: main→production, else→staging)
       UNITY_COMMS_URL: ${{ github.ref_name == 'main' && 'https://unity-comms-app-262420637606.us-central1.run.app' || 'https://unity-comms-app-staging-262420637606.us-central1.run.app' }}
       # Orchestra GCP configuration (set by google-github-actions/auth step)
-      # ORCHESTRA_VERTEXAI_SERVICE_ACC_JSON is set via GOOGLE_APPLICATION_CREDENTIALS by auth action
-      ORCHESTRA_VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-      ORCHESTRA_VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
+      # GOOGLE_APPLICATION_CREDENTIALS is set automatically by the google-github-actions/auth action
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_LOCATION: ${{ vars.GCP_LOCATION }}
       # GCP bucket names (passed to orchestra server)
       ORCHESTRA_GCP_BUCKET_NAME: ${{ vars.GCP_BUCKET_LOGS }}
       ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
