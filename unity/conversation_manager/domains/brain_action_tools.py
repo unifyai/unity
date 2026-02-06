@@ -152,6 +152,77 @@ def _check_contact_has_address(
     return None
 
 
+def _resolve_or_attach_detail(
+    contact: dict | None,
+    contact_id: int,
+    address_field: str,
+    inline_value: str | None,
+    communication_type: str,
+    contact_index: Any,
+) -> tuple[str | None, dict | None]:
+    """Resolve a contact's address field, optionally attaching an inline value.
+
+    Supports implicit contact-detail creation for contacts that are already in
+    the active conversation.  The rules are:
+
+    1. Contact has the field (no inline, or inline matches) -> happy path.
+    2. Contact has the field but inline is *different* -> error (use ``act``).
+    3. Contact missing the field, no inline provided -> error (missing detail).
+    4. Contact missing the field, inline provided -> attach, re-fetch, proceed.
+
+    Args:
+        contact: The contact dict (or ``None`` if not found).
+        contact_id: The contact's ID.
+        address_field: Field to check (e.g. ``"phone_number"``, ``"email_address"``).
+        inline_value: Optional inline value provided by the caller.
+        communication_type: Human-readable type for error messages (e.g. ``"SMS"``).
+        contact_index: :class:`ContactIndex` used for the update + re-fetch.
+
+    Returns:
+        ``(error_message, updated_contact)`` -- if *error_message* is not
+        ``None`` the operation should be aborted.
+    """
+    if not contact:
+        return (f"Contact not found for {communication_type}", None)
+
+    existing_value = contact.get(address_field)
+    field_display = address_field.replace("_", " ")
+    contact_name = _get_contact_display_name(contact)
+
+    if existing_value:
+        # Contact already has this field
+        if inline_value and inline_value != existing_value:
+            return (
+                f"Cannot send {communication_type} to {contact_name}: "
+                f"this contact already has {field_display} '{existing_value}' on file, "
+                f"but you provided '{inline_value}'. "
+                f"Use `act` to update the contact's {field_display} if needed, "
+                f"then retry the {communication_type}.",
+                None,
+            )
+        # No inline value, or same value -- proceed with existing
+        return (None, contact)
+
+    # Contact is missing this field
+    if not inline_value:
+        return (
+            f"Cannot send {communication_type} to {contact_name}: "
+            f"this contact does not have a {field_display} on file. "
+            f"Provide the {field_display} inline or use `act` to update "
+            f"the contact first.",
+            None,
+        )
+
+    # Attach the inline value to the existing contact
+    contact_index.contact_manager.update_contact(
+        contact_id=contact_id,
+        **{address_field: inline_value},
+    )
+    # Re-fetch to get fresh data after the update
+    updated_contact = contact_index.get_contact(contact_id)
+    return (None, updated_contact)
+
+
 class ConversationManagerBrainActionTools:
     """
     Side-effecting tools for the Main CM Brain.
@@ -168,18 +239,31 @@ class ConversationManagerBrainActionTools:
         *,
         contact_id: int | str,
         content: str,
+        phone_number: str | None = None,
     ) -> dict[str, Any]:
         """
         Send an SMS message to an existing contact.
 
-        The contact must already exist and have a phone number on file.
-        Use ``find_contacts`` to look up contacts and ``create_contact``
-        to add new ones before calling this tool.
+        The contact must already exist in the system.
+
+        - If the contact **already has** a phone number on file (visible in
+          active_conversations), omit ``phone_number`` -- it is not needed.
+        - If the contact **does not have** a phone number on file but you
+          know it (e.g. the boss provided it), pass it via ``phone_number``.
+          It will be saved to the contact record automatically and the SMS
+          will be sent in one step.
+        - **Do not** pass a ``phone_number`` that differs from the one
+          already on file -- this will be rejected.  Use ``act`` to update
+          the contact's phone number first, then retry.
 
         Args:
-            contact_id: The contact_id of the recipient (from active_conversations
-                or returned by ``find_contacts`` / ``create_contact``).
+            contact_id: The contact_id of the recipient (from
+                active_conversations or returned by ``find_contacts`` /
+                ``create_contact``).
             content: The text content of the SMS message to send.
+            phone_number: The recipient's phone number.  Required when the
+                contact does not yet have a phone number on file; omit when
+                the contact already has one.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
@@ -190,11 +274,18 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:sms_sent", event.to_json())
             return {"status": "error", "error": outbound_error}
 
-        address_error = _check_contact_has_address(contact, "phone_number", "SMS")
-        if address_error:
-            event = Error(address_error)
+        detail_error, contact = _resolve_or_attach_detail(
+            contact,
+            contact_id,
+            "phone_number",
+            phone_number,
+            "SMS",
+            self._cm.contact_index,
+        )
+        if detail_error:
+            event = Error(detail_error)
             await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-            return {"status": "error", "error": address_error}
+            return {"status": "error", "error": detail_error}
 
         to_number = contact.get("phone_number")
         response = await comms_utils.send_sms_message_via_number(
@@ -336,9 +427,9 @@ class ConversationManagerBrainActionTools:
     async def send_email(
         self,
         *,
-        to: list[int] | None = None,
-        cc: list[int] | None = None,
-        bcc: list[int] | None = None,
+        to: list[int | dict] | None = None,
+        cc: list[int | dict] | None = None,
+        bcc: list[int | dict] | None = None,
         subject: str,
         body: str,
         reply_all: bool = False,
@@ -348,16 +439,32 @@ class ConversationManagerBrainActionTools:
         """
         Send an email to existing contacts.
 
-        Each contact must already exist and have an email address on file.
-        Use ``find_contacts`` to look up contacts and ``create_contact``
-        to add new ones before calling this tool.
+        Each contact must already exist in the system.  Each recipient in
+        ``to``, ``cc``, and ``bcc`` is specified in one of two ways:
+
+        - **Contact already has an email on file** -- pass the bare
+          ``contact_id`` (integer).  Example: ``to=[5]``.
+        - **Contact does NOT have an email on file** but you know it
+          (e.g. the boss provided it) -- pass a dict with both fields:
+          ``{"contact_id": 5, "email_address": "alice@example.com"}``.
+          The email will be saved to the contact record automatically and
+          the email will be sent in one step.
+
+        You can mix both forms in the same list.
+
+        **Do not** use the dict form to supply an email that differs from
+        the one already on file -- this will be rejected.  Use ``act`` to
+        update the contact's email address first, then retry.
 
         Duplicates are automatically collapsed.
 
         Args:
-            to: List of recipient contact_ids.
-            cc: List of CC recipient contact_ids.
-            bcc: List of BCC recipient contact_ids.
+            to: Primary recipients.  Each element is either a
+                ``contact_id`` (int) when the contact already has an email
+                on file, or ``{"contact_id": int, "email_address": str}``
+                when you need to provide the email address.
+            cc: CC recipients (same format as ``to``).
+            bcc: BCC recipients (same format as ``to``).
             subject: Email subject.
             body: Email body.
             reply_all: If True, automatically populate to/cc from the email being
@@ -371,15 +478,29 @@ class ConversationManagerBrainActionTools:
 
         from unity.session_details import SESSION_DETAILS
 
-        # Coerce string-encoded contact_ids to int
-        def _coerce_ids(ids: list | None) -> list[int] | None:
-            if ids is None:
+        # Coerce each recipient item to (contact_id, optional_inline_email).
+        # Accepts: int, str (string-encoded int), or dict with contact_id + email_address.
+        def _coerce_recipients(
+            items: list | None,
+        ) -> list[tuple[int, str | None]] | None:
+            if items is None:
                 return None
-            return [_coerce_contact_id(cid) for cid in ids]
+            result: list[tuple[int, str | None]] = []
+            for item in items:
+                if isinstance(item, dict):
+                    cid = item.get("contact_id")
+                    if cid is None:
+                        raise TypeError(
+                            f"Email recipient dict must include 'contact_id', got: {item!r}",
+                        )
+                    result.append((_coerce_contact_id(cid), item.get("email_address")))
+                else:
+                    result.append((_coerce_contact_id(item), None))
+            return result
 
-        to = _coerce_ids(to)
-        cc = _coerce_ids(cc)
-        bcc = _coerce_ids(bcc)
+        to = _coerce_recipients(to)
+        cc = _coerce_recipients(cc)
+        bcc = _coerce_recipients(bcc)
 
         # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
         if reply_all and (to or cc or bcc):
@@ -392,21 +513,38 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:email_sent", event.to_json())
             return {"status": "error", "error": error_msg}
 
-        # --- Helper: resolve contact_ids to unique (email, contact) pairs ---
+        # --- Helper: resolve recipients to unique (email, contact) pairs ---
         def _resolve_recipients(
-            contact_ids: list[int] | None,
-        ) -> list[tuple[str, dict]]:
-            """Resolve contact_ids to (email_address, contact_dict) pairs."""
-            if not contact_ids:
-                return []
+            recipients: list[tuple[int, str | None]] | None,
+        ) -> tuple[str | None, list[tuple[str, dict]]]:
+            """Resolve recipients to (email_address, contact_dict) pairs.
+
+            Each item is ``(contact_id, optional_inline_email)``.  Uses
+            :func:`_resolve_or_attach_detail` for implicit detail creation.
+
+            Returns ``(error, resolved)`` -- if *error* is not ``None`` the
+            whole send should be aborted.
+            """
+            if not recipients:
+                return (None, [])
             results: dict[str, dict] = {}  # email -> contact, for deduplication
-            for cid in contact_ids:
+            for cid, inline_email in recipients:
                 contact = self._cm.contact_index.get_contact(cid)
-                if contact:
-                    email = contact.get("email_address")
+                err, resolved = _resolve_or_attach_detail(
+                    contact,
+                    cid,
+                    "email_address",
+                    inline_email,
+                    "email",
+                    self._cm.contact_index,
+                )
+                if err:
+                    return (err, [])
+                if resolved:
+                    email = resolved.get("email_address")
                     if email and email not in results:
-                        results[email] = contact
-            return [(email, contact) for email, contact in results.items()]
+                        results[email] = resolved
+            return (None, [(e, c) for e, c in results.items()])
 
         # --- Handle reply_all: populate to/cc from the email being replied to ---
         final_to: list[str] = []
@@ -499,10 +637,33 @@ class ConversationManagerBrainActionTools:
             final_cc = list(all_original_recipients)
 
         else:
-            # --- Resolve explicit contact_ids to email addresses ---
-            to_resolved = _resolve_recipients(to)
-            cc_resolved = _resolve_recipients(cc)
-            bcc_resolved = _resolve_recipients(bcc)
+            # --- Resolve explicit recipients to email addresses ---
+            to_err, to_resolved = _resolve_recipients(to)
+            if to_err:
+                event = Error(to_err)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": to_err}
+
+            cc_err, cc_resolved = _resolve_recipients(cc)
+            if cc_err:
+                event = Error(cc_err)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": cc_err}
+
+            bcc_err, bcc_resolved = _resolve_recipients(bcc)
+            if bcc_err:
+                event = Error(bcc_err)
+                await self._event_broker.publish(
+                    "app:comms:email_sent",
+                    event.to_json(),
+                )
+                return {"status": "error", "error": bcc_err}
 
             # Extract just the email addresses for sending
             final_to = [email for email, _ in to_resolved]
@@ -647,13 +808,22 @@ class ConversationManagerBrainActionTools:
         *,
         contact_id: int | str,
         context: str = "",
+        phone_number: str | None = None,
     ) -> dict[str, Any]:
         """
         Start an outbound phone call to an existing contact.
 
-        The contact must already exist and have a phone number on file.
-        Use ``find_contacts`` to look up contacts and ``create_contact``
-        to add new ones before calling this tool.
+        The contact must already exist in the system.
+
+        - If the contact **already has** a phone number on file (visible in
+          active_conversations), omit ``phone_number`` -- it is not needed.
+        - If the contact **does not have** a phone number on file but you
+          know it (e.g. the boss provided it), pass it via ``phone_number``.
+          It will be saved to the contact record automatically and the call
+          will be placed in one step.
+        - **Do not** pass a ``phone_number`` that differs from the one
+          already on file -- this will be rejected.  Use ``act`` to update
+          the contact's phone number first, then retry.
 
         Args:
             contact_id: The contact_id of the person to call (from
@@ -664,6 +834,9 @@ class ConversationManagerBrainActionTools:
                 to confirm the Thursday 3pm meeting and ask about dietary
                 preferences for the team lunch"). This is delivered to the voice
                 agent as initial guidance before the recipient picks up.
+            phone_number: The recipient's phone number.  Required when the
+                contact does not yet have a phone number on file; omit when
+                the contact already has one.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
@@ -674,15 +847,18 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:make_call", event.to_json())
             return {"status": "error", "error": outbound_error}
 
-        address_error = _check_contact_has_address(
+        detail_error, contact = _resolve_or_attach_detail(
             contact,
+            contact_id,
             "phone_number",
+            phone_number,
             "phone call",
+            self._cm.contact_index,
         )
-        if address_error:
-            event = Error(address_error)
+        if detail_error:
+            event = Error(detail_error)
             await self._event_broker.publish("app:comms:make_call", event.to_json())
-            return {"status": "error", "error": address_error}
+            return {"status": "error", "error": detail_error}
 
         to_number = contact.get("phone_number")
         print(f"[make_call] context: {context}, to_number: {to_number}")
