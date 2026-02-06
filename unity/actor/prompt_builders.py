@@ -702,9 +702,9 @@ def _build_primitives_implementation_examples() -> str:
         get_primitives_contact_ask_example,
         get_primitives_contact_update_example,
         get_primitives_cross_manager_example,
-        get_primitives_files_ask_example,
-        get_primitives_files_get_tools_example,
-        get_primitives_files_organize_example,
+        get_primitives_files_describe_example,
+        get_primitives_files_filter_example,
+        get_primitives_files_search_example,
         get_primitives_guidance_ask_example,
         get_primitives_guidance_update_example,
         get_primitives_task_execute_example,
@@ -723,11 +723,11 @@ def _build_primitives_implementation_examples() -> str:
 
         {get_primitives_cross_manager_example().strip()}
 
-        {get_primitives_files_ask_example().strip()}
+        {get_primitives_files_describe_example().strip()}
 
-        {get_primitives_files_organize_example().strip()}
+        {get_primitives_files_filter_example().strip()}
 
-        {get_primitives_files_get_tools_example().strip()}
+        {get_primitives_files_search_example().strip()}
 
         {get_primitives_guidance_ask_example().strip()}
 
@@ -1890,7 +1890,7 @@ def _build_state_manager_rules_and_examples(
 
     Note: Routing guidance (manager descriptions) is now provided by
     StateManagerEnvironment.get_prompt_context() which dynamically generates
-    from MANAGER_METADATA. This avoids duplication.
+    from unity.function_manager.primitives.ToolSurfaceRegistry. This avoids duplication.
     """
     rules = textwrap.dedent(
         """
@@ -1984,9 +1984,10 @@ def _build_code_act_rules_and_examples(
         parts.append(_build_computer_rules_and_examples(cp))
 
     if "primitives" in environments:
-        # Get exposed managers from the environment if available
+        # Get scope from the environment
         env = environments["primitives"]
-        managers = getattr(env, "_exposed_managers", None)
+        scope = getattr(env, "primitive_scope", None)
+        managers = set(scope.scoped_managers) if scope else None
         parts.append(_build_state_manager_rules_and_examples(managers=managers))
         env_ctx = env.get_prompt_context()
         parts.append(env_ctx)
@@ -2039,11 +2040,12 @@ def _build_initial_plan_rules_and_examples(
                 "Use `reason` only to structure/summarize after you've gathered evidence (e.g., from web search)."
             )
 
-    # Get exposed managers from environment for filtering
+    # Get scope from environment for filtering
     managers_filter = None
     if environments and "primitives" in environments:
         env = environments["primitives"]
-        managers_filter = getattr(env, "_exposed_managers", None)
+        scope = getattr(env, "primitive_scope", None)
+        managers_filter = set(scope.scoped_managers) if scope else None
 
     # Compose examples based on active environments
     example_sections = []
