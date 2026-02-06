@@ -46,6 +46,7 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
     # agent-service/.env
     ANTHROPIC_API_KEY="sk-ant-..."    # or provide other LLM keys used by your magnitude-core config
     ORCHESTRA_URL="..."
+    UNITY_COMMS_URL="..."
     UNIFY_KEY="..."
     # Optional keys depending on configured clients in magnitude-core (baml clients)
     GOOGLE_API_KEY="..."              # if using Google AI Studio clients
