@@ -232,7 +232,6 @@ async def make_code_act_actor(
     impl: Literal["real", "simulated"],
     include_function_manager_tools: bool = False,
     function_manager: Optional["FunctionManager"] = None,
-    primitives: Optional[Primitives] = None,
     exposed_managers: Optional[set[str]] = None,
 ) -> AsyncIterator[tuple[CodeActActor, Primitives, list[str]]]:
     """
@@ -242,10 +241,15 @@ async def make_code_act_actor(
     in `tests/actor/state_managers/conftest.py`, keyed off test path.
     This argument is kept as an assertion/documentation aid.
     """
-    primitives = primitives or Primitives()
-    calls = instrument_basic_primitives_calls(primitives)
+    if exposed_managers:
+        from unity.function_manager.primitives import PrimitiveScope
 
-    env = StateManagerEnvironment(primitives, exposed_managers=exposed_managers)
+        scope = PrimitiveScope(scoped_managers=frozenset(exposed_managers))
+        primitives = Primitives(primitive_scope=scope)
+    else:
+        primitives = Primitives()
+    calls = instrument_basic_primitives_calls(primitives)
+    env = StateManagerEnvironment(primitives)
     actor = CodeActActor(environments=[env], function_manager=function_manager)
 
     # Optionally strip FunctionManager tools to focus on on-the-fly routing via primitives.

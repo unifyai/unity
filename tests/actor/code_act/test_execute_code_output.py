@@ -75,11 +75,13 @@ async def actor_with_primitives(
     configure_simulated_managers,
 ) -> AsyncIterator[tuple[CodeActActor, Primitives]]:
     """Create a CodeActActor with primitives environment for direct execute_code testing."""
-    primitives = Primitives()
-    env = StateManagerEnvironment(
-        primitives,
-        exposed_managers={"contacts", "tasks", "transcripts", "knowledge"},
+    from unity.function_manager.primitives import PrimitiveScope
+
+    scope = PrimitiveScope(
+        scoped_managers=frozenset({"contacts", "tasks", "transcripts", "knowledge"}),
     )
+    primitives = Primitives(primitive_scope=scope)
+    env = StateManagerEnvironment(primitives)
     actor = CodeActActor(environments=[env], function_manager=None)
 
     # Strip FunctionManager tools to focus on primitives
