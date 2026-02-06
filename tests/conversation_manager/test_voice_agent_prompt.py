@@ -217,8 +217,8 @@ class TestAssistantName:
         kwargs = {**base_prompt_kwargs, "assistant_name": None}
         prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True)
 
-        # Should not contain "Your name is" when name is not set
-        assert "Your name is" not in prompt
+        # Should not contain "My name is" when name is not set
+        assert "My name is" not in prompt
 
 
 # =============================================================================
@@ -351,7 +351,7 @@ class TestPromptContent:
 
     def test_assistant_name_in_prompt(self, boss_call_prompt: str):
         """Prompt includes assistant name when provided."""
-        assert "Your name is Alex." in boss_call_prompt
+        assert "My name is Alex." in boss_call_prompt
 
     def test_boss_bio_in_prompt(self, boss_call_prompt: str):
         """Prompt includes boss bio when provided."""
@@ -375,7 +375,7 @@ class TestPromptContent:
         """Prompt omits name line when assistant_name is None."""
         kwargs = {**base_prompt_kwargs, "assistant_name": None}
         prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True)
-        assert "Your name is" not in prompt
+        assert "My name is" not in prompt
 
     def test_no_contact_bio_when_none(self, base_prompt_kwargs: dict):
         """Prompt omits contact bio line when contact_bio is None."""
@@ -397,8 +397,8 @@ class TestPromptContent:
 
     def test_data_access_mentions_instructions(self, boss_call_prompt: str):
         """Data access section mentions data from instructions is usable."""
-        assert "Data provided in your instructions" in boss_call_prompt
+        assert "Data provided in my instructions" in boss_call_prompt
 
     def test_answer_directly_mentions_instructions(self, boss_call_prompt: str):
         """Communication guidelines mention answering from instruction data."""
-        assert "your name, boss details, contact details" in boss_call_prompt
+        assert "my name, boss details, contact details" in boss_call_prompt
