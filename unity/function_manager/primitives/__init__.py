@@ -30,6 +30,7 @@ from unity.function_manager.primitives.registry import (
 from unity.function_manager.primitives.runtime import (
     Primitives,
     ComputerPrimitives,
+    DEFAULT_AGENT_SERVER_URL,
     get_primitive_callable,
     _AsyncPrimitiveWrapper,
     _create_async_wrapper,
@@ -52,6 +53,7 @@ __all__ = [
     # Runtime
     "Primitives",
     "ComputerPrimitives",
+    "DEFAULT_AGENT_SERVER_URL",
     "get_primitive_callable",
     "_AsyncPrimitiveWrapper",
     "_create_async_wrapper",
