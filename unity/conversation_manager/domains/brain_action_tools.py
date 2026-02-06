@@ -810,6 +810,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         recipient: PhoneRecipient,
+        context: str = "",
     ) -> dict[str, Any]:
         """
         Start an outbound phone call to a contact.
@@ -817,6 +818,11 @@ class ConversationManagerBrainActionTools:
         Args:
             recipient: Who to call. Provide either a contact_id
                 (integer ID from active_conversations) or a phone_number string.
+            context: Briefly describe why you are calling and any key information
+                the voice agent should know when the call connects (e.g. "We need
+                to confirm the Thursday 3pm meeting and ask about dietary
+                preferences for the team lunch"). This is delivered to the voice
+                agent as initial guidance before the recipient picks up.
         """
         # Coerce raw dict from LLM tool args into Pydantic model
         if isinstance(recipient, dict):
@@ -850,6 +856,11 @@ class ConversationManagerBrainActionTools:
             return {"status": "error", "error": address_error}
 
         to_number = contact.get("phone_number")
+        print(f"[make_call] context: {context}, to_number: {to_number}")
+        # Store initial guidance so CallManager can publish it to the fast brain
+        # after the subprocess spawns (before the recipient picks up).
+        if context:
+            self._cm.call_manager.initial_call_guidance = context
         response = await comms_utils.start_call(to_number=to_number)
         if response["success"]:
             fresh_contact = (

@@ -86,6 +86,9 @@ class CallEventSocketServer:
         self._connected_clients: list[socket.socket] = []
         self._clients_lock = asyncio.Lock()
         self._running = False
+        # Buffer for messages that arrive before any client connects.
+        # Flushed to the first client that connects.
+        self._pending_messages: list[tuple[str, str]] = []
 
     @property
     def socket_path(self) -> str | None:
@@ -159,7 +162,7 @@ class CallEventSocketServer:
                     pass
         self._client_tasks.clear()
 
-        # Close all connected clients
+        # Close all connected clients and discard buffered messages
         async with self._clients_lock:
             for client in self._connected_clients:
                 try:
@@ -167,6 +170,7 @@ class CallEventSocketServer:
                 except Exception:
                     pass
             self._connected_clients.clear()
+            self._pending_messages.clear()
 
         # Close socket
         if self._server_socket:
@@ -198,6 +202,32 @@ class CallEventSocketServer:
                 # Track connected client for forwarding
                 async with self._clients_lock:
                     self._connected_clients.append(client_socket)
+
+                    # Flush any messages that arrived before the client connected
+                    if self._pending_messages:
+                        print(
+                            f"[CallEventSocketServer] Flushing "
+                            f"{len(self._pending_messages)} buffered message(s)",
+                        )
+                        for channel, event_json in self._pending_messages:
+                            try:
+                                msg = (
+                                    json.dumps(
+                                        {"channel": channel, "event": event_json},
+                                    )
+                                    + "\n"
+                                )
+                                loop = asyncio.get_event_loop()
+                                await loop.sock_sendall(
+                                    client_socket,
+                                    msg.encode("utf-8"),
+                                )
+                            except Exception as e:
+                                print(
+                                    f"[CallEventSocketServer] Failed to flush "
+                                    f"buffered message: {e}",
+                                )
+                        self._pending_messages.clear()
 
                 task = asyncio.create_task(self._handle_client(client_socket))
                 self._client_tasks.append(task)
@@ -279,6 +309,20 @@ class CallEventSocketServer:
         except Exception as e:
             print(f"[CallEventSocketServer] Error processing message: {e}")
 
+    async def queue_for_clients(self, channel: str, event_json: str) -> None:
+        """Directly queue a message for delivery to connected (or future) clients.
+
+        Unlike publishing via the event broker (which requires the forward
+        subscription loop to be active), this injects the message straight
+        into the socket send path.  If clients are already connected the
+        message is sent immediately; otherwise it is buffered and flushed
+        when the first client connects.
+
+        Use this when the message must be delivered reliably regardless of
+        whether the forwarding subscription has been established yet.
+        """
+        await self._send_to_all_clients(channel, event_json)
+
     async def _forward_events_to_clients(self) -> None:
         """Subscribe to forward channels and send matching events to connected clients."""
         try:
@@ -317,7 +361,11 @@ class CallEventSocketServer:
             print(f"[CallEventSocketServer] Forward subscription error: {e}")
 
     async def _send_to_all_clients(self, channel: str, event_json: str) -> None:
-        """Send an event to all connected clients."""
+        """Send an event to all connected clients.
+
+        If no clients are connected, the message is buffered and will be
+        flushed when the first client connects.
+        """
         message = (
             json.dumps(
                 {
@@ -333,6 +381,15 @@ class CallEventSocketServer:
         failed_clients = []
 
         async with self._clients_lock:
+            if not self._connected_clients:
+                # No clients yet -- buffer the message for later delivery
+                self._pending_messages.append((channel, event_json))
+                print(
+                    f"[CallEventSocketServer] No clients connected, buffering "
+                    f"{channel} ({len(self._pending_messages)} buffered)",
+                )
+                return
+
             for client in self._connected_clients:
                 try:
                     await loop.sock_sendall(client, message_bytes)

@@ -149,15 +149,6 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
         timestamp=event.timestamp,
     )
 
-    # For outbound calls, trigger LLM run immediately to generate initial guidance.
-    # The mode is set to CALL for the _run_llm method to handle the case where
-    # the LLM finishes before PhoneCallStarted sets mode to CALL.
-    # This gives us subprocess startup + ringing time as buffer before the user picks
-    # up.
-    if isinstance(event, PhoneCallSent):
-        cm.mode = Mode.CALL
-        await cm.request_llm_run(delay=0, cancel_running=True)
-
 
 @EventHandler.register((PhoneCallStarted, UnifyMeetStarted))
 async def _(
