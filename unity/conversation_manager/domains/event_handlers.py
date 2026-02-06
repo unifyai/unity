@@ -191,11 +191,8 @@ async def _(
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
 
-    # NOTE: For OUTBOUND calls, the slow brain LLM run is triggered earlier on
-    # PhoneCallSent to give maximum time for guidance generation (subprocess
-    # startup + ringing time). See the PhoneCallSent handler above.
-    #
-    # The slow brain will be triggered later for all calls by:
+    # No LLM run here — call guidance is pre-computed via make_call(context=...).
+    # The slow brain will be woken later by:
     # - InboundPhoneUtterance (user says something)
     # - ActorResult (action completes)
     # - NotificationInjectedEvent (cross-channel notification)

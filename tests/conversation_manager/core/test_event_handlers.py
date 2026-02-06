@@ -629,15 +629,20 @@ class TestPhoneCallHandlers:
         assert contact.on_call is True
 
     @pytest.mark.asyncio
-    async def test_phone_call_started_requests_llm_run(self, mock_cm):
-        """PhoneCallStarted requests immediate LLM run."""
+    async def test_phone_call_started_does_not_trigger_llm_run(self, mock_cm):
+        """PhoneCallStarted does not trigger an LLM run.
+
+        Call guidance is pre-computed via make_call(context=...) before the call
+        is placed.  The slow brain is woken later by InboundPhoneUtterance,
+        ActorResult, or cross-channel notifications — not by call-start itself.
+        """
         event = PhoneCallStarted(
             contact={"contact_id": 2, "phone_number": "+15555552222"},
         )
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.request_llm_run.assert_called_once_with(delay=0)
+        mock_cm.request_llm_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_phone_call_ended_resets_mode(self, mock_cm):
