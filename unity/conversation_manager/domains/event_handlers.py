@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
@@ -712,17 +713,21 @@ async def _startup_sequence(cm: "ConversationManager"):
 
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
-    cm._session_logger.info("startup", "Received startup event")
-    payload = event.to_dict()["payload"]
-    cm.set_details(payload)
-    cm.call_manager.set_config(cm.get_call_config())
+    try:
+        cm._session_logger.info("startup", "Received startup event")
+        payload = event.to_dict()["payload"]
+        cm.set_details(payload)
+        cm.call_manager.set_config(cm.get_call_config())
 
-    # Job logging + file sync run in sequence (file sync needs VM details from job startup)
-    asyncio.create_task(_startup_sequence(cm))
+        # Job logging + file sync run in sequence (file sync needs VM details from job startup)
+        asyncio.create_task(_startup_sequence(cm))
 
-    # Manager initialization runs in parallel
-    asyncio.create_task(managers_utils.init_conv_manager(cm))
-    asyncio.create_task(managers_utils.listen_to_operations(cm))
+        # Manager initialization runs in parallel
+        asyncio.create_task(managers_utils.init_conv_manager(cm))
+        asyncio.create_task(managers_utils.listen_to_operations(cm))
+    except Exception as e:
+        cm._session_logger.error("startup", f"Error in startup sequence: {e}")
+        traceback.print_exc()
 
 
 @EventHandler.register(AssistantUpdateEvent)

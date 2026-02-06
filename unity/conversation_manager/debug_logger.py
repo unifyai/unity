@@ -142,6 +142,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
 
     # Update the existing record (created by adapter) with job_name and liveview_url
     try:
+        print(f"[debug_logger] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}")
         existing_logs = unify.get_logs(
             project="AssistantJobs",
             context="startup_events",
