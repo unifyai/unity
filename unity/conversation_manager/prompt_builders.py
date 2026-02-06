@@ -565,16 +565,20 @@ Current time: {now()}."""
 def build_voice_agent_prompt(
     *,
     bio: str,
+    assistant_name: str | None = None,
     boss_first_name: str,
     boss_surname: str,
     boss_phone_number: str | None = None,
     boss_email_address: str | None = None,
+    boss_bio: str | None = None,
     is_boss_user: bool = True,
     contact_first_name: str | None = None,
     contact_surname: str | None = None,
     contact_phone_number: str | None = None,
     contact_email: str | None = None,
+    contact_bio: str | None = None,
     contact_rolling_summary: str | None = None,
+    participants: list[dict] | None = None,
 ) -> str:
     """Build the system prompt for the Voice Agent (fast brain).
 
@@ -585,6 +589,8 @@ def build_voice_agent_prompt(
     ----------
     bio : str
         The assistant's bio/about text.
+    assistant_name : str | None
+        The assistant's own name (so it can introduce itself).
     boss_first_name : str
         The boss contact's first name.
     boss_surname : str
@@ -593,6 +599,8 @@ def build_voice_agent_prompt(
         The boss contact's phone number.
     boss_email_address : str | None
         The boss contact's email address.
+    boss_bio : str | None
+        Bio/background of the boss (role, company, etc.).
     is_boss_user : bool
         Whether the call is with the boss (True) or an external contact (False).
     contact_first_name : str | None
@@ -603,8 +611,14 @@ def build_voice_agent_prompt(
         External contact's phone number (only used when is_boss_user=False).
     contact_email : str | None
         External contact's email (only used when is_boss_user=False).
+    contact_bio : str | None
+        Bio/background of the contact on this call (when is_boss_user=False).
     contact_rolling_summary : str | None
         Rolling summary of past conversations with the contact on this call.
+    participants : list[dict] | None
+        For multi-party calls (e.g. Unify Meet), a list of participant dicts.
+        Each dict should have 'first_name', 'surname', and optionally 'bio'.
+        When provided, these are shown instead of the single contact block.
 
     Returns
     -------
@@ -620,10 +634,15 @@ def build_voice_agent_prompt(
         boss_details_lines.append(f"- Phone Number: {boss_phone_number}")
     if boss_email_address:
         boss_details_lines.append(f"- Email Address: {boss_email_address}")
+    if boss_bio:
+        boss_details_lines.append(f"- Bio: {boss_bio}")
     boss_details = "\n".join(boss_details_lines)
 
-    caller_description = "your boss" if is_boss_user else "one of your boss contacts"
-    caller_ref = "your boss" if is_boss_user else "your boss contact"
+    caller_description = "your boss" if is_boss_user else "one of your boss's contacts"
+    caller_ref = "your boss" if is_boss_user else "your boss's contact"
+
+    # Build name line for role section
+    name_line = f" Your name is {assistant_name}." if assistant_name else ""
 
     # Build parts
     parts = []
@@ -632,7 +651,7 @@ def build_voice_agent_prompt(
     parts.append(
         f"""Role
 ----
-You are a general-purpose assistant communicating with {caller_description} directly over the phone.
+You are a general-purpose assistant communicating with {caller_description} directly over the phone.{name_line}
 You are capable of various tasks such as sending SMS messages, emails, or making calls on the user's behalf.
 
 Your job is to keep the conversation flowing naturally while data lookups and tasks happen in the background. You handle greetings, acknowledgments, and smalltalk autonomously.
@@ -675,8 +694,9 @@ If the data appears ANYWHERE in this conversation history (from you, the user, o
 - If the user asks you to repeat something, just repeat it
 
 **NEVER fabricate data.** The only specific data you can share is:
-1. Data that appeared earlier in this conversation (from any source)
-2. Data from a notification you just received""",
+1. Data provided in your instructions (boss details, contact details, participant info, etc.)
+2. Data that appeared earlier in this conversation (from any source)
+3. Data from a notification you just received""",
     )
 
     # Internal notifications
@@ -712,6 +732,7 @@ Your job is to keep the conversation flowing naturally.
 - Acknowledgments ("Sure", "Got it", "No problem")
 - Clarifying questions ("Which David?", "What time works for you?")
 - User asks you to repeat/clarify something already discussed
+- Any data provided in your instructions (your name, boss details, contact details, participant bios, etc.)
 - Any data that has already appeared in this conversation
 
 **Defer (say "let me check") when:**
@@ -749,12 +770,37 @@ The following are your boss's details:
             f"- Phone Number: {contact_phone_number}",
             f"- Email: {contact_email}",
         ]
+        if contact_bio:
+            contact_lines.append(f"- Bio: {contact_bio}")
         contact_details = "\n".join(contact_lines)
         parts.append(
             f"""Contact details
 ---------------
+The following are the details of the person you are speaking with:
 {contact_details}""",
         )
+
+    # Add participants block for multi-party calls (e.g. Unify Meet)
+    if participants:
+        participant_blocks = []
+        for p in participants:
+            p_lines = []
+            if p.get("first_name"):
+                p_lines.append(f"  - First Name: {p['first_name']}")
+            if p.get("surname"):
+                p_lines.append(f"  - Surname: {p['surname']}")
+            if p.get("bio"):
+                p_lines.append(f"  - Bio: {p['bio']}")
+            if p_lines:
+                name = f"{p.get('first_name', '')} {p.get('surname', '')}".strip()
+                participant_blocks.append(f"**{name}**\n" + "\n".join(p_lines))
+        if participant_blocks:
+            parts.append(
+                "Call participants\n"
+                "-----------------\n"
+                "The following people are on this call:\n\n"
+                + "\n\n".join(participant_blocks),
+            )
 
     # Add conversation history if available
     if contact_rolling_summary:
