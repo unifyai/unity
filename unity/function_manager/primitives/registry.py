@@ -1,0 +1,999 @@
+"""
+ToolSurfaceRegistry: Single source of truth for manager/primitive configuration.
+
+This module centralizes all manager definitions, primitive method discovery,
+prompt context generation, and primitive row collection for FunctionManager indexing.
+
+No other module should define manager lists or primitive configurations.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import inspect
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
+
+from unity.function_manager.primitives.scope import PrimitiveScope
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# ManagerSpec - Per-manager configuration
+# =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class ManagerSpec:
+    """
+    Configuration for a single manager in the tool surface.
+
+    This is the authoritative specification for each manager, containing:
+    - Identity (alias, registry key, class path)
+    - Method exclusions
+    - Prompt metadata (domain, description, use_when, examples, priority)
+    - Method descriptions for prompt generation
+
+    For ComputerPrimitives, `is_state_manager=False` indicates it requires special
+    handling (dynamically-created methods, separate instantiation pattern).
+    """
+
+    manager_alias: str
+    manager_registry_key: str
+    primitive_class_path: str
+    excluded_methods: frozenset[str] = field(default_factory=frozenset)
+    priority: int = 99
+    domain: str = ""
+    description: str = ""
+    use_when: str = ""
+    examples: str = ""
+    special_note: str | None = None
+    method_descriptions: Dict[str, str] = field(default_factory=dict)
+    # Distinguishes state managers from special primitives like ComputerPrimitives
+    is_state_manager: bool = True
+
+
+# =============================================================================
+# Common excluded methods (applies to all managers)
+# =============================================================================
+
+_COMMON_EXCLUDED_METHODS: frozenset[str] = frozenset(
+    {
+        # State management / lifecycle
+        "clear",
+        # Internal helpers
+        "add_tools",
+        "get_tools",
+    },
+)
+
+
+# =============================================================================
+# Canonical Manager Registry (SINGLE SOURCE OF TRUTH)
+# =============================================================================
+
+_MANAGER_SPECS: tuple[ManagerSpec, ...] = (
+    ManagerSpec(
+        manager_alias="contacts",
+        manager_registry_key="contacts",
+        primitive_class_path="unity.contact_manager.contact_manager.ContactManager",
+        excluded_methods=frozenset({"filter_contacts", "update_contact"}),
+        priority=3,
+        domain="People & Relationships",
+        description="People, organizations, contact records (names, emails, phones, roles, locations)",
+        use_when="Questions about specific people, contact info, 'who is X?', 'find contact in Y location'",
+        examples="'Who is our contact at Acme Corp?', 'Find Alice's email', 'Contacts in Berlin?'",
+        method_descriptions={
+            "ask": "Find contacts by name/email/attribute, query relationships, get contact details",
+            "update": "Create, edit, delete, or merge contact records",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="data",
+        manager_registry_key="data",
+        primitive_class_path="unity.data_manager.data_manager.DataManager",
+        excluded_methods=frozenset(),
+        priority=9,
+        domain="Data Operations & Pipelines",
+        description="Low-level data operations on any Unify context (filter, search, reduce, join, vectorize, plot)",
+        use_when="Direct data operations on any context, pipeline transformations, cross-context joins",
+        examples="'Filter rows where amount > 1000', 'Join repairs with telematics', 'Sum revenue by region'",
+        special_note="DataManager operates on ANY Unify context. For file-specific operations with file_path resolution, use FileManager instead.",
+        method_descriptions={
+            "filter": "Query rows with exact-match filter expressions",
+            "search": "Semantic search over embedded columns",
+            "reduce": "Aggregate metrics (count, sum, mean, min, max, etc.)",
+            "join": "Join two contexts on specified columns",
+            "insert_rows": "Insert new rows into a context",
+            "update_rows": "Update existing rows matching a filter",
+            "delete_rows": "Delete rows matching a filter",
+            "vectorize": "Create embeddings for a column",
+            "plot": "Generate visualizations from context data",
+            "create_table": "Create a new table context with schema",
+            "describe_table": "Get metadata and schema for a context",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="transcripts",
+        manager_registry_key="transcripts",
+        primitive_class_path="unity.transcript_manager.transcript_manager.TranscriptManager",
+        excluded_methods=frozenset(),
+        priority=2,
+        domain="Conversation History",
+        description="Past messages, conversation history, communication records (chat/SMS/email)",
+        use_when="Questions about past communications, 'what did X say?', 'last message about Y?', 'conversation with Z?'",
+        examples="'What did Bob say yesterday?', 'Last SMS with Alice?', 'Messages mentioning budget?'",
+        method_descriptions={
+            "ask": "Search messages, find what someone said, retrieve conversation context",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="knowledge",
+        manager_registry_key="knowledge",
+        primitive_class_path="unity.knowledge_manager.knowledge_manager.KnowledgeManager",
+        excluded_methods=frozenset({"filter", "search"}),
+        priority=1,
+        domain="Facts, Policies & Domain Knowledge",
+        description="Organizational facts, policies, procedures, reference material, documentation, stored information",
+        use_when="Questions about company policies, operational procedures, reference docs, 'what is our X policy?', 'summarize Y procedure'",
+        examples="'What's our return policy?', 'Summarize onboarding procedure', 'Office hours?', 'Warranty terms for X?'",
+        method_descriptions={
+            "ask": "Query stored knowledge - company policies (return/refund/warranty/HR), procedures, facts, historical records",
+            "update": "Add/change facts, ingest structured data, update policies",
+            "refactor": "Restructure knowledge schemas (advanced)",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="tasks",
+        manager_registry_key="tasks",
+        primitive_class_path="unity.task_scheduler.task_scheduler.TaskScheduler",
+        excluded_methods=frozenset({"get_active_singleton_handle"}),
+        priority=4,
+        domain="Durable Work & Tracking",
+        description="Task management, work queues, assignments, deadlines, priorities",
+        use_when="Questions about tasks/work items, 'what's due?', 'tasks assigned to X?', 'high-priority items?'",
+        examples="'What tasks are due today?', 'Show Alice's open tasks', 'List high-priority items'",
+        method_descriptions={
+            "ask": "Query task status, what's due/scheduled, assignments, priorities",
+            "update": "Create, edit, delete, or reorder tasks (NOT for starting work)",
+            "execute": "Start durable, tracked execution (use this to run tasks, not `.update(...)`)",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="secrets",
+        manager_registry_key="secrets",
+        primitive_class_path="unity.secret_manager.secret_manager.SecretManager",
+        excluded_methods=frozenset(),
+        priority=8,
+        domain="Credentials & Secrets",
+        description="API keys, passwords, tokens, credentials",
+        use_when="Managing credentials, API keys, secrets (rarely used in plans)",
+        examples="Rarely used directly in plans",
+        method_descriptions={
+            "ask": "Get metadata/placeholders only (never returns actual secret values)",
+            "update": "Create, edit, or delete secrets",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="guidance",
+        manager_registry_key="guidance",
+        primitive_class_path="unity.guidance_manager.guidance_manager.GuidanceManager",
+        excluded_methods=frozenset(),
+        priority=6,
+        domain="Function & Task Guidance",
+        description="Execution instructions, runbooks, how-to guides for functions/tasks",
+        use_when="Questions about HOW to execute something, operational runbooks, incident response procedures",
+        examples="'How do I handle DB failover?', 'Incident response for API outage?'",
+        method_descriptions={
+            "ask": "Query execution instructions, runbooks, best practices for specific operations",
+            "update": "Create, edit, or delete guidance entries linked to functions",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="web",
+        manager_registry_key="web_search",
+        primitive_class_path="unity.web_searcher.web_searcher.WebSearcher",
+        excluded_methods=frozenset(),
+        priority=5,
+        domain="Time-Sensitive & External Research",
+        description="External/public information and research (including general concepts/definitions), plus current events and 'today/latest/now' queries",
+        use_when="Questions answered from public/external knowledge (including definitions/concepts) or requiring up-to-date info: current events, weather, news",
+        examples="'What is the Eisenhower Matrix?', 'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?'",
+        method_descriptions={
+            "ask": "Web search for current information, news, weather, public data",
+        },
+    ),
+    ManagerSpec(
+        manager_alias="files",
+        manager_registry_key="files",
+        primitive_class_path="unity.file_manager.managers.file_manager.FileManager",
+        excluded_methods=frozenset(
+            {
+                "exists",
+                "list",
+                "ingest_files",
+                "export_file",
+                "export_directory",
+                "rename_file",
+                "move_file",
+                "delete_file",
+                "sync",
+            },
+        ),
+        priority=7,
+        domain="Files & Data Operations",
+        description="Received/downloaded files, document parsing, file metadata, data queries",
+        use_when="Questions about specific files/documents, data operations, aggregations, visualizations",
+        examples="'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
+        method_descriptions={
+            "ask": "Query about specific files, parse document contents, extract information from files",
+            "describe": "Discover file storage layout, contexts, and schemas",
+            "list_columns": "Get column names and types for a context",
+            "reduce": "Aggregate data (count, sum, mean, min, max, etc.)",
+            "filter_files": "Query raw records with filtering",
+            "search_files": "Semantic search over table data",
+            "visualize": "Generate chart visualizations",
+        },
+    ),
+    # ComputerPrimitives is NOT a state manager - it has dynamically-created methods
+    # and requires a separate instantiation pattern. It is included here for completeness
+    # but is_state_manager=False indicates it should not be processed like other managers.
+    ManagerSpec(
+        manager_alias="computer",
+        manager_registry_key="",  # No ManagerRegistry getter - instantiated directly
+        primitive_class_path="unity.function_manager.primitives.runtime.ComputerPrimitives",
+        excluded_methods=frozenset(),
+        priority=10,
+        domain="Web & Desktop Control",
+        description="Browser automation, web navigation, computer use actions, reasoning",
+        use_when="Web automation, browser control, navigating websites, extracting web content",
+        examples="'Navigate to example.com', 'Click the login button', 'Extract page content'",
+        special_note="ComputerPrimitives has dynamically-created methods. Access via primitives.computer, not indexed in FunctionManager.",
+        method_descriptions={
+            "act": "Perform an action on the current page",
+            "observe": "Observe the current page state",
+            "query": "Query information from the page",
+            "navigate": "Navigate to a URL",
+            "get_links": "Get links from the page",
+            "get_content": "Get content from the page",
+            "reason": "General-purpose reasoning with call stack context",
+        },
+        is_state_manager=False,  # <-- Key differentiator
+    ),
+)
+
+# Build lookup dicts for fast access
+_MANAGER_BY_ALIAS: Dict[str, ManagerSpec] = {
+    spec.manager_alias: spec for spec in _MANAGER_SPECS
+}
+
+# Reverse mapping: primitive_class_path -> manager_alias (for deriving alias from stored primitive_class)
+_CLASS_PATH_TO_ALIAS: Dict[str, str] = {
+    spec.primitive_class_path: spec.manager_alias for spec in _MANAGER_SPECS
+}
+
+# State managers only (excludes ComputerPrimitives)
+_STATE_MANAGER_SPECS: tuple[ManagerSpec, ...] = tuple(
+    spec for spec in _MANAGER_SPECS if spec.is_state_manager
+)
+
+
+# =============================================================================
+# Routing Guidance for Commonly Confused Manager Pairs
+# =============================================================================
+
+_ROUTING_GUIDANCE: List[Dict[str, Any]] = [
+    {
+        "managers": {"data", "files"},
+        "title": "`primitives.data.*` vs `primitives.files.*`",
+        "guidance": [
+            (
+                "data",
+                "Use for **data operations on table contents** - filtering rows, "
+                "aggregating/reducing values (sum, avg, count), joining tables, transforming data. "
+                "Use when the question is about the DATA INSIDE a table/dataset.",
+            ),
+            (
+                "files",
+                "Use for **file-level operations** - listing files in directories, "
+                "describing storage layout, getting file metadata, asking about what a file contains (high-level). "
+                "Use when the question is about FILES themselves.",
+            ),
+        ],
+        "examples": [
+            (
+                "Calculate the sum of the amount column",
+                "data",
+                "primitives.data.reduce(...)",
+            ),
+            (
+                "Filter rows where status is active",
+                "data",
+                "primitives.data.filter(...)",
+            ),
+            (
+                "What files are in /reports?",
+                "files",
+                "primitives.files.filter_files(...)",
+            ),
+            (
+                "Describe the storage layout of report.csv",
+                "files",
+                "primitives.files.describe(...)",
+            ),
+        ],
+    },
+]
+
+
+# =============================================================================
+# Example generator mapping (manager_alias -> list of function names)
+# =============================================================================
+
+_EXAMPLE_GENERATORS: Dict[str, List[str]] = {
+    "contacts": [
+        "get_primitives_contact_ask_example",
+        "get_primitives_contact_update_example",
+    ],
+    "tasks": [
+        "get_primitives_task_execute_example",
+        "get_primitives_task_lookup_and_execute_example",
+        "get_primitives_dynamic_methods_example",
+    ],
+    "knowledge": [
+        "get_primitives_knowledge_ask_example",
+        "get_primitives_knowledge_update_example",
+    ],
+    "transcripts": [
+        "get_primitives_transcript_ask_example",
+    ],
+    "web": [
+        "get_primitives_web_ask_example",
+    ],
+    "guidance": [
+        "get_primitives_guidance_ask_example",
+        "get_primitives_guidance_update_example",
+    ],
+    "secrets": [
+        "get_primitives_secrets_ask_example",
+        "get_primitives_secrets_update_example",
+    ],
+    "files": [
+        "get_primitives_files_describe_example",
+        "get_primitives_files_reduce_example",
+        "get_primitives_files_filter_example",
+        "get_primitives_files_search_example",
+        "get_primitives_files_visualize_example",
+    ],
+    "data": [
+        "get_primitives_data_filter_example",
+        "get_primitives_data_reduce_example",
+    ],
+}
+
+
+# =============================================================================
+# Stable ID Generation (Matching Old Format)
+# =============================================================================
+
+
+def _get_stable_id(class_name: str, method_name: str) -> int:
+    """
+    Generate a stable integer ID from class.method name.
+
+    Uses a hash-based approach so IDs are:
+    - Deterministic (same name → same ID)
+    - Stable across code changes (no positional dependencies)
+    - Unique (collision-resistant within practical limits)
+
+    Args:
+        class_name: Short class name (e.g., "ContactManager")
+        method_name: Method name (e.g., "ask")
+
+    Returns:
+        A stable non-negative integer ID within signed 32-bit range.
+    """
+    key = f"{class_name}.{method_name}"
+    # Use first 4 bytes of SHA256, masked to signed int32 range (0x7FFFFFFF)
+    # to avoid PostgreSQL integer overflow when sorting by function_id
+    digest = hashlib.sha256(key.encode()).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+# =============================================================================
+# ToolSurfaceRegistry - Main API
+# =============================================================================
+
+
+class ToolSurfaceRegistry:
+    """
+    Central registry for tool surface configuration.
+
+    This class provides the API for:
+    - Getting manager specs filtered by scope
+    - Discovering primitive methods for a manager
+    - Generating prompt context and examples
+    - Collecting primitive rows for FunctionManager indexing
+    - Building row filters for scoped queries
+    """
+
+    # Class-level references to canonical data
+    MANAGERS = _MANAGER_SPECS
+    STATE_MANAGERS = _STATE_MANAGER_SPECS
+    ROUTING_GUIDANCE = _ROUTING_GUIDANCE
+    EXAMPLE_GENERATORS = _EXAMPLE_GENERATORS
+
+    def __init__(self) -> None:
+        """Initialize the registry."""
+        # Cache for dynamically loaded classes (avoids repeated imports)
+        self._class_cache: Dict[str, Type] = {}
+
+    def manager_specs(self, primitive_scope: PrimitiveScope) -> List[ManagerSpec]:
+        """
+        Get manager specs for a given scope, sorted by priority.
+
+        Only returns state managers (is_state_manager=True). ComputerPrimitives
+        is excluded as it requires special handling.
+
+        Args:
+            primitive_scope: The scope defining which managers are exposed.
+
+        Returns:
+            List of ManagerSpec for exposed state managers, sorted by priority.
+        """
+        specs = [
+            spec
+            for spec in _STATE_MANAGER_SPECS
+            if spec.manager_alias in primitive_scope.scoped_managers
+        ]
+        return sorted(specs, key=lambda s: s.priority)
+
+    def get_manager_spec(self, manager_alias: str) -> Optional[ManagerSpec]:
+        """Get a single manager spec by alias (includes ComputerPrimitives)."""
+        return _MANAGER_BY_ALIAS.get(manager_alias)
+
+    def _load_manager_class(self, class_path: str) -> Optional[Type]:
+        """Dynamically load a manager class for introspection."""
+        if class_path in self._class_cache:
+            return self._class_cache[class_path]
+
+        try:
+            module_path, class_name = class_path.rsplit(".", 1)
+            import importlib
+
+            module = importlib.import_module(module_path)
+            cls = getattr(module, class_name)
+            self._class_cache[class_path] = cls
+            return cls
+        except Exception as e:
+            logger.warning(f"Failed to load class {class_path}: {e}")
+            return None
+
+    def primitive_methods(self, *, manager_alias: str) -> List[str]:
+        """
+        Get the list of primitive methods for a manager.
+
+        Discovers methods from @abstractmethod definitions on Base* classes,
+        minus common exclusions and per-manager exclusions.
+
+        For ComputerPrimitives, uses the class's _PRIMITIVE_METHODS constant
+        since methods are dynamically created via setattr in __init__.
+
+        Args:
+            manager_alias: The canonical manager alias.
+
+        Returns:
+            Sorted list of method names exposed as primitives.
+        """
+        spec = _MANAGER_BY_ALIAS.get(manager_alias)
+        if not spec:
+            logger.warning(f"Unknown manager alias: {manager_alias}")
+            return []
+
+        cls = self._load_manager_class(spec.primitive_class_path)
+        if cls is None:
+            return []
+
+        # Combine common exclusions with per-manager exclusions
+        exclude = _COMMON_EXCLUDED_METHODS | spec.excluded_methods
+
+        # Special case: ComputerPrimitives has dynamically-created methods
+        # that are added via setattr in __init__, so we can't discover them
+        # from the class itself. Use the class's _PRIMITIVE_METHODS constant.
+        if cls.__name__ == "ComputerPrimitives":
+            return sorted([m for m in cls._PRIMITIVE_METHODS if m not in exclude])
+
+        methods = []
+
+        # Standard case: find @abstractmethod definitions in Base* classes
+        for base in cls.__mro__:
+            base_name = base.__name__
+            # Look for Base* classes (e.g., BaseContactManager, BaseFileManager)
+            if not base_name.startswith("Base"):
+                continue
+            # Skip the root BaseStateManager - we want the specific manager's base
+            if base_name == "BaseStateManager":
+                continue
+
+            for name, method in vars(base).items():
+                if name.startswith("_"):
+                    continue
+                if name in exclude:
+                    continue
+                if getattr(method, "__isabstractmethod__", False):
+                    if name not in methods:
+                        methods.append(name)
+
+        return sorted(methods)
+
+    def tool_names(self, primitive_scope: PrimitiveScope) -> List[str]:
+        """
+        Get fully-qualified tool names for a scope.
+
+        Args:
+            primitive_scope: The scope defining which managers are exposed.
+
+        Returns:
+            List of tool names like "primitives.contacts.ask".
+        """
+        names = []
+        for alias in sorted(primitive_scope.scoped_managers):
+            spec = _MANAGER_BY_ALIAS.get(alias)
+            # Skip non-state managers (like ComputerPrimitives)
+            if spec and not spec.is_state_manager:
+                continue
+            for method in self.primitive_methods(manager_alias=alias):
+                names.append(f"primitives.{alias}.{method}")
+        return names
+
+    def tool_metadata(
+        self,
+        primitive_scope: PrimitiveScope,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Get metadata for all tools in scope.
+
+        Args:
+            primitive_scope: The scope defining which managers are exposed.
+
+        Returns:
+            Dict mapping tool name to metadata (is_impure, is_steerable).
+        """
+        metadata = {}
+        for name in self.tool_names(primitive_scope):
+            # Conservative: all state manager primitives are impure and steerable
+            metadata[name] = {
+                "is_impure": True,
+                "is_steerable": True,
+            }
+        return metadata
+
+    def prompt_context(self, primitive_scope: PrimitiveScope) -> str:
+        """
+        Generate prompt context for exposed managers.
+
+        Args:
+            primitive_scope: The scope defining which managers are exposed.
+
+        Returns:
+            Formatted prompt context string.
+        """
+        specs = self.manager_specs(primitive_scope)
+        if not specs:
+            return ""
+
+        lines = ["### State manager primitives (`primitives.*`)\n"]
+        lines.append(
+            "Each manager owns a specific domain of the assistant's durable state. "
+            "Choose the right manager for your task:\n",
+        )
+
+        for spec in specs:
+            # Format: **Domain** → `primitives.manager`
+            lines.append(f"\n**{spec.domain}** → `primitives.{spec.manager_alias}`")
+            lines.append(f"- **Domain**: {spec.description}")
+
+            # Show methods with their descriptions
+            method_names = self.primitive_methods(manager_alias=spec.manager_alias)
+            for method_name in method_names:
+                if method_name in spec.method_descriptions:
+                    lines.append(
+                        f"- `.{method_name}(...)`: {spec.method_descriptions[method_name]}",
+                    )
+                else:
+                    # Method exists but no description in metadata
+                    lines.append(f"- `.{method_name}(...)`")
+
+            # Add get_tools for files (special case - not auto-discovered from base class)
+            if (
+                spec.manager_alias == "files"
+                and "get_tools" in spec.method_descriptions
+            ):
+                lines.append(
+                    f"- `.get_tools()`: {spec.method_descriptions['get_tools']}",
+                )
+
+            if spec.use_when:
+                lines.append(f"- **Use when**: {spec.use_when}")
+
+            if spec.examples:
+                lines.append(f"- **Examples**: {spec.examples}")
+
+            if spec.special_note:
+                lines.append(f"- **Note**: {spec.special_note}")
+
+        # Add routing guidance for confused pairs
+        exposed_aliases = primitive_scope.scoped_managers
+        for guidance in _ROUTING_GUIDANCE:
+            if guidance["managers"].issubset(exposed_aliases):
+                lines.append(f"\n**CRITICAL: {guidance['title']} Routing**:")
+                lines.append(
+                    "These managers serve DIFFERENT purposes - do not confuse them:",
+                )
+                for alias, desc in guidance["guidance"]:
+                    lines.append(f"- **`primitives.{alias}.*`**: {desc}")
+                if guidance.get("examples"):
+                    lines.append("\n**Examples**:")
+                    for question, mgr, call in guidance["examples"]:
+                        lines.append(f'  - "{question}" → `{call}` ({mgr})')
+
+        # Add general rules only if multiple managers exposed
+        if len(specs) > 1:
+            lines.append("\n**Manager Selection Priorities**:")
+            lines.append(
+                "1. **knowledge** takes priority for organizational policies, procedures, company facts, internal documentation",
+            )
+            lines.append(
+                "2. **transcripts** for historical communications (what was said/written)",
+            )
+            lines.append("3. **contacts** for people/relationship information")
+            lines.append("4. **tasks** for work items, deadlines, assignments")
+            lines.append(
+                "5. **web** for current external information (weather, news, real-time data)",
+            )
+            lines.append("6. **guidance** for execution instructions and runbooks")
+            lines.append(
+                "7. **files** when dealing with specific documents or file-level operations",
+            )
+
+            lines.append("\n**General Rules**:")
+            lines.append(
+                "- All manager calls return a steerable handle; await `.result()` to get the final answer",
+            )
+            lines.append(
+                "- If a manager asks for clarification, wait for the user response and answer via the handle's API",
+            )
+            lines.append(
+                "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed",
+            )
+            lines.append(
+                "- When in doubt between managers, prefer the most specific domain match",
+            )
+
+        return "\n".join(lines)
+
+    def prompt_examples(self, primitive_scope: PrimitiveScope) -> str:
+        """
+        Get concatenated examples for exposed managers.
+
+        Args:
+            primitive_scope: The scope defining which managers are exposed.
+
+        Returns:
+            Formatted examples string.
+        """
+        try:
+            from unity.actor.prompt_examples import get_example_function_map
+        except ImportError:
+            logger.warning("Could not import prompt_examples module")
+            return ""
+
+        fn_map = get_example_function_map()
+        examples = []
+
+        for alias in sorted(primitive_scope.scoped_managers):
+            fn_names = _EXAMPLE_GENERATORS.get(alias, [])
+            for fn_name in fn_names:
+                fn = fn_map.get(fn_name)
+                if fn:
+                    try:
+                        example = fn()
+                        if example:
+                            examples.append(example.strip())
+                    except Exception as e:
+                        logger.warning(f"Error generating example {fn_name}: {e}")
+
+        return "\n\n".join(examples)
+
+    def _get_method_metadata(
+        self,
+        cls: Type,
+        method_name: str,
+        class_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Extract metadata (signature, docstring) from a class method.
+
+        Handles functools.wraps by looking for __wrapped__ attribute.
+        For ComputerPrimitives dynamic methods, looks up docstrings from backend classes.
+
+        Args:
+            cls: The class containing the method.
+            method_name: Name of the method to introspect.
+            class_name: Short class name for building qualified name.
+
+        Returns:
+            Primitive metadata dict, or None if method not found.
+        """
+        method = getattr(cls, method_name, None)
+
+        # Special case: ComputerPrimitives dynamic methods don't exist on the class
+        # Get their docstrings from the backend class instead
+        if method is None and class_name == "ComputerPrimitives":
+            if method_name in cls._DYNAMIC_METHODS:
+                # Import backend class to get docstrings
+                from unity.function_manager.computer_backends import MagnitudeBackend
+
+                backend_method = getattr(MagnitudeBackend, method_name, None)
+                if backend_method:
+                    docstring = inspect.getdoc(backend_method) or ""
+                    try:
+                        signature = str(inspect.signature(backend_method))
+                    except (ValueError, TypeError):
+                        signature = "(...)"
+                else:
+                    docstring = ""
+                    signature = "(...)"
+
+                qualified_name = f"{class_name}.{method_name}"
+                return {
+                    "name": qualified_name,
+                    "function_id": _get_stable_id(class_name, method_name),
+                    "argspec": signature,
+                    "docstring": docstring,
+                    "embedding_text": (
+                        f"Function Name: {qualified_name}\n"
+                        f"Signature: {signature}\n"
+                        f"Docstring: {docstring}"
+                    ),
+                    "implementation": None,
+                    "is_primitive": True,
+                    "depends_on": [],
+                    "precondition": None,
+                    "verify": False,
+                    "guidance_ids": [],
+                    "primitive_class": cls.__module__ + "." + cls.__name__,
+                    "primitive_method": method_name,
+                }
+            return None
+
+        if method is None:
+            return None
+
+        # Unwrap functools.wraps to get original function metadata
+        fn = method
+        while hasattr(fn, "__wrapped__"):
+            fn = fn.__wrapped__
+
+        qualified_name = f"{class_name}.{method_name}"
+
+        try:
+            signature = str(inspect.signature(fn))
+        except (ValueError, TypeError):
+            signature = "(...)"
+
+        docstring = inspect.getdoc(fn) or ""
+
+        return {
+            "name": qualified_name,
+            "function_id": _get_stable_id(class_name, method_name),
+            "argspec": signature,
+            "docstring": docstring,
+            "embedding_text": (
+                f"Function Name: {qualified_name}\n"
+                f"Signature: {signature}\n"
+                f"Docstring: {docstring}"
+            ),
+            "implementation": None,
+            "is_primitive": True,
+            "depends_on": [],
+            "precondition": None,
+            "verify": False,
+            "guidance_ids": [],
+            "primitive_class": cls.__module__ + "." + cls.__name__,
+            "primitive_method": method_name,
+        }
+
+    def collect_primitives(
+        self,
+        primitive_scope: Optional[PrimitiveScope] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Introspect primitive classes and return their metadata.
+
+        Auto-discovers primitive methods from each class by inspecting @abstractmethod
+        definitions on base classes (minus per-class exclusions), then extracts
+        signature and docstring information.
+
+        Each primitive receives a stable `function_id` derived from a hash of its
+        fully-qualified name (e.g., "ContactManager.ask"). This ensures IDs are:
+        - Deterministic across runs
+        - Stable when methods are added/removed (no positional dependencies)
+        - Consistent across all deployments
+
+        Args:
+            primitive_scope: Optional scope to filter managers. If None, collects all
+                           state manager primitives (excludes ComputerPrimitives).
+
+        Returns:
+            Dict mapping qualified_name (e.g. "ContactManager.ask") to primitive
+            metadata suitable for insertion into the Functions/Primitives context.
+        """
+        primitives: Dict[str, Dict[str, Any]] = {}
+
+        # Determine which specs to process
+        if primitive_scope is None:
+            specs_to_process = _STATE_MANAGER_SPECS
+        else:
+            specs_to_process = [
+                spec
+                for spec in _STATE_MANAGER_SPECS
+                if spec.manager_alias in primitive_scope.scoped_managers
+            ]
+
+        for spec in specs_to_process:
+            cls = self._load_manager_class(spec.primitive_class_path)
+            if cls is None:
+                continue
+
+            class_name = cls.__name__
+            method_names = self.primitive_methods(manager_alias=spec.manager_alias)
+
+            for method_name in method_names:
+                metadata = self._get_method_metadata(cls, method_name, class_name)
+                if metadata is not None:
+                    primitives[metadata["name"]] = metadata
+
+        logger.debug(f"Collected {len(primitives)} primitives")
+        return primitives
+
+    def compute_primitives_hash(
+        self,
+        primitives: Optional[Dict[str, Dict[str, Any]]] = None,
+        primitive_scope: Optional[PrimitiveScope] = None,
+    ) -> str:
+        """
+        Compute a stable hash of all primitive signatures.
+
+        Used to detect when primitives have changed (docstrings updated, methods
+        added/removed) and a sync is needed.
+
+        Args:
+            primitives: Optional pre-collected primitives dict. If provided, uses these
+                       directly without re-collecting.
+            primitive_scope: Optional scope to filter managers. Only used if primitives
+                           is not provided.
+
+        Returns:
+            16-character hex hash string.
+        """
+        if primitives is None:
+            primitives = self.collect_primitives(primitive_scope)
+
+        parts = []
+        for name in sorted(primitives.keys()):
+            p = primitives[name]
+            # Include name, signature, and docstring in hash
+            parts.append(f"{name}|{p['argspec']}|{p['docstring']}")
+
+        combined = "\n".join(parts)
+        return hashlib.sha256(combined.encode()).hexdigest()[:16]
+
+    def compute_hash_for_manager(self, manager_alias: str) -> str:
+        """
+        Compute hash for a single manager's primitives.
+
+        Args:
+            manager_alias: The manager to hash.
+
+        Returns:
+            16-character hex hash string.
+        """
+        scope = PrimitiveScope(scoped_managers=frozenset({manager_alias}))
+        return self.compute_primitives_hash(primitive_scope=scope)
+
+    def primitive_row_filter(self, primitive_scope: PrimitiveScope) -> str:
+        """
+        Build a Unify filter expression for scoped primitive queries.
+
+        Uses primitive_class (which is already stored in Function model) to filter,
+        avoiding the need for a separate primitive_manager field.
+
+        Args:
+            primitive_scope: The scope defining which managers to include.
+
+        Returns:
+            Filter expression using OR clauses for string equality.
+        """
+        # Collect class paths for scoped state managers
+        class_paths = []
+        for alias in primitive_scope.scoped_managers:
+            spec = _MANAGER_BY_ALIAS.get(alias)
+            if spec and spec.is_state_manager:
+                class_paths.append(spec.primitive_class_path)
+
+        # Use OR clauses for string filtering (in [] syntax may not work for strings)
+        clauses = [f'primitive_class == "{cp}"' for cp in sorted(class_paths)]
+        return " or ".join(clauses) if clauses else "False"
+
+
+# =============================================================================
+# Module-level convenience functions (matching old API)
+# =============================================================================
+
+
+def collect_primitives() -> Dict[str, Dict[str, Any]]:
+    """
+    Introspect all registered primitive classes and return their metadata.
+
+    This is a convenience function matching the old module-level API.
+    Delegates to ToolSurfaceRegistry.collect_primitives().
+
+    Returns:
+        Dict mapping qualified_name (e.g. "ContactManager.ask") to primitive
+        metadata suitable for insertion into the Functions/Primitives context.
+    """
+    return get_registry().collect_primitives()
+
+
+def compute_primitives_hash(primitives: Dict[str, Dict[str, Any]]) -> str:
+    """
+    Compute a stable hash of all primitive signatures.
+
+    This is a convenience function matching the old module-level API.
+    Delegates to ToolSurfaceRegistry.compute_primitives_hash().
+
+    Args:
+        primitives: Dict from collect_primitives().
+
+    Returns:
+        16-character hex hash string.
+    """
+    return get_registry().compute_primitives_hash(primitives=primitives)
+
+
+def get_primitive_sources() -> List[tuple[Type, List[str]]]:
+    """
+    Get all primitive classes with their discovered method names.
+
+    Returns a list of (class, method_names) tuples. This provides access to
+    the auto-discovered primitives for code that needs to iterate over them.
+
+    Returns:
+        List of (class_object, [method_names]) tuples.
+    """
+    registry = get_registry()
+    result = []
+    for spec in _STATE_MANAGER_SPECS:
+        cls = registry._load_manager_class(spec.primitive_class_path)
+        if cls is not None:
+            methods = registry.primitive_methods(manager_alias=spec.manager_alias)
+            result.append((cls, methods))
+    return result
+
+
+# Module-level singleton for convenience
+_registry_instance: Optional[ToolSurfaceRegistry] = None
+
+
+def get_registry() -> ToolSurfaceRegistry:
+    """Get the singleton registry instance."""
+    global _registry_instance
+    if _registry_instance is None:
+        _registry_instance = ToolSurfaceRegistry()
+    return _registry_instance
