@@ -27,7 +27,7 @@ from ..common.simulated import (
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
-from ..constants import LOGGER
+from ..logger import LOGGER
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Structured response models for simulated private methods

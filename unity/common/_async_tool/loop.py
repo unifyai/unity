@@ -17,7 +17,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER
+from ...logger import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
 from .propagation_mode import ChatContextPropagation
 from .context_tracker import LoopContextState

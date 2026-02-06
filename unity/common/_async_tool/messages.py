@@ -7,7 +7,7 @@ import json
 import unillm
 from typing import Callable, Optional, Any
 from .utils import maybe_await
-from ...constants import LOGGER
+from ...logger import LOGGER
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
 

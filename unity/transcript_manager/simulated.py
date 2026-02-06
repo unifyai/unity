@@ -28,7 +28,7 @@ from ..common.simulated import (
 from .types.message import Message
 from .types.exchange import Exchange
 from ..common.llm_client import new_llm_client
-from ..constants import LOGGER
+from ..logger import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────

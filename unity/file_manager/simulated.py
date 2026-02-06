@@ -29,7 +29,7 @@ from ..common.simulated import (
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
 )
-from ..constants import LOGGER
+from ..logger import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ from ..common.simulated import (
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
-from ..constants import LOGGER
+from ..logger import LOGGER
 from ..common.llm_client import new_llm_client
 
 

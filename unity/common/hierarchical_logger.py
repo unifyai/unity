@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from secrets import token_hex
 from typing import Optional
 
-from unity.constants import LOGGER
+from unity.logger import LOGGER
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session lineage context (parallel to TOOL_LOOP_LINEAGE for non-tool-loop components)

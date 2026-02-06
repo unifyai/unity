@@ -14,7 +14,7 @@ from typing import (
     Type,
     TYPE_CHECKING,
 )
-from ..constants import LOGGER
+from ..logger import LOGGER
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call

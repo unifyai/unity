@@ -48,6 +48,9 @@ from unity.settings import SETTINGS
 
 LOGGER = logging.getLogger("unity")
 
+# Unique identifier for this process lifetime (used for log correlation)
+SESSION_ID = datetime.now(timezone.utc).isoformat()
+
 # File handler state (managed by configure_log_dir)
 _FILE_HANDLER: Optional[logging.FileHandler] = None
 _LOG_DIR: Optional[Path] = None
