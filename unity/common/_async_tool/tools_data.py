@@ -148,6 +148,16 @@ class ToolsData:
         self.completed_results: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
+        # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
+        # Set by the loop after the factory is initialised each turn.
+        self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
+
+    def get_ask_tools(self) -> Dict[str, Callable]:
+        """Return a snapshot of currently available ``ask_*`` dynamic tools."""
+        dt = self._dynamic_tools_ref
+        if not dt or not isinstance(dt, dict):
+            return {}
+        return {k: v for k, v in dt.items() if k.startswith("ask_")}
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod

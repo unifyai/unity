@@ -576,6 +576,8 @@ async def async_tool_loop_inner(
                 "clarification_channels",
                 tools_data.clarification_channels,
             )
+            # Expose ask_tools snapshot so handle.ask() can propagate to inner handles.
+            setattr(_self_task, "get_ask_tools", tools_data.get_ask_tools)  # type: ignore[attr-defined]
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
@@ -1964,6 +1966,9 @@ async def async_tool_loop_inner(
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+            # Keep ToolsData's reference to dynamic_tools up-to-date so
+            # get_ask_tools() always reflects the latest set of helpers.
+            tools_data._dynamic_tools_ref = dynamic_tools
 
             # Register callback to refresh helpers when a handle is adopted mid-loop
             def _refresh_helpers_for_task(task: asyncio.Task) -> None:

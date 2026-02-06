@@ -374,6 +374,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 msgs = []
             parent_ctx = list(msgs)
 
+        # 1b. Snapshot ask_* tools available at invocation time so the
+        #     inspection loop can propagate questions to inner handles.
+        ask_tools: dict = {}
+        with suppress(Exception):
+            _get_ask_tools = getattr(self._task, "get_ask_tools", lambda: {})
+            ask_tools = _get_ask_tools()
+
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
         from .llm_client import new_llm_client
@@ -410,11 +417,28 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 ],
             )
 
+        # If inner-handle ask_* tools are available, hint the LLM about them
+        if ask_tools:
+            sys_msg_parts.extend(
+                [
+                    "",
+                    "## Inner Loop Tools",
+                    (
+                        "You have access to `ask_*` tools that query inner tool loops for detailed information. "
+                        "Each inner tool loop has its own transcript that may contain details NOT visible in the "
+                        "Inspected Loop Transcript above. If the transcript does not contain enough information "
+                        "to answer the question — for example if a tool's result only shows a placeholder or "
+                        "summary — you MUST call the corresponding `ask_*` tool to get details from that "
+                        "tool's own internal context. Only answer directly from the transcript when it clearly "
+                        "contains the specific information being asked about."
+                    ),
+                ],
+            )
+
         sys_msg_parts.extend(
             [
                 "",
-                "Answer the user's follow-up question using ONLY this context.",
-                "Do not attempt to run new tools unless they are exposed to you.",
+                "Answer the user's follow-up question using the context above and any tools exposed to you.",
                 "Do not ask the user questions or request clarification. If information is missing,",
                 "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
             ],
@@ -443,7 +467,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         helper_handle = start_async_tool_loop(
             inspection_client,
             _ask_message,
-            {},  # no recursive tools
+            ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
             parent_chat_context=parent_ctx,  # ← nested context
@@ -866,6 +890,7 @@ def start_async_tool_loop(
     try:  # pragma: no cover
         setattr(task, "task_info", {})  # asyncio.Task -> ToolCallMetadata
         setattr(task, "clarification_channels", {})  # call_id -> (up_q, down_q)
+        setattr(task, "get_ask_tools", lambda: {})  # snapshot of ask_* dynamic tools
     except Exception:
         pass
 
