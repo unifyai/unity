@@ -169,13 +169,13 @@ async def code_act_actor() -> AsyncIterator[object]:
     """Create a fresh primitives-only CodeActActor for each test."""
     from unity.actor.code_act_actor import CodeActActor
     from unity.actor.environments import StateManagerEnvironment
-    from unity.function_manager.primitives import Primitives
+    from unity.function_manager.primitives import Primitives, PrimitiveScope
 
-    primitives = Primitives()
-    env = StateManagerEnvironment(
-        primitives,
-        exposed_managers={"contacts", "tasks", "transcripts", "files"},
+    scope = PrimitiveScope(
+        scoped_managers=frozenset({"contacts", "tasks", "transcripts", "files"}),
     )
+    primitives = Primitives(primitive_scope=scope)
+    env = StateManagerEnvironment(primitives)
 
     actor = CodeActActor(environments=[env], function_manager=None)
 
