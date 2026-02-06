@@ -341,7 +341,7 @@ async def _get_signed_url_from_gs_url(
     """
     orchestra_url = SETTINGS.ORCHESTRA_URL
     async with session.post(
-        f"{orchestra_url}/v0/storage/signed-url",
+        f"{orchestra_url}/storage/signed-url",
         headers=headers,
         json={"gcs_uri": gs_url},
     ) as resp:
