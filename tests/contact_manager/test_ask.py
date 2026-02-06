@@ -357,7 +357,7 @@ async def test_ask_stop(
         "Find all contacts and list their full details, this might take a while.",
     )
     await asyncio.sleep(0.05)  # Let it start
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done()
 

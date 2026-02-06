@@ -325,7 +325,7 @@ async def test_stop(
         "Create a very detailed contact for Professor Charles Xavier, email prox@xmen.com, phone 123-PROF-X, with notes about his telepathic abilities and founder of the X-Men.",
     )
     await asyncio.sleep(0.1)
-    handle.stop()
+    await handle.stop()
     await handle.result()
     assert handle.done()
 

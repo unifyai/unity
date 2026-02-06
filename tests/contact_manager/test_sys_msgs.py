@@ -54,8 +54,6 @@ def test_ask_system_prompt_formatting(contact_manager_scenario):
     assert "Special contacts" in prompt
     assert "contact_id==0 is the assistant" in prompt
     assert "contact_id==1 is the central user" in prompt
-    assert "Images policy (when images are present)" in prompt
-    assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
 
     # Clarification policy
@@ -77,8 +75,6 @@ def test_ask_system_prompt_formatting(contact_manager_scenario):
             "Columns are defined in the Contact schema above.",
             "Tools (name",
             "Examples",
-            "Images policy (when images are present)",
-            "Images forwarding to nested tools",
             "Parallelism and single",
             "Special contacts",
             "Current UTC time is ",
@@ -90,8 +86,6 @@ def test_ask_system_prompt_formatting(contact_manager_scenario):
         [
             "Examples",
             "Special contacts",
-            "Images policy (when images are present)",
-            "Images forwarding to nested tools",
         ],
     )
     assert_section_spacing(prompt)
@@ -127,8 +121,6 @@ def test_update_system_prompt_formatting(contact_manager_scenario):
 
     # Standard blocks
     assert "Do not create new columns if an alias already exists." in prompt
-    assert "Images policy (when images are present)" in prompt
-    assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
 
     assert re.search(
@@ -149,8 +141,6 @@ def test_update_system_prompt_formatting(contact_manager_scenario):
             "Columns are defined in the Contact schema above.",
             "Tools (name",
             "Tool selection",
-            "Images policy (when images are present)",
-            "Images forwarding to nested tools",
             "Parallelism and single",
             "Special contacts",
             "Do not create new columns if an alias already exists.",
@@ -162,8 +152,6 @@ def test_update_system_prompt_formatting(contact_manager_scenario):
         prompt,
         [
             "Tool selection",
-            "Images policy (when images are present)",
-            "Images forwarding to nested tools",
         ],
     )
     assert_section_spacing(prompt)
