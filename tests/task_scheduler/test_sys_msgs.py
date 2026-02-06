@@ -50,9 +50,6 @@ def test_ask_system_prompt_formatting(task_scheduler_read_scenario):
     assert "Task = " in prompt
 
     # Standard blocks
-    assert "Images-first workflow for ask()" in prompt
-    assert "Images policy (when images are present)" in prompt
-    assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
 
     assert re.search(
@@ -73,9 +70,6 @@ def test_ask_system_prompt_formatting(task_scheduler_read_scenario):
             "Columns are defined in the Task schema above.",
             "Tools (name",
             "Examples",
-            "Images policy (when images are present)",
-            "Images forwarding to nested tools",
-            "Images-first workflow for ask()",
             "Parallelism and single",
             "Current UTC time is ",
         ],
@@ -109,8 +103,6 @@ def test_update_system_prompt_formatting(task_scheduler_read_scenario):
 
     assert "Schemas" in prompt
     assert "Task = " in prompt
-    assert "Images policy (when images are present)" in prompt
-    assert "Images forwarding to nested tools" in prompt
     assert "Parallelism and single" in prompt
 
     assert re.search(
@@ -131,8 +123,6 @@ def test_update_system_prompt_formatting(task_scheduler_read_scenario):
             "Columns are defined in the Task schema above.",
             "Tools (name",
             "Tool selection",
-            "Images policy (when images are present)",
-            "Images forwarding to nested tools",
             "Parallelism and single",
             "Current UTC time is ",
         ],
