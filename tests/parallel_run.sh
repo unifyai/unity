@@ -552,19 +552,6 @@ build_env_exports() {
     exports="$exports $kv"
   done
 
-  # Propagate relevant system environment variables if not already set via --env
-  # Note: UNIFY_TESTS_DELETE_PROJ_ON_START and UNIFY_TESTS_DELETE_PROJ_ON_EXIT are intentionally
-  # NOT propagated to individual sessions. They are handled at the script level to avoid race
-  # conditions where multiple sessions try to delete the shared project simultaneously.
-  # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNILLM_CACHE UNIFY_KEY ORCHESTRA_URL UNITY_COMMS_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
-  for var_name in $propagate_vars; do
-    if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
-      # Quote values containing special characters (paths, URLs with colons/slashes)
-      exports="$exports ${var_name}='${!var_name}'"
-    fi
-  done
-
   # Append UNIFY_TEST_TAGS if any tags were specified via --tags
   if (( ${#TAGS[@]} > 0 )); then
     local joined_tags
@@ -758,6 +745,12 @@ run_cmd() {
   local env_exports
   # Always export UTF-8 locale for proper emoji handling in session names
   # Enable cache stats tracking (UNILLM_CACHE_STATS must be set before importing unillm)
+  #
+  # Note: tmux sessions use `bash -c` (not `bash -lc`) so they inherit the full
+  # environment from parallel_run.sh. This means all .env variables are available
+  # without an explicit whitelist. The only vars that need special handling are:
+  # - UNIFY_TESTS_DELETE_PROJ_ON_START/EXIT: explicitly unset in shared project mode
+  #   to prevent race conditions (multiple sessions deleting the same project).
   env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 UNILLM_CACHE_STATS=true'
   if is_random_projects_mode; then
     # Random projects mode: each session gets its own isolated project.
@@ -771,8 +764,11 @@ run_cmd() {
       env_exports="$env_exports UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True"
     fi
   else
-    # Shared project mode: skip session setup (already done by prepare script)
+    # Shared project mode: skip session setup (already done by prepare script).
+    # Blocklist: unset delete flags to prevent race conditions where multiple
+    # sessions try to delete the shared project simultaneously.
     env_exports="$env_exports UNIFY_SKIP_SESSION_SETUP=True"
+    env_exports="$env_exports; unset UNIFY_TESTS_DELETE_PROJ_ON_START UNIFY_TESTS_DELETE_PROJ_ON_EXIT"
   fi
   # Append user-provided --env overrides (includes UNITY_TEST_SOCKET for log scoping)
   local user_overrides
@@ -807,7 +803,7 @@ run_cmd() {
   # The session ID is captured BEFORE pytest runs and exported as UNITY_TMUX_SESSION_ID
   # so pytest's conftest.py can write cache stats to a known temp file location.
   inner=$(printf '%s; export UNITY_TMUX_SESSION_ID=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$UNITY_TMUX_SESSION_ID" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$TMUX_SOCKET" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
-  printf 'bash -lc %q' "$inner"
+  printf 'bash -c %q' "$inner"
 }
 
 # Ensure we don't collide with existing sessions.
