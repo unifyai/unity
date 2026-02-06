@@ -4,14 +4,10 @@ tests/conversation_manager/test_multi_contact_outbound.py
 
 Tests for outbound messages to contacts not yet in active_conversations.
 
-These tests verify that when the boss asks to message someone who hasn't
-messaged first (i.e., not in active_conversations), the ConversationManager
-correctly uses `act` to search for contact details from the Actor,
-then sends the message once details are returned.
-
-Also tests that when the boss provides contact details inline (e.g., "call
-David on +1234567890"), the LLM correctly uses the contact_details field
-rather than delegating to `act`.
+All communication tools require a ``contact_id``.  When the boss asks to
+contact someone not in active_conversations, the CM brain must delegate to
+``act`` to find or create the contact — regardless of whether the boss
+provided contact details (phone number, email) inline or not.
 
 Uses SimulatedActor which returns plausible made-up contact details.
 """
@@ -23,9 +19,6 @@ from tests.conversation_manager.cm_helpers import filter_events_by_type
 from tests.conversation_manager.conftest import BOSS
 from unity.conversation_manager.events import (
     SMSReceived,
-    SMSSent,
-    EmailSent,
-    PhoneCallSent,
     ActorHandleStarted,
 )
 
@@ -36,7 +29,7 @@ pytestmark = pytest.mark.eval
 
 
 # ---------------------------------------------------------------------------
-#  Outbound to unknown contact triggers act
+#  Outbound to unknown contact (no details provided) triggers act
 # ---------------------------------------------------------------------------
 
 
@@ -59,7 +52,6 @@ async def test_email_unknown_contact_triggers_act(initialized_cm):
         ),
     )
 
-    # Check that act was called (ActorHandleStarted event)
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
 
     assert len(actor_events) >= 1, (
@@ -67,7 +59,6 @@ async def test_email_unknown_contact_triggers_act(initialized_cm):
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
 
-    # The query should reference David and the message
     task_event = actor_events[0]
     assert (
         "david" in task_event.query.lower() or "email" in task_event.query.lower()
@@ -75,7 +66,12 @@ async def test_email_unknown_contact_triggers_act(initialized_cm):
 
 
 # ---------------------------------------------------------------------------
-#  Outbound with inline contact details - should use contact_details field
+#  Outbound with inline contact details still triggers act
+#
+#  Even when the boss provides a phone number or email address inline,
+#  the CM brain must still delegate to act because comms tools only
+#  accept contact_id.  act will find or create the contact and return
+#  the contact_id for subsequent use.
 # ---------------------------------------------------------------------------
 
 
@@ -83,11 +79,11 @@ async def test_email_unknown_contact_triggers_act(initialized_cm):
 @_handle_project
 async def test_call_with_inline_phone_number(initialized_cm):
     """
-    Boss provides phone number inline -> should call make_call with contact_details.
+    Boss provides phone number inline for unknown contact -> should still call act.
 
-    When the boss says "call David, his number is +15551234567", the LLM should
-    directly call make_call with contact_details containing the phone number,
-    NOT delegate to act.
+    "call David, his number is +15551234567" — David is not in
+    active_conversations, so the LLM must use act to create/find the
+    contact before calling.
     """
     cm = initialized_cm
 
@@ -98,18 +94,9 @@ async def test_call_with_inline_phone_number(initialized_cm):
         ),
     )
 
-    # Check that make_call was triggered (PhoneCallSent event)
-    call_events = filter_events_by_type(result.output_events, PhoneCallSent)
-
-    # Should NOT have called act since we provided the number
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) == 0, (
-        f"Should not call act when phone number is provided inline, "
-        f"got ActorHandleStarted events: {actor_events}"
-    )
-
-    assert len(call_events) >= 1, (
-        f"Expected make_call to be triggered (PhoneCallSent event), "
+    assert len(actor_events) >= 1, (
+        f"Expected act to be called to resolve contact, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
 
@@ -118,11 +105,10 @@ async def test_call_with_inline_phone_number(initialized_cm):
 @_handle_project
 async def test_sms_with_inline_phone_number(initialized_cm):
     """
-    Boss provides phone number inline -> should call send_sms with contact_details.
+    Boss provides phone number inline for unknown contact -> should still call act.
 
-    When the boss says "text Joanna on +15559876543 saying hi", the LLM should
-    directly call send_sms with contact_details containing the phone number,
-    NOT delegate to act.
+    "text Joanna on +15559876543" — Joanna is not in active_conversations,
+    so the LLM must use act to create/find the contact before sending.
     """
     cm = initialized_cm
 
@@ -133,18 +119,9 @@ async def test_sms_with_inline_phone_number(initialized_cm):
         ),
     )
 
-    # Check that send_sms was triggered (SMSSent event)
-    sms_events = filter_events_by_type(result.output_events, SMSSent)
-
-    # Should NOT have called act since we provided the number
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) == 0, (
-        f"Should not call act when phone number is provided inline, "
-        f"got ActorHandleStarted events: {actor_events}"
-    )
-
-    assert len(sms_events) >= 1, (
-        f"Expected send_sms to be triggered (SMSSent event), "
+    assert len(actor_events) >= 1, (
+        f"Expected act to be called to resolve contact, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
 
@@ -153,11 +130,11 @@ async def test_sms_with_inline_phone_number(initialized_cm):
 @_handle_project
 async def test_email_with_inline_email_address(initialized_cm):
     """
-    Boss provides email address inline -> should call send_email with contact_details.
+    Boss provides email address inline for unknown contact -> should still call act.
 
-    When the boss says "email Johnny at johnny@example.com", the LLM should
-    directly call send_email with contact_details containing the email address,
-    NOT delegate to act.
+    "email Johnny at johnny@example.com" — Johnny is not in
+    active_conversations, so the LLM must use act to create/find the
+    contact before sending.
     """
     cm = initialized_cm
 
@@ -168,17 +145,8 @@ async def test_email_with_inline_email_address(initialized_cm):
         ),
     )
 
-    # Check that send_email was triggered (EmailSent event)
-    email_events = filter_events_by_type(result.output_events, EmailSent)
-
-    # Should NOT have called act since we provided the email
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    assert len(actor_events) == 0, (
-        f"Should not call act when email address is provided inline, "
-        f"got ActorHandleStarted events: {actor_events}"
-    )
-
-    assert len(email_events) >= 1, (
-        f"Expected send_email to be triggered (EmailSent event), "
+    assert len(actor_events) >= 1, (
+        f"Expected act to be called to resolve contact, "
         f"got events: {[type(e).__name__ for e in result.output_events]}"
     )
