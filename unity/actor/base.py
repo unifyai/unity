@@ -156,7 +156,7 @@ class BaseActor(ABC):
             ComputerEnvironment,
             StateManagerEnvironment,
         )
-        from unity.function_manager.primitives import ComputerPrimitives, Primitives
+        from unity.function_manager.primitives import ComputerPrimitives
 
         # If environments are explicitly provided, honor them and do not implicitly
         # introduce a computer environment (domain-agnostic mode).
@@ -173,7 +173,6 @@ class BaseActor(ABC):
                     connect_now=connect_now,
                 )
 
-            primitives = Primitives()
             environments = [
                 ComputerEnvironment(
                     cp,
@@ -181,7 +180,6 @@ class BaseActor(ABC):
                     clarification_down_q=clarification_down_q,
                 ),
                 StateManagerEnvironment(
-                    primitives,
                     clarification_up_q=clarification_up_q,
                     clarification_down_q=clarification_down_q,
                 ),
