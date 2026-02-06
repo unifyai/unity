@@ -3037,7 +3037,6 @@ class CodeActActor(BaseCodeActActor):
                 ):
                     sandbox_envs[ns] = _StateManagerEnvironment(
                         env.get_instance(),
-                        exposed_managers=getattr(env, "_exposed_managers", None),
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
                     )
