@@ -923,6 +923,58 @@ class TestMakeCallTool:
         assert "does not have" in result["error"]
         assert "phone" in result["error"].lower()
 
+    @pytest.mark.asyncio
+    async def test_context_stores_initial_call_guidance(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """The context param stores initial_call_guidance on call_manager
+        before the call is placed, so CallManager can publish it to the
+        fast brain after the subprocess spawns."""
+        contact = {
+            "contact_id": 5,
+            "first_name": "Test",
+            "surname": "Person",
+            "phone_number": "+1234567890",
+            "should_respond": True,
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact])
+
+        guidance_text = "Confirm the Thursday 3pm meeting"
+        result = await brain_action_tools.make_call(
+            recipient=5,
+            context=guidance_text,
+        )
+
+        assert result["status"] == "ok"
+        assert mock_cm.call_manager.initial_call_guidance == guidance_text
+
+    @pytest.mark.asyncio
+    async def test_context_not_set_when_empty(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """When context is empty (default), initial_call_guidance is not set."""
+        contact = {
+            "contact_id": 5,
+            "first_name": "Test",
+            "surname": "Person",
+            "phone_number": "+1234567890",
+            "should_respond": True,
+        }
+        _setup_mock_contacts(mock_cm.contact_index, [contact])
+
+        # Preset to empty to track whether it's written
+        mock_cm.call_manager.initial_call_guidance = ""
+
+        result = await brain_action_tools.make_call(recipient=5)
+
+        assert result["status"] == "ok"
+        # Should remain empty — the code only writes when context is truthy
+        assert mock_cm.call_manager.initial_call_guidance == ""
+
 
 class TestActTool:
     """Tests for act tool."""

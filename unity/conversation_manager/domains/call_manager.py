@@ -51,6 +51,9 @@ class LivekitCallManager:
         self._socket_server: CallEventSocketServer | None = None
         # Track whether the current call is outbound (we initiated it)
         self.is_outbound: bool = False
+        # Initial guidance for outbound calls, set by make_call tool before the
+        # call is placed, published to the fast brain after the subprocess spawns.
+        self.initial_call_guidance: str = ""
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -113,6 +116,31 @@ class LivekitCallManager:
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
+
+        # Deliver initial guidance to the fast brain (if any was stored by
+        # make_call).  We bypass the event-broker pub/sub roundtrip and push
+        # directly into the socket server buffer so the message cannot be lost
+        # due to the forward-subscription task not having subscribed yet.
+        if self.initial_call_guidance:
+            guidance_event = CallGuidance(
+                contact=contact,
+                content=self.initial_call_guidance,
+            )
+            # Direct socket delivery to the fast brain subprocess
+            await self._socket_server.queue_for_clients(
+                "app:call:call_guidance",
+                guidance_event.to_json(),
+            )
+            # Also publish on the comms channel for the transcript / UI
+            await self._event_broker.publish(
+                "app:comms:assistant_call_guidance",
+                guidance_event.to_json(),
+            )
+            print(
+                f"[LivekitCallManager] Published initial call guidance: "
+                f"{self.initial_call_guidance[:80]}",
+            )
+            self.initial_call_guidance = ""
 
     async def start_unify_meet(
         self,
@@ -179,6 +207,7 @@ class LivekitCallManager:
         """
         # Reset outbound tracking
         self.is_outbound = False
+        self.initial_call_guidance = ""
 
         # Stop socket server first
         if self._socket_server:

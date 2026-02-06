@@ -855,6 +855,109 @@ class TestBidirectionalCommunication:
         await client.close()
         await server.stop()
 
+    @pytest.mark.asyncio
+    async def test_server_buffers_messages_before_client_connects(
+        self,
+        real_event_broker,
+    ):
+        """Server buffers forwarded events that arrive before any client connects.
+
+        When the parent publishes a CallGuidance event right after spawning
+        the subprocess, the subprocess hasn't connected to the socket yet.
+        The server must buffer the message and flush it once the client connects.
+        """
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        # Start server with forwarding (no clients connected yet)
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        await server.start()
+
+        # Parent publishes guidance BEFORE any client connects
+        await real_event_broker.publish(
+            "app:call:call_guidance",
+            '{"content": "Confirm the Thursday 3pm meeting"}',
+        )
+
+        # Give the forward loop time to pick up the message and buffer it
+        await _wait_for_condition(
+            lambda: len(server._pending_messages) >= 1,
+            timeout=2.0,
+        )
+        assert len(server._pending_messages) == 1, (
+            "Server should buffer the message when no clients are connected"
+        )
+
+        # Now a client connects (simulates subprocess startup)
+        client = CallEventSocketClient(server.socket_path)
+        await client.start_receive_loop(on_event)
+
+        # Wait for the buffered message to be flushed to the client
+        await _wait_for_condition(lambda: len(received_events) >= 1, timeout=2.0)
+
+        assert len(received_events) == 1
+        assert received_events[0][0] == "app:call:call_guidance"
+        assert "Thursday 3pm" in received_events[0][1]
+
+        # Buffer should be cleared after flush
+        assert len(server._pending_messages) == 0
+
+        await client.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_server_buffers_multiple_messages_before_client_connects(
+        self,
+        real_event_broker,
+    ):
+        """Server buffers multiple events and flushes all when client connects."""
+        received_events = []
+
+        async def on_event(channel: str, event_json: str):
+            received_events.append((channel, event_json))
+
+        server = CallEventSocketServer(
+            real_event_broker,
+            forward_channels=["app:call:*"],
+        )
+        await server.start()
+
+        # Publish multiple events before any client connects
+        await real_event_broker.publish(
+            "app:call:call_guidance",
+            '{"content": "First guidance"}',
+        )
+        await real_event_broker.publish(
+            "app:call:status",
+            '{"type": "call_answered"}',
+        )
+
+        # Give the forward loop time to buffer both messages
+        await _wait_for_condition(
+            lambda: len(server._pending_messages) >= 2,
+            timeout=2.0,
+        )
+        assert len(server._pending_messages) == 2
+
+        # Client connects — both messages should be flushed
+        client = CallEventSocketClient(server.socket_path)
+        await client.start_receive_loop(on_event)
+
+        await _wait_for_condition(lambda: len(received_events) >= 2, timeout=2.0)
+
+        assert len(received_events) == 2
+        assert any("First guidance" in e[1] for e in received_events)
+        assert any("call_answered" in e[1] for e in received_events)
+        assert len(server._pending_messages) == 0
+
+        await client.close()
+        await server.stop()
+
 
 class TestSocketAwareEventBroker:
     """Tests for the SocketAwareEventBroker wrapper in common.py."""
