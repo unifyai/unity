@@ -340,9 +340,12 @@ async def _get_signed_url_from_gs_url(
         The signed HTTPS URL for downloading the file
     """
     orchestra_url = SETTINGS.ORCHESTRA_URL
+    # Use the user's API key (not admin key) for Orchestra API calls
+    user_api_key = SESSION_DETAILS.unify_key
+    user_headers = {"Authorization": f"Bearer {user_api_key}"}
     async with session.post(
         f"{orchestra_url}/storage/signed-url",
-        headers=headers,
+        headers=user_headers,
         json={"gcs_uri": gs_url},
     ) as resp:
         resp.raise_for_status()
