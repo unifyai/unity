@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from pydantic import BaseModel, Field
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 from tests.async_helpers import (
@@ -33,6 +34,16 @@ async def echo(text: str) -> str:
 def add(x: int, y: int) -> int:
     """Add two numbers."""
     return x + y
+
+
+# --------------------------------------------------------------------------- #
+#  RESPONSE FORMAT MODELS                                                     #
+# --------------------------------------------------------------------------- #
+class Greeting(BaseModel):
+    """Simple structured response for persist-mode tests."""
+
+    message: str = Field(..., description="A greeting message.")
+    number: int = Field(..., description="Any integer chosen by the model.")
 
 
 # --------------------------------------------------------------------------- #
@@ -292,3 +303,83 @@ async def test_persist_mode_with_tool_calls(llm_config):
     # Clean up
     await handle.stop()
     await handle.result()
+
+
+# --------------------------------------------------------------------------- #
+#  BUG: final_answer BYPASSES PERSIST MODE                                    #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_persist_mode_does_not_terminate_on_final_answer(llm_config):
+    """In persist mode with ``response_format``, calling ``final_answer`` should
+    NOT terminate the loop.
+
+    When ``response_format`` is set the loop injects a synthetic ``final_answer``
+    tool and forces ``tool_choice=required``, so the LLM *must* call it.  In
+    non-persist mode, ``final_answer`` rightly returns the structured payload
+    and exits the loop.
+
+    However, in **persist** mode the loop should treat the ``final_answer``
+    payload as the response for the *current* turn, then continue waiting for
+    the next interjection — just like it does for a plain text-only response.
+
+    **BUG**: The ``final_answer`` handler hard-returns (``return json.dumps(…)``)
+    without checking ``persist``, so the loop terminates immediately.
+    """
+    client = new_llm_client(**llm_config)
+
+    client.set_system_message(
+        "When asked, respond with a JSON object containing exactly two keys: "
+        "'message' (a greeting) and 'number' (an integer). Do not include any "
+        "extra keys or commentary.",
+    )
+
+    handle = start_async_tool_loop(
+        client,
+        message="Say hello and pick a number.",
+        tools={},
+        persist=True,
+        response_format=Greeting,
+        timeout=60,
+    )
+
+    # Wait for the LLM to call final_answer (it must, because tool_choice=required
+    # and final_answer is the only tool available).
+    await _wait_for_tool_request(client, "final_answer")
+
+    # Give the loop time to process the final_answer response
+    await asyncio.sleep(0.5)
+
+    # In persist mode the loop should still be alive, waiting for the next
+    # interjection.  The bug causes it to terminate here.
+    assert not handle.done(), (
+        "Persist loop should NOT terminate after final_answer — "
+        "it should continue waiting for interjections."
+    )
+
+    # If persist were honoured, we could interject and get a second response.
+    await handle.interject("Now greet me in French and pick a different number.")
+
+    # Wait for the LLM to produce a second final_answer call
+    async def _has_second_final_answer() -> bool:
+        count = sum(
+            1
+            for m in (client.messages or [])
+            if m.get("role") == "assistant"
+            and any(
+                tc.get("function", {}).get("name") == "final_answer"
+                for tc in (m.get("tool_calls") or [])
+            )
+        )
+        return count >= 2
+
+    await _wait_for_condition(_has_second_final_answer, poll=0.05, timeout=30.0)
+
+    # Still alive
+    await asyncio.sleep(0.2)
+    assert not handle.done(), "Persist loop should survive multiple final_answer calls."
+
+    # Explicit stop is the only way to end a persist loop
+    await handle.stop()
+    result = await handle.result()
+    assert result == "processed stopped early, no result"
