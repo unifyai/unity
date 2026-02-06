@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from abc import ABCMeta
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Dict, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type
 
 if TYPE_CHECKING:
     from .actor.base import BaseActor
@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from .task_scheduler.base import BaseTaskScheduler
     from .transcript_manager.base import BaseTranscriptManager
     from .web_searcher.base import BaseWebSearcher
+    from .function_manager.primitives.scope import PrimitiveScope
 
 __all__ = [
     "ManagerRegistry",
@@ -427,17 +428,35 @@ class ManagerRegistry:
     def get_function_manager(
         cls,
         *,
+        primitive_scope: Optional[PrimitiveScope] = None,
         description: str | None = None,
         simulation_guidance: str | None = None,
         _force_new: bool = False,
         **kwargs: Any,
     ) -> "BaseFunctionManager":
-        """Get the FunctionManager singleton (respects IMPL settings)."""
+        """Get the FunctionManager for a given primitive scope.
+
+        Unlike other managers, FunctionManager is NOT a singleton because each
+        scope requires its own instance with scoped primitive sync/search.
+
+        Parameters
+        ----------
+        primitive_scope : PrimitiveScope | None
+            Defines which managers' primitives are indexed and searchable.
+            If None, defaults to all_managers().
+        """
+        from unity.function_manager.primitives import PrimitiveScope
+
+        if primitive_scope is None:
+            primitive_scope = PrimitiveScope.all_managers()
+
+        # FunctionManager is always created fresh per scope (not singleton)
         return cls.get(
             "functions",
             description=description,
             simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
+            _force_new=True,  # Always create new instance per scope
+            primitive_scope=primitive_scope,
             **kwargs,
         )
 
