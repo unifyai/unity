@@ -1166,29 +1166,50 @@ async def test_outer_handle_ask_propagates_to_inner_ask(llm_config):
     """
     ``outer_handle.ask()`` should propagate to the in-flight inner
     handle's ``ask()``, not just inspect the outer transcript.
+
+    The generator calls ``get_seed`` then feeds the seed into
+    ``generate_token``, which blocks on a gate. The outer transcript
+    only shows "generator → (pending)" — the seed value is only visible
+    inside the generator's transcript, so answering "what seed is being
+    used?" requires delegating to the inner handle's ``ask()``.
     """
 
     ask_calls = {"count": 0}
     inner_gate = asyncio.Event()
 
-    async def inner_task() -> str:
+    def get_seed() -> str:
+        """Return the random seed used for token generation."""
+        return "seed-7742"
+
+    async def generate_token(seed: str) -> str:
+        """Generate a token from the given seed. Blocks until approved.
+
+        Parameters
+        ----------
+        seed : str
+            The seed string returned by get_seed.
+        """
         await asyncio.wait_for(inner_gate.wait(), timeout=120)
-        return "solver-result"
+        return f"token-{seed}-xyz"
 
-    inner_task.__name__ = "inner_task"
-    inner_task.__qualname__ = "inner_task"
+    generate_token.__name__ = "generate_token"
+    generate_token.__qualname__ = "generate_token"
 
-    async def solver() -> AsyncToolLoopHandle:
+    async def generator() -> AsyncToolLoopHandle:
         inner_client = new_llm_client(**llm_config)
         inner_client.set_system_message(
-            "1️⃣ Call `inner_task`.\n"
-            "2️⃣ Wait for it to finish.\n"
-            "3️⃣ Reply with exactly 'done'.",
+            "You are a token generator. Perform these steps in order:\n"
+            "1. Call `get_seed` to obtain the seed.\n"
+            "2. Call `generate_token` passing the seed you received.\n"
+            "3. Reply with **only** the token returned by `generate_token` — nothing else, no explanation.",
         )
         h = start_async_tool_loop(
             client=inner_client,
             message="start",
-            tools={"inner_task": inner_task},
+            tools={
+                "get_seed": get_seed,
+                "generate_token": generate_token,
+            },
             max_steps=10,
             timeout=120,
         )
@@ -1202,27 +1223,31 @@ async def test_outer_handle_ask_propagates_to_inner_ask(llm_config):
         setattr(h, "ask", _wrapped_ask)
         return h
 
-    solver.__name__ = "solver"
-    solver.__qualname__ = "solver"
+    generator.__name__ = "generator"
+    generator.__qualname__ = "generator"
 
     client = new_llm_client(**llm_config)
     client.set_system_message(
-        "Call `solver` with no arguments, then wait until it completes.",
+        "Call `generator` with no arguments, then wait until it completes.",
     )
 
     outer_handle = start_async_tool_loop(
         client=client,
         message="start",
-        tools={"solver": solver},
+        tools={"generator": generator},
         max_steps=20,
         timeout=240,
     )
 
-    await _wait_for_tool_request(client, "solver")
-    await _wait_for_tool_result(client, tool_name="solver", min_results=1)
+    await _wait_for_tool_request(client, "generator")
+    await _wait_for_tool_result(client, tool_name="generator", min_results=1)
 
-    # Call ask() on the OUTER handle — should propagate to inner handle's ask()
-    ask_handle = await outer_handle.ask("How is it going with the solver?")
+    # Call ask() on the OUTER handle — should propagate to inner handle's ask().
+    # The outer transcript only shows "generator → (pending)"; the seed value
+    # is only visible inside the generator's transcript.
+    ask_handle = await outer_handle.ask(
+        "What seed is the generator using?",
+    )
     ask_result = await ask_handle.result()
     assert ask_result is not None, "ask() should return a result"
 
