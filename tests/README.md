@@ -450,23 +450,14 @@ Understanding how env vars flow from `.env` to your test process avoids subtle "
 ### Local runs (`parallel_run.sh`)
 
 ```
-.env  ──(sourced)──>  parallel_run.sh  ──(whitelist)──>  tmux session  ──>  pytest
+.env  ──(sourced)──>  parallel_run.sh  ──(inherited)──>  tmux session  ──>  pytest
 ```
 
 1. `parallel_run.sh` sources the repo-root `.env` file (via `set -a; source .env; set +a`), exporting all variables into its own process.
 2. It starts the local orchestra server, which **inherits the full environment** (so orchestra sees everything from `.env`).
-3. It creates tmux sessions for each test. These sessions run via `bash -lc`, which is a **fresh login shell** — it does NOT inherit the `parallel_run.sh` environment.
-4. Only a **whitelist** of variables is explicitly passed to each tmux session:
-
-   ```
-   UNIFY_KEY, ORCHESTRA_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY,
-   UNILLM_CACHE, UNITY_COMMS_URL, UNIFY_TESTS_RAND_PROJ,
-   UNIFY_SKIP_SESSION_SETUP, UNITY_SKIP_SHARED_PROJECT_PREP, PYTHONPATH
-   ```
-
-5. Any `--env KEY=VALUE` flags are always passed through (they override everything).
-
-**Consequence**: Variables in `.env` that are *not* in the whitelist (e.g., `TAVILY_API_KEY`, `DEEPGRAM_API_KEY`, `LIVEKIT_*`) will **not** reach test sessions via `parallel_run.sh` alone. They reach tests only if they're also in your shell profile (`~/.zshrc`) or passed explicitly via `--env`.
+3. It creates tmux sessions for each test. These sessions use `bash -c` (not `bash -lc`), so they **inherit the full environment** from `parallel_run.sh` — every variable from `.env` is available.
+4. Any `--env KEY=VALUE` flags are always passed through and override inherited values.
+5. **Blocklist**: In shared project mode, `UNIFY_TESTS_DELETE_PROJ_ON_START` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` are explicitly unset in test sessions to prevent race conditions (multiple sessions trying to delete the same project). In random project mode, these are passed through safely.
 
 ### CI runs (`parallel_cloud_run.sh` / commit triggers)
 
