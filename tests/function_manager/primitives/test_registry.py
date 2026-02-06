@@ -1,0 +1,395 @@
+"""Tests for ToolSurfaceRegistry."""
+
+import pytest
+
+from unity.function_manager.primitives.scope import PrimitiveScope
+from unity.function_manager.primitives.registry import (
+    get_registry,
+    get_primitive_sources,
+    ManagerSpec,
+    _COMMON_EXCLUDED_METHODS,
+    _STATE_MANAGER_SPECS,
+)
+
+# ────────────────────────────────────────────────────────────────────────────
+# Singleton and basic registry tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_singleton_registry():
+    """get_registry() returns singleton."""
+    r1 = get_registry()
+    r2 = get_registry()
+    assert r1 is r2
+
+
+def test_manager_spec_frozen():
+    """ManagerSpec is frozen (immutable)."""
+    spec = ManagerSpec(
+        manager_alias="test",
+        manager_registry_key="test",
+        primitive_class_path="test.TestManager",
+    )
+    with pytest.raises(AttributeError):
+        spec.manager_alias = "changed"  # type: ignore
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Scoping tests - manager_specs filtering
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_manager_specs_filtered_by_scope():
+    """manager_specs() returns only scoped managers."""
+    registry = get_registry()
+    scope = PrimitiveScope(scoped_managers=frozenset({"files", "contacts"}))
+    specs = registry.manager_specs(scope)
+    aliases = {s.manager_alias for s in specs}
+    assert aliases == {"files", "contacts"}
+    # Should NOT include unscoped managers
+    assert "tasks" not in aliases
+    assert "knowledge" not in aliases
+
+
+def test_manager_specs_sorted_by_priority():
+    """manager_specs() returns specs sorted by priority."""
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    specs = registry.manager_specs(scope)
+    priorities = [s.priority for s in specs]
+    assert priorities == sorted(priorities)
+
+
+def test_manager_specs_excludes_computer_primitives():
+    """manager_specs() always excludes ComputerPrimitives (is_state_manager=False)."""
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    specs = registry.manager_specs(scope)
+    aliases = {s.manager_alias for s in specs}
+    # ComputerPrimitives has manager_alias="computer" but should NOT appear
+    assert "computer" not in aliases
+
+
+def test_get_manager_spec_valid():
+    """get_manager_spec() returns spec for valid alias."""
+    registry = get_registry()
+    spec = registry.get_manager_spec("files")
+    assert spec is not None
+    assert spec.manager_alias == "files"
+    assert spec.domain == "Files & Data Operations"
+
+
+def test_get_manager_spec_invalid():
+    """get_manager_spec() returns None for invalid alias."""
+    registry = get_registry()
+    spec = registry.get_manager_spec("invalid")
+    assert spec is None
+
+
+def test_get_manager_spec_includes_computer():
+    """get_manager_spec() CAN return ComputerPrimitives spec for introspection."""
+    registry = get_registry()
+    spec = registry.get_manager_spec("computer")
+    assert spec is not None
+    assert spec.is_state_manager is False
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Primitive methods discovery tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_primitive_methods_for_files():
+    """primitive_methods() returns expected methods for files manager."""
+    registry = get_registry()
+    methods = registry.primitive_methods(manager_alias="files")
+    # Should include real FileManager primitives
+    assert "describe" in methods
+    assert "reduce" in methods
+    assert "filter_files" in methods
+    assert "search_files" in methods
+    # Should exclude internal methods from EXCLUDED_METHODS
+    assert "ingest_files" not in methods
+    assert "delete_file" not in methods
+    assert "exists" not in methods
+
+
+def test_primitive_methods_for_contacts():
+    """primitive_methods() returns expected methods for contacts manager."""
+    registry = get_registry()
+    methods = registry.primitive_methods(manager_alias="contacts")
+    assert "ask" in methods
+    assert "update" in methods
+    # Should exclude internal methods
+    assert "filter_contacts" not in methods
+    assert "update_contact" not in methods
+
+
+def test_primitive_methods_respects_common_exclusions():
+    """primitive_methods() excludes common excluded methods."""
+    registry = get_registry()
+    # Check for all managers
+    for alias in ["contacts", "files", "tasks", "knowledge"]:
+        methods = registry.primitive_methods(manager_alias=alias)
+        for excluded in _COMMON_EXCLUDED_METHODS:
+            assert (
+                excluded not in methods
+            ), f"{excluded} should be excluded from {alias}"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Tool names scoping tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_tool_names_scoped():
+    """tool_names() returns fully-qualified names for scoped managers only."""
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    names = registry.tool_names(scope)
+    assert all(name.startswith("primitives.files.") for name in names)
+    assert "primitives.files.describe" in names
+    # Should NOT include other managers
+    assert not any(name.startswith("primitives.contacts.") for name in names)
+
+
+def test_tool_names_multiple_managers():
+    """tool_names() includes all scoped managers."""
+    registry = get_registry()
+    scope = PrimitiveScope(scoped_managers=frozenset({"files", "contacts"}))
+    names = registry.tool_names(scope)
+    has_files = any(name.startswith("primitives.files.") for name in names)
+    has_contacts = any(name.startswith("primitives.contacts.") for name in names)
+    assert has_files and has_contacts
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Prompt context scoping tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_prompt_context_includes_scoped_managers():
+    """prompt_context() includes only scoped managers."""
+    registry = get_registry()
+    scope = PrimitiveScope(scoped_managers=frozenset({"files", "contacts"}))
+    context = registry.prompt_context(scope)
+    assert "primitives.files" in context
+    assert "primitives.contacts" in context
+    # Should NOT include unscoped managers
+    assert "primitives.tasks" not in context
+    assert "primitives.knowledge" not in context
+
+
+def test_prompt_context_single_manager_no_general_rules():
+    """prompt_context() omits general rules for single manager."""
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    context = registry.prompt_context(scope)
+    # Should NOT include multi-manager rules
+    assert "Manager Selection Priorities" not in context
+    assert "General Rules" not in context
+
+
+def test_prompt_context_multiple_managers_has_general_rules():
+    """prompt_context() includes general rules for multiple managers."""
+    registry = get_registry()
+    scope = PrimitiveScope(scoped_managers=frozenset({"files", "contacts", "tasks"}))
+    context = registry.prompt_context(scope)
+    assert "Manager Selection Priorities" in context
+    assert "General Rules" in context
+
+
+def test_prompt_context_routing_guidance_only_when_both_present():
+    """prompt_context() only includes routing guidance when both managers are scoped."""
+    registry = get_registry()
+    # data+files has routing guidance
+    scope_both = PrimitiveScope(scoped_managers=frozenset({"data", "files"}))
+    context_both = registry.prompt_context(scope_both)
+    assert "primitives.data.*` vs `primitives.files.*" in context_both
+
+    # files only should NOT have data/files routing guidance
+    scope_files = PrimitiveScope.single("files")
+    context_files = registry.prompt_context(scope_files)
+    assert "primitives.data.*` vs `primitives.files.*" not in context_files
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Primitive row filter tests (for FunctionManager queries)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_primitive_row_filter():
+    """primitive_row_filter() builds valid filter expression using primitive_class."""
+    registry = get_registry()
+    scope = PrimitiveScope(scoped_managers=frozenset({"files", "contacts"}))
+    filter_expr = registry.primitive_row_filter(scope)
+    # Filter uses OR clauses with primitive_class
+    assert "primitive_class ==" in filter_expr
+    assert " or " in filter_expr
+    assert "unity.contact_manager.contact_manager.ContactManager" in filter_expr
+    assert "unity.file_manager.managers.file_manager.FileManager" in filter_expr
+    # Should NOT include unscoped managers
+    assert "TaskScheduler" not in filter_expr
+
+
+def test_primitive_row_filter_single_manager():
+    """primitive_row_filter() works for single manager."""
+    registry = get_registry()
+    scope = PrimitiveScope.single("contacts")
+    filter_expr = registry.primitive_row_filter(scope)
+    # Single manager should have a single clause (no "or")
+    assert "primitive_class ==" in filter_expr
+    assert "ContactManager" in filter_expr
+    assert "FileManager" not in filter_expr
+    # No OR needed for single manager
+    assert " or " not in filter_expr
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Collect primitives tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_collect_primitives_returns_expected_fields():
+    """collect_primitives() returns rows with required fields."""
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    primitives = registry.collect_primitives(scope)
+    assert len(primitives) > 0
+    for name, row in primitives.items():
+        assert "name" in row
+        assert "function_id" in row
+        assert "primitive_class" in row
+        assert "primitive_method" in row
+        assert "argspec" in row
+        assert "docstring" in row
+        assert "embedding_text" in row
+        assert row["is_primitive"] is True
+
+
+def test_collect_primitives_matches_get_primitive_sources():
+    """collect_primitives() discovers same primitives as get_primitive_sources()."""
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    primitives = registry.collect_primitives(scope)
+
+    # Verify primitives match what get_primitive_sources returns
+    for cls, method_names in get_primitive_sources():
+        class_name = cls.__name__
+        for method_name in method_names:
+            qualified_name = f"{class_name}.{method_name}"
+            assert (
+                qualified_name in primitives
+            ), f"Expected auto-discovered primitive '{qualified_name}' not found"
+
+
+def test_collect_primitives_respects_scope():
+    """collect_primitives() only collects primitives for scoped managers."""
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    primitives = registry.collect_primitives(scope)
+
+    # All primitives should be from FileManager
+    for name, row in primitives.items():
+        assert (
+            "FileManager" in row["primitive_class"]
+        ), f"Primitive {name} should be from FileManager"
+
+
+def test_collect_primitives_stable_ids():
+    """collect_primitives() generates stable IDs across calls."""
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+
+    primitives1 = registry.collect_primitives(scope)
+    primitives2 = registry.collect_primitives(scope)
+
+    for name in primitives1:
+        assert (
+            primitives1[name]["function_id"] == primitives2[name]["function_id"]
+        ), f"ID for '{name}' should be stable across calls"
+
+
+def test_collect_primitives_unique_ids():
+    """collect_primitives() generates unique IDs for each primitive."""
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    primitives = registry.collect_primitives(scope)
+
+    ids = [p["function_id"] for p in primitives.values()]
+    assert len(ids) == len(set(ids)), "Primitive IDs should be unique"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Hash computation tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_compute_hash_for_manager():
+    """compute_hash_for_manager() returns consistent hash."""
+    registry = get_registry()
+    hash1 = registry.compute_hash_for_manager("files")
+    hash2 = registry.compute_hash_for_manager("files")
+    assert hash1 == hash2
+    assert len(hash1) == 16  # 16-char hex
+
+
+def test_compute_hash_different_for_different_managers():
+    """compute_hash_for_manager() returns different hashes for different managers."""
+    registry = get_registry()
+    hash_files = registry.compute_hash_for_manager("files")
+    hash_contacts = registry.compute_hash_for_manager("contacts")
+    assert hash_files != hash_contacts
+
+
+def test_compute_primitives_hash_stable():
+    """compute_primitives_hash() is stable for same scope."""
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    hash1 = registry.compute_primitives_hash(primitive_scope=scope)
+    hash2 = registry.compute_primitives_hash(primitive_scope=scope)
+    assert hash1 == hash2
+
+
+def test_compute_primitives_hash_different_for_different_scopes():
+    """compute_primitives_hash() returns different hashes for different scopes."""
+    registry = get_registry()
+    scope_all = PrimitiveScope.all_managers()
+    scope_files = PrimitiveScope.single("files")
+
+    hash_all = registry.compute_primitives_hash(primitive_scope=scope_all)
+    hash_files = registry.compute_primitives_hash(primitive_scope=scope_files)
+
+    assert hash_all != hash_files
+
+
+def test_compute_primitives_hash_accepts_precomputed():
+    """compute_primitives_hash() can use pre-collected primitives."""
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    primitives = registry.collect_primitives(scope)
+
+    # Hash with pre-collected should match hash computed internally
+    hash_precomputed = registry.compute_primitives_hash(primitives=primitives)
+    hash_computed = registry.compute_primitives_hash(primitive_scope=scope)
+
+    assert hash_precomputed == hash_computed
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# State manager specs exclusion tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def test_state_manager_specs_excludes_computer():
+    """_STATE_MANAGER_SPECS excludes ComputerPrimitives."""
+    aliases = {s.manager_alias for s in _STATE_MANAGER_SPECS}
+    assert "computer" not in aliases
+
+
+def test_all_state_managers_have_is_state_manager_true():
+    """All specs in _STATE_MANAGER_SPECS have is_state_manager=True."""
+    for spec in _STATE_MANAGER_SPECS:
+        assert (
+            spec.is_state_manager is True
+        ), f"{spec.manager_alias} should be a state manager"
