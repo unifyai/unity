@@ -45,7 +45,8 @@ from ..image_manager.image_manager import ImageHandle
 from ..manager_registry import ManagerRegistry
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
-from .primitives import collect_primitives, compute_primitives_hash
+from unity.function_manager.primitives.scope import PrimitiveScope
+from unity.function_manager.primitives.registry import get_registry
 from .custom_functions import (
     collect_custom_functions,
     compute_custom_functions_hash,
@@ -1637,10 +1638,14 @@ class FunctionManager(BaseFunctionManager):
     def __init__(
         self,
         *,
+        primitive_scope: Optional[PrimitiveScope] = None,
         daemon: bool = True,
         file_manager: Optional[LocalFileManager] = None,
     ) -> None:
-        # No thread behavior; keep parameter for backward compatibility
+        # Store the scope - this FunctionManager instance is permanently scoped
+        # Default to all managers if not specified
+        self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
+        self._registry = get_registry()
         self._daemon = daemon
         # ToDo: expose tools to LLM once needed
         self._tools: Dict[str, callable] = {}
@@ -1715,6 +1720,11 @@ class FunctionManager(BaseFunctionManager):
         # ------------------------------------------------------------------ #
         # Dict[session_id, Dict[str, Any]] - persistent globals per session
         self._in_process_sessions: Dict[int, Dict[str, Any]] = {}
+
+    @property
+    def primitive_scope(self) -> PrimitiveScope:
+        """The scope controlling which managers' primitives are accessible."""
+        return self._primitive_scope
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -2017,8 +2027,8 @@ class FunctionManager(BaseFunctionManager):
     #  Primitives sync                                                   #
     # ------------------------------------------------------------------ #
 
-    def _get_stored_primitives_hash(self) -> Optional[str]:
-        """Retrieve the primitives hash from the Meta context."""
+    def _get_stored_primitives_hash_by_manager(self) -> Dict[str, str]:
+        """Retrieve the per-manager primitives hashes from the Meta context."""
         try:
             logs = unify.get_logs(
                 context=self._meta_ctx,
@@ -2026,13 +2036,16 @@ class FunctionManager(BaseFunctionManager):
                 limit=1,
             )
             if logs:
-                return logs[0].entries.get("primitives_hash")
+                return logs[0].entries.get("primitives_hash_by_manager", {}) or {}
         except Exception:
             pass
-        return None
+        return {}
 
-    def _store_primitives_hash(self, hash_value: str) -> None:
-        """Store the primitives hash in the Meta context."""
+    def _store_primitives_hash_by_manager(
+        self,
+        hash_by_manager: Dict[str, str],
+    ) -> None:
+        """Store the per-manager primitives hashes in the Meta context."""
         try:
             logs = unify.get_logs(
                 context=self._meta_ctx,
@@ -2043,23 +2056,42 @@ class FunctionManager(BaseFunctionManager):
                 unify.update_logs(
                     logs=[logs[0].id],
                     context=self._meta_ctx,
-                    entries={"primitives_hash": hash_value},
+                    entries={"primitives_hash_by_manager": hash_by_manager},
                     overwrite=True,
                 )
             else:
                 unity_create_logs(
                     context=self._meta_ctx,
-                    entries=[{"meta_id": 1, "primitives_hash": hash_value}],
+                    entries=[
+                        {"meta_id": 1, "primitives_hash_by_manager": hash_by_manager},
+                    ],
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
             logger.warning(f"Failed to store primitives hash: {e}")
 
-    def _delete_all_primitives(self) -> None:
-        """Delete all rows from the Primitives context."""
+    def _delete_primitives_for_managers(self, manager_aliases: List[str]) -> None:
+        """Delete primitive rows for specific managers."""
+        if not manager_aliases:
+            return
         try:
+            # Convert manager aliases to class paths for filtering
+            class_paths = []
+            for alias in manager_aliases:
+                for spec in self._registry.manager_specs(self._primitive_scope):
+                    if spec.manager_alias == alias:
+                        class_paths.append(spec.primitive_class_path)
+                        break
+
+            if not class_paths:
+                return
+
+            # Build filter using OR clauses (in [] syntax may not work for strings)
+            clauses = [f'primitive_class == "{cp}"' for cp in class_paths]
+            filter_expr = " or ".join(clauses)
             logs = unify.get_logs(
                 context=self._primitives_ctx,
+                filter=filter_expr,
                 exclude_fields=list_private_fields(self._primitives_ctx),
             )
             if logs:
@@ -2067,17 +2099,19 @@ class FunctionManager(BaseFunctionManager):
                     context=self._primitives_ctx,
                     logs=[lg.id for lg in logs],
                 )
-                logger.debug(f"Deleted {len(logs)} primitive rows")
+                logger.debug(
+                    f"Deleted {len(logs)} primitive rows for managers: {manager_aliases}",
+                )
         except Exception as e:
-            logger.warning(f"Failed to delete primitives: {e}")
+            logger.warning(f"Failed to delete primitives for {manager_aliases}: {e}")
 
-    def _insert_primitives(self, primitives: Dict[str, Dict[str, Any]]) -> None:
+    def _insert_primitives(self, primitives: List[Dict[str, Any]]) -> None:
         """Insert primitive rows into the Primitives context with explicit IDs."""
         if not primitives:
             return
 
         entries = []
-        for name, data in primitives.items():
+        for data in primitives:
             entry = {
                 "name": data["name"],
                 "function_id": data[
@@ -2112,8 +2146,15 @@ class FunctionManager(BaseFunctionManager):
         """
         Ensure primitives in the database match current Python definitions.
 
-        Uses hash comparison to avoid unnecessary writes. Safe to call
-        multiple times; will only perform sync if primitives have changed.
+        Uses per-manager hash comparison to avoid unnecessary writes. Only syncs
+        primitives for managers in this FunctionManager's scope.
+
+        The algorithm:
+        1. Read current hashes from Meta (one call)
+        2. Compute expected hashes for each scoped manager
+        3. Batch delete all changed managers' primitives (one call)
+        4. Batch insert all new primitives (one call)
+        5. Update Meta with new hashes (one call)
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -2121,22 +2162,49 @@ class FunctionManager(BaseFunctionManager):
         if self._primitives_synced:
             return False
 
-        expected = collect_primitives()
-        expected_hash = compute_primitives_hash(expected)
+        target_managers = sorted(self._primitive_scope.scoped_managers)
 
-        current_hash = self._get_stored_primitives_hash()
+        # Step 1: Read current hashes (one backend call)
+        current_hashes = self._get_stored_primitives_hash_by_manager()
 
-        if current_hash == expected_hash:
-            logger.debug("Primitives hash matches, skipping sync")
+        # Step 2: Compute expected hashes and collect pending updates if they differ
+        pending_updates: List[Tuple[str, List[Dict[str, Any]], str]] = []
+        for manager_alias in target_managers:
+            expected_hash = self._registry.compute_hash_for_manager(manager_alias)
+
+            if current_hashes.get(manager_alias) == expected_hash:
+                continue
+
+            single_scope = PrimitiveScope(scoped_managers=frozenset({manager_alias}))
+            primitives_dict = self._registry.collect_primitives(single_scope)
+            expected_rows = list(primitives_dict.values())
+            pending_updates.append((manager_alias, expected_rows, expected_hash))
+
+        # Step 3: If nothing changed, mark synced and return
+        if not pending_updates:
+            logger.debug(
+                "Primitives hashes match for all scoped managers, skipping sync",
+            )
             self._primitives_synced = True
             return False
 
-        logger.info(
-            f"Primitives hash mismatch (current={current_hash}, expected={expected_hash}), syncing...",
-        )
-        self._delete_all_primitives()
-        self._insert_primitives(expected)
-        self._store_primitives_hash(expected_hash)
+        changed_managers = [alias for alias, _, _ in pending_updates]
+        logger.info(f"Primitives changed for managers: {changed_managers}, syncing...")
+
+        # Step 4: Batched delete for all changed managers (one backend call)
+        self._delete_primitives_for_managers(changed_managers)
+
+        # Step 5: Batched insert all new primitives (one backend call)
+        all_rows = []
+        for _, rows, _ in pending_updates:
+            all_rows.extend(rows)
+        self._insert_primitives(all_rows)
+
+        # Step 6: Update Meta with new hashes (one backend call)
+        new_hashes = dict(current_hashes)
+        for alias, _, hash_val in pending_updates:
+            new_hashes[alias] = hash_val
+        self._store_primitives_hash_by_manager(new_hashes)
 
         self._primitives_synced = True
         return True
@@ -2592,16 +2660,19 @@ class FunctionManager(BaseFunctionManager):
         """
         Return a mapping of primitive name to primitive metadata.
 
-        Returns primitives from the Primitives context. Call sync_primitives()
-        first to ensure the database is up-to-date.
+        Only returns primitives for managers in this FunctionManager's scope.
+        Call sync_primitives() first to ensure the database is up-to-date.
 
         Returns:
             Dict mapping primitive name to metadata dict (includes function_id).
         """
         entries: Dict[str, Dict[str, Any]] = {}
         try:
+            # Build scoped filter
+            filter_expr = self._registry.primitive_row_filter(self._primitive_scope)
             logs = unify.get_logs(
                 context=self._primitives_ctx,
+                filter=filter_expr,
                 exclude_fields=list_private_fields(self._primitives_ctx),
             )
             for log in logs:
@@ -3844,8 +3915,13 @@ class FunctionManager(BaseFunctionManager):
         if not include_primitives:
             results = compositional_rows[:n]
         else:
-            # Sync and search primitives
+            # Sync and search primitives (scoped)
             self.sync_primitives()
+
+            # Build scoped filter for primitives
+            primitive_filter = self._registry.primitive_row_filter(
+                self._primitive_scope,
+            )
 
             primitive_rows = table_search_top_k(
                 context=self._primitives_ctx,
@@ -3853,6 +3929,7 @@ class FunctionManager(BaseFunctionManager):
                 k=n,
                 allowed_fields=allowed_fields,
                 unique_id_field="function_id",
+                row_filter=primitive_filter,
             )
 
             # Merge and sort by the private score column (lower distance = better match)
@@ -5665,56 +5742,23 @@ if __name__ == "__main__":
                 }
             }
         """
-        from .primitives import get_primitive_sources, MANAGER_METADATA
-
         result: Dict[str, Dict[str, Any]] = {"managers": {}}
 
-        # Map class names to manager short names
-        class_to_manager = {
-            "ContactManager": "contacts",
-            "TranscriptManager": "transcripts",
-            "KnowledgeManager": "knowledge",
-            "TaskScheduler": "tasks",
-            "SecretManager": "secrets",
-            "GuidanceManager": "guidance",
-            "WebSearcher": "web",
-            "FileManager": "files",
-            "ComputerPrimitives": "computer",
-        }
+        # Use the scoped primitive_scope from this FunctionManager
+        for spec in self._registry.manager_specs(self._primitive_scope):
+            manager_name = spec.manager_alias
+            description = spec.description
 
-        # Collect methods from primitive sources
-        for cls, method_names in get_primitive_sources():
-            class_name = cls.__name__
-            manager_name = class_to_manager.get(class_name)
-            if not manager_name:
-                continue
+            # Get primitive rows which contain signature and docstring
+            single_scope = PrimitiveScope(scoped_managers=frozenset({manager_name}))
+            primitives_dict = self._registry.collect_primitives(single_scope)
 
-            # Get description from MANAGER_METADATA
-            metadata = MANAGER_METADATA.get(manager_name, {})
-            description = metadata.get("description", "")
-
-            # Extract method signatures
             methods_info: Dict[str, Dict[str, str]] = {}
-            for method_name in method_names:
-                method = getattr(cls, method_name, None)
-                if method is None:
-                    continue
-
-                # Unwrap functools.wraps
-                fn = method
-                while hasattr(fn, "__wrapped__"):
-                    fn = fn.__wrapped__
-
-                try:
-                    sig = str(inspect.signature(fn))
-                except (ValueError, TypeError):
-                    sig = "(...)"
-
-                docstring = inspect.getdoc(fn) or ""
-
+            for row in primitives_dict.values():
+                method_name = row.get("primitive_method", "")
                 methods_info[method_name] = {
-                    "signature": sig,
-                    "docstring": docstring,
+                    "signature": row.get("argspec", ""),
+                    "docstring": row.get("docstring", ""),
                 }
 
             result["managers"][manager_name] = {
