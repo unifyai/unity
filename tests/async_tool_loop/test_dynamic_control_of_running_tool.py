@@ -141,8 +141,8 @@ def _assistant_is_check_status_only(msg: dict) -> bool:
 #  FIXTURE                                                                    #
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="function")
-def client(model):
-    return new_llm_client(model=model)
+def client(llm_config):
+    return new_llm_client(**llm_config)
 
 
 # --------------------------------------------------------------------------- #
@@ -788,7 +788,7 @@ async def test_helpers_hide_notification_clarification(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_helpers_hide_get_history(client, model):
+async def test_helpers_hide_get_history(client, llm_config):
     """
     Verify dynamic tools do NOT expose `get_history_…` for an in‑flight nested
     AsyncToolLoopHandle (this would have been exposed before dynamic base-method
@@ -797,7 +797,7 @@ async def test_helpers_hide_get_history(client, model):
 
     async def spawn_inner_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         # Start an inner async tool loop and return its handle immediately
-        inner_client = new_llm_client(model=model)
+        inner_client = new_llm_client(**llm_config)
         return start_async_tool_loop(
             inner_client,
             message="Inner loop: reply OK.",

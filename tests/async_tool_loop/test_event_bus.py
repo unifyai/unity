@@ -45,14 +45,14 @@ def _filter_runtime_context(events: list) -> list:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_basic_event_flow(model) -> None:
+async def test_basic_event_flow(llm_config) -> None:
     """
     End-to-end check:
 
         user/msg → assistant/tool-call → tool/result → assistant/final-text
     """
 
-    client = new_llm_client(model=model).set_system_message(
+    client = new_llm_client(**llm_config).set_system_message(
         "You are an automated test agent.\n"
         "You MUST call the tool named `echo` exactly once, passing the user's message as the `text` argument.\n"
         "Do NOT reply directly without first calling the `echo` tool (even if you think you know the answer).\n"
@@ -97,7 +97,7 @@ async def test_basic_event_flow(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_publishes_user_event(model) -> None:
+async def test_interjection_publishes_user_event(llm_config) -> None:
     """
     Verify that interjections are published to the event bus as user messages.
 
@@ -105,7 +105,7 @@ async def test_interjection_publishes_user_event(model) -> None:
     Model response quality and instruction-following are tested separately
     in test_interjections.py.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     # Minimal prompt - we don't care about model's response quality here
     client.set_system_message("Acknowledge any messages you receive.")
 
@@ -151,7 +151,7 @@ async def test_interjection_publishes_user_event(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_result_content_is_not_placeholder(model) -> None:
+async def test_tool_result_content_is_not_placeholder(llm_config) -> None:
     """
     Verify that tool messages published to EventBus contain actual tool results,
     not placeholder text like "Streaming..." or "In progress...".
@@ -167,7 +167,7 @@ async def test_tool_result_content_is_not_placeholder(model) -> None:
         """A tool that returns a predictable result for testing."""
         return expected_result
 
-    client = new_llm_client(model=model).set_system_message(
+    client = new_llm_client(**llm_config).set_system_message(
         "You are an automated test agent.\n"
         "You MUST call the tool named `deterministic_tool` exactly once, "
         "passing any text as the `input_text` argument.\n"

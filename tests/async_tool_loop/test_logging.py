@@ -16,7 +16,7 @@ pytestmark = pytest.mark.enable_eventbus
 
 
 @pytest.mark.asyncio
-async def test_nested_logging_hierarchy_labels(model):
+async def test_nested_logging_hierarchy_labels(llm_config):
     """
     Verify that nested async tool loops emit ToolLoop events with hierarchical
     lineage in payload: `hierarchy` (list[str]) and `hierarchy_label` (str).
@@ -34,7 +34,7 @@ async def test_nested_logging_hierarchy_labels(model):
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client(model=model)
+        inner_client = new_llm_client(**llm_config)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -55,7 +55,7 @@ async def test_nested_logging_hierarchy_labels(model):
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -105,7 +105,7 @@ async def test_nested_logging_hierarchy_labels(model):
 
 
 @pytest.mark.asyncio
-async def test_single_loop_logging_hierarchy_label(model):
+async def test_single_loop_logging_hierarchy_label(llm_config):
     """
     Verify that a single (non-nested) async tool loop emits ToolLoop events
     with a flat hierarchy and label equal to its loop_id.
@@ -120,7 +120,7 @@ async def test_single_loop_logging_hierarchy_label(model):
     def noop_tool() -> str:  # noqa: D401
         return "ok"
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message(
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",
     )
@@ -161,7 +161,7 @@ async def test_single_loop_logging_hierarchy_label(model):
 
 
 @pytest.mark.asyncio
-async def test_litellm_logs_are_suppressed(model, caplog):
+async def test_litellm_logs_are_suppressed(llm_config, caplog):
     """
     Verify that LiteLLM logs are suppressed by our logging configuration.
 
@@ -177,7 +177,7 @@ async def test_litellm_logs_are_suppressed(model, caplog):
     def noop_tool() -> str:
         return "ok"
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message("Call noop_tool, then reply 'done'.")
 
     handle = start_async_tool_loop(

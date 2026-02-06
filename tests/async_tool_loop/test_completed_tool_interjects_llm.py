@@ -80,7 +80,7 @@ async def very_slow_task() -> str:
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
-    model,
+    llm_config,
     caplog,
 ) -> None:
     """
@@ -108,7 +108,7 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     )
 
     client = new_llm_client(
-        model=model,
+        **llm_config,
         system_message=system_prompt,
     )
 
@@ -223,7 +223,7 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_llm_step_is_preempted_by_late_tool_completion(model) -> None:
+async def test_llm_step_is_preempted_by_late_tool_completion(llm_config) -> None:
     """
     The model is instructed to call both tools in a single assistant turn. The fast
     task completes first, then the slow task completes while the model may still be
@@ -249,7 +249,7 @@ async def test_llm_step_is_preempted_by_late_tool_completion(model) -> None:
     )
 
     client = new_llm_client(
-        model=model,
+        **llm_config,
         system_message=system_prompt,
     )
 

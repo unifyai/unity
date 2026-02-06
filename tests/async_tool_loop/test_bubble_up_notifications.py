@@ -8,7 +8,7 @@ import pytest
 import unillm
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
@@ -24,9 +24,9 @@ from tests.async_helpers import (
 
 def make_llm(
     system_message: Optional[str] = None,
-    model: str = DEFAULT_MODEL,
+    **llm_kwargs,
 ) -> unillm.AsyncUnify:
-    return new_llm_client(model=model, system_message=system_message)
+    return new_llm_client(**llm_kwargs, system_message=system_message)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ async def notify_parent(
 # ──────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_notification_bubbles_up_two_tiers(model) -> None:
+async def test_notification_bubbles_up_two_tiers(llm_config) -> None:
     """
     Verifies that notifications emitted by a running tool are surfaced upstream
     and allow the assistant to react; the tool then completes successfully.
@@ -128,7 +128,7 @@ async def test_notification_bubbles_up_two_tiers(model) -> None:
         "2) Do not produce a normal assistant message while work is pending; use tools only.\n"
         "3) Avoid starting unrelated tools while the original call is in progress.\n"
         "4) Once the email has been sent, produce a single, concise assistant message that includes the word 'sent' (e.g., 'Email sent.').",
-        model=model,
+        **llm_config,
     )
 
     outer_tools = {
@@ -266,7 +266,7 @@ async def delegating_tool(
 # regression test
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_notification_bubbles_through_returned_handle(model) -> None:
+async def test_notification_bubbles_through_returned_handle(llm_config) -> None:
     """Notification raised inside the returned handle must still reach the user."""
 
     outer_llm = make_llm(
@@ -276,7 +276,7 @@ async def test_notification_bubbles_through_returned_handle(model) -> None:
         "Do not invent status; only reflect actual notifications.\n"
         "When the inner work completes, end your final assistant message by including the word 'finished'. "
         "Keep responses concise.",
-        model=model,
+        **llm_config,
     )
 
     handle = start_async_tool_loop(

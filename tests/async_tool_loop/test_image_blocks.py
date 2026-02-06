@@ -30,13 +30,13 @@ with open(Path(__file__).parent / "cat.jpg", "rb") as f:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_initial_user_image_is_promoted(model) -> None:
+async def test_initial_user_image_is_promoted(llm_config) -> None:
     """
     The first user turn contains an inline PNG.  We expect:
       • `image_url` block present in the chat payload sent to the model;
       • the assistant correctly answers "cat".
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message(
         "You will receive an image. Answer with ONE three-letter word naming the animal.",
     )
@@ -81,7 +81,7 @@ async def image_tool() -> dict:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_result_image_is_promoted_and_reasoned_over(model) -> None:
+async def test_tool_result_image_is_promoted_and_reasoned_over(llm_config) -> None:
     """
     Flow:
       1. Assistant calls `image_tool`.
@@ -91,7 +91,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over(model) -> None:
          it must answer "cat".
     """
     # ---- phase 1: run the tool and verify promotion ----------------------
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message(
         "Call image_tool exactly once. The tool will return a base64-encoded image of a domestic cat. After the tool finishes, respond with exactly 'cat' (lowercase, no punctuation). Do not output anything else.",
     )

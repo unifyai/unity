@@ -17,7 +17,7 @@ class SimpleGreeting(BaseModel):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_structured_output_response_format(model) -> None:
+async def test_structured_output_response_format(llm_config) -> None:
     """The async-tool loop should honour *response_format* and return JSON that
     validates against the supplied Pydantic schema.
 
@@ -29,7 +29,7 @@ async def test_structured_output_response_format(model) -> None:
          ``SimpleGreeting.model_validate_json``.
     """
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     client.set_system_message(
         "When asked, respond with a JSON object that contains exactly two keys: "
@@ -71,7 +71,7 @@ class SimpleEcho(BaseModel):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_additional_formatting_roundtrip(model) -> None:  # noqa: D401
+async def test_no_additional_formatting_roundtrip(llm_config) -> None:  # noqa: D401
     """Verify that the loop skips the re-formatting turn when the first
     assistant reply already conforms to *response_format*.
 
@@ -80,7 +80,7 @@ async def test_no_additional_formatting_roundtrip(model) -> None:  # noqa: D401
     is **absent** from the final chat transcript.
     """
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Prompt the model so that it can satisfy the schema in one go.
     client.set_system_message(

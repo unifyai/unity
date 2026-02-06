@@ -40,12 +40,12 @@ def add(x: int, y: int) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_persist_mode_waits_for_interjection(model):
+async def test_persist_mode_waits_for_interjection(llm_config):
     """
     In persist mode, after the LLM produces content without tool calls,
     the loop blocks waiting for an interjection instead of returning.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client,
@@ -94,11 +94,11 @@ async def test_persist_mode_waits_for_interjection(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_persist_mode_processes_multiple_interjections(model):
+async def test_persist_mode_processes_multiple_interjections(llm_config):
     """
     The persist loop should process multiple interjections sequentially.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client,
@@ -179,11 +179,11 @@ async def test_persist_mode_processes_multiple_interjections(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_persist_mode_terminates_on_stop(model):
+async def test_persist_mode_terminates_on_stop(llm_config):
     """
     A persist loop should terminate gracefully when handle.stop() is called.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client,
@@ -213,12 +213,12 @@ async def test_persist_mode_terminates_on_stop(model):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_non_persist_mode_terminates_normally(model):
+async def test_non_persist_mode_terminates_normally(llm_config):
     """
     Without persist=True, the loop should terminate as normal when the LLM
     produces content without tool calls (regression test).
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client,
@@ -243,12 +243,12 @@ async def test_non_persist_mode_terminates_normally(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_persist_mode_with_tool_calls(model):
+async def test_persist_mode_with_tool_calls(llm_config):
     """
     Persist mode should handle tool calls normally and only wait after
     the LLM produces content without tool calls.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client,
