@@ -832,15 +832,10 @@ jobs:
         echo "=== Orchestra Server Logs ==="
         if [ -f /tmp/orchestra-local-server.log ]; then
           cat /tmp/orchestra-local-server.log
-          # Also copy to logs/orchestra/ so it gets uploaded with artifacts
-          if [ -d logs/orchestra ]; then
-            # Find the session directory (most recent timestamp)
-            session_dir=$(ls -td logs/orchestra/*/ 2>/dev/null | head -1)
-            if [ -n "$session_dir" ]; then
-              cp /tmp/orchestra-local-server.log "$session_dir/server.log"
-              echo "(Copied to $session_dir/server.log for artifact upload)"
-            fi
-          fi
+          # Copy to logs/orchestra/ so it gets uploaded with artifacts
+          mkdir -p logs/orchestra
+          cp /tmp/orchestra-local-server.log logs/orchestra/server.log
+          echo "(Copied to logs/orchestra/server.log for artifact upload)"
         else
           echo "No orchestra log file found at /tmp/orchestra-local-server.log"
         fi
