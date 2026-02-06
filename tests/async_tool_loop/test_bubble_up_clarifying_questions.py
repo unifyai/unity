@@ -7,7 +7,7 @@ import pytest
 import unillm
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_message_prefix,
@@ -27,10 +27,10 @@ from tests.async_helpers import (
 
 def make_llm(
     system_message: Optional[str] = None,
-    model: str = DEFAULT_MODEL,
+    **llm_kwargs,
 ) -> unillm.AsyncUnify:
     return new_llm_client(
-        model=model,
+        **llm_kwargs,
         system_message=system_message,
     )
 
@@ -80,7 +80,7 @@ asked_questions: list[str] = []  # for assertions
 # ──────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_clarification_bubbles_up_two_tiers(model) -> None:
+async def test_clarification_bubbles_up_two_tiers(llm_config) -> None:
     """
     Verifies that the clarification travels up & the answer travels down two
     levels of the call stack.
@@ -96,7 +96,7 @@ async def test_clarification_bubbles_up_two_tiers(model) -> None:
         "After the original call resumes or completes, you may continue with further tools as needed.\n"
         "When the email has been sent successfully, end your final assistant message with an explicit confirmation using the word 'sent' (e.g., 'Email sent.').\n"
         "Do not hallucinate any details; if unknown, ask. Keep responses concise.",
-        model=model,
+        **llm_config,
     )
 
     clar_up_q = asyncio.Queue()
@@ -261,7 +261,7 @@ async def delegating_tool(
 # regression test
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_clarification_bubbles_through_returned_handle(model) -> None:
+async def test_clarification_bubbles_through_returned_handle(llm_config) -> None:
     """Clarification raised *inside* the returned handle must still reach the user."""
 
     clar_up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -279,7 +279,7 @@ async def test_clarification_bubbles_through_returned_handle(model) -> None:
         "(3) Forward that answer to the pending tool via the clarify_* helper.\n"
         "Treat these as user preferences or facts unknown to you; do NOT answer them yourself, guess, or infer from unrelated context.\n"
         "Do NOT start unrelated tools until pending clarifications are resolved.",
-        model=model,
+        **llm_config,
     )
 
     handle = start_async_tool_loop(
@@ -355,7 +355,7 @@ async def spawn_inner(
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
-    model,
+    llm_config,
 ) -> None:
     """
     Regression test for deadlock when LLM ends conversation while inner tool
@@ -383,7 +383,7 @@ async def test_outer_loop_exits_when_inner_blocked_on_unanswered_clarification(
             "to respond with 'I cannot help with that.' - do NOT try to answer it "
             "yourself or guess, and do NOT call stop or wait helpers."
         ),
-        model=model,
+        **llm_config,
     )
 
     # NOTE: Outer loop does NOT have request_clarification tool!

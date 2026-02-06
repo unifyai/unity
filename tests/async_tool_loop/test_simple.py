@@ -79,8 +79,8 @@ def count_tool_messages(client) -> int:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_happy_path_single_sync_tool(model):
-    client = new_llm_client(model=model)
+async def test_happy_path_single_sync_tool(llm_config):
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -98,7 +98,7 @@ async def test_happy_path_single_sync_tool(model):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_concurrent_tools_waits_for_all_results(model):
+async def test_concurrent_tools_waits_for_all_results(llm_config):
     """
     The loop launches `fast` and `slow` concurrently but must *not* call the
     model again until *both* have finished.
@@ -130,9 +130,8 @@ async def test_concurrent_tools_waits_for_all_results(model):
 
     # Manually constructing to support inheritance, but mirroring new_llm_client defaults
     client = InstrumentedClient(
-        model,
-        reasoning_effort="low",
-        service_tier="priority",
+        llm_config["model"],
+        **{k: v for k, v in llm_config.items() if k != "model"},
         cache=SETTINGS.UNIFY_CACHE,
     )
 
@@ -171,8 +170,8 @@ async def test_concurrent_tools_waits_for_all_results(model):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_recovers_after_failure(model):
-    client = new_llm_client(model=model)
+async def test_recovers_after_failure(llm_config):
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -198,8 +197,8 @@ async def test_recovers_after_failure(model):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_aborts_after_too_many_failures(model):
-    client = new_llm_client(model=model)
+async def test_aborts_after_too_many_failures(llm_config):
+    client = new_llm_client(**llm_config)
 
     with pytest.raises(RuntimeError):
         await start_async_tool_loop(
@@ -216,8 +215,8 @@ async def test_aborts_after_too_many_failures(model):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mixed_sync_async_tools(model):
-    client = new_llm_client(model=model)
+async def test_mixed_sync_async_tools(llm_config):
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -243,8 +242,8 @@ def emit_json() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_pretty_prints_json_string_tool_result(model):
-    client = new_llm_client(model=model)
+async def test_pretty_prints_json_string_tool_result(llm_config):
+    client = new_llm_client(**llm_config)
 
     # Ask the model to call the tool once, then reply. Result should be pretty‑printed in the transcript.
     _ = await start_async_tool_loop(
@@ -282,7 +281,9 @@ async def test_pretty_prints_json_string_tool_result(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noqa: D401
+async def test_duplicate_tool_calls_are_optionally_pruned(
+    llm_config,
+) -> None:  # noqa: D401
     """Verify that duplicate tool calls are kept or pruned according to the flag."""
 
     log: list[str] = []
@@ -324,7 +325,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     # 1️⃣  duplicates SHOULD be executed when pruning is disabled
     # ------------------------------------------------------------------ #
     log.clear()
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     await start_async_tool_loop(
         client=client,
         message=seeded,
@@ -348,7 +349,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     # 2️⃣  duplicates SHOULD be pruned when pruning is enabled
     # ------------------------------------------------------------------ #
     log.clear()
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     await start_async_tool_loop(
         client=client,
         message=seeded,
@@ -392,14 +393,14 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_tools_with_system_message(model) -> None:
+async def test_no_tools_with_system_message(llm_config) -> None:
     """
     Verify that the loop completes correctly when **no** tools are available
     and the conversation starts with a system prompt.
 
     The assistant must answer directly without any tool calls.
     """
-    client = new_llm_client(model=model).set_system_message(
+    client = new_llm_client(**llm_config).set_system_message(
         "You are a helpful assistant.",
     )
 
@@ -416,13 +417,13 @@ async def test_no_tools_with_system_message(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_tools_without_explicit_system_message(model) -> None:
+async def test_no_tools_without_explicit_system_message(llm_config) -> None:
     """
     No tools, no explicit system message provided by the caller.
 
     The assistant must answer directly without any tool calls.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -441,7 +442,7 @@ async def test_no_tools_without_explicit_system_message(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_max_concurrent_limit_is_obeyed(model) -> None:  # noqa: D401
+async def test_max_concurrent_limit_is_obeyed(llm_config) -> None:  # noqa: D401
     """Ensure the per‑tool *runtime* concurrency cap is respected.
 
     We ask the model to run the same tool twice *in parallel*.  The limit
@@ -463,7 +464,7 @@ async def test_max_concurrent_limit_is_obeyed(model) -> None:  # noqa: D401
 
     tools = {"limited": ToolSpec(fn=limited, max_concurrent=1)}
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Kick off the interactive loop *without* awaiting the final result yet so
     # that we can synchronise on the **first** tool request and ensure all

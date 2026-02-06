@@ -121,12 +121,12 @@ def _effectively_adjacent(msgs: List[dict], idx1: int, idx2: int) -> bool:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_triggers_tool_and_result(model):
+async def test_interject_triggers_tool_and_result(llm_config):
     """
     Start with echo("A"), then interject to also echo("B"). Expect two tool
     calls and a final plain-text result.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     handle = start_async_tool_loop(
         client,
         message=("Use the `echo` tool to output the text 'A'."),
@@ -187,9 +187,9 @@ async def test_interject_triggers_tool_and_result(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_stops_gracefully(model):
+async def test_stop_stops_gracefully(llm_config):
     """handle.stop() cancels the loop and result() returns a standard notice string."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     handle = start_async_tool_loop(
         client,
         "Echo something then say 'ok'.",
@@ -204,13 +204,13 @@ async def test_stop_stops_gracefully(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_backfills_helper_call_reply(model) -> None:
+async def test_backfills_helper_call_reply(llm_config) -> None:
     """
     Pre-seed transcript with an assistant helper tool_call (e.g. wait).
     New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
     The pre-seeded assistant helper turn should be removed, and no tool reply should appear.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     helper_call_id = "call_TEST_HELPER"
     helper_name = "wait"
@@ -268,7 +268,7 @@ async def test_backfills_helper_call_reply(model) -> None:
 @pytest.mark.asyncio
 @_handle_project
 async def test_patient_interjection_defers_turn(
-    model,
+    llm_config,
     monkeypatch,
 ) -> None:
     """
@@ -280,7 +280,7 @@ async def test_patient_interjection_defers_turn(
     test_patient_interjection_does_not_cancel_inflight_llm. This test focuses on
     the deferred turn semantics and message ordering.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     from unity.common._async_tool import loop as _loop
 
@@ -359,7 +359,7 @@ async def test_patient_interjection_defers_turn(
 @pytest.mark.asyncio
 @_handle_project
 async def test_patient_interjection_does_not_cancel_inflight_llm(
-    model,
+    llm_config,
     monkeypatch,
 ) -> None:
     """
@@ -373,7 +373,7 @@ async def test_patient_interjection_does_not_cancel_inflight_llm(
     The bug this catches: The cleanup code after asyncio.wait() unconditionally
     cancelled the LLM task before checking if the interjection was in patient mode.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     from unity.common._async_tool import loop as _loop
 
@@ -443,12 +443,12 @@ async def test_patient_interjection_does_not_cancel_inflight_llm(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_immediate_interjection_cancels_llm(model, monkeypatch) -> None:
+async def test_immediate_interjection_cancels_llm(llm_config, monkeypatch) -> None:
     """
     When the LLM is currently thinking, an immediate interjection
     (default behaviour) MUST cancel the in-flight LLM call.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     from unity.common._async_tool import loop as _loop
 
@@ -502,11 +502,11 @@ async def test_immediate_interjection_cancels_llm(model, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjections_processed_successfully(model):
+async def test_interjections_processed_successfully(llm_config):
     """
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -562,12 +562,12 @@ async def test_interjections_processed_successfully(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_result_precedes_interjection(model):
+async def test_tool_result_precedes_interjection(llm_config):
     """
     Run `slow` once then reply "ACK". Interject while running.
     Expect: assistant → tool result → interjection.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     handle = start_async_tool_loop(
         client,
         (
@@ -597,12 +597,12 @@ async def test_tool_result_precedes_interjection(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parallel_results_shift_interjection(model):
+async def test_parallel_results_shift_interjection(llm_config):
     """
     Run both `fast` and `slow`, interject while they are running.
     Expect both tool results right after the assistant turn, interjection follows.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -637,9 +637,9 @@ async def test_parallel_results_shift_interjection(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_stops_ongoing_llm(model):
+async def test_interjection_stops_ongoing_llm(llm_config):
     """The first LLM generation is stopped once the user interjects."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -669,8 +669,8 @@ async def test_interjection_stops_ongoing_llm(model):
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjectable_tool_roundtrip(model) -> None:
-    client = new_llm_client(model=model)
+async def test_interjectable_tool_roundtrip(llm_config) -> None:
+    client = new_llm_client(**llm_config)
 
     exec_log: List[str] = []
 
@@ -737,12 +737,12 @@ async def test_interjectable_tool_roundtrip(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_immediate_interjection_has_reply(model) -> None:
+async def test_immediate_interjection_has_reply(llm_config) -> None:
     """
     When an interjection arrives immediately after an assistant tool_calls turn,
     a tool placeholder must already be present to maintain API ordering.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     import time as _time
 
@@ -800,12 +800,12 @@ async def test_immediate_interjection_has_reply(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_backfills_prior_assistant_reply(model) -> None:
+async def test_backfills_prior_assistant_reply(llm_config) -> None:
     """
     Pre-seed transcript with assistant tool_call but no tool reply.
     The loop must backfill a tool message directly after that assistant turn.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     def slow_tool(x: int) -> str:
         return f"ok:{x}"
@@ -876,7 +876,7 @@ async def test_backfills_prior_assistant_reply(model) -> None:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_system_message_preserved_with_runtime_interjections(model) -> None:
+async def test_system_message_preserved_with_runtime_interjections(llm_config) -> None:
     """
     Verify that the original system message is preserved and followed when
     runtime system messages (e.g., visibility_guidance) are inserted between
@@ -895,7 +895,7 @@ async def test_system_message_preserved_with_runtime_interjections(model) -> Non
         "where X is the user's most recent message. No other text allowed."
     )
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message(SYSTEM_INSTRUCTION)
 
     handle = start_async_tool_loop(
@@ -924,7 +924,7 @@ async def test_system_message_preserved_with_runtime_interjections(model) -> Non
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_multiple_interjections_preserve_system_message(model) -> None:
+async def test_multiple_interjections_preserve_system_message(llm_config) -> None:
     """
     Verify system message preservation with multiple rapid interjections.
 
@@ -938,7 +938,7 @@ async def test_multiple_interjections_preserve_system_message(model) -> None:
         "a single digit number. No other text, punctuation, or explanation."
     )
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
     client.set_system_message(SYSTEM_INSTRUCTION)
 
     handle = start_async_tool_loop(
@@ -964,7 +964,9 @@ async def test_multiple_interjections_preserve_system_message(model) -> None:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_provides_answer_terminates_inflight_tool(model) -> None:
+async def test_interjection_provides_answer_terminates_inflight_tool(
+    llm_config,
+) -> None:
     """
     When a user interjection provides the complete answer while a tool is
     in-flight, the loop should terminate immediately and auto-kill the
@@ -996,7 +998,7 @@ async def test_interjection_provides_answer_terminates_inflight_tool(model) -> N
             tool_cancelled["value"] = True
             raise
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client=client,
@@ -1039,7 +1041,7 @@ async def test_interjection_provides_answer_terminates_inflight_tool(model) -> N
 @pytest.mark.asyncio
 @_handle_project
 async def test_final_answer_with_response_format_terminates_inflight_tool(
-    model,
+    llm_config,
 ) -> None:
     """
     When response_format is specified and the LLM calls final_answer while a
@@ -1076,7 +1078,7 @@ async def test_final_answer_with_response_format_terminates_inflight_tool(
             tool_cancelled["value"] = True
             raise
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client=client,

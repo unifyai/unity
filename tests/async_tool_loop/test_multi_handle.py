@@ -337,9 +337,9 @@ async def test_multi_handle_add_request_after_close():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_multi_handle_single_request_baseline(model):
+async def test_multi_handle_single_request_baseline(llm_config):
     """Test that multi-handle mode works with a single request (baseline)."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client,
@@ -359,14 +359,14 @@ async def test_multi_handle_single_request_baseline(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_multi_handle_two_requests_sequential(model):
+async def test_multi_handle_two_requests_sequential(llm_config):
     """Test handling two requests that complete sequentially."""
 
     def add(x: int, y: int) -> int:
         """Add two numbers."""
         return x + y
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle0 = start_async_tool_loop(
         client,
@@ -393,7 +393,7 @@ async def test_multi_handle_two_requests_sequential(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_multi_handle_stop_one_request(model):
+async def test_multi_handle_stop_one_request(llm_config):
     """Test stopping one request while another continues."""
 
     async def slow_tool(label: str) -> str:
@@ -401,7 +401,7 @@ async def test_multi_handle_stop_one_request(model):
         await asyncio.sleep(2)
         return f"Completed: {label}"
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle0 = start_async_tool_loop(
         client,
@@ -432,7 +432,7 @@ async def test_multi_handle_stop_one_request(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_multi_handle_interjection_routing(model):
+async def test_multi_handle_interjection_routing(llm_config):
     """Test that interjections are routed to correct requests."""
 
     async def wait_tool() -> str:
@@ -440,7 +440,7 @@ async def test_multi_handle_interjection_routing(model):
         await asyncio.sleep(1)
         return "done waiting"
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle0 = start_async_tool_loop(
         client,

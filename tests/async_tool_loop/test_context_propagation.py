@@ -23,8 +23,8 @@ from unity.common.llm_client import new_llm_client
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chat_context_propagation(model) -> None:
-    client = new_llm_client(model=model)
+async def test_chat_context_propagation(llm_config) -> None:
+    client = new_llm_client(**llm_config)
 
     root_ctx = [{"role": "user", "content": "root-level message"}]
     captured_ctx: List[list[dict]] = []
@@ -75,9 +75,9 @@ async def test_chat_context_propagation(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chat_context_propagation_never(model) -> None:
+async def test_chat_context_propagation_never(llm_config) -> None:
     """Verify that NEVER mode does NOT pass context to tools, even when they accept it."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     root_ctx = [{"role": "user", "content": "secret-context-message"}]
     captured_ctx: List[list[dict]] = []
@@ -109,9 +109,9 @@ async def test_chat_context_propagation_never(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chat_context_propagation_llm_decides_include(model) -> None:
+async def test_chat_context_propagation_llm_decides_include(llm_config) -> None:
     """Verify that LLM_DECIDES mode passes context when LLM includes it (default)."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     root_ctx = [{"role": "user", "content": "root-level-context-marker"}]
     captured_ctx: List[list[dict]] = []
@@ -149,9 +149,9 @@ async def test_chat_context_propagation_llm_decides_include(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chat_context_propagation_llm_decides_exclude(model) -> None:
+async def test_chat_context_propagation_llm_decides_exclude(llm_config) -> None:
     """Verify that LLM_DECIDES mode omits context when LLM explicitly excludes it."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     root_ctx = [{"role": "user", "content": "secret-context-should-not-appear"}]
     captured_ctx: List[list[dict]] = []
@@ -187,7 +187,7 @@ async def test_chat_context_propagation_llm_decides_exclude(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_uses_parent_context(model) -> None:
+async def test_ask_uses_parent_context(llm_config) -> None:
     """Verify that ask() includes parent context in the inspection loop and influences the answer.
 
     The inner inspection loop should choose "apple" only because the parent context
@@ -197,7 +197,7 @@ async def test_ask_uses_parent_context(model) -> None:
     which sophisticated models might (correctly) treat as suspicious prompt injection.
     """
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Start a trivial outer loop (no tools needed for this test).
     handle = start_async_tool_loop(
@@ -240,7 +240,7 @@ async def test_ask_uses_parent_context(model) -> None:
 @pytest.mark.asyncio
 @_handle_project
 async def test_interject_with_continued_parent_context_influences_decision(
-    model,
+    llm_config,
 ) -> None:
     """Verify that an interjection with continued parent context steers the LLM decision.
 
@@ -251,7 +251,7 @@ async def test_interject_with_continued_parent_context_influences_decision(
     which sophisticated models might (correctly) treat as suspicious prompt injection.
     """
 
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client=client,
@@ -456,13 +456,13 @@ class TestLoopContextState:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_incremental_context_multiple_tool_calls(model) -> None:
+async def test_incremental_context_multiple_tool_calls(llm_config) -> None:
     """Verify that multiple calls to the same tool receive incremental context.
 
     First call should receive full parent_chat_context.
     Second call should receive only _parent_chat_context_cont with new messages.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     root_ctx = [{"role": "user", "content": "initial-parent-context"}]
 
@@ -1093,7 +1093,7 @@ async def test_ask_dynamic_tool_respects_include_parent_chat_context_false():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_context_continuation_message_structure(model) -> None:
+async def test_interjection_context_continuation_message_structure(llm_config) -> None:
     """Verify that interjections with _parent_chat_context_continued create proper message structure.
 
     When an interjection includes _parent_chat_context_continued:
@@ -1105,7 +1105,7 @@ async def test_interjection_context_continuation_message_structure(model) -> Non
     This test uses a realistic scenario (food allergy) rather than arbitrary directives,
     which sophisticated models might (correctly) treat as suspicious prompt injection.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client=client,
@@ -1177,7 +1177,7 @@ async def test_interjection_context_continuation_message_structure(model) -> Non
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_context_only_no_user_message(model) -> None:
+async def test_interjection_context_only_no_user_message(llm_config) -> None:
     """Verify that context-only interjections (empty message) work correctly.
 
     When an interjection has _parent_chat_context_continued but empty message text,
@@ -1187,7 +1187,7 @@ async def test_interjection_context_only_no_user_message(model) -> None:
     a banana allergy, which the inner loop should naturally use when asked to recommend
     a fruit between apple and banana.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     handle = start_async_tool_loop(
         client=client,
