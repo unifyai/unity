@@ -17,9 +17,6 @@ import inspect
 import re
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, field_validator, model_validator
-
-from unity.contact_manager.types import ContactDetailsEmail, ContactDetailsPhone
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
@@ -51,73 +48,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from unity.conversation_manager.conversation_manager import ConversationManager
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Recipient models — explicit tagged types for robust tool argument parsing
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class PhoneRecipient(BaseModel):
-    """Who to contact. Provide exactly ONE of these fields.
-
-    - ``contact_id``: integer ID of an existing contact from active_conversations.
-    - ``phone_number``: phone number string (e.g., "+1234567890") for direct contact.
-    """
-
-    contact_id: int | None = None
-    phone_number: str | None = None
-
-    @field_validator("contact_id", mode="before")
-    @classmethod
-    def coerce_contact_id(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            try:
-                return int(v)
-            except (ValueError, TypeError):
-                pass
-        return v
-
-    @model_validator(mode="after")
-    def exactly_one_field(self) -> "PhoneRecipient":
-        has_id = self.contact_id is not None
-        has_phone = self.phone_number is not None
-        if has_id == has_phone:
-            raise ValueError(
-                "Provide exactly one of contact_id or phone_number, not both or neither.",
-            )
-        return self
-
-
-class EmailRecipient(BaseModel):
-    """A single email recipient. Provide exactly ONE of these fields.
-
-    - ``contact_id``: integer ID of an existing contact from active_conversations.
-    - ``email_address``: email address string for direct contact.
-    """
-
-    contact_id: int | None = None
-    email_address: str | None = None
-
-    @field_validator("contact_id", mode="before")
-    @classmethod
-    def coerce_contact_id(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            try:
-                return int(v)
-            except (ValueError, TypeError):
-                pass
-        return v
-
-    @model_validator(mode="after")
-    def exactly_one_field(self) -> "EmailRecipient":
-        has_id = self.contact_id is not None
-        has_email = self.email_address is not None
-        if has_id == has_email:
-            raise ValueError(
-                "Provide exactly one of contact_id or email_address, not both or neither.",
-            )
-        return self
 
 
 def _coerce_contact_id(v: Any) -> int:
@@ -222,74 +152,6 @@ def _check_contact_has_address(
     return None
 
 
-async def _get_or_create_contact(
-    cm: "ConversationManager",
-    contact_id: int | None = None,
-    details: ContactDetailsPhone | ContactDetailsEmail | None = None,
-) -> dict | None:
-    """
-    Get an existing contact or create a new one via ContactManager.
-
-    All contact operations go through ContactManager - the source of truth.
-    """
-    if not contact_id and not details:
-        raise ValueError("Either contact_id or details must be provided")
-
-    # Convert Pydantic model to dict
-    details_dict: dict | None = None
-    if details is not None:
-        if isinstance(details, dict):
-            details_dict = {k: v for k, v in details.items() if v is not None}
-        else:
-            details_dict = details.model_dump(exclude_none=True)
-
-    # Get by contact_id
-    if contact_id:
-        contact = cm.contact_index.get_contact(contact_id)
-        if contact:
-            return contact
-
-    # Search by phone/email
-    if details_dict:
-        phone_number = details_dict.get("phone_number")
-        email_address = details_dict.get("email_address")
-
-        if phone_number and cm.contact_manager:
-            result = cm.contact_manager.filter_contacts(
-                filter=f"phone_number == '{phone_number}'",
-                limit=1,
-            )
-            contacts = result.get("contacts", [])
-            if contacts:
-                c = contacts[0]
-                return c.model_dump() if hasattr(c, "model_dump") else c
-
-        if email_address and cm.contact_manager:
-            result = cm.contact_manager.filter_contacts(
-                filter=f"email_address == '{email_address}'",
-                limit=1,
-            )
-            contacts = result.get("contacts", [])
-            if contacts:
-                c = contacts[0]
-                return c.model_dump() if hasattr(c, "model_dump") else c
-
-        # Create new contact via ContactManager
-        if cm.contact_manager:
-            tool_outcome = await asyncio.to_thread(
-                cm.contact_manager._create_contact,
-                **details_dict,
-            )
-            new_contact_id = tool_outcome["details"]["contact_id"]
-            new_contact = await asyncio.to_thread(
-                cm.contact_manager.get_contact_info,
-                new_contact_id,
-            )
-            return new_contact.get(new_contact_id)
-
-    return None
-
-
 class ConversationManagerBrainActionTools:
     """
     Side-effecting tools for the Main CM Brain.
@@ -304,31 +166,23 @@ class ConversationManagerBrainActionTools:
     async def send_sms(
         self,
         *,
-        recipient: PhoneRecipient,
+        contact_id: int | str,
         content: str,
     ) -> dict[str, Any]:
         """
-        Send an SMS message to a contact.
+        Send an SMS message to an existing contact.
+
+        The contact must already exist and have a phone number on file.
+        Use ``find_contacts`` to look up contacts and ``create_contact``
+        to add new ones before calling this tool.
 
         Args:
-            recipient: Who to send the SMS to. Provide either a contact_id
-                (integer ID from active_conversations) or a phone_number string.
+            contact_id: The contact_id of the recipient (from active_conversations
+                or returned by ``find_contacts`` / ``create_contact``).
             content: The text content of the SMS message to send.
         """
-        # Coerce raw dict from LLM tool args into Pydantic model
-        if isinstance(recipient, dict):
-            recipient = PhoneRecipient.model_validate(recipient)
-        # Resolve recipient to contact (creates contact if phone number provided)
-        if recipient.contact_id is not None:
-            contact = await _get_or_create_contact(
-                self._cm,
-                contact_id=recipient.contact_id,
-            )
-        else:
-            contact = await _get_or_create_contact(
-                self._cm,
-                details=ContactDetailsPhone(phone_number=recipient.phone_number),
-            )
+        contact_id = _coerce_contact_id(contact_id)
+        contact = self._cm.contact_index.get_contact(contact_id)
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
@@ -482,9 +336,9 @@ class ConversationManagerBrainActionTools:
     async def send_email(
         self,
         *,
-        to: list[EmailRecipient] | None = None,
-        cc: list[EmailRecipient] | None = None,
-        bcc: list[EmailRecipient] | None = None,
+        to: list[int] | None = None,
+        cc: list[int] | None = None,
+        bcc: list[int] | None = None,
         subject: str,
         body: str,
         reply_all: bool = False,
@@ -492,16 +346,18 @@ class ConversationManagerBrainActionTools:
         attachment_filepath: str | None = None,
     ) -> dict[str, Any]:
         """
-        Send an email with flexible recipient specification.
+        Send an email to existing contacts.
 
-        Recipients can be specified as contact_ids (integer) or email_addresses (string).
-        Duplicates are automatically collapsed (e.g., if you provide both a contact_id
-        and the same contact's email address, only one recipient is sent).
+        Each contact must already exist and have an email address on file.
+        Use ``find_contacts`` to look up contacts and ``create_contact``
+        to add new ones before calling this tool.
+
+        Duplicates are automatically collapsed.
 
         Args:
-            to: List of recipients (contact_ids or email addresses).
-            cc: List of CC recipients (contact_ids or email addresses).
-            bcc: List of BCC recipients (contact_ids or email addresses).
+            to: List of recipient contact_ids.
+            cc: List of CC recipient contact_ids.
+            bcc: List of BCC recipient contact_ids.
             subject: Email subject.
             body: Email body.
             reply_all: If True, automatically populate to/cc from the email being
@@ -515,20 +371,15 @@ class ConversationManagerBrainActionTools:
 
         from unity.session_details import SESSION_DETAILS
 
-        # Coerce raw dicts from LLM tool args into Pydantic models
-        def _coerce_email_recipients(
-            recipients: list | None,
-        ) -> list[EmailRecipient] | None:
-            if recipients is None:
+        # Coerce string-encoded contact_ids to int
+        def _coerce_ids(ids: list | None) -> list[int] | None:
+            if ids is None:
                 return None
-            return [
-                EmailRecipient.model_validate(r) if isinstance(r, dict) else r
-                for r in recipients
-            ]
+            return [_coerce_contact_id(cid) for cid in ids]
 
-        to = _coerce_email_recipients(to)
-        cc = _coerce_email_recipients(cc)
-        bcc = _coerce_email_recipients(bcc)
+        to = _coerce_ids(to)
+        cc = _coerce_ids(cc)
+        bcc = _coerce_ids(bcc)
 
         # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
         if reply_all and (to or cc or bcc):
@@ -541,31 +392,16 @@ class ConversationManagerBrainActionTools:
             await self._event_broker.publish("app:comms:email_sent", event.to_json())
             return {"status": "error", "error": error_msg}
 
-        # --- Helper: resolve a recipient to a contact dict ---
-        async def _resolve_recipient(recipient: EmailRecipient) -> dict | None:
-            """Resolve a contact_id or email to a contact dict, creating if needed."""
-            if recipient.contact_id is not None:
-                # It's a contact_id - look up the contact
-                return self._cm.contact_index.get_contact(recipient.contact_id)
-            else:
-                # It's an email address - get or create contact
-                return await _get_or_create_contact(
-                    self._cm,
-                    details=ContactDetailsEmail(
-                        email_address=recipient.email_address,
-                    ),
-                )
-
-        # --- Helper: resolve a list of recipients to unique (email, contact) pairs ---
-        async def _resolve_recipients(
-            recipients: list[EmailRecipient] | None,
+        # --- Helper: resolve contact_ids to unique (email, contact) pairs ---
+        def _resolve_recipients(
+            contact_ids: list[int] | None,
         ) -> list[tuple[str, dict]]:
-            """Resolve recipients to list of (email_address, contact_dict) pairs."""
-            if not recipients:
+            """Resolve contact_ids to (email_address, contact_dict) pairs."""
+            if not contact_ids:
                 return []
             results: dict[str, dict] = {}  # email -> contact, for deduplication
-            for r in recipients:
-                contact = await _resolve_recipient(r)
+            for cid in contact_ids:
+                contact = self._cm.contact_index.get_contact(cid)
                 if contact:
                     email = contact.get("email_address")
                     if email and email not in results:
@@ -663,10 +499,10 @@ class ConversationManagerBrainActionTools:
             final_cc = list(all_original_recipients)
 
         else:
-            # --- Resolve explicit recipients (creates contacts if needed) ---
-            to_resolved = await _resolve_recipients(to)
-            cc_resolved = await _resolve_recipients(cc)
-            bcc_resolved = await _resolve_recipients(bcc)
+            # --- Resolve explicit contact_ids to email addresses ---
+            to_resolved = _resolve_recipients(to)
+            cc_resolved = _resolve_recipients(cc)
+            bcc_resolved = _resolve_recipients(bcc)
 
             # Extract just the email addresses for sending
             final_to = [email for email, _ in to_resolved]
@@ -809,35 +645,28 @@ class ConversationManagerBrainActionTools:
     async def make_call(
         self,
         *,
-        recipient: PhoneRecipient,
+        contact_id: int | str,
         context: str = "",
     ) -> dict[str, Any]:
         """
-        Start an outbound phone call to a contact.
+        Start an outbound phone call to an existing contact.
+
+        The contact must already exist and have a phone number on file.
+        Use ``find_contacts`` to look up contacts and ``create_contact``
+        to add new ones before calling this tool.
 
         Args:
-            recipient: Who to call. Provide either a contact_id
-                (integer ID from active_conversations) or a phone_number string.
+            contact_id: The contact_id of the person to call (from
+                active_conversations or returned by ``find_contacts`` /
+                ``create_contact``).
             context: Briefly describe why you are calling and any key information
                 the voice agent should know when the call connects (e.g. "We need
                 to confirm the Thursday 3pm meeting and ask about dietary
                 preferences for the team lunch"). This is delivered to the voice
                 agent as initial guidance before the recipient picks up.
         """
-        # Coerce raw dict from LLM tool args into Pydantic model
-        if isinstance(recipient, dict):
-            recipient = PhoneRecipient.model_validate(recipient)
-        # Resolve recipient to contact (creates contact if phone number provided)
-        if recipient.contact_id is not None:
-            contact = await _get_or_create_contact(
-                self._cm,
-                contact_id=recipient.contact_id,
-            )
-        else:
-            contact = await _get_or_create_contact(
-                self._cm,
-                details=ContactDetailsPhone(phone_number=recipient.phone_number),
-            )
+        contact_id = _coerce_contact_id(contact_id)
+        contact = self._cm.contact_index.get_contact(contact_id)
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
