@@ -14,6 +14,7 @@ This directory contains the test suite for Unity.
 - [Project Cleanup](#project-cleanup)
 - [Troubleshooting](#troubleshooting)
 - [Requirements](#requirements)
+- [Environment Variable Propagation](#environment-variable-propagation)
 - [Detailed Documentation](#detailed-documentation)
 
 ---
@@ -439,6 +440,49 @@ project_cleanup.sh --random-only
 - **coreutils** (macOS): `brew install coreutils` — provides `timeout` for helper scripts
 - **Python virtualenv**: Repo-local `.venv/` (create/sync via `uv sync --all-groups`)
 - **Environment**: Optional `.env` file at repo root (`.env`) for `UNIFY_KEY`, etc.
+
+---
+
+## Environment Variable Propagation
+
+Understanding how env vars flow from `.env` to your test process avoids subtle "variable is set but tests don't see it" bugs.
+
+### Local runs (`parallel_run.sh`)
+
+```
+.env  ──(sourced)──>  parallel_run.sh  ──(whitelist)──>  tmux session  ──>  pytest
+```
+
+1. `parallel_run.sh` sources the repo-root `.env` file (via `set -a; source .env; set +a`), exporting all variables into its own process.
+2. It starts the local orchestra server, which **inherits the full environment** (so orchestra sees everything from `.env`).
+3. It creates tmux sessions for each test. These sessions run via `bash -lc`, which is a **fresh login shell** — it does NOT inherit the `parallel_run.sh` environment.
+4. Only a **whitelist** of variables is explicitly passed to each tmux session:
+
+   ```
+   UNIFY_KEY, ORCHESTRA_URL, ANTHROPIC_API_KEY, OPENAI_API_KEY,
+   UNILLM_CACHE, UNITY_COMMS_URL, UNIFY_TESTS_RAND_PROJ,
+   UNIFY_SKIP_SESSION_SETUP, UNITY_SKIP_SHARED_PROJECT_PREP, PYTHONPATH
+   ```
+
+5. Any `--env KEY=VALUE` flags are always passed through (they override everything).
+
+**Consequence**: Variables in `.env` that are *not* in the whitelist (e.g., `TAVILY_API_KEY`, `DEEPGRAM_API_KEY`, `LIVEKIT_*`) will **not** reach test sessions via `parallel_run.sh` alone. They reach tests only if they're also in your shell profile (`~/.zshrc`) or passed explicitly via `--env`.
+
+### CI runs (`parallel_cloud_run.sh` / commit triggers)
+
+```
+.env  ──(base64)──>  GitHub Actions  ──(decode to .env)──>  parallel_run.sh  ──(same as above)
+                     job-level env  ───────────────────────>  (merged into process)
+```
+
+1. `parallel_cloud_run.sh` base64-encodes your local `.env` and sends it as a workflow input.
+2. The CI runner decodes it back to `.env`, then `parallel_run.sh` sources it (same as local).
+3. CI also sets **job-level env vars** from GitHub secrets/repo variables (API keys, GCP config, etc.). These are always present regardless of `.env` content.
+4. **Commit-triggered tests** (`[run-tests]` in commit message) do **not** send any `.env` — they rely entirely on the job-level env vars.
+
+### pydantic-settings (Python side)
+
+Once inside a pytest process, `unity/settings.py` uses pydantic-settings with `env_file=".env"`. This reads the repo-root `.env` **again** at Python import time. So variables that aren't in the shell whitelist can still be picked up by the `SETTINGS` object — but only if the `.env` file exists in the working directory (which it does locally, but not on CI for commit-triggered runs).
 
 ---
 
