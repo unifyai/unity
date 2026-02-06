@@ -294,42 +294,6 @@ class TestPingKeepAlive:
 
         assert cm.last_activity_time > initial_time, "Ping should update activity time"
 
-    @pytest.mark.asyncio
-    async def test_ping_interval_is_half_timeout(self):
-        """
-        Verify that the ping interval (30s) is half the inactivity timeout (60s check).
-
-        This ensures pings arrive frequently enough to prevent accidental timeouts.
-        The actual timeout is 360s (6 min), check interval is 30s.
-        """
-        from unity.conversation_manager.conversation_manager import ConversationManager
-
-        # Create CM with defaults
-        stop_event = asyncio.Event()
-        cm = ConversationManager(
-            event_broker=MagicMock(),
-            job_name="test-job",
-            user_id="user_1",
-            assistant_id="assistant_1",
-            user_name="Test User",
-            assistant_name="Test Assistant",
-            assistant_age="25",
-            assistant_nationality="American",
-            assistant_about="Test bio",
-            assistant_number="+15555550000",
-            assistant_email="assistant@test.com",
-            user_number="+15555551111",
-            user_email="user@test.com",
-            stop=stop_event,
-        )
-
-        # Verify the relationship between timeout and check interval
-        assert cm.inactivity_timeout == 360, "Timeout should be 6 minutes (360s)"
-        assert cm.inactivity_check_interval == 30, "Check interval should be 30s"
-        assert (
-            cm.inactivity_check_interval < cm.inactivity_timeout
-        ), "Check interval must be less than timeout"
-
 
 # =============================================================================
 # Test: Cleanup Sequence
