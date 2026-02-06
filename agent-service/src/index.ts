@@ -290,9 +290,9 @@ Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Silent
 }
 
 function getDefaultBrowserPaths() {
-  const base = path.join(os.tmpdir(), 'unify', 'assistant', 'browser');
-  const downloadsPath = path.join(base, 'install');
-  const tracesDir = path.join(base, 'traces');
+  const base = path.join(UNITY_WORKSPACE_DIR, 'Local');
+  const downloadsPath = path.join(base, 'Downloads');
+  const tracesDir = path.join(base, 'Traces');
   try {
     fs.mkdirSync(downloadsPath, { recursive: true });
     fs.mkdirSync(tracesDir, { recursive: true });
@@ -521,6 +521,18 @@ const startDesktop = async (): Promise<BrowserAgent> => {
       browser: getLaunchOptions(true),
       prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
       narrate: true,
+      // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
+      llm: {
+        provider: 'openai-generic',
+        options: {
+          model: 'claude-4.5-opus@anthropic',
+          baseUrl: `${process.env.ORCHESTRA_URL}/unillm`,
+          headers: {
+            'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
+          },
+          temperature: 0.2,
+        }
+      }
     });
     agent.context.setDefaultNavigationTimeout(90000);
     console.log("✅ Desktop BrowserAgent started successfully.");
@@ -537,6 +549,18 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
       url: "https://www.duckduckgo.com/",
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
+      // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
+      llm: {
+        provider: 'openai-generic',
+        options: {
+          model: 'claude-4.5-opus@anthropic',
+          baseUrl: `${process.env.ORCHESTRA_URL}/unillm`,
+          headers: {
+            'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
+          },
+          temperature: 0.2,
+        }
+      }
     });
     agent.context.setDefaultNavigationTimeout(90000);
     console.log("✅ BrowserAgent started successfully.");
