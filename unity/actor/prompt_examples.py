@@ -475,56 +475,98 @@ async def execute_task_and_append(task_a_id: int, task_b_id: int) -> str:
 '''
 
 
-def get_primitives_files_ask_example() -> str:
-    """Example: read-only file inventory query.
-
-    Shows how to use the File manager via `primitives.files.ask(...)`.
-    """
+def get_primitives_files_describe_example() -> str:
+    """Example: discovering file storage layout via `primitives.files.describe(...)`."""
 
     return '''
-# Example: Read-only files query (inventory)
-async def list_available_filesystems() -> str:
-    """List available filesystems/roots and summarize what is available."""
-    handle = await primitives.files.ask(
-        "List available filesystems/roots and provide a brief inventory overview."
+# Example: Discover file storage layout
+async def discover_file_structure(file_path: str) -> dict:
+    """Discover what tables/contexts are available in a file."""
+    storage = await primitives.files.describe(file_path=file_path)
+
+    # storage contains:
+    # - indexed_exists: bool (whether file has been indexed)
+    # - has_tables: bool (whether tables were extracted)
+    # - tables: list of table info with context_path, name, description
+
+    if storage.has_tables:
+        for table in storage.tables:
+            print(f"Table: {table.name}")
+            print(f"  Context: {table.context_path}")
+            print(f"  Description: {table.description}")
+    return storage
+'''
+
+
+def get_primitives_files_reduce_example() -> str:
+    """Example: aggregating data via `primitives.files.reduce(...)`."""
+
+    return '''
+# Example: Aggregate data from a file table
+async def count_records_by_category(table_context: str) -> dict:
+    """Count records grouped by a category column."""
+    result = await primitives.files.reduce(
+        context=table_context,
+        metric="count",
+        columns="id",
+        group_by="category",
+        filter="status == 'active'",
     )
-    return await handle.result()
+    return result
 '''
 
 
-def get_primitives_files_organize_example() -> str:
-    """Example: file organization (rename/move/delete) via `primitives.files.organize(...)`."""
+def get_primitives_files_filter_example() -> str:
+    """Example: filtering rows via `primitives.files.filter_files(...)`."""
 
     return '''
-# Example: File organization (rename/move)
-async def organize_project_files() -> str:
-    """Rename/move files using the File manager."""
-    # File-manager paths are typically root-relative to the active filesystem adapter.
-    # Avoid leading "/" unless you truly intend an absolute host path.
-    instruction = "Rename docs/notes.txt to docs/notes-2024.txt and move reports/q1.pdf to archive/q1.pdf."
-    handle = await primitives.files.organize(instruction)
-    return await handle.result()
+# Example: Filter rows from a file table
+async def get_recent_records(table_context: str) -> list:
+    """Get recent records matching a filter."""
+    rows = await primitives.files.filter_files(
+        context=table_context,
+        filter="created_date > '2024-01-01'",
+        columns=["id", "name", "created_date", "status"],
+        limit=50,
+    )
+    return rows
 '''
 
 
-def get_primitives_files_get_tools_example() -> str:
-    """Example: passing FileManager tools to functions that accept a tools parameter."""
+def get_primitives_files_search_example() -> str:
+    """Example: semantic search via `primitives.files.search_files(...)`."""
 
     return '''
-# primitives.files provides TWO interfaces:
-#
-# 1. DIRECT METHOD CALLS (use for your own data operations):
-#    storage = await primitives.files.describe(file_path="path/to/file.xlsx")
-#    result = await primitives.files.reduce(context=storage.tables[0].context_path, ...)
-#
-# 2. GET_TOOLS (use ONLY when passing to functions that accept `tools: FileTools`):
-#    tools = primitives.files.get_tools()
-#    result = await some_function(tools, other_args...)
+# Example: Semantic search over file data
+async def search_for_topic(table_context: str, query: str) -> list:
+    """Search for records semantically matching a query."""
+    hits = await primitives.files.search_files(
+        context=table_context,
+        query=query,
+        columns=["description"],  # embedded column(s) to search
+        limit=10,
+    )
+    return hits
+'''
 
-async def call_function_with_tools(target_fn, **kwargs):
-    """When a function signature shows `tools: FileTools`, pass get_tools()."""
-    tools = primitives.files.get_tools()
-    return await target_fn(tools, **kwargs)
+
+def get_primitives_files_visualize_example() -> str:
+    """Example: generating charts via `primitives.files.visualize(...)`."""
+
+    return '''
+# Example: Generate a chart from file data
+async def plot_distribution(table_context: str) -> str:
+    """Generate a bar chart showing distribution by category."""
+    result = await primitives.files.visualize(
+        tables=table_context,
+        plot_type="bar",
+        x_axis="category",
+        y_axis="amount",
+        metric="sum",
+        title="Amount by Category",
+    )
+    # result contains the plot URL
+    return result.get("url") if isinstance(result, dict) else result
 '''
 
 
@@ -980,46 +1022,47 @@ def get_verification_examples_for_environments(
 
 
 # ---------------------------------------------------------------------------
-# 7. Example Tags (for filtering by manager/capability)
+# 7. Example Function Map (for ToolSurfaceRegistry)
 # ---------------------------------------------------------------------------
 
-# Maps manager names to their associated example function names
-EXAMPLE_TAGS: dict[str, list[str]] = {
-    "contacts": [
-        "get_primitives_contact_ask_example",
-        "get_primitives_contact_update_example",
-    ],
-    "tasks": [
-        "get_primitives_task_execute_example",
-        "get_primitives_task_lookup_and_execute_example",
-        "get_primitives_dynamic_methods_example",
-    ],
-    "knowledge": [
-        "get_primitives_cross_manager_example",
-    ],
-    "files": [
-        "get_primitives_files_ask_example",
-        "get_primitives_files_organize_example",
-        "get_primitives_files_get_tools_example",
-    ],
-    "guidance": [
-        "get_primitives_guidance_ask_example",
-        "get_primitives_guidance_update_example",
-    ],
-    "web": [
-        "get_primitives_web_ask_example",
-    ],
-    "core": [
-        "get_library_function_reuse_example",
-        "get_library_function_composition_example",
-        "get_library_function_adaptation_example",
-        "get_confidence_based_stubbing_example",
-        "get_structured_output_example",
-        "get_error_handling_example",
-        "get_handle_steering_example",
-        "get_clarification_example",
-    ],
-}
+
+def get_example_function_map() -> dict[str, callable]:
+    """Get a mapping of example function names to their callables.
+
+    This is used by ToolSurfaceRegistry.prompt_examples() to generate
+    examples for exposed managers.
+    """
+    return {
+        # Contacts
+        "get_primitives_contact_ask_example": get_primitives_contact_ask_example,
+        "get_primitives_contact_update_example": get_primitives_contact_update_example,
+        # Tasks
+        "get_primitives_task_execute_example": get_primitives_task_execute_example,
+        "get_primitives_task_lookup_and_execute_example": get_primitives_task_lookup_and_execute_example,
+        "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
+        # Knowledge
+        "get_primitives_knowledge_ask_example": get_primitives_cross_manager_example,
+        "get_primitives_knowledge_update_example": lambda: "",  # placeholder
+        # Transcripts
+        "get_primitives_transcript_ask_example": lambda: "",  # placeholder
+        # Files (using real FileManager primitives)
+        "get_primitives_files_describe_example": get_primitives_files_describe_example,
+        "get_primitives_files_reduce_example": get_primitives_files_reduce_example,
+        "get_primitives_files_filter_example": get_primitives_files_filter_example,
+        "get_primitives_files_search_example": get_primitives_files_search_example,
+        "get_primitives_files_visualize_example": get_primitives_files_visualize_example,
+        # Guidance
+        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
+        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
+        # Web
+        "get_primitives_web_ask_example": get_primitives_web_ask_example,
+        # Secrets
+        "get_primitives_secrets_ask_example": lambda: "",  # placeholder
+        "get_primitives_secrets_update_example": lambda: "",  # placeholder
+        # Data
+        "get_primitives_data_filter_example": lambda: "",  # placeholder
+        "get_primitives_data_reduce_example": lambda: "",  # placeholder
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1353,6 +1396,8 @@ def get_computer_examples() -> str:
 def get_primitives_examples(*, managers: set[str] | None = None) -> str:
     """Get state manager examples, optionally filtered by manager.
 
+    DEPRECATED: Use ToolSurfaceRegistry.prompt_examples(scope) instead.
+
     Args:
         managers: If provided, only include examples for these managers.
                   If None, include all examples.
@@ -1360,37 +1405,22 @@ def get_primitives_examples(*, managers: set[str] | None = None) -> str:
     Returns:
         Formatted string with relevant examples.
     """
-    # Map function names to their callables
-    all_fns: dict[str, callable] = {
-        "get_primitives_contact_ask_example": get_primitives_contact_ask_example,
-        "get_primitives_contact_update_example": get_primitives_contact_update_example,
-        "get_primitives_cross_manager_example": get_primitives_cross_manager_example,
-        "get_primitives_task_lookup_and_execute_example": get_primitives_task_lookup_and_execute_example,
-        "get_primitives_task_execute_example": get_primitives_task_execute_example,
-        "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
-        "get_primitives_files_ask_example": get_primitives_files_ask_example,
-        "get_primitives_files_organize_example": get_primitives_files_organize_example,
-        "get_primitives_files_get_tools_example": get_primitives_files_get_tools_example,
-        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
-        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
-        "get_primitives_web_ask_example": get_primitives_web_ask_example,
-    }
+    from unity.function_manager.primitives import (
+        PrimitiveScope,
+        VALID_MANAGER_ALIASES,
+        get_registry,
+    )
 
     if managers is None:
-        # Return all examples
-        return "\n\n".join(fn().strip() for fn in all_fns.values())
+        scope = PrimitiveScope.all_managers()
+    else:
+        # Filter to valid aliases only
+        valid = managers & VALID_MANAGER_ALIASES
+        if not valid:
+            return ""
+        scope = PrimitiveScope(scoped_managers=frozenset(valid))
 
-    # Filter by manager tags
-    included_fn_names: set[str] = set()
-    for mgr in managers:
-        included_fn_names.update(EXAMPLE_TAGS.get(mgr, []))
-
-    examples = []
-    for fn_name, fn in all_fns.items():
-        if fn_name in included_fn_names:
-            examples.append(fn().strip())
-
-    return "\n\n".join(examples)
+    return get_registry().prompt_examples(scope)
 
 
 def get_mixed_examples() -> str:
