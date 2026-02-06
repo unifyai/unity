@@ -16,14 +16,9 @@ import pytest
 from unity.function_manager.function_manager import FunctionManager
 from unity.function_manager.primitives import (
     Primitives,
-    PRIMITIVE_CONFIG,
     _AsyncPrimitiveWrapper,
-    _COMMON_EXCLUDED_METHODS,
     _create_async_wrapper,
-    _discover_primitive_methods,
-    collect_primitives,
-    compute_primitives_hash,
-    get_primitive_sources,
+    get_registry,
 )
 from unity.common.context_registry import ContextRegistry
 from tests.helpers import _handle_project
@@ -71,11 +66,22 @@ def function_manager_factory():
 
 
 def test_collect_primitives_returns_expected_methods():
-    """collect_primitives() should return metadata for all auto-discovered methods."""
-    primitives = collect_primitives()
+    """Registry should return metadata for all auto-discovered methods."""
+    from unity.function_manager.primitives import PrimitiveScope
+    from unity.function_manager.primitives.registry import get_primitive_sources
+
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    primitives = registry.collect_primitives(scope)
 
     # Should have collected at least some primitives
     assert len(primitives) > 0
+
+    # Verify primitives include expected manager classes (using primitive_class)
+    classes_found = set(p["primitive_class"] for p in primitives.values())
+    assert any("ContactManager" in c for c in classes_found)
+    assert any("FileManager" in c for c in classes_found)
+    assert any("DataManager" in c for c in classes_found)
 
     # Verify primitives match what get_primitive_sources returns
     # (i.e., the auto-discovery is working correctly)
@@ -90,9 +96,13 @@ def test_collect_primitives_returns_expected_methods():
 
 def test_collect_primitives_has_required_fields():
     """Each primitive should have the required metadata fields including function_id."""
-    primitives = collect_primitives()
+    from unity.function_manager.primitives import PrimitiveScope
 
-    for name, data in primitives.items():
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    primitives = registry.collect_primitives(scope)
+
+    for data in primitives.values():
         assert "name" in data
         assert "argspec" in data
         assert "docstring" in data
@@ -100,39 +110,47 @@ def test_collect_primitives_has_required_fields():
         assert data.get("is_primitive") is True
         assert "primitive_class" in data
         assert "primitive_method" in data
-        # New: primitives now have explicit integer function_ids
+        # Primitives have explicit integer function_ids
         assert "function_id" in data
         assert isinstance(data["function_id"], int)
 
 
 def test_collect_primitives_has_stable_ids():
     """Primitive function_ids should be stable hash-based IDs."""
-    primitives = collect_primitives()
+    from unity.function_manager.primitives import PrimitiveScope
+
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    primitives = registry.collect_primitives(scope)
 
     # Verify no duplicate IDs
     ids = [p["function_id"] for p in primitives.values()]
     assert len(ids) == len(set(ids)), "Primitive IDs should be unique"
 
     # Verify IDs are deterministic (calling twice gives same IDs)
-    primitives2 = collect_primitives()
+    primitives2 = registry.collect_primitives(scope)
     for name, data in primitives.items():
         assert (
             primitives2[name]["function_id"] == data["function_id"]
         ), f"ID for '{name}' should be stable across calls"
 
     # Verify IDs are non-negative integers (hash-based)
-    for name, data in primitives.items():
+    for data in primitives.values():
         assert isinstance(data["function_id"], int)
         assert data["function_id"] >= 0
 
 
 def test_collect_primitives_has_docstrings():
     """Primitives should have non-empty docstrings (from base class)."""
-    primitives = collect_primitives()
+    from unity.function_manager.primitives import PrimitiveScope
+
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+    primitives = registry.collect_primitives(scope)
 
     # At least some primitives should have docstrings
     with_docstrings = [
-        name for name, data in primitives.items() if data.get("docstring", "").strip()
+        name for name, p in primitives.items() if p.get("docstring", "").strip()
     ]
     assert (
         len(with_docstrings) > 0
@@ -141,49 +159,71 @@ def test_collect_primitives_has_docstrings():
 
 def test_compute_primitives_hash_is_stable():
     """Hash should be deterministic for the same primitives."""
-    primitives = collect_primitives()
+    from unity.function_manager.primitives import PrimitiveScope
 
-    hash1 = compute_primitives_hash(primitives)
-    hash2 = compute_primitives_hash(primitives)
+    registry = get_registry()
+    scope = PrimitiveScope.all_managers()
+
+    hash1 = registry.compute_primitives_hash(primitive_scope=scope)
+    hash2 = registry.compute_primitives_hash(primitive_scope=scope)
 
     assert hash1 == hash2
     assert len(hash1) == 16  # 16 hex chars
 
 
+def test_compute_primitives_hash_changes_for_different_scopes():
+    """Hash should be different for different scopes."""
+    from unity.function_manager.primitives import PrimitiveScope
+
+    registry = get_registry()
+    scope_all = PrimitiveScope.all_managers()
+    scope_files = PrimitiveScope.single("files")
+
+    hash_all = registry.compute_primitives_hash(primitive_scope=scope_all)
+    hash_files = registry.compute_primitives_hash(primitive_scope=scope_files)
+
+    assert hash_all != hash_files
+
+
 def test_compute_primitives_hash_changes_on_modification():
-    """Hash should change if primitives metadata changes."""
-    primitives = collect_primitives()
-    original_hash = compute_primitives_hash(primitives)
+    """Hash should change when primitives are modified."""
+    from unity.function_manager.primitives import PrimitiveScope
 
-    # Modify a docstring
-    modified = dict(primitives)
-    first_key = next(iter(modified))
-    modified[first_key] = dict(modified[first_key])
-    modified[first_key]["docstring"] = "MODIFIED DOCSTRING"
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    primitives = registry.collect_primitives(scope)
 
-    modified_hash = compute_primitives_hash(modified)
+    # Compute original hash
+    original_hash = registry.compute_primitives_hash(primitives=primitives)
 
-    assert original_hash != modified_hash
+    # Modify a primitive's docstring
+    first_name = next(iter(primitives.keys()))
+    modified_primitives = dict(primitives)
+    modified_primitives[first_name] = dict(modified_primitives[first_name])
+    modified_primitives[first_name]["docstring"] = "MODIFIED DOCSTRING FOR TESTING"
+
+    # Hash should change
+    modified_hash = registry.compute_primitives_hash(primitives=modified_primitives)
+    assert (
+        original_hash != modified_hash
+    ), "Hash should change when primitives are modified"
 
 
 def test_collect_primitives_includes_file_manager():
     """FileManager primitives should be collected from auto-discovery."""
-    primitives = collect_primitives()
+    from unity.function_manager.primitives import PrimitiveScope
 
-    file_primitives = [n for n in primitives if n.startswith("FileManager.")]
-    assert len(file_primitives) >= 5, "Expected at least 5 FileManager primitives"
+    registry = get_registry()
+    scope = PrimitiveScope.single("files")
+    primitives = registry.collect_primitives(scope)
 
-    # Verify that the auto-discovered methods match what's in primitives
-    from unity.file_manager.managers.file_manager import FileManager
+    assert len(primitives) >= 5, "Expected at least 5 FileManager primitives"
 
-    for cls, method_names in get_primitive_sources():
-        if cls is FileManager:
-            for method_name in method_names:
-                name = f"FileManager.{method_name}"
-                assert (
-                    name in primitives
-                ), f"Expected auto-discovered {name} in primitives"
-            break
+    # Verify all are from files manager (using primitive_class)
+    for name, p in primitives.items():
+        assert "FileManager" in p["primitive_class"]
+        # Old format: "FileManager.method", not "primitives.files.method"
+        assert p["name"].startswith("FileManager.")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -392,30 +432,31 @@ def test_sync_after_clear_restores_primitives(function_manager_factory):
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def test_primitive_config_only_has_exclude():
-    """PRIMITIVE_CONFIG entries should only contain 'exclude' key."""
-    for class_name, config in PRIMITIVE_CONFIG.items():
-        # Only 'exclude' should be present
-        assert "exclude" in config, f"{class_name} missing 'exclude' key"
-        # No sync/async_methods keys (auto-detected now)
-        assert "sync" not in config, f"{class_name} should not have 'sync' key"
-        assert (
-            "async_methods" not in config
-        ), f"{class_name} should not have 'async_methods' key"
+def test_manager_spec_has_excluded_methods():
+    """ManagerSpec entries should have excluded_methods."""
+    registry = get_registry()
+
+    for spec in registry.MANAGERS:
+        # excluded_methods should be a frozenset
+        assert isinstance(
+            spec.excluded_methods,
+            frozenset,
+        ), f"{spec.manager_alias} excluded_methods should be frozenset"
 
 
 def test_common_excluded_methods():
     """Common excluded methods should include lifecycle and internal helpers."""
+    from unity.function_manager.primitives.registry import _COMMON_EXCLUDED_METHODS
+
     assert "clear" in _COMMON_EXCLUDED_METHODS
     assert "add_tools" in _COMMON_EXCLUDED_METHODS
     assert "get_tools" in _COMMON_EXCLUDED_METHODS
 
 
-def test_discover_primitive_methods_respects_exclusions():
-    """_discover_primitive_methods should exclude methods in config."""
-    from unity.contact_manager.contact_manager import ContactManager
-
-    methods = _discover_primitive_methods(ContactManager)
+def test_primitive_methods_respects_exclusions():
+    """primitive_methods should exclude methods in config."""
+    registry = get_registry()
+    methods = registry.primitive_methods(manager_alias="contacts")
 
     # Should not include excluded methods
     assert "filter_contacts" not in methods
@@ -427,26 +468,31 @@ def test_discover_primitive_methods_respects_exclusions():
     assert "update" in methods
 
 
-def test_async_patching_auto_detects_sync_methods():
-    """Patching should auto-detect sync methods without config."""
+def test_async_wrapper_auto_detects_sync_methods():
+    """Wrapper should auto-detect sync methods without config."""
     from unity.manager_registry import ManagerRegistry
 
     dm = ManagerRegistry.get_data_manager()
 
-    # Before patching, filter is sync
+    # Before wrapping, filter is sync
     original_filter = dm.filter
     is_originally_sync = not asyncio.iscoroutinefunction(original_filter)
 
-    # Patch
-    _patch_sync_methods_to_async(dm, "DataManager")
+    # Create wrapper (using manager alias)
+    wrapper = _create_async_wrapper(dm, "data")
 
-    # After patching, filter should be async
+    # After wrapping, filter should be async
     assert asyncio.iscoroutinefunction(
+        wrapper.filter,
+    ), "filter should be async after wrapping"
+
+    # Original should remain sync
+    assert not asyncio.iscoroutinefunction(
         dm.filter,
-    ), "filter should be async after patching"
+    ), "Original filter should remain sync"
 
     # Verify it was originally sync (this confirms auto-detection worked)
-    assert is_originally_sync, "filter should have been sync before patching"
+    assert is_originally_sync, "filter should have been sync before wrapping"
 
 
 def test_async_patching_preserves_docstrings():
@@ -475,24 +521,20 @@ def test_async_patching_preserves_signatures():
     assert "context" in params, "filter should have 'context' parameter"
 
 
-def test_primitives_data_is_actual_data_manager():
-    """primitives.data should return actual DataManager, not wrapper."""
-    from unity.data_manager.base import BaseDataManager
-
+def test_primitives_data_is_async_wrapper():
+    """primitives.data should return an async wrapper around DataManager."""
     primitives = Primitives()
     dm = primitives.data
 
-    assert isinstance(dm, BaseDataManager)
+    assert isinstance(dm, _AsyncPrimitiveWrapper)
 
 
-def test_primitives_files_is_actual_file_manager():
-    """primitives.files should return actual FileManager, not wrapper."""
-    from unity.file_manager.base import BaseFileManager
-
+def test_primitives_files_is_async_wrapper():
+    """primitives.files should return an async wrapper around FileManager."""
     primitives = Primitives()
     fm = primitives.files
 
-    assert isinstance(fm, BaseFileManager)
+    assert isinstance(fm, _AsyncPrimitiveWrapper)
 
 
 def test_primitives_returns_async_wrapper():
@@ -516,8 +558,8 @@ def test_async_wrapper_preserves_async_methods():
     original_ask = fm.ask_about_file
     assert asyncio.iscoroutinefunction(original_ask), "ask_about_file should be async"
 
-    # Create wrapper
-    wrapper = _create_async_wrapper(fm, "FileManager")
+    # Create wrapper (using manager alias)
+    wrapper = _create_async_wrapper(fm, "files")
 
     # Wrapped method should also be async
     assert asyncio.iscoroutinefunction(
