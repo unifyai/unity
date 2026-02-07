@@ -112,16 +112,6 @@ logs/pytest/
 - This project uses `uv` for dependency management.
 - Config file: `pyproject.toml`
 
-## Debug Instrumentation
-
-When adding temporary debug logging (e.g., for Cursor's Debug Mode):
-
-- **Self-contained imports**: Each debug snippet must include ALL its own imports inline (e.g., `import json as _json; import os as _os;`). Never rely on the file's existing imports.
-- **Prefixed names**: Use underscore-prefixed aliases (`_json`, `_os`, `_pid`) to avoid shadowing.
-- **Region markers**: Wrap in `# #region agent log` / `# #endregion` for easy identification and removal.
-
-This prevents `NameError` crashes when debug snippets reference modules that aren't imported at that location.
-
 ## Edit Safety
 - **Protected Files**: Do not edit `uv.lock` or `package-lock.json` manually. Use the appropriate package manager commands.
 - **Sensitive Files**: Do not output the contents of `.env` or `*.key` files to the chat.

@@ -43,7 +43,6 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - `primitives.files.parse` → `primitives.knowledge.update` (to persist structured facts)
 - **Images**
   - Use `ImageManager` only through managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`). Pass image_ids and helpful annotations.
-  - `ScreenShareManager` is a producer of live images. When screen sharing is active, it emits curated, annotated screenshots that `ConversationManager` forwards to `Actor` via the `images` argument on downstream calls.
 
 ### ImageManager
 - **Role**: Low‑level image store/retrieval and the cross‑cutting "visual communication" surface used by managers.
@@ -65,26 +64,10 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - Images do not implicitly propagate into nested tool‑loops; callers must forward them explicitly via the `images` argument when delegating.
   - Dynamic steering helpers (interjections, clarifications, stop) carry the current images alongside text so visual context is preserved during live control.
 - **Current coverage**:
-  - Integration is complete for `ContactManager`, `TranscriptManager`, and `TaskScheduler`; the same pattern will be rolled out to the remaining managers (work‑in‑progress).
+  - Integration is complete for `ContactManager`, `TranscriptManager`, and `TaskScheduler`.
 - **Connections**:
   - **Steered by**: managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`, `ContactManager`, `TaskScheduler`).
   - **Steers**: — (exposes image records/handles; managers decide when/how to attach or query images).
-
-### ScreenShareManager
-- **Role**: Continuous screen‑share perception and summarization. When a user shares their screen, it selects the most informative frames and produces concise, annotated images that describe what the user is doing, saying, or showing.
-- **Trigger**: Automatically active while screen sharing is on. It runs opportunistically (no manual tool invocation required) and publishes updates as new informative frames are detected.
-- **Scope**: Capture and curate screenshots from the live feed; attach short human‑readable annotations; output typed image references suitable for downstream reasoning. It does not answer questions itself and is not called directly for `ask`/`update`.
-- **Outputs**:
-  - Emits batches of `AnnotatedImageRef` entries (with stable `image_id`s) for the current conversation turn.
-  - Images are persisted via `ImageManager` and delivered to orchestration as `images` for downstream tools.
-- **Integration pattern**:
-  - `ConversationManager` ingests screen‑share updates and forwards them as `images` to `Actor`.
-  - `Actor` passes these `images` to whichever primitives it calls; managers that support images will expose helpers (e.g., `ask_image`, attach helpers) and inject an overview at the start of their tool‑loops.
-  - Images do not implicitly propagate into nested tool‑loops; callers must pass `images` explicitly when delegating.
-- **Connections**:
-  - **Steered by**: Top‑level UI/controller toggling screen share; `ConversationManager` subscribes to its updates during live conversations.
-  - **Steers**: `ImageManager` (for storage); provides annotated image refs to the rest of the system via `ConversationManager` → `Actor`.
-
 
 ### TaskScheduler
 - **Role**: Owner of durable tasks and their execution.
@@ -143,6 +126,13 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Scope**: ask (metadata/placeholder answers only), update (create/edit/delete secrets).
 - **Connections**:
   - **Steered by**: `Actor` (via `primitives.secrets.*`).
+  - **Steers**: —
+
+### BlacklistManager
+- **Role**: Catalogue of blocked contact details per communication medium (email, SMS, phone).
+- **Scope**: Primitive CRUD operations — filter/create/update/delete blacklist entries. No tool loops; purely programmatic.
+- **Connections**:
+  - **Steered by**: `Actor` (via `primitives.blacklist.*`); `ConversationManager` (for direct blacklist management).
   - **Steers**: —
 
 ### FunctionManager
