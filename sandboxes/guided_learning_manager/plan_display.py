@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from unity.actor.hierarchical_actor import HierarchicalActorHandle
+    from typing import Any
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ class PlanDisplayFormatter:
 
     def parse_plan_for_display(
         self,
-        handle: "HierarchicalActorHandle",
+        handle: "Any",
     ) -> PlanDisplayState:
         """
         Extract display-friendly metadata from Actor's data structures.
@@ -100,7 +100,7 @@ class PlanDisplayFormatter:
         Compares with previous state to detect changes.
 
         Args:
-            handle: The HierarchicalActorHandle containing plan data
+            handle: The actor handle containing plan data
 
         Returns:
             PlanDisplayState with function metadata and change summary
@@ -260,7 +260,7 @@ class PlanDisplayFormatter:
 
     def format_full_plan(
         self,
-        handle: "HierarchicalActorHandle",
+        handle: "Any",
     ) -> str:
         """
         Compose full plan source from clean_function_source_map.
@@ -269,7 +269,7 @@ class PlanDisplayFormatter:
         Functions are ordered with main_plan last (standard convention).
 
         Args:
-            handle: The HierarchicalActorHandle containing plan data
+            handle: The actor handle containing plan data
 
         Returns:
             Complete Python source code as a string

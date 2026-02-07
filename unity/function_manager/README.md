@@ -333,7 +333,7 @@ These are always available (from `create_execution_globals()`):
 
 #### Injected by Actor at Runtime
 
-When functions are executed via an Actor (`HierarchicalActor`, `SingleFunctionActor`), additional objects are injected:
+When functions are executed via an Actor (`CodeActActor`, `SingleFunctionActor`), additional objects are injected:
 
 | Name | Description |
 |------|-------------|

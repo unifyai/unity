@@ -87,7 +87,7 @@ class Computer:
         Returns a handle to the sub-agent that will execute the task.
         """
         raise NotImplementedError(
-            "multi_step method is not yet implemented. Use HierarchicalActor or CodeActActor instead.",
+            "multi_step method is not yet implemented. Use CodeActActor instead.",
         )
 
     async def reason(self, query: str) -> str:

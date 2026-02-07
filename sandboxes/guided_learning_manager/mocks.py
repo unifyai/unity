@@ -1,7 +1,7 @@
 """
 Mocking infrastructure for the guided learning sandbox.
 
-This module provides reusable mocks for running the HierarchicalActor in a safe,
+This module provides reusable mocks for running the Actor in a safe,
 side-effect-free environment. It includes:
 
 - SimpleMockVerificationClient: Always returns "ok" for verification checks
@@ -17,10 +17,9 @@ Usage:
     )
 
     # Set up actor with mocks (computer_mode="mock" uses MockComputerBackend)
-    actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
+    actor = CodeActActor(headless=True, computer_mode="mock")
     mock_computer_primitives(actor, url="https://custom-url.com")  # Optional customization
     mock_state_managers(actor)
-    active_task.verification_client = SimpleMockVerificationClient()
 """
 
 from typing import Any, Optional
@@ -28,7 +27,7 @@ from unittest.mock import MagicMock, AsyncMock
 
 from pydantic import BaseModel
 
-from unity.actor.hierarchical_actor import HierarchicalActor, VerificationAssessment
+from unity.actor.code_act_actor import CodeActActor
 from unity.common.async_tool_loop import SteerableToolHandle
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -48,20 +47,20 @@ class SimpleMockVerificationClient:
         active_task.verification_client = SimpleMockVerificationClient()
 
     Attributes:
-        generate: AsyncMock that returns VerificationAssessment JSON with status="ok"
+        generate: AsyncMock that returns verification JSON with status="ok"
     """
 
     def __init__(self):
         self.generate = AsyncMock(side_effect=self._side_effect)
-        self._current_format = VerificationAssessment
+        self._current_format = None
 
     def set_response_format(self, model: type[BaseModel]) -> None:
         """Set the expected response format (Pydantic model)."""
         self._current_format = model
 
     def reset_response_format(self) -> None:
-        """Reset to default VerificationAssessment format."""
-        self._current_format = VerificationAssessment
+        """Reset to default format."""
+        self._current_format = None
 
     def reset_messages(self) -> None:
         """Reset message history (no-op for mock)."""
@@ -71,10 +70,8 @@ class SimpleMockVerificationClient:
 
     async def _side_effect(self, *args, **kwargs) -> str:
         """Return a successful verification assessment."""
-        return VerificationAssessment(
-            status="ok",
-            reason="Mock verification success.",
-        ).model_dump_json()
+        import json
+        return json.dumps({"status": "ok", "reason": "Mock verification success."})
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -150,7 +147,7 @@ class MockStateManagerHandle(SteerableToolHandle):
 
 
 def mock_computer_primitives(
-    actor: "HierarchicalActor",
+    actor,
     *,
     url: str = "https://mock-url.com",
     screenshot: str = "",  # Empty uses MockComputerBackend's default (valid PNG)
@@ -161,24 +158,20 @@ def mock_computer_primitives(
     This configures the actor's ComputerPrimitives to use MockComputerBackend
     with the specified URL and screenshot values.
 
-    NOTE: When creating a HierarchicalActor with computer_mode="mock", the
+    NOTE: When creating an actor with computer_mode="mock", the
     MockComputerBackend is used automatically. This function is useful when
     you need to customize the mock's return values.
 
     Args:
-        actor: The HierarchicalActor instance to mock
+        actor: The actor instance to mock
         url: URL to return from get_current_url()
         screenshot: Screenshot data to return from get_screenshot()
 
     Usage:
-        actor = HierarchicalActor(headless=True, computer_mode="mock", connect_now=False)
+        actor = CodeActActor(headless=True, computer_mode="mock")
         mock_computer_primitives(actor, url="https://custom-url.com")
     """
-    from unity.actor.hierarchical_actor import HierarchicalActor
     from unity.function_manager.computer_backends import MockComputerBackend
-
-    if not isinstance(actor, HierarchicalActor):
-        raise TypeError(f"Expected HierarchicalActor, got {type(actor).__name__}")
 
     # Use MockComputerBackend - the official mock implementation
     # Only pass screenshot if explicitly provided, otherwise use the default (valid PNG)
@@ -194,7 +187,7 @@ def mock_computer_primitives(
 
 
 def mock_state_managers(
-    actor: "HierarchicalActor",
+    actor,
     *,
     use_simulated: bool = True,
     contact_description: str = "A sandbox contact database for testing.",
@@ -210,7 +203,7 @@ def mock_state_managers(
     - AsyncMock managers (use_simulated=False): Simple mocks returning canned results
 
     Args:
-        actor: The HierarchicalActor instance to mock
+        actor: The actor instance to mock
         use_simulated: If True, use simulated managers; if False, use AsyncMock
         contact_description: Description for simulated ContactManager
         knowledge_description: Description for simulated KnowledgeManager
@@ -218,16 +211,12 @@ def mock_state_managers(
         transcript_description: Description for simulated TranscriptManager
 
     Usage:
-        actor = HierarchicalActor(...)
+        actor = CodeActActor(...)
         mock_state_managers(actor)  # Uses simulated managers by default
 
         # Or with simple mocks:
         mock_state_managers(actor, use_simulated=False)
     """
-    from unity.actor.hierarchical_actor import HierarchicalActor
-
-    if not isinstance(actor, HierarchicalActor):
-        raise TypeError(f"Expected HierarchicalActor, got {type(actor).__name__}")
 
     # Get the primitives instance from the StateManagerEnvironment
     primitives = None
