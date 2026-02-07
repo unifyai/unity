@@ -576,7 +576,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(SETTINGS.UNIFY_MODEL)
-        client.set_system_message(system_prompt)
+        client.set_system_message(system_prompt.to_list())
+        client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
         result = await single_shot_tool_decision(
             client,
@@ -922,7 +923,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             brain_spec = build_brain_spec(self)
             decision = await self.proactive_speech.decide(
                 conversation_turns,
-                brain_spec.system_prompt,
+                brain_spec.system_prompt.flatten(),
                 elapsed_seconds=elapsed_seconds,
             )
             self._session_logger.debug(
