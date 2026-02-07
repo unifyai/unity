@@ -238,6 +238,14 @@ The workaround is to run multiple independent clones in local mode, where rules 
 
 Each clone checks out `staging`, inits submodules, copies `.env`, and symlinks `.venv` — ready to open in a separate Cursor window with full rule support. The script uses `--reference` to borrow local git objects, so cloning is near-instant.
 
+To pull the latest changes across all adjacent clones at once:
+
+```bash
+./pull_adjacent.sh
+```
+
+This runs `git pull --ff-only` in every sibling `unity_*` directory (skipping the current repo), so all clones stay up to date with a single command.
+
 ### Cursor Cloud Agent Secrets (Required)
 
 Cursor Cloud Agents run in isolated VMs and need user-specific secrets. Add these in **Cursor Settings → Cloud Agents → Secrets**:
