@@ -262,13 +262,19 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
             # INTERJECT HANDLER (Triggered by ConversationManager)
             async def interject(self, message: str, **kwargs):
-                await inner_handle.interject(
-                    message,
-                    trigger_immediate_llm_turn=False,
-                    **kwargs,
-                )
                 if not user_reply_future.done():
+                    # ask_question is blocking — deliver the reply via the
+                    # future so it surfaces as a tool result, not as a
+                    # duplicate user message in the conversation.
                     user_reply_future.set_result(message)
+                else:
+                    # No ask_question pending — forward as a regular
+                    # interjection into the tool loop.
+                    await inner_handle.interject(
+                        message,
+                        trigger_immediate_llm_turn=False,
+                        **kwargs,
+                    )
 
             async def result(self):
                 try:
