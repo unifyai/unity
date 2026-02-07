@@ -1242,6 +1242,15 @@ async def test_outer_handle_ask_propagates_to_inner_ask(llm_config):
     await _wait_for_tool_request(client, "generator")
     await _wait_for_tool_result(client, tool_name="generator", min_results=1)
 
+    # Wait until the generator's handle has been adopted and ask_* dynamic tools are available.
+    async def _ask_tools_ready():
+        try:
+            return bool(outer_handle._task.get_ask_tools())
+        except Exception:
+            return False
+
+    await _wait_for_condition(_ask_tools_ready, poll=0.05, timeout=10.0)
+
     # Call ask() on the OUTER handle — should propagate to inner handle's ask().
     # The outer transcript only shows "generator → (pending)"; the seed value
     # is only visible inside the generator's transcript.
