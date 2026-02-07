@@ -191,6 +191,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                     return f"User replied: {user_msg}"
 
                 user_msg = await asyncio.wait_for(user_reply_future, timeout=120)
+                # Reset for potential future questions
+                user_reply_future = asyncio.Future()
                 return f"User replied: {user_msg}"
             except asyncio.TimeoutError:
                 return "Timed out waiting for user reply."
