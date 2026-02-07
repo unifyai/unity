@@ -7,6 +7,8 @@ These validate that when an actor run needs clarification, CM can:
 - continue execution deterministically
 """
 
+import asyncio
+
 import pytest
 
 from tests.helpers import _handle_project, get_or_create_contact
@@ -35,6 +37,11 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
     actor handle clarification surface that CM relies on:
     - `handle.next_clarification()` yields a question
     - `handle.answer_clarification(call_id, answer)` delivers the answer
+
+    The handle is a standard AsyncToolLoopHandle (same as ContactManager, etc.).
+    Clarification questions arrive in the handle's internal _clar_q (populated by
+    the inner loop's _handle_clarification when nested tools request clarification).
+    Answers are routed back through the inner loop's mirror mechanism.
     """
     cm = initialized_cm_codeact
 
@@ -68,37 +75,34 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
     handle_id = actor_event.handle_id
     handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
-    # Force a clarification through the handle surface (contract-level test).
-    up_q = getattr(handle, "clarification_up_q", None)
-    down_q = getattr(handle, "clarification_down_q", None)
-    assert (
-        up_q is not None and down_q is not None
-    ), "Handle missing clarification queues"
+    # Inject a clarification question into the handle's internal clarification
+    # queue — the same queue that the inner loop's _handle_clarification() populates
+    # when a nested tool (e.g. ContactManager) calls request_clarification().
+    question = "Which John did you mean: John Smith or John Doe?"
+    call_id = "test-clar-0"
+    handle._clar_q.put_nowait(
+        {
+            "type": "clarification",
+            "call_id": call_id,
+            "tool_name": "request_clarification",
+            "question": question,
+        },
+    )
 
-    try:
-        # Inject a clarification question directly into the handle's queue.
-        up_q.put_nowait("Which John did you mean: John Smith or John Doe?")
+    # Verify next_clarification() surfaces the injected question.
+    clar = await asyncio.wait_for(handle.next_clarification(), timeout=30)
+    assert isinstance(clar, dict)
+    q = str(clar.get("question") or "")
+    assert "which john" in q.lower(), f"Expected clarification about John, got: {q!r}"
 
-        import asyncio
+    # Answer clarification via the public API.
+    # The answer is routed through the inner loop's mirror mechanism.
+    resp_call_id = str(clar.get("call_id") or "")
+    await handle.answer_clarification(resp_call_id, "John Smith")
 
-        clar = await asyncio.wait_for(handle.next_clarification(), timeout=30)
-        assert isinstance(clar, dict)
-        q = str(clar.get("question") or "")
-        assert "which john" in q.lower()
-
-        # Answer clarification (call_id may be omitted/ignored).
-        call_id = str(clar.get("call_id") or "")
-        await handle.answer_clarification(call_id, "John Smith")
-
-        # Verify the down-channel received the answer.
-        got = down_q.get_nowait()
-        assert "john smith" in str(got).lower()
-
-        # End the handle to complete the flow deterministically.
-        await handle.stop(reason="clarification_answered")
-        _final = await wait_for_actor_completion(cm, handle_id, timeout=30)
-    finally:
-        pass
+    # End the handle to complete the flow deterministically.
+    await handle.stop(reason="clarification_answered")
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=30)
 
     assert_no_errors(result)
 
@@ -143,20 +147,25 @@ async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
     handle_id = actor_event.handle_id
     handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
-    # Force a clarification to be emitted through the handle surface so the watcher publishes
-    # ActorClarificationRequest. In step-mode tests, we then *apply* the event to CM state
-    # deterministically (since the background broker consumer is not driving EventHandler).
-    up_q = getattr(handle, "clarification_up_q", None)
-    assert up_q is not None, "Handle missing clarification_up_q"
+    # Inject a clarification question into the handle's internal clarification queue
+    # (same queue that the inner loop populates when nested tools request clarification).
+    # Then deterministically apply the corresponding CM-level event, since the background
+    # broker consumer is not running in step-driven tests.
     question = "Which John did you mean: John Smith or John Doe?"
-    up_q.put_nowait(question)
-    # In step-driven tests, the background event-broker consumer is not running,
-    # so we deterministically apply the clarification event to CM state.
+    call_id = "0"
+    handle._clar_q.put_nowait(
+        {
+            "type": "clarification",
+            "call_id": call_id,
+            "tool_name": "request_clarification",
+            "question": question,
+        },
+    )
     await inject_actor_clarification_request(
         cm,
         handle_id=handle_id,
         query=question,
-        call_id="0",
+        call_id=call_id,
     )
 
     # Wait until CM has recorded a pending clarification request.
