@@ -160,32 +160,10 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             recent_transcript_for_prompt = "Recent Transcript: (error)"
 
         # Build prompts using prompt_builders
-        static_prompt, dynamic_prompt = build_ask_handle_prompt(
+        prompt_parts = build_ask_handle_prompt(
             question=question,
             recent_transcript=recent_transcript_for_prompt,
         )
-
-        # Build content array with optional handler context
-        content_parts = [
-            {
-                "type": "text",
-                "text": static_prompt,
-            },
-            {
-                "type": "text",
-                "text": dynamic_prompt,
-            },
-        ]
-
-        system_header_msg = {
-            "role": "system",
-            "content": content_parts,
-        }
-        kickoff_user_msg = {
-            "role": "user",
-            "content": f"Answer the question: '{question}'",
-        }
-        seeded_messages: list[dict] = [system_header_msg, kickoff_user_msg]
 
         user_reply_future = asyncio.Future()
 
@@ -228,6 +206,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         llm = new_llm_client(
             return_full_completion=False,
         )
+        llm.set_system_message(prompt_parts.to_list())
 
         # Get the parent lineage from the ConversationManager's session logger
         parent_lineage: list[str] = []
@@ -238,7 +217,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         # final_answer tool injection automatically
         inner_handle = start_async_tool_loop(
             client=llm,
-            message=seeded_messages,
+            message=f"Answer the question: '{question}'",
             tools=tools,
             response_format=response_format,
             interrupt_llm_with_interjections=True,

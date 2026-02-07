@@ -1698,7 +1698,7 @@ class TestInFlightActionOrchestration:
             boss_phone_number=boss.get("phone_number"),
             boss_email_address=boss.get("email_address"),
             is_boss_user=True,
-        )
+        ).flatten()
         client = new_llm_client(
             model="gpt-5-nano@openai",
             reasoning_effort="minimal",

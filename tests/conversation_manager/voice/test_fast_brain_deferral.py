@@ -124,7 +124,7 @@ def voice_agent_prompt():
         boss_email_address="alex.thompson@example.com",
         is_boss_user=True,
         contact_rolling_summary=None,
-    )
+    ).flatten()
 
 
 async def get_unify_llm_response(

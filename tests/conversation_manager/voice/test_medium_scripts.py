@@ -553,7 +553,7 @@ class TestVoiceAgentPromptBuilding:
             boss_phone_number=boss_contact["phone_number"],
             boss_email_address=boss_contact["email_address"],
             is_boss_user=True,
-        )
+        ).flatten()
 
         # Now uses Markdown headers
         assert "Role\n----" in prompt
@@ -567,7 +567,7 @@ class TestVoiceAgentPromptBuilding:
             boss_first_name=boss_contact["first_name"],
             boss_surname=boss_contact["surname"],
             is_boss_user=True,
-        )
+        ).flatten()
 
         assert "I am a helpful test assistant" in prompt
 
@@ -582,7 +582,7 @@ class TestVoiceAgentPromptBuilding:
             boss_phone_number="+15551234567",
             boss_email_address="john@test.com",
             is_boss_user=True,
-        )
+        ).flatten()
 
         # Now uses Markdown headers
         assert "Boss details\n------------" in prompt
@@ -608,7 +608,7 @@ class TestVoiceAgentPromptBuilding:
             contact_phone_number=external_contact["phone_number"],
             contact_email=external_contact["email_address"],
             is_boss_user=False,
-        )
+        ).flatten()
 
         # Now uses Markdown headers
         assert "Contact details\n---------------" in prompt
@@ -624,7 +624,7 @@ class TestVoiceAgentPromptBuilding:
             boss_first_name=boss_contact["first_name"],
             boss_surname=boss_contact["surname"],
             is_boss_user=True,
-        )
+        ).flatten()
 
         # Now uses Markdown headers - section should not exist for boss calls
         assert "Contact details\n---------------" not in prompt
@@ -638,7 +638,7 @@ class TestVoiceAgentPromptBuilding:
             boss_first_name=boss_contact["first_name"],
             boss_surname=boss_contact["surname"],
             is_boss_user=True,
-        )
+        ).flatten()
 
         # Now uses Markdown headers
         assert "Conversation manager\n--------------------" in prompt
@@ -653,7 +653,7 @@ class TestVoiceAgentPromptBuilding:
             boss_first_name=boss_contact["first_name"],
             boss_surname=boss_contact["surname"],
             is_boss_user=True,
-        )
+        ).flatten()
 
         # Now uses Markdown headers
         assert "Communication guidelines\n------------------------" in prompt
