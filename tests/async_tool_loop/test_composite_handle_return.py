@@ -11,13 +11,10 @@ and continues steering the handle as usual.
 """
 
 import asyncio
-import json
-import threading
 
 import pytest
 
 from unity.common.async_tool_loop import (
-    AsyncToolLoopHandle,
     SteerableToolHandle,
     start_async_tool_loop,
 )
@@ -27,17 +24,12 @@ from unity.common._async_tool.tools_data import (
 )
 from unity.common.tool_spec import ToolSpec
 from unity.common.llm_client import new_llm_client
-from tests.helpers import _handle_project
 from tests.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
     _wait_for_assistant_call_prefix,
-    _wait_for_condition,
-    make_gated_async_tool,
     real_tool_messages,
-    last_plain_assistant_message,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Unit tests for _extract_nested_handle
@@ -234,12 +226,12 @@ async def test_composite_dict_return_with_handle(llm_config):
     assert tool_msgs, "Expected a tool message placeholder for composite_tool"
     placeholder_content = tool_msgs[0].get("content", "")
     # The intermediate data should contain "found" and the sentinel
-    assert "found" in placeholder_content, (
-        f"Intermediate data should contain 'found'; got: {placeholder_content}"
-    )
-    assert "_placeholder" in placeholder_content, (
-        f"Intermediate data should be formatted as progress; got: {placeholder_content}"
-    )
+    assert (
+        "found" in placeholder_content
+    ), f"Intermediate data should contain 'found'; got: {placeholder_content}"
+    assert (
+        "_placeholder" in placeholder_content
+    ), f"Intermediate data should be formatted as progress; got: {placeholder_content}"
 
     # Release the inner gate so the handle completes
     inner_gate.set()
@@ -252,9 +244,9 @@ async def test_composite_dict_return_with_handle(llm_config):
     assert tool_msgs_final, "Expected final tool message for composite_tool"
     # The final content replaces the progress placeholder
     final_content = tool_msgs_final[0].get("content", "")
-    assert "inner-complete" in final_content, (
-        f"Final tool result should contain the handle's result; got: {final_content}"
-    )
+    assert (
+        "inner-complete" in final_content
+    ), f"Final tool result should contain the handle's result; got: {final_content}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -408,8 +400,7 @@ async def test_composite_return_with_nested_loop(llm_config):
     tool_msgs = [
         m
         for m in client.messages
-        if m.get("role") == "tool"
-        and m.get("name") == "composite_with_loop"
+        if m.get("role") == "tool" and m.get("name") == "composite_with_loop"
     ]
     assert tool_msgs, "Expected tool messages for composite_with_loop"
 
@@ -485,14 +476,15 @@ async def test_multiple_handles_in_return_raises(llm_config):
 
     # Verify the error was surfaced in a tool message
     tool_msgs = [
-        m for m in client.messages
+        m
+        for m in client.messages
         if m.get("role") == "tool" and m.get("name") == "bad_tool"
     ]
     assert tool_msgs, "Expected a tool message for bad_tool"
     error_content = tool_msgs[0].get("content", "")
-    assert "SteerableToolHandle" in error_content or "ValueError" in error_content, (
-        f"Error should mention multiple handles; got: {error_content}"
-    )
+    assert (
+        "SteerableToolHandle" in error_content or "ValueError" in error_content
+    ), f"Error should mention multiple handles; got: {error_content}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -572,9 +564,9 @@ async def test_composite_tuple_return(llm_config):
     tool_msgs = real_tool_messages(client.messages, tool_name="tuple_tool")
     assert tool_msgs, "Expected a tool message for tuple_tool"
     ph_content = tool_msgs[0].get("content", "")
-    assert "ready" in ph_content, (
-        f"Intermediate data should contain 'ready'; got: {ph_content}"
-    )
+    assert (
+        "ready" in ph_content
+    ), f"Intermediate data should contain 'ready'; got: {ph_content}"
 
     # Release gate
     gate.set()
@@ -585,6 +577,6 @@ async def test_composite_tuple_return(llm_config):
     # Final tool result should contain the handle's result
     tool_msgs_final = real_tool_messages(client.messages, tool_name="tuple_tool")
     final_content = tool_msgs_final[0].get("content", "")
-    assert "tuple-handle-done" in final_content, (
-        f"Final result should contain handle result; got: {final_content}"
-    )
+    assert (
+        "tuple-handle-done" in final_content
+    ), f"Final result should contain handle result; got: {final_content}"
