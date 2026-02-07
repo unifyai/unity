@@ -366,53 +366,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, _parent_chat_context)
 
-        # 0.  Defensive guard: if the outer loop has already finished we can
-        #     just answer from the final transcript without starting another
-        #     loop.
-        if self.done():
-            LOGGER.warning(
-                "AsyncToolLoopHandle.ask() called on an already-finished "
-                "loop – returning a synthetic handle with a static answer.",
-            )
-
-            async def _static() -> str:  # type: ignore[return-type]
-                return (
-                    "Parent loop is already complete; no additional "
-                    "information available."
-                )
-
-            class _StaticHandle(SteerableToolHandle):
-                def __init__(self): ...
-
-                async def interject(self, message: str, **kwargs): ...
-
-                async def stop(self, reason: Optional[str] = None, **kwargs): ...
-
-                async def pause(self): ...
-
-                async def resume(self): ...
-
-                def done(self):
-                    return True
-
-                async def result(self):
-                    return await _static()
-
-                async def ask(self, question: str, **kwargs) -> "SteerableToolHandle":
-                    return self
-
-                # Inert stubs for required abstract event APIs
-                async def next_clarification(self) -> dict:
-                    return {}
-
-                async def next_notification(self) -> dict:
-                    return {}
-
-                async def answer_clarification(self, call_id: str, answer: str) -> None:
-                    return None
-
-            return _StaticHandle()  # pragma: no cover
-
         # 1.  Gather a *read-only* snapshot of the parent chat.
         parent_ctx = []
         with suppress(Exception):
@@ -420,6 +373,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             if msgs is None:
                 msgs = []
             parent_ctx = list(msgs)
+
+        # 1b. Snapshot ask_* tools available at invocation time so the
+        #     inspection loop can propagate questions to inner handles.
+        ask_tools: dict = {}
+        with suppress(Exception):
+            _get_ask_tools = getattr(self._task, "get_ask_tools", lambda: {})
+            ask_tools = _get_ask_tools()
 
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
@@ -462,11 +422,28 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 ],
             )
 
+        # If inner-handle ask_* tools are available, hint the LLM about them
+        if ask_tools:
+            sys_msg_parts.extend(
+                [
+                    "",
+                    "## Inner Loop Tools",
+                    (
+                        "You have access to `ask_*` tools that query inner tool loops for detailed information. "
+                        "Each inner tool loop has its own transcript that may contain details NOT visible in the "
+                        "Inspected Loop Transcript above. If the transcript does not contain enough information "
+                        "to answer the question — for example if a tool's result only shows a placeholder or "
+                        "summary — you MUST call the corresponding `ask_*` tool to get details from that "
+                        "tool's own internal context. Only answer directly from the transcript when it clearly "
+                        "contains the specific information being asked about."
+                    ),
+                ],
+            )
+
         sys_msg_parts.extend(
             [
                 "",
-                "Answer the user's follow-up question using ONLY this context.",
-                "Do not attempt to run new tools unless they are exposed to you.",
+                "Answer the user's follow-up question using the context above and any tools exposed to you.",
                 "Do not ask the user questions or request clarification. If information is missing,",
                 "state what is known and, if helpful, briefly note assumptions. Respond in a single, concise paragraph.",
             ],
@@ -495,7 +472,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         helper_handle = start_async_tool_loop(
             inspection_client,
             _ask_message,
-            {},  # no recursive tools
+            ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
             parent_chat_context=parent_ctx,  # ← nested context
@@ -918,6 +895,7 @@ def start_async_tool_loop(
     try:  # pragma: no cover
         setattr(task, "task_info", {})  # asyncio.Task -> ToolCallMetadata
         setattr(task, "clarification_channels", {})  # call_id -> (up_q, down_q)
+        setattr(task, "get_ask_tools", lambda: {})  # snapshot of ask_* dynamic tools
     except Exception:
         pass
 
