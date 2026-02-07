@@ -5,7 +5,7 @@ This folder contains an **interactive playground** for the `FunctionManager` com
 
 What is the `FunctionManager`?
 ------------------------------
-`FunctionManager` is an abstraction that serves as the agent's persistent memory for reusable Python functions. It stores function implementations, signatures, docstrings, and dependency information, making them searchable and retrievable through both semantic similarity and structured queries. This allows more advanced actors, like the `HierarchicalActor`, to discover and incorporate existing code into their execution plans.
+`FunctionManager` is an abstraction that serves as the agent's persistent memory for reusable Python functions. It stores function implementations, signatures, docstrings, and dependency information, making them searchable and retrievable through both semantic similarity and structured queries. This allows actors like the `CodeActActor` to discover and incorporate existing code into their execution plans.
 
 The manager provides comprehensive function lifecycle management with built-in security validation:
 

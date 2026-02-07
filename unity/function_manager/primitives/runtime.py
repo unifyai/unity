@@ -54,7 +54,7 @@ DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
 
 class ComputerPrimitives:
     """
-    Provides a library of high-level, agentic actions for the HierarchicalActor.
+    Provides a library of high-level, agentic actions for the Actor.
     Each public method is a tool that the actor can incorporate into its generated code.
     """
 

@@ -1142,7 +1142,7 @@ Examples:
         choices=["on", "off"],
         default="off",
         help=(
-            "Enable/disable HierarchicalActor course correction (recovery sub-agent). "
+            "Enable/disable Actor course correction (recovery sub-agent). "
             "Default: off (faster demos)."
         ),
     )

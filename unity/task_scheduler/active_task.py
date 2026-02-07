@@ -395,7 +395,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         ):
             summary = "No execution log was available to generate a summary."
             try:
-                # The _actor_handle is the HierarchicalActorHandle, which has the action_log
+                # The _actor_handle may have an action_log attribute
                 if (
                     hasattr(self._actor_handle, "action_log")
                     and self._actor_handle.action_log

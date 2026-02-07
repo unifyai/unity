@@ -123,7 +123,7 @@ class GuidedLearningStep:
 
     def to_actor_interject_args(self) -> str:
         """
-        Returns transcript ready for HierarchicalActorHandle.interject().
+        Returns transcript ready for an actor handle's interject() method.
 
         Example:
             step = await guided_learning_manager.get_next_step()
