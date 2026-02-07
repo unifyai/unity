@@ -50,16 +50,10 @@ async def test_simulated_act_response_format():
     handle.trigger_completion()
     result = await handle.result()
 
-    # SimulatedActor uses its own handle (not AsyncToolLoopHandle), so
-    # result() may return a JSON string rather than a parsed model.
-    if isinstance(result, ActionResult):
-        parsed = result
-    else:
-        parsed = ActionResult.model_validate_json(result)
-
-    assert isinstance(parsed.completed, bool)
-    assert isinstance(parsed.steps_taken, list)
-    assert parsed.outcome.strip(), "Outcome should be non-empty"
+    assert isinstance(result, ActionResult)
+    assert isinstance(result.completed, bool)
+    assert isinstance(result.steps_taken, list)
+    assert result.outcome.strip(), "Outcome should be non-empty"
 
 
 # ────────────────────────────────────────────────────────────────────────────

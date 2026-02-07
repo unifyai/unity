@@ -326,15 +326,12 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                     "Do NOT include any extra keys or commentary.\n"
                     f"{json.dumps(schema, indent=2)}"
                 )
-                self._llm.set_response_format(self._response_format)
-                try:
-                    structured_result = await self._llm.generate(prompt)
-                finally:
-                    try:
-                        self._llm.reset_response_format()
-                    except Exception:
-                        pass
-                return structured_result
+                return await simulated_llm_roundtrip(
+                    self._llm,
+                    label="SimulatedActor.result",
+                    prompt=prompt,
+                    response_format=self._response_format,
+                )
             except Exception:
                 pass
 
