@@ -1246,7 +1246,6 @@ class TestUserCorrectionsAndRestatements:
             # Step 2: User IMPLICITLY switches to a different meeting
             # Note: NO explicit "not the status meeting" - just mentions different one
             # ─────────────────────────────────────────────────────────────────
-            await asyncio.sleep(0.2)
             user_implicit_switch = InboundPhoneUtterance(
                 contact=boss_contact,
                 content="Oh wait, I meant the budget review. When is that?",
@@ -1488,7 +1487,6 @@ class TestFastBrainIncorrectInformation:
             # No hedging language - this makes it harder for the filter
             # because it looks like a definitive answer, not a guess
             # ─────────────────────────────────────────────────────────────────
-            await asyncio.sleep(0.2)
             fast_brain_wrong_guess = OutboundPhoneUtterance(
                 contact=boss_contact,
                 content="The meeting with Alice is at 2pm.",
