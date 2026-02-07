@@ -483,11 +483,13 @@ class TestSteeringContextPropagation:
 
             assert ask_tool is not None, "Should have an ask tool"
 
-            # Call the ask tool (don't await the background task result)
+            # Call the ask tool (spawns a background steering task)
             await ask_tool(question="what's the status?")
 
-            # Give the background task a moment to start
-            await asyncio.sleep(0.1)
+            # Await the background task so the mock ask() has executed
+            pending = set(cm._pending_steering_tasks)
+            if pending:
+                await asyncio.wait(pending, timeout=120)
 
             # Verify context was captured
             assert len(captured_context) == 1, "ask should have been called once"

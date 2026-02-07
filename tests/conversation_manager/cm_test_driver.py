@@ -142,6 +142,12 @@ class CMStepDriver:
                 if tool_name:
                     self.all_tool_calls.append(tool_name)
 
+                # Await any pending steering tasks (e.g., async ask_*)
+                # so their events flow through our patches while active.
+                pending = set(self._cm._pending_steering_tasks)
+                if pending:
+                    await asyncio.wait(pending, timeout=120)
+
             # Apply any published events to local state so callers can inspect state
             # without depending on background broker subscribers.
             for evt in published_events:
