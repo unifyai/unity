@@ -30,7 +30,7 @@ async def test_interjection_incremental_teaching_session():
 
         # Interjection 1
         interjection_1 = "Navigate to allrecipes.com"
-        history_len_before = len(plan.chat_history)
+        history_len_before = len(plan.get_history())
         await plan.interject(interjection_1)
         try:
             await asyncio.wait_for(
@@ -42,7 +42,7 @@ async def test_interjection_incremental_teaching_session():
 
         # Interjection 2
         interjection_2 = "Great, now search for 'chocolate chip cookies'."
-        history_len_before = len(plan.chat_history)
+        history_len_before = len(plan.get_history())
         await plan.interject(interjection_2)
         try:
             await asyncio.wait_for(
@@ -54,7 +54,7 @@ async def test_interjection_incremental_teaching_session():
 
         # Interjection 3: Finish
         interjection_3 = "Perfect, that's all. We're done."
-        history_len_before = len(plan.chat_history)
+        history_len_before = len(plan.get_history())
         await plan.interject(interjection_3)
         try:
             await asyncio.wait_for(
@@ -72,7 +72,7 @@ async def test_interjection_incremental_teaching_session():
             "Error:",
         ), f"Unexpected error: {final_result}"
 
-        history_str = str(plan.chat_history)
+        history_str = str(plan.get_history())
         assert (
             "allrecipes" in history_str.lower()
             or actor._computer_primitives.navigate.called
