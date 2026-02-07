@@ -4,11 +4,21 @@ globs: ["**/*"]
 alwaysApply: true
 ---
 
-# Test Philosophy: Symbolic ↔ Eval Spectrum
+# Test Philosophy
 
-Tests in this codebase fall on a **spectrum** between two paradigms. Understanding where a test sits on this spectrum is essential for writing, debugging, and interpreting test results.
+## Real LLMs, Never Mocked
 
-## Symbolic Tests (Infrastructure-Focused)
+We *never* stub the LLM client. Tests always use a real LLM via `unillm.AsyncUnify`. Responses are cached per unique input, so repeated runs are fast on CI. The LLM responses become "locked in" after the first successful run.
+
+## Trigger-Based Synchronization, Not Sleeps
+
+Never rely on sleeps to align events in tests. Always use the trigger helpers in `tests/async_helpers.py` to ensure each event occurs in the necessary order. This makes tests robust to significant timing differences between cached responses (milliseconds) and live LLM calls (up to a minute).
+
+## Symbolic ↔ Eval Spectrum
+
+Tests fall on a **spectrum** between two paradigms. Understanding where a test sits on this spectrum is essential for writing, debugging, and interpreting test results.
+
+### Symbolic Tests (Infrastructure-Focused)
 
 At one end, **symbolic tests** use the LLM purely as a stub. The LLM receives minimal "dummy" instructions designed to trigger specific code paths.
 
@@ -18,7 +28,7 @@ At one end, **symbolic tests** use the LLM purely as a stub. The LLM receives mi
 - The LLM's "intelligence" is irrelevant—we just need it to call the right tools in the right order
 - **Failures indicate regressions in symbolic/programmatic logic**
 
-## Eval Tests (Capability-Focused)
+### Eval Tests (Capability-Focused)
 
 At the other end, **eval tests** exercise the system end-to-end. We ask a high-level question or give a directive, then verify the outcome—regardless of internal tool calls.
 
@@ -28,7 +38,7 @@ At the other end, **eval tests** exercise the system end-to-end. We ask a high-l
 - Tests LLM reasoning and decision-making in realistic scenarios
 - **Failures may indicate prompt issues, tool design problems, or capability gaps**
 
-## The Spectrum (Not Binary)
+### The Spectrum (Not Binary)
 
 Most tests sit **somewhere between** these extremes:
 - Realistic prompts but only verify specific tool calls were made
@@ -49,6 +59,16 @@ When `UNILLM_CACHE="true"` (the default), all LLM responses are cached:
 - After caching, both test types effectively verify that *symbolic logic has not regressed*
 - Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
 - To re-evaluate LLM behavior: delete `.cache.ndjson`, set `UNILLM_CACHE="false"`, or use `--no-cache`
+
+### The Cache Is Never the Problem
+
+"We just need to update the cache" is **never** a valid conclusion when debugging test failures. The cache is a faithful replay mechanism, not a source of bugs.
+
+Cache keys are the exact LLM input. A cache hit means the code is sending **byte-for-byte identical** input to a previous run. If you modify prompts, tool docstrings, or system messages, the cache key changes automatically and you get fresh inference.
+
+If a cached response causes a failure, an LLM **actually made that decision** given that exact input. This is a prompt issue, not a stale cache issue. Clearing the cache just re-runs inference on the same input—likely producing the same flawed output.
+
+Only clear the cache to **re-evaluate** LLM behavior after prompt changes (`--no-cache`), not as a fix for failing tests.
 
 ## Tagging Tests as Eval
 
@@ -73,16 +93,16 @@ async def test_natural_language_query():
 
 ```bash
 # Run only eval tests
-./parallel_run.sh --eval-only tests
+tests/parallel_run.sh --eval-only tests
 
 # Run only symbolic tests
-./parallel_run.sh --symbolic-only tests
+tests/parallel_run.sh --symbolic-only tests
 
 # Re-evaluate LLM behavior (fresh calls, no cache)
-./parallel_run.sh --no-cache tests
+tests/parallel_run.sh --no-cache tests
 
 # Statistical sampling for eval reliability
-./parallel_run.sh --no-cache --repeat 10 --eval-only tests/contact_manager
+tests/parallel_run.sh --no-cache --repeat 10 --eval-only tests/contact_manager
 ```
 
 ## When Debugging Failing Tests

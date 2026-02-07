@@ -1,6 +1,0 @@
----
-description: Triggers not Sleeps for Event Alignment in Tests
-globs: ["**/*"]
-alwaysApply: true
----
-We should never rely on sleeps in order to align events in the unit tests. We should always use the trigger helpers found in `tests/async_helpers.py`, in order to ensure each event occurs in the necessary order. This makes unit tests robust to significant differences in timing, which depends on whether the LLM is reading from its cache (very fast, miliseconds) or performing a real backend call (can take up to a minute).
