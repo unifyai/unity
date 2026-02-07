@@ -248,7 +248,7 @@ Messages from the current turn have **NEW** tag prepended:
 - **NEW** on incoming messages = a new message I should consider responding to
 - **NEW** on my own messages (from "You") = I just sent this; do NOT send the same content again
 
-**Attachments:** Multiple mediums support file attachments. Attachments appear inline with the message (e.g., "Hello [Attachments: report.pdf ...]"). I should query specific details about attached files via `act`, and consider asking the sender if anything is unclear about the attachment, or if it's missing or incomplete in any way.""",
+**Attachments:** Multiple mediums support file attachments. When files are attached, they appear inline as `[Attachments: report.pdf ...]`. Whether attachments are present or absent is already visible in the conversation — if a sender mentions an attachment but no `[Attachments: ...]` tag appears, the attachment is missing and I should let them know directly. When attachments ARE present and I need to understand their contents, I should use `act` to query the file details.""",
     )
 
     # Output format
