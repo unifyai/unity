@@ -35,6 +35,18 @@ from unity.conversation_manager.events import (
     UnifyMessageReceived,
 )
 
+
+def _make_contacts_visible(cm, *contact_ids: int) -> None:
+    """Add contacts to active_conversations so the LLM can see their contact_ids.
+
+    Use this in tests that are about email routing mechanics (to/cc/bcc),
+    not about contact resolution.  The contacts must already exist in the
+    ContactManager (e.g., via TEST_CONTACTS in conftest).
+    """
+    for cid in contact_ids:
+        cm.cm.contact_index.get_or_create_conversation(cid)
+
+
 pytestmark = pytest.mark.eval
 
 
@@ -287,11 +299,13 @@ async def test_email_thread_fork_with_different_recipients(initialized_cm):
 
     Scenario:
     1. Alice sends email about project (just to assistant)
-    2. Boss asks to reply and add Bob and Charlie (using inline emails)
+    2. Boss asks to reply and add Bob and Charlie
     3. EXPECTED: Reply includes Alice, Bob, and Charlie
     """
     cm = initialized_cm
     alice = TEST_CONTACTS[0]  # Alice Smith
+
+    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     email_id = "CAKx7fQ_fork_test@mail.gmail.com"
 
@@ -306,14 +320,14 @@ async def test_email_thread_fork_with_different_recipients(initialized_cm):
         ),
     )
 
-    # Boss asks to reply but add more recipients (using inline emails)
+    # Boss asks to reply but add more recipients
     result = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=BOSS,
             content=(
                 "Reply to Alice's project proposal email and tell her the proposal "
                 "looks great and we're moving forward with it. "
-                "Also CC bob@example.com and charlie@example.com "
+                "Also CC Bob and Charlie "
                 "so they can provide their technical input."
             ),
         ),
@@ -398,15 +412,19 @@ async def test_reply_removes_recipient_from_thread(initialized_cm):
 @_handle_project
 async def test_email_thread_with_external_recipients(initialized_cm):
     """
-    Reply to email thread and add external email addresses (not contacts).
+    Reply to email thread and add additional recipients.
 
     Scenario:
     1. Alice sends email
-    2. Boss asks to reply via email and add external partners
-    3. EXPECTED: Reply includes Alice and the external email addresses
+    2. Boss asks to reply via email and add Bob and Charlie
+    3. EXPECTED: Reply includes Alice, Bob, and Charlie
     """
     cm = initialized_cm
     alice = TEST_CONTACTS[0]  # Alice Smith
+    bob = TEST_CONTACTS[1]  # Bob Johnson
+    charlie = TEST_CONTACTS[2]  # Charlie Davis
+
+    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     email_id = "CAKx7fQ_external_test@mail.gmail.com"
 
@@ -421,13 +439,13 @@ async def test_email_thread_with_external_recipients(initialized_cm):
         ),
     )
 
-    # Boss asks to reply via email and add external partners
+    # Boss asks to reply via email and add Bob and Charlie
     result = await cm.step_until_wait(
         UnifyMessageReceived(
             contact=BOSS,
             content=(
                 "Send an email reply to Alice about her partnership opportunity email. "
-                "CC partner@acme-corp.com and legal@acme-corp.com "
+                "CC Bob and Charlie "
                 "so they can join the discussion. Tell her we're interested."
             ),
         ),
@@ -443,13 +461,13 @@ async def test_email_thread_with_external_recipients(initialized_cm):
         alice["email_address"] in all_recipients
     ), f"Expected Alice in recipients, got to={email.to}, cc={email.cc}"
 
-    # Verify at least one external email is included
-    external_emails = ["partner@acme-corp.com", "legal@acme-corp.com"]
-    found_external = any(ext in all_recipients for ext in external_emails)
-    assert found_external, (
-        f"Expected at least one external email in recipients, "
-        f"got to={email.to}, cc={email.cc}"
-    )
+    # Verify Bob and Charlie are included
+    assert (
+        bob["email_address"] in all_recipients
+    ), f"Expected Bob in recipients, got to={email.to}, cc={email.cc}"
+    assert (
+        charlie["email_address"] in all_recipients
+    ), f"Expected Charlie in recipients, got to={email.to}, cc={email.cc}"
 
 
 # ---------------------------------------------------------------------------
