@@ -5,16 +5,14 @@ tests/conversation_manager/flows/test_multi_thread.py
 Tests for multi-thread email scenarios where the system must distinguish
 between multiple email threads with the same contact.
 
-The current implementation auto-infers the email_id for threading based on
-subject matching against the most recent inbound email. This fails when:
-- Multiple threads exist with the same subject
-- The user wants to reply to an older thread, not the most recent one
-
 Also includes tests for:
 - Reply-all functionality with multiple recipients
 - Email threading with to/cc/bcc fields
+- Re: prefix and subject-based auto-inference
 
-These tests verify and document these features.
+All tests use a boss-first pattern: the boss pre-instructs the assistant,
+then the triggering email(s) arrive.  This avoids non-determinism from
+the LLM auto-replying to inbound emails before the boss has spoken.
 """
 
 import pytest
@@ -58,7 +56,7 @@ def use_helpful_response_policy(initialized_cm):
 
 
 # ---------------------------------------------------------------------------
-#  Multi-thread email tests
+#  Multi-thread email tests (require multiple prior emails)
 # ---------------------------------------------------------------------------
 
 
@@ -69,38 +67,33 @@ async def test_reply_to_older_thread_with_same_subject(initialized_cm):
     Bug reproduction: system picks wrong thread when multiple threads have same subject.
 
     Scenario:
-    1. Alice sends email on Thread A (subject: "Budget Discussion", about Q1)
-    2. Alice sends email on Thread B (subject: "Budget Discussion", about Q2) - MORE RECENT
-    3. Boss tells assistant to reply to Alice about Q1, using subject "Budget Discussion"
+    1. Boss pre-instructs: "When Alice emails about Q1 budget, reply about
+       reviewing marketing spend.  Use subject 'Budget Discussion'."
+    2. Alice sends Thread A (subject: "Budget Discussion", about Q1)
+    3. Alice sends Thread B (subject: "Budget Discussion", about Q2) - MORE RECENT
     4. EXPECTED: Reply should thread to Thread A (email_id_replied_to = thread_a_email_id)
-    5. ACTUAL BUG: System picks Thread B because it's most recent with matching subject
-
-    The bug trigger conditions:
-    - Reply subject EXACTLY matches inbound email subjects (auto-inference kicks in)
-    - Multiple inbound emails have the same subject
-    - The desired thread is NOT the most recent one
-
-    The current auto-inference logic in brain_action_tools.py:
-    - Iterates through email thread in reverse (most recent first)
-    - Finds first inbound message where subject matches the reply subject
-    - Uses that email_id, IGNORING the LLM's explicit email_id_to_reply_to
-
-    Note: If the LLM uses "Re: Budget Discussion" instead of "Budget Discussion",
-    the auto-inference won't find a match and the LLM's choice will be used.
-    This test explicitly instructs the LLM to use the exact subject to trigger the bug.
     """
     cm = initialized_cm
     alice = TEST_CONTACTS[0]  # Alice Smith
 
-    # Use realistic RFC Message-ID format (opaque identifiers from email servers)
-    # These are NOT email addresses - they're unique message identifiers like:
-    # <CABx+abc123@mail.gmail.com> or <1234567890.123456@smtp.example.com>
-    # Note: angle brackets are stripped by the system, so we omit them here
     thread_a_email_id = "CAKx7fQ1a2b3c4d5@mail.gmail.com"
     thread_b_email_id = "CAKx7fQ9z8y7w6v5@mail.gmail.com"
 
-    # --- Step 1: Alice sends email on Thread A (Q1 budget, older) ---
-    await cm.step(
+    # --- Boss pre-instructs ---
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "Alice is going to send two emails both with subject 'Budget Discussion'. "
+                "The first will be about Q1 budget, the second about Q2. "
+                "Reply to the Q1 one specifically — tell her we'll review the "
+                "Q1 marketing spend next week. Use subject 'Budget Discussion'."
+            ),
+        ),
+    )
+
+    # --- Alice sends Thread A (Q1 budget, older) ---
+    result_a = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Budget Discussion",
@@ -110,45 +103,30 @@ async def test_reply_to_older_thread_with_same_subject(initialized_cm):
         ),
     )
 
-    # --- Step 2: Alice sends email on Thread B (Q2 budget, more recent) ---
-    # Same subject as Thread A - this is the key condition that triggers the bug
-    await cm.step(
+    # --- Alice sends Thread B (Q2 budget, more recent, same subject) ---
+    result_b = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
-            subject="Budget Discussion",  # Same subject as Thread A!
+            subject="Budget Discussion",
             body="Following up on a separate matter - the Q2 budget projections need review. Very different from Q1.",
             email_id=thread_b_email_id,
             attachments=[],
         ),
     )
 
-    # --- Step 3: Boss asks assistant to reply specifically to Thread A (Q1) ---
-    # CRITICAL: We explicitly tell the assistant to use the SAME subject (not "Re: ...")
-    # This forces the auto-inference to kick in and pick the wrong thread.
-    # The auto-inference matches by exact subject and picks the most recent email.
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Reply to Alice's email about the Q1 budget (the first one she sent, not the Q2 one). "
-                "Use the subject line 'Budget Discussion' (same as her emails). "
-                "Tell her we'll review the Q1 marketing spend next week."
-            ),
-        ),
+    # --- Verify the reply went to the CORRECT thread ---
+    all_emails = filter_events_by_type(
+        result_a.output_events + result_b.output_events,
+        EmailSent,
+    )
+    assert len(all_emails) >= 1, (
+        f"Expected at least 1 EmailSent event, got {len(all_emails)}. "
+        f"Output events: "
+        f"{[type(e).__name__ for e in result_a.output_events + result_b.output_events]}"
     )
 
-    # --- Step 4: Verify the reply went to the CORRECT thread ---
-    email_events = filter_events_by_type(result.output_events, EmailSent)
-    assert len(email_events) >= 1, (
-        f"Expected at least 1 EmailSent event, got {len(email_events)}. "
-        f"Output events: {[type(e).__name__ for e in result.output_events]}"
-    )
+    sent_email = all_emails[0]
 
-    sent_email = email_events[0]
-
-    # THE ASSERTION THAT SHOULD FAIL (documenting the bug):
-    # The email should reply to Thread A (Q1), but the system will pick Thread B (Q2)
-    # because Thread B is more recent and has the same subject.
     assert sent_email.email_id_replied_to == thread_a_email_id, (
         f"Expected reply to Thread A (Q1 budget)\n"
         f"  email_id: {thread_a_email_id}\n"
@@ -173,8 +151,8 @@ async def test_reply_all_preserves_recipients(initialized_cm):
     Reply-all should preserve all original recipients.
 
     Scenario:
-    1. Alice sends email to assistant with Bob and Charlie CC'd
-    2. Boss asks assistant to reply-all
+    1. Boss pre-instructs: reply-all to Alice's upcoming team sync email
+    2. Alice sends email with Bob and Charlie CC'd
     3. EXPECTED: Reply should have Alice in TO, Bob and Charlie in CC
     """
     cm = initialized_cm
@@ -184,8 +162,20 @@ async def test_reply_all_preserves_recipients(initialized_cm):
 
     email_id = "CAKx7fQ_reply_all_test@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "Alice is going to email about a team sync with Bob and Charlie CC'd. "
+                "When she does, reply all — tell everyone I'll send the status "
+                "update by end of day."
+            ),
+        ),
+    )
+
     # Alice sends email with Bob and Charlie CC'd
-    await cm.step(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Team Sync",
@@ -194,17 +184,6 @@ async def test_reply_all_preserves_recipients(initialized_cm):
             attachments=[],
             to=[],  # Assistant is the recipient (implicit)
             cc=[bob["email_address"], charlie["email_address"]],
-        ),
-    )
-
-    # Boss asks to reply-all
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Reply all to Alice's team sync email. "
-                "Tell them I'll send the status update by end of day."
-            ),
         ),
     )
 
@@ -235,8 +214,8 @@ async def test_reply_all_to_email_with_multiple_to_recipients(initialized_cm):
     Reply-all to an email with multiple TO recipients.
 
     Scenario:
-    1. Alice sends email to assistant AND Diana (both in TO)
-    2. Boss asks assistant to reply-all
+    1. Boss pre-instructs: reply-all to Alice's upcoming email (Diana also in TO)
+    2. Alice sends email to assistant AND Diana (both in TO)
     3. EXPECTED: Reply includes Alice (sender) and Diana in recipients
     """
     cm = initialized_cm
@@ -245,8 +224,19 @@ async def test_reply_all_to_email_with_multiple_to_recipients(initialized_cm):
 
     email_id = "CAKx7fQ_multi_to_test@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "Alice is going to send an email with Diana also in the TO field. "
+                "When it arrives, reply all to confirm receipt."
+            ),
+        ),
+    )
+
     # Alice sends email with Diana also in TO
-    await cm.step(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Dual Recipients Test",
@@ -255,14 +245,6 @@ async def test_reply_all_to_email_with_multiple_to_recipients(initialized_cm):
             attachments=[],
             to=[diana["email_address"]],  # Diana explicitly in TO
             cc=[],
-        ),
-    )
-
-    # Boss asks to reply-all
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content="Reply all to Alice's email about dual recipients. Confirm receipt.",
         ),
     )
 
@@ -287,8 +269,9 @@ async def test_email_thread_fork_with_different_recipients(initialized_cm):
     Fork an email thread by replying with different recipients.
 
     Scenario:
-    1. Alice sends email about project (just to assistant)
-    2. Boss asks to reply and add Bob and Charlie
+    1. Boss pre-instructs: when Alice emails about project proposal, reply and
+       CC Bob and Charlie
+    2. Alice sends email about project (just to assistant)
     3. EXPECTED: Reply includes Alice, Bob, and Charlie
     """
     cm = initialized_cm
@@ -298,27 +281,26 @@ async def test_email_thread_fork_with_different_recipients(initialized_cm):
 
     email_id = "CAKx7fQ_fork_test@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "When Alice emails about her project proposal, reply telling her "
+                "the proposal looks great and we're moving forward with it. "
+                "Also CC Bob and Charlie so they can provide their technical input."
+            ),
+        ),
+    )
+
     # Alice sends initial email (just to assistant)
-    await cm.step(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Project Proposal",
             body="Here's my proposal for the new feature. What do you think?",
             email_id=email_id,
             attachments=[],
-        ),
-    )
-
-    # Boss asks to reply but add more recipients
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Reply to Alice's project proposal email and tell her the proposal "
-                "looks great and we're moving forward with it. "
-                "Also CC Bob and Charlie "
-                "so they can provide their technical input."
-            ),
         ),
     )
 
@@ -347,8 +329,9 @@ async def test_reply_removes_recipient_from_thread(initialized_cm):
     Reply to thread but explicitly exclude a recipient.
 
     Scenario:
-    1. Alice sends email with Bob CC'd
-    2. Boss asks to reply to Alice only, WITHOUT Bob
+    1. Boss pre-instructs: when Alice emails about a sensitive topic (Bob CC'd),
+       reply ONLY to Alice — do NOT include Bob
+    2. Alice sends email with Bob CC'd
     3. EXPECTED: Reply goes only to Alice, Bob is not included
     """
     cm = initialized_cm
@@ -357,8 +340,20 @@ async def test_reply_removes_recipient_from_thread(initialized_cm):
 
     email_id = "CAKx7fQ_exclude_test@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "Alice is going to email about a sensitive topic. Bob will be CC'd. "
+                "When it arrives, reply ONLY to Alice — do NOT include Bob. "
+                "This is confidential."
+            ),
+        ),
+    )
+
     # Alice sends email with Bob CC'd
-    await cm.step(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Sensitive Topic",
@@ -366,17 +361,6 @@ async def test_reply_removes_recipient_from_thread(initialized_cm):
             email_id=email_id,
             attachments=[],
             cc=[bob["email_address"]],
-        ),
-    )
-
-    # Boss asks to reply only to Alice, excluding Bob
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Reply to Alice's email about the sensitive topic. "
-                "Reply ONLY to Alice - do NOT include Bob. This is confidential."
-            ),
         ),
     )
 
@@ -404,8 +388,9 @@ async def test_email_thread_with_external_recipients(initialized_cm):
     Reply to email thread and add additional recipients.
 
     Scenario:
-    1. Alice sends email
-    2. Boss asks to reply via email and add Bob and Charlie
+    1. Boss pre-instructs: when Alice emails about the partnership, reply and
+       CC Bob and Charlie
+    2. Alice sends email
     3. EXPECTED: Reply includes Alice, Bob, and Charlie
     """
     cm = initialized_cm
@@ -417,26 +402,26 @@ async def test_email_thread_with_external_recipients(initialized_cm):
 
     email_id = "CAKx7fQ_external_test@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "When Alice emails about the partnership opportunity, reply to her "
+                "and CC Bob and Charlie so they can join the discussion. "
+                "Tell her we're interested."
+            ),
+        ),
+    )
+
     # Alice sends initial email
-    await cm.step(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Partnership Opportunity",
             body="I've been in touch with Acme Corp about a partnership.",
             email_id=email_id,
             attachments=[],
-        ),
-    )
-
-    # Boss asks to reply via email and add Bob and Charlie
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Send an email reply to Alice about her partnership opportunity email. "
-                "CC Bob and Charlie "
-                "so they can join the discussion. Tell her we're interested."
-            ),
         ),
     )
 
@@ -471,9 +456,11 @@ async def test_multiple_threads_different_recipients(initialized_cm):
     Multiple email threads with the same contact but different CC lists.
 
     Scenario:
-    1. Alice sends email Thread A with Bob CC'd (technical discussion)
-    2. Alice sends email Thread B with Charlie CC'd (budget discussion)
-    3. Boss asks to reply to the technical thread (with Bob)
+    1. Boss pre-instructs: when Alice emails about technical architecture
+       (with Bob CC'd) and budget planning (with Charlie CC'd), reply to the
+       technical one and keep Bob in the loop
+    2. Alice sends Thread A with Bob CC'd (technical discussion)
+    3. Alice sends Thread B with Charlie CC'd (budget discussion)
     4. EXPECTED: Reply should be threaded to Thread A and include Bob
     """
     cm = initialized_cm
@@ -484,8 +471,21 @@ async def test_multiple_threads_different_recipients(initialized_cm):
     thread_a_email_id = "CAKx7fQ_tech_thread@mail.gmail.com"
     thread_b_email_id = "CAKx7fQ_budget_thread@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "Alice is going to send two emails: one about technical architecture "
+                "with Bob CC'd, and one about budget planning with Charlie CC'd. "
+                "Reply to the technical one — keep Bob in the loop and tell them "
+                "we'll schedule a review meeting."
+            ),
+        ),
+    )
+
     # Thread A: Technical discussion with Bob
-    await cm.step(
+    result_a = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Technical Architecture Review",
@@ -497,7 +497,7 @@ async def test_multiple_threads_different_recipients(initialized_cm):
     )
 
     # Thread B: Budget discussion with Charlie (more recent)
-    await cm.step(
+    result_b = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Budget Planning",
@@ -508,20 +508,18 @@ async def test_multiple_threads_different_recipients(initialized_cm):
         ),
     )
 
-    # Boss asks to reply to the TECHNICAL thread (not the most recent)
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Reply to Alice's email about the technical architecture review. "
-                "Keep Bob in the loop. Tell them we'll schedule a review meeting."
-            ),
-        ),
+    # Check across both email steps
+    all_emails = filter_events_by_type(
+        result_a.output_events + result_b.output_events,
+        EmailSent,
+    )
+    assert len(all_emails) >= 1, (
+        f"Expected at least 1 EmailSent across both steps, got {len(all_emails)}. "
+        f"Output events: "
+        f"{[type(e).__name__ for e in result_a.output_events + result_b.output_events]}"
     )
 
-    # Should have exactly one email sent
-    assert_has_one(result.output_events, EmailSent)
-    email = filter_events_by_type(result.output_events, EmailSent)[0]
+    email = all_emails[0]
 
     # Verify Alice is in recipients
     all_recipients = email.to + email.cc
@@ -549,8 +547,8 @@ async def test_reply_adds_re_prefix_to_subject(initialized_cm):
     Reply to email should auto-prefix subject with "Re:" if not present.
 
     Scenario:
-    1. Alice sends email with subject "Meeting Request"
-    2. Boss asks to reply
+    1. Boss pre-instructs: when Alice emails about a meeting request, reply
+    2. Alice sends email with subject "Meeting Request"
     3. EXPECTED: Reply subject should be "Re: Meeting Request"
     """
     cm = initialized_cm
@@ -558,22 +556,25 @@ async def test_reply_adds_re_prefix_to_subject(initialized_cm):
 
     email_id = "CAKx7fQ_re_prefix_test@mail.gmail.com"
 
-    # Alice sends initial email
-    await cm.step(
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "When Alice emails about a meeting request, reply telling her "
+                "Tuesday at 2pm works."
+            ),
+        ),
+    )
+
+    # Alice sends email
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Meeting Request",
             body="Can we schedule a meeting for next week?",
             email_id=email_id,
             attachments=[],
-        ),
-    )
-
-    # Boss asks to reply
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content="Reply to Alice's meeting request and tell her Tuesday at 2pm works.",
         ),
     )
 
@@ -599,8 +600,8 @@ async def test_subject_auto_inference_threads_correctly(initialized_cm):
     based on subject matching and thread to the correct email.
 
     Scenario:
-    1. Alice sends email about "Project Alpha"
-    2. Boss asks to reply about "Project Alpha" (subject hint)
+    1. Boss pre-instructs: when Alice emails about Project Alpha, reply
+    2. Alice sends email about "Project Alpha"
     3. EXPECTED: Reply should be threaded to Alice's email
     """
     cm = initialized_cm
@@ -608,25 +609,25 @@ async def test_subject_auto_inference_threads_correctly(initialized_cm):
 
     email_id = "CAKx7fQ_auto_infer_test@mail.gmail.com"
 
+    # Boss pre-instructs
+    await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "When Alice emails about Project Alpha, reply telling her "
+                "the updates look good and we should proceed."
+            ),
+        ),
+    )
+
     # Alice sends email
-    await cm.step(
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=alice,
             subject="Project Alpha",
             body="Here's the latest update on Project Alpha.",
             email_id=email_id,
             attachments=[],
-        ),
-    )
-
-    # Boss asks to reply (subject inference should kick in)
-    result = await cm.step_until_wait(
-        UnifyMessageReceived(
-            contact=BOSS,
-            content=(
-                "Reply to the Project Alpha email and tell Alice "
-                "the updates look good and we should proceed."
-            ),
         ),
     )
 

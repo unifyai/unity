@@ -161,25 +161,28 @@ async def test_two_contacts_reply_to_correct_one(initialized_cm):
 @_handle_project
 async def test_email_reply_to_alice(initialized_cm):
     """
-    Alice emails, boss asks to reply -> reply should go to Alice.
+    Boss pre-instructs, Alice emails -> reply should go to Alice.
+
+    Uses boss-first pattern: boss gives standing instruction, then
+    Alice's email arrives and triggers the reply.
     """
     cm = initialized_cm
 
-    # Step 1: Alice sends an email
+    # Step 1: Boss pre-instructs
     await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="When Alice emails about action items, reply saying they look good",
+        ),
+    )
+
+    # Step 2: Alice sends an email (triggers the reply)
+    result = await cm.step_until_wait(
         EmailReceived(
             contact=ALICE,
             subject="Q3 Action Items",
             body="Hi, here are the action items from our meeting:\n- Finalize budget\n- Schedule follow-up\n- Send client update",
             email_id="alice_email_1",
-        ),
-    )
-
-    # Step 2: Boss asks to reply to Alice
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="Email Alice back saying the action items look good",
         ),
     )
 
