@@ -25,25 +25,13 @@ from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     filter_events_by_type,
     assert_has_one,
+    make_contacts_visible,
 )
 from tests.conversation_manager.conftest import (
     TEST_CONTACTS,
     BOSS,
     HELPFUL_RESPONSE_POLICY,
 )
-
-
-def _make_contacts_visible(cm, *contact_ids: int) -> None:
-    """Add contacts to active_conversations so the LLM can see their contact_ids.
-
-    Use this in tests that are about email routing mechanics (to/cc/bcc),
-    not about contact resolution.  The contacts must already exist in the
-    ContactManager (e.g., via TEST_CONTACTS in conftest).
-    """
-    for cid in contact_ids:
-        cm.contact_index.get_or_create_conversation(cid)
-
-
 from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
@@ -791,7 +779,7 @@ async def test_email_with_cc(initialized_cm):
     """Boss sends email with CC recipient."""
     cm = initialized_cm
 
-    _make_contacts_visible(cm, 2, 3)  # Alice, Bob
+    make_contacts_visible(cm, 2, 3)  # Alice, Bob
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -821,7 +809,7 @@ async def test_email_with_cc(initialized_cm):
 async def test_email_with_bcc(initialized_cm):
     """Boss sends email with BCC recipient."""
     cm = initialized_cm
-    _make_contacts_visible(cm, 2, 4)  # Alice, Charlie
+    make_contacts_visible(cm, 2, 4)  # Alice, Charlie
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -851,7 +839,7 @@ async def test_email_with_bcc(initialized_cm):
 async def test_email_with_multiple_cc(initialized_cm):
     """Boss sends email with multiple CC recipients."""
     cm = initialized_cm
-    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
+    make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -884,7 +872,7 @@ async def test_email_with_multiple_cc(initialized_cm):
 async def test_email_with_cc_and_bcc(initialized_cm):
     """Boss sends email with TO, CC, and BCC recipients."""
     cm = initialized_cm
-    _make_contacts_visible(cm, 2, 3, 5)  # Alice, Bob, Diana
+    make_contacts_visible(cm, 2, 3, 5)  # Alice, Bob, Diana
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -917,7 +905,7 @@ async def test_email_with_cc_and_bcc(initialized_cm):
 async def test_email_to_multiple_recipients(initialized_cm):
     """Boss sends email to multiple TO recipients."""
     cm = initialized_cm
-    _make_contacts_visible(cm, 2, 3)  # Alice, Bob
+    make_contacts_visible(cm, 2, 3)  # Alice, Bob
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -948,7 +936,7 @@ async def test_email_to_multiple_recipients(initialized_cm):
 async def test_email_with_multiple_bcc(initialized_cm):
     """Boss sends email with multiple BCC recipients."""
     cm = initialized_cm
-    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
+    make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     result = await cm.step_until_wait(
         SMSReceived(
@@ -984,7 +972,7 @@ async def test_email_with_multiple_bcc(initialized_cm):
 async def test_email_with_all_plural_recipients(initialized_cm):
     """Boss sends email with TO, CC, and BCC all populated."""
     cm = initialized_cm
-    _make_contacts_visible(cm, 2, 3, 4, 5)  # Alice, Bob, Charlie, Diana
+    make_contacts_visible(cm, 2, 3, 4, 5)  # Alice, Bob, Charlie, Diana
 
     result = await cm.step_until_wait(
         SMSReceived(
