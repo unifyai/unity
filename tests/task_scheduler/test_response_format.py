@@ -103,16 +103,10 @@ async def test_simulated_execute_response_format():
     )
     result = await handle.result()
 
-    # SimulatedTaskScheduler.execute uses its own handle (not
-    # AsyncToolLoopHandle), so result() may return a JSON string.
-    if isinstance(result, TaskExecutionResult):
-        parsed = result
-    else:
-        parsed = TaskExecutionResult.model_validate_json(result)
-
-    assert isinstance(parsed.completed, bool)
-    assert parsed.outcome.strip(), "Outcome should be non-empty"
-    assert isinstance(parsed.steps_taken, list)
+    assert isinstance(result, TaskExecutionResult)
+    assert isinstance(result.completed, bool)
+    assert result.outcome.strip(), "Outcome should be non-empty"
+    assert isinstance(result.steps_taken, list)
 
 
 # ────────────────────────────────────────────────────────────────────────────
