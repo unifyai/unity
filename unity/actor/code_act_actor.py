@@ -916,6 +916,77 @@ class CodeActActor(BaseCodeActActor):
 
             tools["FunctionManager_add_functions"] = FunctionManager_add_functions
 
+            async def execute_function(
+                function_name: str,
+                call_kwargs: Optional[Dict[str, Any]] = None,
+            ) -> Dict[str, Any]:
+                """
+                Execute a stored function by name and return its result.
+
+                This is the preferred way to run a known, pre-stored function
+                without writing any code. The function is looked up in the
+                FunctionManager by exact name and executed directly.
+
+                When to use this vs execute_code
+                ---------------------------------
+                - Use **execute_function** when you know the exact function name
+                  (from a prior search/list/filter call) and want to run it as-is.
+                  This is simpler, faster, and avoids the overhead of a code sandbox.
+                - Use **execute_code** when you need to compose multiple functions,
+                  transform data between calls, or write any custom logic.
+
+                Workflow
+                -------
+                1. Discover functions via `FunctionManager_search_functions`,
+                   `FunctionManager_filter_functions`, or
+                   `FunctionManager_list_functions`.
+                2. Pick the best match by name.
+                3. Call `execute_function(function_name=..., call_kwargs=...)`.
+
+                Parameters
+                ----------
+                function_name : str
+                    Exact name of the stored function to execute (as returned by
+                    the FunctionManager discovery tools).
+                call_kwargs : dict, optional
+                    Keyword arguments to pass to the function. Omit or pass None /
+                    an empty dict for functions that take no arguments.
+
+                Returns
+                -------
+                dict
+                    A dict with:
+                    - **result**: The function's return value (any JSON-serializable type).
+                    - **error**: Traceback string if the function raised, else None.
+                    - **stdout**: Captured standard output (string).
+                    - **stderr**: Captured standard error (string).
+                """
+                fm = self.function_manager
+                if fm is None:
+                    raise RuntimeError(
+                        "FunctionManager is not configured on this actor.",
+                    )
+
+                primitives = None
+                try:
+                    env = self.environments.get("primitives")
+                    if env is not None:
+                        primitives = env.get_instance()
+                except Exception:
+                    primitives = None
+
+                return await fm.execute_function(
+                    function_name=function_name,
+                    call_kwargs=call_kwargs,
+                    primitives=primitives,
+                    computer_primitives=self._computer_primitives,
+                    venv_pool=self._venv_pool,
+                    shell_pool=self._shell_pool,
+                    state_mode="stateless",
+                )
+
+            tools["execute_function"] = execute_function
+
         # ───────────────────────── Session management tools ────────────────── #
 
         async def list_sessions(detail: str = "summary") -> Dict[str, Any]:
