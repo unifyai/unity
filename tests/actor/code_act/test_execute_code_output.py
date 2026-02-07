@@ -215,7 +215,6 @@ await handle.result()
 
     # The result field should contain the primitive's answer
     result = get_result(out)
-    # Note: This may fail if the bug is that result isn't captured
     assert (
         result is not None
     ), f"Expected 'result' field to be populated, got None. Full output: {out}"
@@ -436,8 +435,6 @@ await handle.result()  # This is the last expression, should be captured as resu
 
     # The result field should capture the last expression's value
     result = get_result(out)
-    # This may be None if the bug exists, or a string if it works
-    # We're testing that SOMETHING is captured
     assert (
         result is not None
     ), f"Expected 'result' to capture last expression value, got None"
