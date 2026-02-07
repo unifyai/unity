@@ -47,17 +47,12 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, TranscriptSummary):
-        parsed = result
-    else:
-        parsed = TranscriptSummary.model_validate_json(result)
-
-    assert isinstance(parsed.total_messages, int)
-    assert parsed.total_messages >= 0
-    assert isinstance(parsed.participants, list)
-    assert isinstance(parsed.key_topics, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, TranscriptSummary)
+    assert isinstance(result.total_messages, int)
+    assert result.total_messages >= 0
+    assert isinstance(result.participants, list)
+    assert isinstance(result.key_topics, list)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -79,10 +74,9 @@ async def test_real_ask_response_format(
     )
     result = await handle.result()
 
-    parsed = TranscriptSummary.model_validate_json(result)
-
+    assert isinstance(result, TranscriptSummary)
     # We know from the fixture there are some messages
-    assert isinstance(parsed.total_messages, int)
-    assert isinstance(parsed.participants, list)
-    assert isinstance(parsed.key_topics, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result.total_messages, int)
+    assert isinstance(result.participants, list)
+    assert isinstance(result.key_topics, list)
+    assert result.summary.strip(), "Summary should be non-empty"

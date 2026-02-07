@@ -66,17 +66,12 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, TaskListSummary):
-        parsed = result
-    else:
-        parsed = TaskListSummary.model_validate_json(result)
-
-    assert isinstance(parsed.total_tasks, int)
-    assert parsed.total_tasks >= 0
-    assert isinstance(parsed.task_names, list)
-    assert isinstance(parsed.has_primed_task, bool)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, TaskListSummary)
+    assert isinstance(result.total_tasks, int)
+    assert result.total_tasks >= 0
+    assert isinstance(result.task_names, list)
+    assert isinstance(result.has_primed_task, bool)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -91,14 +86,9 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, TaskUpdateResult):
-        parsed = result
-    else:
-        parsed = TaskUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, TaskUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -113,7 +103,8 @@ async def test_simulated_execute_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    # SimulatedTaskScheduler.execute uses its own handle (not
+    # AsyncToolLoopHandle), so result() may return a JSON string.
     if isinstance(result, TaskExecutionResult):
         parsed = result
     else:
@@ -143,12 +134,11 @@ async def test_real_ask_response_format(
     )
     result = await handle.result()
 
-    parsed = TaskListSummary.model_validate_json(result)
-
+    assert isinstance(result, TaskListSummary)
     # We know from the fixture there are seeded tasks
-    assert parsed.total_tasks >= 0
-    assert isinstance(parsed.task_names, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert result.total_tasks >= 0
+    assert isinstance(result.task_names, list)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -165,7 +155,6 @@ async def test_real_update_response_format(
     )
     result = await handle.result()
 
-    parsed = TaskUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, TaskUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"

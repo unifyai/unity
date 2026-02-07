@@ -50,7 +50,8 @@ async def test_simulated_act_response_format():
     handle.trigger_completion()
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
+    # SimulatedActor uses its own handle (not AsyncToolLoopHandle), so
+    # result() may return a JSON string rather than a parsed model.
     if isinstance(result, ActionResult):
         parsed = result
     else:

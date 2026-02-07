@@ -503,11 +503,14 @@ async def test_non_persist_response_format_uses_final_response(llm_config):
         timeout=60,
     )
 
-    # The loop should terminate with a valid structured response
+    # The loop should terminate with a valid structured response.
+    # result() returns a Pydantic model instance when response_format is set.
     result = await handle.result()
-    parsed = Greeting.model_validate_json(result)
-    assert parsed.message.strip(), "Message must be non-empty"
-    assert isinstance(parsed.number, int)
+    assert isinstance(result, Greeting), (
+        f"Expected Greeting instance, got {type(result).__name__}: {result!r}"
+    )
+    assert result.message.strip(), "Message must be non-empty"
+    assert isinstance(result.number, int)
 
     # Verify the tool was called with the correct name
     assistant_tool_calls = [

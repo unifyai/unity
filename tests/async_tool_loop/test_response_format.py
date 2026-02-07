@@ -46,15 +46,14 @@ async def test_structured_output_response_format(llm_config) -> None:
         timeout=120,
     )
 
-    # The call should finish quickly and return JSON conforming to the schema.
     final_reply = await handle.result()
 
-    # Validate – will raise if the JSON structure is wrong.
-    parsed = SimpleGreeting.model_validate_json(final_reply)
-
-    # Light sanity checks on the parsed content.
-    assert parsed.greeting.strip(), "Greeting must be non-empty"
-    assert isinstance(parsed.lucky_number, int)
+    # result() returns a Pydantic model instance when response_format is set.
+    assert isinstance(final_reply, SimpleGreeting), (
+        f"Expected SimpleGreeting instance, got {type(final_reply).__name__}"
+    )
+    assert final_reply.greeting.strip(), "Greeting must be non-empty"
+    assert isinstance(final_reply.lucky_number, int)
 
 
 # ----------------------------------------------------------------------------
@@ -99,9 +98,11 @@ async def test_no_additional_formatting_roundtrip(llm_config) -> None:  # noqa: 
 
     final_reply = await handle.result()
 
-    # Validation should succeed directly.
-    parsed = SimpleEcho.model_validate_json(final_reply)
-    assert parsed.text.strip(), "Text must be non-empty"
+    # result() returns a Pydantic model instance when response_format is set.
+    assert isinstance(final_reply, SimpleEcho), (
+        f"Expected SimpleEcho instance, got {type(final_reply).__name__}"
+    )
+    assert final_reply.text.strip(), "Text must be non-empty"
 
     # Ensure *no* follow-up formatting prompt was injected.
     assert not any(
@@ -109,3 +110,72 @@ async def test_no_additional_formatting_roundtrip(llm_config) -> None:  # noqa: 
         and "Please output your previous answer again" in m.get("content", "")
         for m in client.messages
     ), "Unexpected additional formatting round triggered."
+
+
+# ----------------------------------------------------------------------------
+# result() returns a Pydantic model (not a raw JSON string) when
+# response_format is supplied.  Tests that the handle-level parsing is
+# working end-to-end.
+# ----------------------------------------------------------------------------
+
+
+class MathAnswer(BaseModel):
+    """Schema for a simple math calculation result."""
+
+    expression: str = Field(..., description="The mathematical expression evaluated.")
+    result: int = Field(..., description="The integer result of the expression.")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_result_returns_pydantic_model(llm_config) -> None:
+    """handle.result() should return a validated Pydantic model instance, not a
+    raw JSON string, when *response_format* is supplied.
+    """
+    client = new_llm_client(**llm_config)
+    client.set_system_message(
+        "You are a calculator. When asked a math question, respond with a JSON "
+        "object containing 'expression' (the expression as a string) and 'result' "
+        "(the integer answer). Do not add extra keys or commentary.",
+    )
+
+    handle = start_async_tool_loop(
+        client,
+        message="What is 7 * 6?",
+        tools={},
+        response_format=MathAnswer,
+        max_steps=8,
+        timeout=120,
+    )
+
+    answer = await handle.result()
+
+    # The core assertion: result() delivers a model, not a string.
+    assert isinstance(answer, MathAnswer), (
+        f"Expected MathAnswer instance, got {type(answer).__name__}: {answer!r}"
+    )
+    assert answer.result == 42
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_result_returns_string_without_response_format(llm_config) -> None:
+    """When *response_format* is not supplied, handle.result() should return a
+    plain string as before (backward compatibility).
+    """
+    client = new_llm_client(**llm_config)
+    client.set_system_message("Reply with exactly one word: 'hello'.")
+
+    handle = start_async_tool_loop(
+        client,
+        message="Say the word.",
+        tools={},
+        max_steps=4,
+        timeout=60,
+    )
+
+    answer = await handle.result()
+
+    assert isinstance(answer, str), (
+        f"Expected str, got {type(answer).__name__}: {answer!r}"
+    )
