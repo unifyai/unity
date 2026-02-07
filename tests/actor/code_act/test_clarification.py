@@ -49,7 +49,7 @@ async def test_clarification_flow():
             "Error:",
         ), f"Unexpected error: {final_result}"
 
-        history_str = str(active_task.chat_history)
+        history_str = str(active_task.get_history())
         assert "allrecipes" in history_str.lower() or "recipe" in history_str.lower()
     finally:
         if active_task and not active_task.done():

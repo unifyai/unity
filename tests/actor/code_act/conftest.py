@@ -28,8 +28,8 @@ async def wait_for_turn_completion(task, initial_history_len, timeout=30):
     deadline = loop.time() + timeout
 
     while loop.time() < deadline:
-        if len(task.chat_history) > initial_history_len:
-            last_message = task.chat_history[-1]
+        if len(task.get_history()) > initial_history_len:
+            last_message = task.get_history()[-1]
             if last_message.get("role") == "assistant" and not last_message.get(
                 "tool_calls",
             ):
