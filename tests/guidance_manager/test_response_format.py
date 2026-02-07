@@ -57,17 +57,12 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, GuidanceQueryResult):
-        parsed = result
-    else:
-        parsed = GuidanceQueryResult.model_validate_json(result)
-
-    assert isinstance(parsed.guidance_count, int)
-    assert parsed.guidance_count >= 0
-    assert isinstance(parsed.titles, list)
-    assert isinstance(parsed.categories, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, GuidanceQueryResult)
+    assert isinstance(result.guidance_count, int)
+    assert result.guidance_count >= 0
+    assert isinstance(result.titles, list)
+    assert isinstance(result.categories, list)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -82,14 +77,9 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, GuidanceUpdateResult):
-        parsed = result
-    else:
-        parsed = GuidanceUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, GuidanceUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -112,11 +102,10 @@ async def test_real_ask_response_format():
     )
     result = await handle.result()
 
-    parsed = GuidanceQueryResult.model_validate_json(result)
-
-    assert isinstance(parsed.guidance_count, int)
-    assert isinstance(parsed.titles, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, GuidanceQueryResult)
+    assert isinstance(result.guidance_count, int)
+    assert isinstance(result.titles, list)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -133,7 +122,6 @@ async def test_real_update_response_format():
     )
     result = await handle.result()
 
-    parsed = GuidanceUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, GuidanceUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"

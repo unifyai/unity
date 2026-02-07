@@ -58,17 +58,12 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, SecretQueryResult):
-        parsed = result
-    else:
-        parsed = SecretQueryResult.model_validate_json(result)
-
-    assert isinstance(parsed.secrets_count, int)
-    assert parsed.secrets_count >= 0
-    assert isinstance(parsed.secret_names, list)
-    assert isinstance(parsed.has_api_keys, bool)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, SecretQueryResult)
+    assert isinstance(result.secrets_count, int)
+    assert result.secrets_count >= 0
+    assert isinstance(result.secret_names, list)
+    assert isinstance(result.has_api_keys, bool)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -83,14 +78,9 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, SecretUpdateResult):
-        parsed = result
-    else:
-        parsed = SecretUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, SecretUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -117,11 +107,10 @@ async def test_real_ask_response_format(secret_manager_context):
     )
     result = await handle.result()
 
-    parsed = SecretQueryResult.model_validate_json(result)
-
-    assert isinstance(parsed.secrets_count, int)
-    assert isinstance(parsed.secret_names, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, SecretQueryResult)
+    assert isinstance(result.secrets_count, int)
+    assert isinstance(result.secret_names, list)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -136,7 +125,6 @@ async def test_real_update_response_format(secret_manager_context):
     )
     result = await handle.result()
 
-    parsed = SecretUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, SecretUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"

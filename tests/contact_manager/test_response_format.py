@@ -54,16 +54,11 @@ async def test_simulated_ask_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, ContactSummary):
-        parsed = result
-    else:
-        parsed = ContactSummary.model_validate_json(result)
-
-    assert isinstance(parsed.total_count, int)
-    assert parsed.total_count >= 0
-    assert isinstance(parsed.contact_names, list)
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert isinstance(result, ContactSummary)
+    assert isinstance(result.total_count, int)
+    assert result.total_count >= 0
+    assert isinstance(result.contact_names, list)
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -78,14 +73,9 @@ async def test_simulated_update_response_format():
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, ContactUpdateResult):
-        parsed = result
-    else:
-        parsed = ContactUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, ContactUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -107,16 +97,11 @@ async def test_real_ask_response_format(
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, ContactSummary):
-        parsed = result
-    else:
-        parsed = ContactSummary.model_validate_json(result)
-
+    assert isinstance(result, ContactSummary)
     # We know from the fixture there are multiple contacts
-    assert parsed.total_count > 0, "Should find at least one contact"
-    assert len(parsed.contact_names) > 0, "Should have at least one contact name"
-    assert parsed.summary.strip(), "Summary should be non-empty"
+    assert result.total_count > 0, "Should find at least one contact"
+    assert len(result.contact_names) > 0, "Should have at least one contact name"
+    assert result.summary.strip(), "Summary should be non-empty"
 
 
 @pytest.mark.asyncio
@@ -133,11 +118,6 @@ async def test_real_update_response_format(
     )
     result = await handle.result()
 
-    # Result may be a parsed Pydantic object or JSON string (mirrors real Unify behavior)
-    if isinstance(result, ContactUpdateResult):
-        parsed = result
-    else:
-        parsed = ContactUpdateResult.model_validate_json(result)
-
-    assert isinstance(parsed.success, bool)
-    assert parsed.action_taken.strip(), "Action description should be non-empty"
+    assert isinstance(result, ContactUpdateResult)
+    assert isinstance(result.success, bool)
+    assert result.action_taken.strip(), "Action description should be non-empty"
