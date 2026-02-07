@@ -1489,90 +1489,13 @@ class CodeActActor(BaseCodeActActor):
         )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
 
-        # can_compose=False mode: do not run an LLM tool loop or allow arbitrary code execution.
-        # Instead, semantic-search for a stored function and execute it directly.
-        if entrypoint is None and not effective_can_compose:
-            # Validate description is a string for can_compose=False mode
-            # (semantic search and SingleFunctionActorHandle require string input)
-            if not isinstance(description, str):
-                raise TypeError(
-                    "can_compose=False requires description to be a string, "
-                    f"got {type(description).__name__}",
-                )
-
-            from unity.actor.single_function_actor import SingleFunctionActorHandle
-            from unity.actor.execution import ExecutionResult as _ExecutionResult
-
-            fm = self.function_manager
-            if fm is None:
-                raise RuntimeError(
-                    "CodeActActor cannot run with can_compose=False: function_manager is None",
-                )
-
-            matches = fm.search_functions(
-                query=str(description or ""),
-                n=1,
-                include_implementations=True,
-            )
-            if not matches:
-
-                async def _fail() -> _ExecutionResult:
-                    return _ExecutionResult(
-                        error="can_compose=False: no matching functions found via semantic search.",
-                    )
-
-                return SingleFunctionActorHandle(
-                    function_name="(no_match)",
-                    function_id=None,
-                    execution_task=asyncio.create_task(_fail()),
-                    is_primitive=False,
-                    verify=False,
-                    goal=description,
-                )
-
-            fn_name = matches[0].get("name")
-            if not isinstance(fn_name, str) or not fn_name.strip():
-                raise RuntimeError(
-                    "can_compose=False: semantic search returned a function without a valid name.",
-                )
-
-            primitives = None
-            try:
-                env = self.environments.get("primitives")
-                if env is not None:
-                    primitives = env.get_instance()
-            except Exception:
-                primitives = None
-
-            async def _run_found() -> _ExecutionResult:
-                out = await fm.execute_function(
-                    function_name=fn_name,
-                    primitives=primitives,
-                    computer_primitives=self._computer_primitives,
-                    venv_pool=self._venv_pool,
-                    shell_pool=self._shell_pool,
-                    state_mode="stateless",
-                )
-                if isinstance(out, dict):
-                    return _ExecutionResult(**out)
-                return _ExecutionResult(result=out)
-
-            return SingleFunctionActorHandle(
-                function_name=fn_name,
-                function_id=(
-                    matches[0].get("function_id")
-                    if isinstance(matches[0], dict)
-                    else None
-                ),
-                execution_task=asyncio.create_task(_run_found()),
-                is_primitive=False,
-                verify=False,
-                goal=description,
-                docstring=(
-                    matches[0].get("docstring")
-                    if isinstance(matches[0], dict)
-                    else None
-                ),
+        # can_compose=False requires a FunctionManager so the LLM has execute_function
+        # and the discovery tools available. Without it there are no usable tools.
+        if not effective_can_compose and self.function_manager is None:
+            raise RuntimeError(
+                "CodeActActor cannot run with can_compose=False: "
+                "function_manager is required so execute_function and "
+                "FunctionManager discovery tools are available.",
             )
 
         initial_prompt = (
@@ -1741,33 +1664,51 @@ class CodeActActor(BaseCodeActActor):
             )
             return entry_handle
 
+        # Build the tool set for this call. When can_compose=False the LLM
+        # may only discover and execute stored functions -- no arbitrary code,
+        # no session management, no function persistence.
+        _code_and_session_tools = {
+            "execute_code",
+            "list_sessions",
+            "inspect_state",
+            "close_session",
+            "close_all_sessions",
+        }
+
+        def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
+            """Apply static per-call filters (can_compose, can_store)."""
+            out = dict(tool_dict)
+            if not effective_can_compose:
+                for name in _code_and_session_tools:
+                    out.pop(name, None)
+                out.pop("FunctionManager_add_functions", None)
+            if not effective_can_store:
+                out.pop("FunctionManager_add_functions", None)
+            return out
+
+        base_tools = _filter_tools(self.get_tools("act"))
+
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
-            tools=dict(self.get_tools("act")),
+            tools=base_tools,
         )
 
-        # Tool policy controls which tools are visible per turn, and whether a tool call
-        # is required. We use this for two concerns:
-        # 1) If can_store is disabled, hide persistence tools.
-        # 2) If FunctionManager tools are present, enforce "function-first" by preventing
-        #    the very first turn from being `execute_code` (push the model to search/list
-        #    and inject memoized functions first).
-        _all_tools_for_policy = dict(self.get_tools("act"))
+        # Tool policy controls which tools are visible per turn, and whether a
+        # tool call is required. Concerns:
+        # 1) Static filters (can_compose, can_store) -- applied via _filter_tools.
+        # 2) Function-first: on the first model turn, require a FunctionManager
+        #    discovery call (search/filter/list) when those tools exist.
         _has_fm_tools = any(
             isinstance(k, str) and k.startswith("FunctionManager_")
-            for k in _all_tools_for_policy.keys()
+            for k in base_tools.keys()
         )
 
         def _tool_policy(step: int, tools: Dict[str, Any]):
-            filtered = dict(tools)
+            filtered = _filter_tools(tools)
 
-            # 1) Hide persistence tool if disabled
-            if not effective_can_store:
-                filtered.pop("FunctionManager_add_functions", None)
-
-            # 2) Function-first: on the first model turn, require a FunctionManager call
+            # Function-first: on the first model turn, require a FunctionManager call
             # (search/filter/list) when those tools exist. This avoids the model skipping
-            # the function library and going straight to `execute_code`.
+            # the function library and going straight to execution.
             if step == 0 and _has_fm_tools:
                 fm_only = {
                     k: v
@@ -1795,7 +1736,7 @@ class CodeActActor(BaseCodeActActor):
             client.append_messages(_parent_chat_context)
 
         # Add clarification tool when queues are supplied
-        tools = dict(self.get_tools("act"))
+        tools = dict(base_tools)
         if clarification_up_q is not None and clarification_down_q is not None:
             add_clarification_tool_with_events(
                 tools,
