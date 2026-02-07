@@ -1,5 +1,5 @@
 """
-tests/conversation_manager/test_error_handling.py
+tests/conversation_manager/core/test_error_handling.py
 ======================================================
 
 Tests for error handling and recovery in ConversationManager.
