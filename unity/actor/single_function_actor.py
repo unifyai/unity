@@ -137,10 +137,12 @@ class SingleFunctionActorHandle(BaseActorHandle):
                 # callers can observe any stdout/stderr captured before the
                 # handle was returned.
                 cleaned_result = ExecutionResult(**cleaned)
-                await self._notification_q.put({
-                    "type": "intermediate_result",
-                    "content": cleaned_result,
-                })
+                await self._notification_q.put(
+                    {
+                        "type": "intermediate_result",
+                        "content": cleaned_result,
+                    },
+                )
                 self._handle_ready.set()
                 # Do NOT set _completion_event -- the inner handle manages
                 # completion and result() forwards to it.
@@ -292,19 +294,28 @@ class SingleFunctionActorHandle(BaseActorHandle):
         return None
 
     def get_history(self) -> list[dict]:
-        if self._inner_handle is not None and hasattr(self._inner_handle, "get_history"):
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "get_history",
+        ):
             return self._inner_handle.get_history()
         return []
 
     @property
     def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
-        if self._inner_handle is not None and hasattr(self._inner_handle, "clarification_up_q"):
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "clarification_up_q",
+        ):
             return self._inner_handle.clarification_up_q
         return None
 
     @property
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
-        if self._inner_handle is not None and hasattr(self._inner_handle, "clarification_down_q"):
+        if self._inner_handle is not None and hasattr(
+            self._inner_handle,
+            "clarification_down_q",
+        ):
             return self._inner_handle.clarification_down_q
         return None
 
@@ -315,9 +326,6 @@ class SingleFunctionActorHandle(BaseActorHandle):
     @property
     def inner_handle(self) -> Optional[SteerableToolHandle]:
         return self._inner_handle
-
-
-
 
 
 class SingleFunctionActor(BaseActor):

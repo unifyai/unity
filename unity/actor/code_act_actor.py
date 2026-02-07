@@ -13,7 +13,6 @@ from typing import (
     Callable,
     Awaitable,
     Dict,
-    List,
     Optional,
     Type,
     TYPE_CHECKING,
@@ -23,15 +22,11 @@ from pydantic import BaseModel
 from unity.actor.base import BaseCodeActActor
 from unity.actor.execution import (
     ExecutionResult,
-    ImagePart,
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
-    TextPart,
     _CURRENT_SANDBOX,
     _validate_execution_params,
-    _stdout_parts,
-    parts_to_text,
 )
 from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
@@ -111,7 +106,6 @@ def get_current_agent_context() -> AgentContext:
 
 
 logger = logging.getLogger(__name__)
-
 
 
 class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-method]

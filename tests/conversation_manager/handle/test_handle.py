@@ -411,7 +411,9 @@ async def test_ask_question_resets_future_after_await():
 
     # --- Path 2 (await): future resolved while ask_question is awaiting ---
     asyncio.get_event_loop().call_later(
-        0.05, user_reply_future.set_result, "vague answer",
+        0.05,
+        user_reply_future.set_result,
+        "vague answer",
     )
     result1 = await ask_question("What is your phone number?")
     assert result1 == "User replied: vague answer"
@@ -427,9 +429,9 @@ async def test_ask_question_resets_future_after_await():
     result2 = await ask_question("Could you give me the actual number?")
     assert result2 == "User replied: 555-1234"
 
-    assert not user_reply_future.done(), (
-        "user_reply_future was not reset after the patient-mode path returned."
-    )
+    assert (
+        not user_reply_future.done()
+    ), "user_reply_future was not reset after the patient-mode path returned."
 
 
 # =============================================================================
