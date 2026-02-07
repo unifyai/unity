@@ -200,11 +200,13 @@ _NUM_CORES=$DETECTED_CPU_CORES
 # Local orchestra is started via the orchestra repo's scripts/local.sh.
 # Set ORCHESTRA_REPO_PATH to override the default location (../orchestra).
 #
-# WORKTREE HANDLING:
-# When running from a git worktree (e.g., Cursor Background Agents), we don't
-# restart orchestra just to change log directories. Instead, we create symlinks
-# from the worktree's logs/ to wherever orchestra is currently logging. This
-# avoids disrupting concurrent tests in the main repo or other worktrees.
+# SHARED ORCHESTRA HANDLING:
+# When running from a git worktree (e.g., Cursor Background Agents) or an
+# adjacent clone (created by clone_adjacent.sh), we don't restart orchestra
+# just to change log directories. Instead, we create symlinks from the
+# worktree/clone's logs/ to wherever orchestra is currently logging. This
+# avoids disrupting concurrent tests in the main repo, other worktrees, or
+# other clones.
 
 _is_local_url() {
   local url="${1:-}"
@@ -217,14 +219,19 @@ _is_git_worktree() {
   [[ -f "$REPO_ROOT/.git" ]]
 }
 
+_is_adjacent_clone() {
+  # Adjacent clones (created by clone_adjacent.sh) symlink .venv to the main repo.
+  # They share the same orchestra instance and should not restart it.
+  [[ -L "$REPO_ROOT/.venv" ]]
+}
+
 _create_orchestra_log_symlinks() {
-  # Create symlinks from worktree's log directories to the main repo's log directories.
-  # This ensures all orchestra logs (and OTEL traces) go to a single shared location,
-  # while allowing the worktree to "see" them via symlinks.
+  # Create symlinks from this repo's log directories to wherever orchestra is logging.
+  # This ensures all OTEL traces go to a single shared location, while allowing
+  # this repo (worktree or adjacent clone) to access them via symlinks.
   #
-  # Only called when:
-  # 1. We're in a git worktree
-  # 2. Orchestra is already running with logs pointing elsewhere
+  # Called when orchestra is already running with logs pointing elsewhere and we
+  # don't want to restart it (worktree or adjacent clone).
 
   local config_file="/tmp/orchestra-local-server.config"
 
@@ -309,10 +316,10 @@ if _is_local_url "${ORCHESTRA_URL:-}"; then
       fi
 
       if [[ "$_needs_restart" == "true" ]]; then
-        if _is_git_worktree; then
-          # WORKTREE MODE: Don't restart orchestra (would disrupt other worktrees/main repo).
+        if _is_git_worktree || _is_adjacent_clone; then
+          # SHARED MODE: Don't restart orchestra (would disrupt other worktrees/clones).
           # Instead, create symlinks so logs appear in expected locations.
-          echo "Worktree detected: Using existing orchestra, creating log symlinks..."
+          echo "Shared orchestra: using existing instance, creating log symlinks..."
           _create_orchestra_log_symlinks
           export ORCHESTRA_URL="$_local_url"
         else
