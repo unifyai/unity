@@ -32,6 +32,59 @@ if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .message_dispatcher import LoopMessageDispatcher
 
 
+# Sentinel string inserted in place of an extracted SteerableToolHandle
+# so the LLM sees where the handle lived in the original return structure.
+_HANDLE_SENTINEL = "<steerable handle — now in-flight>"
+
+
+def _extract_nested_handle(obj):
+    """Walk *obj* (dict / list / tuple) looking for a single ``SteerableToolHandle``.
+
+    Returns ``(handle, cleaned_obj)`` where *cleaned_obj* is a shallow copy of
+    *obj* with the handle replaced by :data:`_HANDLE_SENTINEL`.
+
+    If no handle is found returns ``(None, obj)`` unchanged.
+    Raises ``ValueError`` when more than one handle is found.
+    """
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    if isinstance(obj, SteerableToolHandle):
+        # Top-level handle — the caller should use the direct-handle path.
+        return obj, _HANDLE_SENTINEL
+
+    found: list = []
+
+    def _walk(node):
+        """Recursively walk and return a cleaned copy, collecting handles."""
+        if isinstance(node, SteerableToolHandle):
+            found.append(node)
+            return _HANDLE_SENTINEL
+
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+
+        if isinstance(node, tuple):
+            return tuple(_walk(v) for v in node)
+
+        return node
+
+    cleaned = _walk(obj)
+
+    if len(found) > 1:
+        raise ValueError(
+            f"Tool return value contains {len(found)} SteerableToolHandles; "
+            "at most one is allowed.",
+        )
+
+    if found:
+        return found[0], cleaned
+
+    return None, obj
+
+
 def compute_context_injection(
     *,
     args: dict,
@@ -593,6 +646,23 @@ class ToolsData:
                 return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
+            #  Composite return: a handle nested inside a dict/list/tuple
+            #  alongside intermediate data that should be surfaced to the LLM
+            #  as progress while the handle is steered.
+            # ───────────────────────────────────────────────────────────────
+            nested_handle, cleaned = _extract_nested_handle(raw)
+            if nested_handle is not None:
+                await self.adopt_nested(
+                    info,
+                    nested_handle,
+                    msg_dispatcher=msg_dispatcher,
+                    assistant_meta=assistant_meta,
+                    outer_handle_container=outer_handle_container,
+                    intermediate_content=cleaned,
+                )
+                return True  # ⬅️  LLM turn required — intermediate content to process
+
+            # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
             # ── finished successfully – promote any embedded images ─────────
@@ -701,12 +771,18 @@ class ToolsData:
         msg_dispatcher,
         assistant_meta,
         outer_handle_container,
+        intermediate_content: Any = None,
     ) -> None:
         """Adopt a child SteerableToolHandle returned by a tool into this loop.
 
         Creates/updates a single placeholder tool message, schedules the child's
         result as a nested task with inherited metadata, and wires clarification
         channels.
+
+        When *intermediate_content* is provided (from a composite return where
+        the handle was nested inside a data structure), the placeholder is
+        populated with the intermediate data formatted as a progress notification
+        so the LLM can react to it while steering continues.
         """
         # Upgrade interject flag based on child capability
         if hasattr(child_handle, "interject"):
@@ -727,13 +803,27 @@ class ToolsData:
             nested_coro = asyncio.to_thread(child_handle.result)
         nested_task = asyncio.create_task(nested_coro)
 
-        # Insert/update single placeholder for this call_id
+        # Insert/update single placeholder for this call_id.
+        # When intermediate_content is provided the placeholder carries
+        # the partial data formatted as progress so the LLM can react.
+        if intermediate_content is not None:
+            placeholder_content = serialize_tool_content(
+                tool_name=info.name,
+                payload=intermediate_content,
+                is_final=False,
+            )
+        else:
+            placeholder_content = json.dumps(
+                {"_placeholder": "nested_start"},
+                indent=4,
+            )
+
         ph = info.tool_reply_msg
         if ph is None:
             ph = create_tool_call_message(
                 name=info.name,
                 call_id=info.call_id,
-                content=json.dumps({"_placeholder": "nested_start"}, indent=4),
+                content=placeholder_content,
             )
             await insert_tool_message_after_assistant(
                 assistant_meta,
@@ -745,7 +835,7 @@ class ToolsData:
             )
             info.tool_reply_msg = ph
         else:
-            ph["content"] = json.dumps({"_placeholder": "nested_start"}, indent=4)
+            ph["content"] = placeholder_content
 
         # Book-keeping for the new task (inherit, share placeholder)
         metadata = dataclasses.replace(
