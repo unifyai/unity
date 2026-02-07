@@ -186,18 +186,13 @@ class DynamicToolFactory:
         handle: Any,
     ) -> None:
         doc = (
-            f"Stop pending call {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+            f"Stop {tool_context.fn_name}({tool_context.arg_repr}), cancelling any pending work.\n\n"
+            "While any tools are still running you cannot end the conversation;\n"
+            "stop or wait for all in-flight tools to complete, then respond.\n\n"
             "Parameters\n"
             "----------\n"
             "reason : str | None\n"
-            "    Optional human‑readable reason for stopping the running tool call.\n\n"
-            "Returns\n"
-            "-------\n"
-            "Dict[str, str]\n"
-            "    Status acknowledgement including the underlying call id.\n\n"
-            "Notes\n"
-            "-----\n"
-            "- The stop request is forwarded to the underlying handle when available."
+            "    Optional human-readable reason for stopping."
         )
 
         async def _stop(**_kw) -> Dict[str, str]:
