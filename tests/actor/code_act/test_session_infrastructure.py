@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from unity.actor.code_act_actor import (
+from unity.actor.execution import (
     SessionExecutor,
     _validate_execution_params,
     parts_to_text,

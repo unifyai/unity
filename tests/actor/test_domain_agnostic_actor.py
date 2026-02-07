@@ -919,7 +919,7 @@ async def test_code_act_actor_primitives_only_sandbox_can_call_state_managers():
 
     actor = CodeActActor(environments=[StateManagerEnvironment(primitives)])
     try:
-        from unity.actor.code_act_actor import PythonExecutionSession
+        from unity.actor.execution import PythonExecutionSession
 
         sandbox = PythonExecutionSession(environments=actor.environments)
         exec_result = await sandbox.execute(

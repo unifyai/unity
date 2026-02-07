@@ -20,11 +20,8 @@ from typing import Any, AsyncIterator
 import pytest
 import pytest_asyncio
 
-from unity.actor.code_act_actor import (
-    CodeActActor,
-    ExecutionResult,
-    parts_to_text,
-)
+from unity.actor.code_act_actor import CodeActActor
+from unity.actor.execution import ExecutionResult, parts_to_text
 from unity.actor.environments import StateManagerEnvironment
 from unity.function_manager.primitives import Primitives
 from unity.manager_registry import ManagerRegistry
