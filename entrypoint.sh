@@ -7,7 +7,6 @@ set -e
 REDIS_PID=""
 MAIN_PID=""
 AGENT_PID=""
-CSB_PID=""
 
 # Function to handle graceful shutdown
 cleanup() {
@@ -39,15 +38,6 @@ cleanup() {
         pkill -f "ts-node" 2>/dev/null || true
     fi
 
-    if [ ! -z "$CSB_PID" ]; then
-        echo "Stopping codesandbox-service (PID: $CSB_PID)..."
-        kill -TERM $CSB_PID 2>/dev/null || true
-        wait $CSB_PID 2>/dev/null || true
-    else
-        echo "Stopping codesandbox-service..."
-        pkill -f "codesandbox-service" 2>/dev/null || true
-    fi
-
     echo "Cleanup complete"
     exit 0
 }
@@ -72,12 +62,6 @@ echo "Starting agent-service..."
 npx ts-node /app/agent-service/src/index.ts &
 AGENT_PID=$!
 echo "Agent-service started with PID: $AGENT_PID"
-
-# Start codesandbox-service
-echo "Starting codesandbox-service..."
-npx ts-node /app/codesandbox-service/src/index.ts &
-CSB_PID=$!
-echo "Codesandbox-service started with PID: $CSB_PID"
 
 # Start the main application
 echo "Starting convo manager..."

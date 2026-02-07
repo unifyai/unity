@@ -989,52 +989,6 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
         )
 
 
-def mirror_global_file_manager_tools(kind: str) -> Dict[str, Any]:
-    """Build a tool-dict mirroring the real GlobalFileManager's tool exposure.
-
-    kind: "ask" or "organize". Uses AST reflection with a static fallback.
-    """
-    from unity.common.llm_helpers import methods_to_tool_dict
-    from unity.file_manager.global_file_manager import GlobalFileManager
-
-    target_attr = "_ask_tools" if kind == "ask" else "_organize_tools"
-
-    try:
-        pairs = _extract_owner_method_pairs(
-            GlobalFileManager,
-            target_attr,
-            self_external_map=None,
-            extra_class_names={"GlobalFileManager": GlobalFileManager},
-        )
-        if pairs:
-            tools = _build_tool_dict(pairs)
-            if tools:
-                return tools
-    except Exception as e:
-        print(f"mirror_global_file_manager_tools({kind}) failed: {e}")
-
-    # Fallback – align with new delegation-only model
-    if kind == "ask":
-        # Require listing filesystems first; no low-level ops exposed here
-        return methods_to_tool_dict(
-            GlobalFileManager.list_filesystems,
-            include_class_name=False,
-        )
-    elif kind == "organize":
-        # Organize should have discovery via ask available
-        return methods_to_tool_dict(
-            GlobalFileManager.ask,
-            GlobalFileManager.list_filesystems,
-            include_class_name=False,
-        )
-    else:
-        # Default to ask tools (GlobalFileManager only exposes list_filesystems directly)
-        return methods_to_tool_dict(
-            GlobalFileManager.list_filesystems,
-            include_class_name=False,
-        )
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # WebSearcher mirroring
 # ─────────────────────────────────────────────────────────────────────────────

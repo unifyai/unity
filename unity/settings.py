@@ -138,7 +138,7 @@ class ProductionSettings(BaseSettings):
     #   - Actor, ContactManager, TranscriptManager, TaskScheduler, ConversationManager
     # Optional managers (can be disabled via ENABLED=False):
     #   - KnowledgeManager, GuidanceManager, SecretManager,
-    #     WebSearcher, GlobalFileManager
+    #     WebSearcher
 
     # ─────────────────────────────────────────────────────────────────────────
     # Composed Manager Settings

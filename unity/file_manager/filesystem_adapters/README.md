@@ -1,6 +1,6 @@
 ## `filesystem_adapters/` — filesystem adapters
 
-This package contains **thin synchronous adapters** around concrete storage backends (local FS, Google Drive, CodeSandbox, etc.).
+This package contains **thin synchronous adapters** around concrete storage backends.
 
 ## Responsibilities
 
@@ -25,7 +25,7 @@ This package contains **thin synchronous adapters** around concrete storage back
 Adapters must provide stable identifiers:
 
 - `FileReference.path`: canonical “adapter path” used by FileManager as the **logical path**
-- `FileReference.uri`: canonical provider URI (e.g. `local:///abs/path`, `gdrive://fileId`) when available
+- `FileReference.uri`: canonical provider URI (e.g. `local:///abs/path`) when available
 
 ## Export strategy
 

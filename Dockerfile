@@ -61,11 +61,6 @@ WORKDIR /app/agent-service
 RUN npm ci
 WORKDIR /app
 
-# Build codesandbox-service
-WORKDIR /app/codesandbox-service
-RUN npm ci
-WORKDIR /app
-
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}

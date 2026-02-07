@@ -9,7 +9,6 @@ import pytest
 from pathlib import Path
 from typing import Any, Dict
 from unity.file_manager.managers.local import LocalFileManager
-from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.simulated import SimulatedFileManager
 from unity.common.llm_client import new_llm_client
 
@@ -134,14 +133,6 @@ def rootless_file_manager():
     )
 
     return FileManager(adapter=LocalFileSystemAdapter(None))
-
-
-@pytest.fixture()
-def global_file_manager(file_manager):
-    """Return the singleton GlobalFileManager configured with the local manager."""
-    local = file_manager
-    gfm = GlobalFileManager([local])
-    return gfm
 
 
 @pytest.fixture(scope="module")

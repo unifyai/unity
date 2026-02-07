@@ -18,14 +18,6 @@ class FileSettings(BaseSettings):
     Attributes:
         ENABLED: Whether FileManager is enabled.
         IMPL: Implementation type - "real" or "simulated".
-        CODESANDBOX_SERVICE_BASE_URL: Base URL for CodeSandbox service.
-        CODESANDBOX_SERVICE_PORT: Port for CodeSandbox service.
-        CODESANDBOX_API_TOKEN: API token for CodeSandbox.
-        INTERACT_API_BASE: Base URL for Interact API.
-        INTERACT_KEY: API key for Interact.
-        INTERACT_SECRET: API secret for Interact.
-        INTERACT_PERSON_ID: Person ID for Interact.
-        INTERACT_TENANT: Tenant for Interact.
         CONSOLE_BASE_URL: Base URL for Unify Console (Plot API).
         PLOT_API_ENDPOINT: Endpoint path for plot creation.
         PLOT_API_TIMEOUT: Timeout in seconds for plot API requests.
@@ -35,18 +27,6 @@ class FileSettings(BaseSettings):
 
     ENABLED: bool = False
     IMPL: str = "real"
-
-    # CodeSandbox adapter settings
-    CODESANDBOX_SERVICE_BASE_URL: str = ""
-    CODESANDBOX_SERVICE_PORT: str = "3100"
-    CODESANDBOX_API_TOKEN: str = ""
-
-    # Interact adapter settings
-    INTERACT_API_BASE: str = ""
-    INTERACT_KEY: str = ""
-    INTERACT_SECRET: str = ""
-    INTERACT_PERSON_ID: str = ""
-    INTERACT_TENANT: str = ""
 
     # Plot API settings
     CONSOLE_BASE_URL: str = "https://console.unify.ai"

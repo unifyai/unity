@@ -28,7 +28,7 @@ class FileReference(BaseModel):
     name: str
     provider: Optional[str] = Field(
         default=None,
-        description="Stable provider/adapter name (e.g., 'Local', 'GoogleDrive').",
+        description="Stable provider/adapter name (e.g., 'Local').",
     )
     uri: Optional[str] = Field(
         default=None,

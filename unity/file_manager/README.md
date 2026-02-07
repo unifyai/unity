@@ -37,7 +37,7 @@ Important invariant: `/Content/` is the *navigation + retrieval* surface. Raw ta
 
 ## Directory taxonomy
 
-- `filesystem_adapters/`: thin synchronous adapters around concrete file stores (local FS, Google Drive, etc.)
+- `filesystem_adapters/`: thin synchronous adapters around concrete file stores (local FS)
 - `file_parsers/`: format-aware parsing subsystem. Input is `FileParseRequest`, output is `FileParseResult`.
 - `parse_adapter/`: FileManager-owned transformation of parse artifacts into ingestion payloads (lowering).
 - `managers/`: orchestration (export files, parse, ingest rows, embed).
