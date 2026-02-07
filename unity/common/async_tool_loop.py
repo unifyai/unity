@@ -266,6 +266,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         client: "unillm.AsyncUnify | None" = None,
         loop_id: str = "",
         initial_user_message: Optional[Any] = None,
+        response_format: Optional[Any] = None,
     ):
         self._task = task
         self._queue = interject_queue
@@ -283,6 +284,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Only the top-level handle should emit the public stop log.
         # Nested/adopted handles will inherit False to avoid duplicate logging.
         self._is_root_handle: bool = False
+        # When set, result() parses the raw JSON string from the loop into a
+        # Pydantic model instance so callers don't need bespoke parsing.
+        self._response_format: Optional[Any] = response_format
 
         # Maintain a user-visible history (what the end-user would see):
         # Records: original prompt (user), interjections (user), ask Q/A (user/assistant).
@@ -677,14 +681,27 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         return self._task.done()
 
     @functools.wraps(SteerableToolHandle.result, updated=())
-    async def result(self) -> str:
-        """Return the final answer once the conversation loop (or delegate) completes."""
+    async def result(self):
+        """Return the final answer once the conversation loop (or delegate) completes.
+
+        When *response_format* was supplied to ``start_async_tool_loop``, the
+        raw JSON string produced by the inner loop is automatically parsed into
+        a Pydantic model instance.  Callers receive the typed object directly
+        and do not need to call ``model_validate_json`` themselves.
+        """
         _stopped_notice = "processed stopped early, no result"
         try:
-            return await self._task
+            raw = await self._task
         except asyncio.CancelledError:
             # When callers cancel the OUTER loop without a delegate, return a stable notice.
             return _stopped_notice
+
+        if self._response_format is not None and isinstance(raw, str):
+            try:
+                return self._response_format.model_validate_json(raw)
+            except Exception:
+                pass
+        return raw
 
     def get_history(self) -> list[dict]:
         """Returns the full LLM conversation history including tool calls and reasoning.
@@ -924,6 +941,7 @@ def start_async_tool_loop(
         client=client,
         loop_id=loop_id,
         initial_user_message=init_content,
+        response_format=response_format,
     )
 
     # Attach lineage to handle for optional external inspection
