@@ -150,6 +150,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.completed_actions: dict[int, dict] = (
             {}
         )  # Finished actions, kept for post-completion ask() queries
+        self._pending_steering_tasks: set[asyncio.Task] = (
+            set()
+        )  # Background tasks from async steering ops (e.g., ask_*)
         self.last_snapshot = prompt_now(as_string=False)
         self._current_snapshot = None
         self._current_state_snapshot = (

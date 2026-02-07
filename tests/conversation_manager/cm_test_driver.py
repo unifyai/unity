@@ -262,9 +262,12 @@ class CMStepDriver:
                 if tool_name:
                     self.all_tool_calls.append(tool_name)
 
-                # Yield control to allow any background tasks (e.g., async ask
-                # completions) to run and potentially emit events
-                await asyncio.sleep(0)
+                # Await any pending steering tasks (e.g., async ask_*)
+                # so their events flow through our publish_wrapper and
+                # request_llm_run patch while they're still active.
+                pending = set(self._cm._pending_steering_tasks)
+                if pending:
+                    await asyncio.wait(pending, timeout=120)
 
                 # Check if another LLM run was requested (e.g., by event handlers
                 # processing events from background tasks)

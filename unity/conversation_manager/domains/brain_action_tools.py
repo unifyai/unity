@@ -1137,7 +1137,9 @@ class ConversationManagerBrainActionTools:
                     ).to_json(),
                 )
 
-            asyncio.create_task(_perform_ask_and_emit())
+            task = asyncio.create_task(_perform_ask_and_emit())
+            cm._pending_steering_tasks.add(task)
+            task.add_done_callback(cm._pending_steering_tasks.discard)
 
             return {
                 "status": "ok",
@@ -1239,7 +1241,11 @@ class ConversationManagerBrainActionTools:
                                 ).to_json(),
                             )
 
-                        asyncio.create_task(_perform_ask_and_emit())
+                        task = asyncio.create_task(_perform_ask_and_emit())
+                        cm._pending_steering_tasks.add(task)
+                        task.add_done_callback(
+                            cm._pending_steering_tasks.discard,
+                        )
 
                         # Return immediately - brain will be woken when result arrives
                         return {
