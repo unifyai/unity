@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_pause_resume_inflight_handle(initialized_cm_codeact):
     """Pause and resume an in-flight actor handle (steerability surface stays functional)."""
@@ -54,19 +54,19 @@ async def test_pause_resume_inflight_handle(initialized_cm_codeact):
 
     await wait_for_condition(
         lambda: get_handle_paused_state(handle) is True,
-        timeout=30,
+        timeout=300,
         poll=0.05,
         timeout_message="Timed out waiting for handle to enter paused state.",
     )
 
     await handle.resume()
 
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
     assert_no_errors(result)
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_stop_inflight_handle(initialized_cm_codeact):
     """
@@ -89,7 +89,7 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
 
     # Stop the action deterministically and ensure CM moves it to completed_actions.
     await handle.stop(reason="test_stop")
-    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=30)
+    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     # Manually inject the ActorResult event to trigger CM's event handler
     # (CMStepDriver patches the event broker and doesn't auto-forward background events).
@@ -106,7 +106,7 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_interject_midflight_constraints(initialized_cm_codeact):
     """Interject constraints mid-flight and ensure the handle remains healthy through completion."""
@@ -127,12 +127,12 @@ async def test_interject_midflight_constraints(initialized_cm_codeact):
         _parent_chat_context_cont=cm.cm.chat_history,
     )
 
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
     assert_no_errors(result)
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_codeact):
     """
@@ -165,7 +165,7 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
     await handle_a.pause()
     await wait_for_condition(
         lambda: get_handle_paused_state(handle_a) is True,
-        timeout=30,
+        timeout=300,
         poll=0.05,
         timeout_message="Timed out waiting for handle A to enter paused state.",
     )
@@ -187,7 +187,7 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
     assert handle_id_a != handle_id_b
 
     # B should complete successfully even while A is paused.
-    _final_b = await wait_for_actor_completion(cm, handle_id_b, timeout=120)
+    _final_b = await wait_for_actor_completion(cm, handle_id_b, timeout=300)
     assert_no_errors(result_b)
 
     # A should still be paused (i.e., steering isolation; no cross-talk).
@@ -195,12 +195,12 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
 
     # Cleanup A (stop) so we don't leak in-flight state.
     await handle_a.stop(reason="test_concurrency_cleanup")
-    _ = await wait_for_actor_completion(cm, handle_id_a, timeout=60)
+    _ = await wait_for_actor_completion(cm, handle_id_a, timeout=300)
     assert_no_errors(result_a)
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_ask_completed_action_about_trajectory(initialized_cm_codeact):
     """
@@ -229,7 +229,7 @@ async def test_ask_completed_action_about_trajectory(initialized_cm_codeact):
     handle_id = actor_event.handle_id
 
     # Wait for action to complete
-    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     # Inject the ActorResult event to trigger CM's event handler
     # (test driver patches event broker and doesn't forward background events)

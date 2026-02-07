@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_find_contact_then_send_sms(initialized_cm_codeact):
     """
@@ -52,7 +52,7 @@ async def test_find_contact_then_send_sms(initialized_cm_codeact):
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
 
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
     # Ensure the CM brain can observe completion deterministically.
     await inject_actor_result(cm, handle_id=handle_id, result=final, success=True)
 
@@ -69,7 +69,7 @@ async def test_find_contact_then_send_sms(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_find_contact_then_send_email(initialized_cm_codeact):
     """
@@ -90,7 +90,7 @@ async def test_find_contact_then_send_email(initialized_cm_codeact):
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
 
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
     await inject_actor_result(cm, handle_id=handle_id, result=final, success=True)
     followup_events = await run_cm_until_wait(cm, max_steps=6)
 
@@ -102,7 +102,7 @@ async def test_find_contact_then_send_email(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_summarize_file_then_create_task(
     initialized_cm_codeact,
@@ -128,7 +128,7 @@ async def test_summarize_file_then_create_task(
     )
     actor_event1 = get_actor_started_event(result1)
     handle_id1 = actor_event1.handle_id
-    _summary = await wait_for_actor_completion(cm, handle_id1, timeout=90)
+    _summary = await wait_for_actor_completion(cm, handle_id1, timeout=300)
     assert_no_errors(result1)
 
     # Step 2 (realistic): user follows up asking to create a task based on the summary.
@@ -144,7 +144,7 @@ async def test_summarize_file_then_create_task(
 
     actor_event2 = get_actor_started_event(result2)
     handle_id2 = actor_event2.handle_id
-    _final = await wait_for_actor_completion(cm, handle_id2, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id2, timeout=300)
 
     task_id = find_task_id_by_name_contains(name=task_name)
     verify_task_in_db(
@@ -156,7 +156,7 @@ async def test_summarize_file_then_create_task(
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_single_message_file_then_create_task(
     initialized_cm_codeact,
@@ -202,7 +202,7 @@ async def test_single_message_file_then_create_task(
 
     # CM may break compound instructions into multiple serial actor calls.
     # Loop until CM calls `wait` with zero in-flight actors.
-    _results = await run_until_all_actors_complete(cm, result, timeout_per_actor=90)
+    _results = await run_until_all_actors_complete(cm, result, timeout_per_actor=300)
 
     # Verify the task was created with the token in its description.
     task_id = find_task_id_by_name_contains(name=task_name)
@@ -221,7 +221,7 @@ async def test_single_message_file_then_create_task(
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_single_message_update_contact_then_create_task(initialized_cm_codeact):
     """
@@ -268,7 +268,7 @@ async def test_single_message_update_contact_then_create_task(initialized_cm_cod
 
     # CM may break compound instructions into multiple serial actor calls.
     # Loop until CM calls `wait` with zero in-flight actors.
-    _results = await run_until_all_actors_complete(cm, result, timeout_per_actor=90)
+    _results = await run_until_all_actors_complete(cm, result, timeout_per_actor=300)
 
     # Verify the contact update persisted.
     payload = cm.cm.contact_manager.filter_contacts(

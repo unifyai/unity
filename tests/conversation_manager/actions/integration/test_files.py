@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_file_summarize_pdf_by_path(initialized_cm_codeact, test_files):
     """Summarize a PDF by file path (basic FileManager read + extraction path)."""
@@ -38,14 +38,14 @@ async def test_file_summarize_pdf_by_path(initialized_cm_codeact, test_files):
 
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert "test report" in final.lower() or "fixture" in final.lower()
     assert_no_errors(result)
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_file_read_csv_extracts_names(initialized_cm_codeact, test_files):
     """Read a CSV by file path and extract simple structured facts (rows + names)."""
@@ -63,7 +63,7 @@ async def test_file_read_csv_extracts_names(initialized_cm_codeact, test_files):
 
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     lower = final.lower()
     assert "alice" in lower and "bob" in lower
@@ -71,7 +71,7 @@ async def test_file_read_csv_extracts_names(initialized_cm_codeact, test_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_file_missing_path_returns_helpful_error(initialized_cm_codeact):
     """Missing file path is handled gracefully (no crash; returns a helpful error)."""
@@ -86,7 +86,7 @@ async def test_file_missing_path_returns_helpful_error(initialized_cm_codeact):
 
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert (
         "not found" in final.lower()

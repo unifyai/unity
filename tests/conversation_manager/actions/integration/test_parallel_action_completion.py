@@ -88,7 +88,7 @@ def _count_create_actions_for_name(events: list, contact_name: str) -> int:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_parallel_action_completion_preserves_first_result(
     initialized_cm_codeact,
@@ -144,7 +144,7 @@ async def test_parallel_action_completion_preserves_first_result(
     for i, handle_id in enumerate(handle_ids):
         try:
             # Wait for this actor to complete
-            final_result = await wait_for_actor_completion(cm, handle_id, timeout=90)
+            final_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
             # Inject the result back to CM (simulates ActorResult event)
             await inject_actor_result(

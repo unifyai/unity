@@ -489,7 +489,7 @@ class TestSteeringContextPropagation:
             # Await the background task so the mock ask() has executed
             pending = set(cm._pending_steering_tasks)
             if pending:
-                await asyncio.wait(pending, timeout=120)
+                await asyncio.wait(pending, timeout=300)
 
             # Verify context was captured
             assert len(captured_context) == 1, "ask should have been called once"

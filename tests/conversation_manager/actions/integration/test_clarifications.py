@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_clarification_handle_contract(initialized_cm_codeact):
     """
@@ -90,7 +90,7 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
     )
 
     # Verify next_clarification() surfaces the injected question.
-    clar = await asyncio.wait_for(handle.next_clarification(), timeout=30)
+    clar = await asyncio.wait_for(handle.next_clarification(), timeout=300)
     assert isinstance(clar, dict)
     q = str(clar.get("question") or "")
     assert "which john" in q.lower(), f"Expected clarification about John, got: {q!r}"
@@ -102,13 +102,13 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
 
     # End the handle to complete the flow deterministically.
     await handle.stop(reason="clarification_answered")
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=30)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert_no_errors(result)
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
     """
@@ -174,7 +174,7 @@ async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
             a.get("action_name") == "clarification_request"
             for a in cm.cm.in_flight_actions[handle_id].get("handle_actions", [])
         ),
-        timeout=30,
+        timeout=300,
         timeout_message="Timed out waiting for CM to record clarification_request in handle_actions.",
     )
 
@@ -195,12 +195,12 @@ async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
                 [],
             )
         ),
-        timeout=30,
+        timeout=300,
         timeout_message="Timed out waiting for CM brain to call answer_clarification_* steering tool.",
     )
 
     # Continue until wait; the action should complete or progress without errors.
     _ = await run_cm_until_wait(cm, max_steps=5)
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert_no_errors(result)

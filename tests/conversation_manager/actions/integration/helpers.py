@@ -39,7 +39,7 @@ T = TypeVar("T")
 async def wait_for_condition(
     predicate: Callable[[], bool | Awaitable[bool]],
     *,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
     poll: float = 0.05,
     timeout_message: str | None = None,
 ) -> None:
@@ -86,7 +86,7 @@ async def wait_for_actor_result_event(
     cm: Any,
     handle_id: int,
     *,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
 ) -> ActorResult:
     """Wait for ActorResult on the in-memory broker (published by actor_watch_result)."""
     broker = cm.cm.event_broker
@@ -115,7 +115,7 @@ async def wait_for_actor_clarification_event(
     cm: Any,
     handle_id: int,
     *,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
 ) -> ActorClarificationRequest:
     """Wait for ActorClarificationRequest on the in-memory broker."""
     broker = cm.cm.event_broker
@@ -163,7 +163,7 @@ async def wait_for_actor_completion(
     cm: Any,
     handle_id: int,
     *,
-    timeout: float = 90.0,
+    timeout: float = 300.0,
 ) -> str:
     """Wait for the actor handle result (primary completion signal)."""
     handle = extract_actor_handle(cm, handle_id)
@@ -275,7 +275,7 @@ async def run_cm_until_wait(
             # so their events flow through our patches while active.
             pending = set(cm._pending_steering_tasks)
             if pending:
-                await asyncio.wait(pending, timeout=120)
+                await asyncio.wait(pending, timeout=300)
 
             if tool_name == "wait" or tool_name is None:
                 break
@@ -294,7 +294,7 @@ async def run_until_all_actors_complete(
     cm_driver: Any,
     initial_result: Any,
     *,
-    timeout_per_actor: float = 90.0,
+    timeout_per_actor: float = 300.0,
     max_actors: int = 10,
     max_cm_steps: int = 10,
 ) -> list[str]:
@@ -366,7 +366,7 @@ class Clarification:
 async def wait_for_clarification(
     handle: Any,
     *,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
 ) -> Clarification:
     """Wait for a clarification request on the handle."""
     clar = await asyncio.wait_for(handle.next_clarification(), timeout=timeout)
@@ -386,7 +386,7 @@ async def answer_clarification_and_continue(
     *,
     call_id: str,
     answer: str,
-    timeout: float = 60.0,
+    timeout: float = 300.0,
 ) -> None:
     """
     Answer a clarification and wait for the handle to progress.

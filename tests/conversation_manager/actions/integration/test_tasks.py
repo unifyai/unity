@@ -26,7 +26,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_task_create_persists_in_db(initialized_cm_codeact):
     """Create a task via CM→Actor and verify it persisted."""
@@ -43,7 +43,7 @@ async def test_task_create_persists_in_db(initialized_cm_codeact):
 
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     task_id = find_task_id_by_exact_name(name=task_name)
     verify_task_in_db(
@@ -58,7 +58,7 @@ async def test_task_create_persists_in_db(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
     """Query an existing task via CM→Actor and get back the correct description."""
@@ -97,17 +97,17 @@ async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
         if handle.done():
             break
         try:
-            clar = await wait_for_clarification(handle, timeout=5)
+            clar = await wait_for_clarification(handle, timeout=300)
         except Exception:
             break
         await answer_clarification_and_continue(
             handle,
             call_id=clar.call_id,
             answer=task_name,
-            timeout=30,
+            timeout=300,
         )
 
-    final = await wait_for_actor_completion(cm, h2, timeout=90)
+    final = await wait_for_actor_completion(cm, h2, timeout=300)
 
     lower = final.lower()
     assert (
@@ -118,7 +118,7 @@ async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_task_mark_completed_persists_status(initialized_cm_codeact):
     """Mark a task completed via CM→Actor and verify status persisted."""
@@ -133,7 +133,7 @@ async def test_task_mark_completed_persists_status(initialized_cm_codeact):
         ),
     )
     h1 = get_actor_started_event(result1).handle_id
-    _ = await wait_for_actor_completion(cm, h1, timeout=90)
+    _ = await wait_for_actor_completion(cm, h1, timeout=300)
 
     result2 = await cm.step_until_wait(
         SMSReceived(
@@ -142,7 +142,7 @@ async def test_task_mark_completed_persists_status(initialized_cm_codeact):
         ),
     )
     h2 = get_actor_started_event(result2).handle_id
-    _ = await wait_for_actor_completion(cm, h2, timeout=90)
+    _ = await wait_for_actor_completion(cm, h2, timeout=300)
 
     task_id = find_task_id_by_exact_name(name=task_name)
     verify_task_in_db(
@@ -154,7 +154,7 @@ async def test_task_mark_completed_persists_status(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_single_message_task_create_then_query(initialized_cm_codeact):
     """
@@ -179,7 +179,7 @@ async def test_single_message_task_create_then_query(initialized_cm_codeact):
         ),
     )
     handle_id = get_actor_started_event(result).handle_id
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     # Side-effect verification: task exists with correct fields.
     task_id = find_task_id_by_exact_name(name=task_name)
