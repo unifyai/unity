@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.eval]
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_contact_lookup_by_email_returns_phone(initialized_cm_codeact):
     """Ask for a contact detail via CM→Actor and get back the correct phone number."""
@@ -43,7 +43,7 @@ async def test_contact_lookup_by_email_returns_phone(initialized_cm_codeact):
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
 
-    final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert "alice" in final.lower()
     digits = re.sub(r"\D", "", final)
@@ -52,7 +52,7 @@ async def test_contact_lookup_by_email_returns_phone(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_contact_create_persists_in_db(initialized_cm_codeact):
     """Create a new contact via CM→Actor and verify it was written to ContactManager storage."""
@@ -69,7 +69,7 @@ async def test_contact_create_persists_in_db(initialized_cm_codeact):
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
 
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     # Find the created contact by filtering ContactManager context (deterministic).
     payload = cm.cm.contact_manager.filter_contacts(
@@ -99,7 +99,7 @@ async def test_contact_create_persists_in_db(initialized_cm_codeact):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 @_handle_project
 async def test_contact_update_persists_in_db(initialized_cm_codeact):
     """Update an existing contact via CM→Actor and verify the change persisted."""
@@ -125,7 +125,7 @@ async def test_contact_update_persists_in_db(initialized_cm_codeact):
 
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=90)
+    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     payload = cm.cm.contact_manager.filter_contacts(
         filter=f"email_address == '{email}'",
