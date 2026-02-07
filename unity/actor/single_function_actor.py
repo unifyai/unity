@@ -14,9 +14,10 @@ Supports optional verification via LLM to check if the function achieved its goa
 
 Execution results are packaged as ``ExecutionResult`` objects (the same structured
 format used by ``CodeActActor``), capturing stdout, stderr, the return value, and
-any errors.  If the executed function returns a steerable handle, it will be nested
-inside the ``ExecutionResult.result`` field where the outer async tool loop can
-detect and adopt it via ``_extract_nested_handle``.
+any errors.  If the executed function returns a steerable handle, it is detected
+via ``_extract_nested_handle`` and all steering operations on the outer handle
+are forwarded to it.  The intermediate ``ExecutionResult`` (with stdout/stderr
+captured before the handle was returned) is published as a notification.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from unity.actor.execution import ExecutionResult, TextPart, execute_callable
+from unity.common._async_tool.tools_data import _extract_nested_handle
 from unity.common.async_tool_loop import (
     SteerableHandle,
     SteerableToolHandle,
@@ -64,10 +66,15 @@ class SingleFunctionActorHandle(BaseActorHandle):
     """
     A handle for a single function execution.
 
-    Steering operations (pause/resume/interject) are no-ops because this actor
-    does not run an LLM loop.  If the executed function itself returns a steerable
-    handle, it will be nested inside the ``ExecutionResult.result`` field where
-    the outer async tool loop can detect and steer it transparently.
+    If the executed function returns a ``SteerableToolHandle`` (e.g., from
+    ``CodeActActor.act()`` or ``start_async_tool_loop()``), it is detected
+    via ``_extract_nested_handle`` and all steering operations are forwarded
+    to it.  The intermediate ``ExecutionResult`` (with the handle replaced
+    by a sentinel) is published as a notification so callers can observe
+    stdout / stderr captured before the handle was returned.
+
+    For non-steerable functions, steering operations are no-ops and
+    ``result()`` returns the ``ExecutionResult`` directly.
     """
 
     def __init__(
@@ -95,44 +102,80 @@ class SingleFunctionActorHandle(BaseActorHandle):
         self._verification_passed: Optional[bool] = None
         self._verification_reason: Optional[str] = None
 
+        # Nested handle support
+        self._inner_handle: Optional[SteerableToolHandle] = None
+        self._handle_ready = asyncio.Event()
+        self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
+
         asyncio.create_task(self._monitor_execution())
 
     async def _monitor_execution(self):
-        """Await the execution task, run optional verification, and store the result."""
+        """Await the execution task, detect nested handles, run verification, store result."""
         try:
             execution_result: ExecutionResult = await self._execution_task
 
-            if not self._stopped:
-                # Run verification if enabled
-                if self._verify and self._actor is not None:
-                    try:
-                        verification = await self._actor._verify_execution(
-                            function_name=self._function_name,
-                            goal=self._goal,
-                            docstring=self._docstring,
-                            return_value=execution_result.result,
-                        )
-                        self._verification_passed = verification.success
-                        self._verification_reason = verification.reason
-
-                        if not verification.success:
-                            execution_result.error = (
-                                f"Verification failed: {verification.reason}"
-                            )
-                            logger.warning(
-                                f"Verification failed for '{self._function_name}': {verification.reason}",
-                            )
-                        else:
-                            logger.info(
-                                f"Verification passed for '{self._function_name}': {verification.reason}",
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Verification error for '{self._function_name}': {e}",
-                        )
-                        execution_result.error = f"Verification error: {e}"
-
+            if self._stopped:
                 self._execution_result = execution_result
+                return
+
+            # Check for a nested steerable handle inside the result.
+            raw_dict = {
+                "stdout": execution_result.stdout,
+                "stderr": execution_result.stderr,
+                "result": execution_result.result,
+                "error": execution_result.error,
+            }
+            nested_handle, cleaned = _extract_nested_handle(raw_dict)
+
+            if nested_handle is not None:
+                self._inner_handle = nested_handle
+                logger.info(
+                    f"Function '{self._function_name}' returned steerable handle, "
+                    f"forwarding steering to inner handle.",
+                )
+                # Publish the cleaned ExecutionResult as a notification so
+                # callers can observe any stdout/stderr captured before the
+                # handle was returned.
+                cleaned_result = ExecutionResult(**cleaned)
+                await self._notification_q.put({
+                    "type": "intermediate_result",
+                    "content": cleaned_result,
+                })
+                self._handle_ready.set()
+                # Do NOT set _completion_event -- the inner handle manages
+                # completion and result() forwards to it.
+                return
+
+            # Non-steerable: run verification if enabled
+            if self._verify and self._actor is not None:
+                try:
+                    verification = await self._actor._verify_execution(
+                        function_name=self._function_name,
+                        goal=self._goal,
+                        docstring=self._docstring,
+                        return_value=execution_result.result,
+                    )
+                    self._verification_passed = verification.success
+                    self._verification_reason = verification.reason
+
+                    if not verification.success:
+                        execution_result.error = (
+                            f"Verification failed: {verification.reason}"
+                        )
+                        logger.warning(
+                            f"Verification failed for '{self._function_name}': {verification.reason}",
+                        )
+                    else:
+                        logger.info(
+                            f"Verification passed for '{self._function_name}': {verification.reason}",
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Verification error for '{self._function_name}': {e}",
+                    )
+                    execution_result.error = f"Verification error: {e}"
+
+            self._execution_result = execution_result
 
         except asyncio.CancelledError:
             self._stopped = True
@@ -144,21 +187,30 @@ class SingleFunctionActorHandle(BaseActorHandle):
                 error=f"Function '{self._function_name}' failed: {e}",
             )
         finally:
+            self._handle_ready.set()
             self._completion_event.set()
 
-    async def result(self) -> ExecutionResult:
+    async def result(self):
+        await self._handle_ready.wait()
+        if self._inner_handle is not None:
+            return await self._inner_handle.result()
         await self._completion_event.wait()
         return self._execution_result or ExecutionResult(
             error=f"Function '{self._function_name}' produced no result.",
         )
 
     def done(self) -> bool:
+        if self._inner_handle is not None:
+            return self._inner_handle.done()
         return self._completion_event.is_set()
 
     async def stop(
         self,
         reason: Optional[str] = None,
     ) -> None:
+        if self._inner_handle is not None:
+            await self._inner_handle.stop(reason)
+            return
         if self._completion_event.is_set():
             return
         self._stopped = True
@@ -169,9 +221,13 @@ class SingleFunctionActorHandle(BaseActorHandle):
             pass
 
     async def pause(self) -> Optional[str]:
+        if self._inner_handle is not None:
+            return await self._inner_handle.pause()
         return None
 
     async def resume(self) -> Optional[str]:
+        if self._inner_handle is not None:
+            return await self._inner_handle.resume()
         return None
 
     async def interject(
@@ -180,7 +236,11 @@ class SingleFunctionActorHandle(BaseActorHandle):
         *,
         _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
-        pass
+        if self._inner_handle is not None:
+            await self._inner_handle.interject(
+                message,
+                _parent_chat_context_cont=_parent_chat_context_cont,
+            )
 
     async def ask(
         self,
@@ -188,6 +248,12 @@ class SingleFunctionActorHandle(BaseActorHandle):
         *,
         _parent_chat_context: list[dict] | None = None,
     ) -> SteerableHandle:
+        if self._inner_handle is not None:
+            return await self._inner_handle.ask(
+                question,
+                _parent_chat_context=_parent_chat_context,
+            )
+
         client = new_llm_client()
         id_info = "(primitive)" if self._is_primitive else f"(ID: {self._function_id})"
         client.set_system_message(
@@ -220,22 +286,38 @@ class SingleFunctionActorHandle(BaseActorHandle):
         return {}
 
     async def next_notification(self) -> dict:
-        await asyncio.Event().wait()
-        return {}
+        return await self._notification_q.get()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         return None
 
     def get_history(self) -> list[dict]:
+        if self._inner_handle is not None and hasattr(self._inner_handle, "get_history"):
+            return self._inner_handle.get_history()
         return []
 
     @property
     def clarification_up_q(self) -> Optional[asyncio.Queue[str]]:
+        if self._inner_handle is not None and hasattr(self._inner_handle, "clarification_up_q"):
+            return self._inner_handle.clarification_up_q
         return None
 
     @property
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
+        if self._inner_handle is not None and hasattr(self._inner_handle, "clarification_down_q"):
+            return self._inner_handle.clarification_down_q
         return None
+
+    @property
+    def is_steerable(self) -> bool:
+        return self._inner_handle is not None
+
+    @property
+    def inner_handle(self) -> Optional[SteerableToolHandle]:
+        return self._inner_handle
+
+
+
 
 
 class SingleFunctionActor(BaseActor):
