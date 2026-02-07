@@ -26,6 +26,8 @@ from .capture import (
     capture_sandbox_output,
 )
 
+from .callable import execute_callable
+
 from .session import (
     PythonExecutionSession,
     SessionExecutor,
@@ -55,6 +57,8 @@ __all__ = [
     "_stderr_parts",
     "_make_display",
     "capture_sandbox_output",
+    # callable
+    "execute_callable",
     # session
     "SupportedShellLanguage",
     "SupportedLanguage",

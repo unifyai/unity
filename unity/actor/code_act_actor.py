@@ -1436,6 +1436,7 @@ class CodeActActor(BaseCodeActActor):
                 )
 
             from unity.actor.single_function_actor import SingleFunctionActorHandle
+            from unity.actor.execution import ExecutionResult as _ExecutionResult
 
             fm = self.function_manager
             if fm is None:
@@ -1450,9 +1451,9 @@ class CodeActActor(BaseCodeActActor):
             )
             if not matches:
 
-                async def _fail() -> Any:
-                    raise RuntimeError(
-                        "can_compose=False: no matching functions found via semantic search.",
+                async def _fail() -> _ExecutionResult:
+                    return _ExecutionResult(
+                        error="can_compose=False: no matching functions found via semantic search.",
                     )
 
                 return SingleFunctionActorHandle(
@@ -1478,7 +1479,7 @@ class CodeActActor(BaseCodeActActor):
             except Exception:
                 primitives = None
 
-            async def _run_found() -> Any:
+            async def _run_found() -> _ExecutionResult:
                 out = await fm.execute_function(
                     function_name=fn_name,
                     primitives=primitives,
@@ -1487,11 +1488,9 @@ class CodeActActor(BaseCodeActActor):
                     shell_pool=self._shell_pool,
                     state_mode="stateless",
                 )
-                if isinstance(out, dict) and out.get("error"):
-                    raise RuntimeError(str(out.get("error")))
                 if isinstance(out, dict):
-                    return out.get("result")
-                return out
+                    return _ExecutionResult(**out)
+                return _ExecutionResult(result=out)
 
             return SingleFunctionActorHandle(
                 function_name=fn_name,

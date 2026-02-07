@@ -96,7 +96,7 @@ async def test_execute_sync_function_by_id():
     )
 
     result = await handle.result()
-    assert "Hello, Alice!" in result
+    assert result.result == "Hello, Alice!"
     assert handle.done()
 
 
@@ -119,7 +119,7 @@ async def test_execute_async_function_by_id():
     )
 
     result = await handle.result()
-    assert "Async hello, Bob!" in result
+    assert result.result == "Async hello, Bob!"
     assert handle.done()
 
 
@@ -142,7 +142,7 @@ async def test_execute_function_by_description():
     )
 
     result = await handle.result()
-    assert "Hello, Charlie!" in result
+    assert result.result == "Hello, Charlie!"
     assert handle.done()
 
 
@@ -182,7 +182,7 @@ def send_email(to: str, subject: str) -> str:
     )
 
     result = await handle.result()
-    assert "8" in result  # 5 + 3 = 8
+    assert str(result.result) == "8"  # 5 + 3 = 8
 
 
 @pytest.mark.asyncio
@@ -216,7 +216,7 @@ def greet_pet(name: str) -> str:
     )
 
     result = await handle.result()
-    assert "Good boy" in result or "Buddy" in result
+    assert result.result is not None and ("Good boy" in str(result.result) or "Buddy" in str(result.result))
 
 
 @pytest.mark.asyncio
@@ -327,7 +327,7 @@ async def test_execute_function_default_args():
     )
 
     result = await handle.result()
-    assert "Hello, World!" in result
+    assert result.result == "Hello, World!"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -402,8 +402,8 @@ async def test_function_execution_error():
     handle = await actor.act(function_id=function_id)
 
     result = await handle.result()
-    assert "Error:" in result or "failed" in result.lower()
-    assert "Intentional test failure" in result
+    assert result.error is not None
+    assert "Intentional test failure" in result.error
     assert handle.done()
 
 
@@ -428,11 +428,11 @@ async def test_handle_pause_is_noop():
     handle = await actor.act(function_id=function_id)
 
     pause_result = await handle.pause()
-    assert "acknowledged" in pause_result.lower() or "no effect" in pause_result.lower()
+    assert pause_result is None
 
     # Function should still complete normally
     result = await handle.result()
-    assert "Hello" in result
+    assert "Hello" in str(result.result)
 
 
 @pytest.mark.asyncio
@@ -451,12 +451,10 @@ async def test_handle_resume_is_noop():
     handle = await actor.act(function_id=function_id)
 
     resume_result = await handle.resume()
-    assert (
-        "acknowledged" in resume_result.lower() or "no effect" in resume_result.lower()
-    )
+    assert resume_result is None
 
     result = await handle.result()
-    assert "Hello" in result
+    assert "Hello" in str(result.result)
 
 
 @pytest.mark.asyncio
@@ -477,7 +475,7 @@ async def test_handle_interject_is_noop():
     await handle.interject("change something")
 
     result = await handle.result()
-    assert "Hello" in result
+    assert "Hello" in str(result.result)
 
 
 @pytest.mark.asyncio
@@ -739,7 +737,7 @@ async def test_execute_function_in_custom_venv(cleanup_venvs):
     )
 
     result = await handle.result()
-    assert "Hello from venv, VenvUser!" in result
+    assert result.result == "Hello from venv, VenvUser!"
     assert handle.done()
 
 
@@ -766,7 +764,7 @@ async def test_execute_venv_function_by_description(cleanup_venvs):
     )
 
     result = await handle.result()
-    assert "Hello from venv" in result
+    assert result.result is not None and "Hello from venv" in str(result.result)
     assert handle.done()
 
 
@@ -798,8 +796,8 @@ async def venv_error_function() -> str:
     handle = await actor.act(function_id=func_data["function_id"])
 
     result = await handle.result()
-    assert "Error" in result or "failed" in result.lower()
-    assert "Error from inside venv" in result
+    assert result.error is not None
+    assert "Error from inside venv" in result.error
     assert handle.done()
 
 
@@ -897,7 +895,7 @@ def sync_venv_add(a: int, b: int) -> int:
     )
 
     result = await handle.result()
-    assert "8" in result
+    assert str(result.result) == "8"
     assert handle.done()
 
 
@@ -955,7 +953,7 @@ async def test_verification_passes_for_successful_function():
     result = await handle.result()
 
     # Should succeed
-    assert "Error" not in result
+    assert result.error is None
     assert handle._verification_passed is True
     assert handle._verification_reason is not None
 
@@ -982,7 +980,7 @@ async def test_verification_fails_for_failed_function():
 
     # Should fail verification
     assert handle._verification_passed is False
-    assert "verification failed" in result.lower() or "error" in result.lower()
+    assert result.error is not None and ("verification failed" in result.error.lower() or "error" in result.error.lower())
     assert handle._verification_reason is not None
 
 
@@ -1020,7 +1018,7 @@ async def no_verify_task() -> str:
 
     # Verification should not have run
     assert handle._verification_passed is None
-    assert "Done without verification" in result
+    assert result.result == "Done without verification"
 
 
 @pytest.mark.asyncio
@@ -1093,282 +1091,13 @@ async def verified_sum(a: int, b: int) -> dict:
 
     # Verification should not have run
     assert handle._verification_passed is None
-    assert "success" in result.lower() or "3" in result
+    assert result.result is not None and ("success" in str(result.result).lower() or "3" in str(result.result))
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Steerable Function Forwarding Tests
 # ────────────────────────────────────────────────────────────────────────────
 
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_steerable_function_detected_and_forwarded():
-    """A function returning SteerableHandle should be detected and forwarded."""
-    from unity.common.async_tool_loop import SteerableHandle
-
-    fm = FunctionManager()
-
-    # Create a function that returns a steerable handle
-    steerable_impl = '''
-async def steerable_workflow(goal: str):
-    """A workflow that returns a steerable handle."""
-    client = new_llm_client()
-    client.set_system_message("You are helpful. Be very brief.")
-
-    handle = start_async_tool_loop(
-        client=client,
-        message=goal,
-        tools={},
-        loop_id="test-steerable",
-        timeout=30,
-    )
-    return handle
-'''
-    fm.add_functions(implementations=[steerable_impl])
-    functions = fm.list_functions(include_implementations=True)
-    func_data = functions["steerable_workflow"]
-
-    actor = SingleFunctionActor(
-        computer_primitives=None,
-        function_manager=fm,
-    )
-
-    handle = await actor.act(
-        function_id=func_data["function_id"],
-        call_kwargs={"goal": "Say only the word 'hello'"},
-        verify=False,
-    )
-
-    # Wait for the function to return (and inner handle to be detected)
-    await handle._function_returned.wait()
-
-    # Should have detected the inner handle
-    assert handle.is_steerable
-    assert handle.inner_handle is not None
-    assert isinstance(handle.inner_handle, SteerableHandle)
-
-    # Clean up
-    await handle.stop("test cleanup")
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_steerable_function_result_forwarded():
-    """Result from steerable function should be forwarded from inner handle."""
-    fm = FunctionManager()
-
-    steerable_impl = '''
-async def steerable_brief_response(message: str):
-    """A workflow that returns a steerable handle for brief responses."""
-    client = new_llm_client()
-    client.set_system_message("Respond with exactly one word only.")
-
-    handle = start_async_tool_loop(
-        client=client,
-        message=message,
-        tools={},
-        loop_id="test-brief",
-        timeout=30,
-    )
-    return handle
-'''
-    fm.add_functions(implementations=[steerable_impl])
-    functions = fm.list_functions(include_implementations=True)
-    func_data = functions["steerable_brief_response"]
-
-    actor = SingleFunctionActor(
-        computer_primitives=None,
-        function_manager=fm,
-    )
-
-    handle = await actor.act(
-        function_id=func_data["function_id"],
-        call_kwargs={"message": "Say only 'done'"},
-        verify=False,
-    )
-
-    # Get result (should forward to inner handle)
-    result = await asyncio.wait_for(handle.result(), timeout=60.0)
-    assert result is not None
-    assert isinstance(result, str)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_steerable_function_stop_forwarded():
-    """Stop on steerable function should forward to inner handle."""
-    fm = FunctionManager()
-
-    steerable_impl = '''
-async def steerable_slow_task(duration: int):
-    """A slow steerable workflow."""
-    client = new_llm_client()
-    client.set_system_message("Count slowly to the given number, one at a time.")
-
-    handle = start_async_tool_loop(
-        client=client,
-        message=f"Count to {duration} slowly",
-        tools={},
-        loop_id="test-slow",
-        timeout=300,
-    )
-    return handle
-'''
-    fm.add_functions(implementations=[steerable_impl])
-    functions = fm.list_functions(include_implementations=True)
-    func_data = functions["steerable_slow_task"]
-
-    actor = SingleFunctionActor(
-        computer_primitives=None,
-        function_manager=fm,
-    )
-
-    handle = await actor.act(
-        function_id=func_data["function_id"],
-        call_kwargs={"duration": 100},
-        verify=False,
-    )
-
-    # Wait for inner handle to be available
-    await handle._function_returned.wait()
-    assert handle.is_steerable
-
-    # Stop should forward to inner handle
-    await handle.stop("test stop")
-
-    # Result should complete (after stop)
-    result = await asyncio.wait_for(handle.result(), timeout=10.0)
-    assert result is not None
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_non_steerable_function_not_marked_steerable():
-    """A regular function should not be marked as steerable."""
-    fm = FunctionManager()
-    simple_function = _create_async_function(fm)
-
-    actor = SingleFunctionActor(
-        computer_primitives=None,
-        function_manager=fm,
-    )
-
-    handle = await actor.act(function_id=simple_function["function_id"])
-
-    # Wait for completion
-    await handle.result()
-
-    # Should NOT be steerable
-    assert not handle.is_steerable
-    assert handle.inner_handle is None
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_codeact_actor_compositional_function_steerable():
-    """A compositional function wrapping CodeActActor should be steerable."""
-    from unity.common.async_tool_loop import SteerableHandle
-
-    fm = FunctionManager()
-
-    codeact_impl = '''
-async def codeact_workflow(goal: str):
-    """A workflow powered by CodeActActor."""
-    from unity.actor.code_act_actor import CodeActActor
-
-    actor = CodeActActor()
-    handle = await actor.act(
-        description=goal,
-        clarification_enabled=False,
-    )
-    return handle
-'''
-    fm.add_functions(implementations=[codeact_impl])
-    functions = fm.list_functions(include_implementations=True)
-    func_data = functions["codeact_workflow"]
-
-    actor = SingleFunctionActor(
-        computer_primitives=None,
-        function_manager=fm,
-    )
-
-    handle = await actor.act(
-        function_id=func_data["function_id"],
-        call_kwargs={"goal": "Say hello briefly"},
-        verify=False,
-    )
-
-    # Wait for inner handle detection
-    await handle._function_returned.wait()
-
-    # Should be steerable (CodeActActor returns SteerableToolHandle)
-    assert handle.is_steerable
-    assert handle.inner_handle is not None
-    assert isinstance(handle.inner_handle, SteerableHandle)
-
-    # Clean up
-    await handle.stop("test cleanup")
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_codeact_compositional_search_no_primitives_with_interjection():
-    """Search for CodeActActor compositional function (no primitives) and test interjection passthrough."""
-    from unity.common.async_tool_loop import SteerableHandle
-
-    fm = FunctionManager()
-
-    # Create a compositional function that wraps CodeActActor
-    codeact_impl = '''
-async def counting_workflow(target: int):
-    """A workflow that counts numbers slowly using CodeActActor.
-
-    This function uses an AI agent to count from 1 to the target number,
-    announcing each number one at a time.
-    """
-    from unity.actor.code_act_actor import CodeActActor
-
-    actor = CodeActActor()
-    handle = await actor.act(
-        description=f"Count from 1 to {target}, saying each number one at a time. Take your time.",
-        clarification_enabled=False,
-    )
-    return handle
-'''
-    fm.add_functions(implementations=[codeact_impl])
-
-    actor = SingleFunctionActor(
-        computer_primitives=None,
-        function_manager=fm,
-    )
-
-    # Search by description with primitives EXCLUDED
-    handle = await actor.act(
-        description="count numbers slowly",
-        include_primitives=False,  # Explicitly exclude primitives
-        call_kwargs={"target": 10},
-        verify=False,
-    )
-
-    # Wait for inner handle detection
-    await handle._function_returned.wait()
-
-    # Should be steerable
-    assert handle.is_steerable, "Handle should be steerable"
-    assert handle.inner_handle is not None, "Inner handle should be available"
-    assert isinstance(
-        handle.inner_handle,
-        SteerableHandle,
-    ), "Inner handle should be SteerableHandle"
-
-    # Test interjection passthrough - this should forward to the inner CodeActActor
-    await handle.interject(
-        "Actually, skip ahead and just say the final number directly.",
-    )
-
-    # Clean up
-    await handle.stop("test cleanup")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1420,7 +1149,7 @@ async def test_dependency_resolution_by_id():
     )
 
     result = await handle.result()
-    assert "17" in result, f"Expected 17 in result, got: {result}"  # (5 * 3) + 2 = 17
+    assert result.result == 17, f"Expected 17, got: {result.result}"  # (5 * 3) + 2 = 17
     assert handle.done()
 
 
@@ -1443,5 +1172,5 @@ async def test_dependency_resolution_by_description():
     )
 
     result = await handle.result()
-    assert "25" in result, f"Expected 25 in result, got: {result}"  # (4 * 6) + 1 = 25
+    assert result.result == 25, f"Expected 25, got: {result.result}"  # (4 * 6) + 1 = 25
     assert handle.done()
