@@ -560,6 +560,13 @@ class PythonExecutionSession:
                     ):
                         top_level_assign_targets.add(node.name)
 
+                # REPL semantics: implicitly return the last expression's value
+                # so callers can read it from the `result` field.
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    tree.body[-1] = ast.Return(value=tree.body[-1].value)
+                    ast.fix_missing_locations(tree)
+                    code = ast.unparse(tree)
+
                 async_code = "async def __exec_wrapper():\n"
                 if top_level_assign_targets:
                     async_code += f"    global {', '.join(sorted(list(top_level_assign_targets)))}\n"
