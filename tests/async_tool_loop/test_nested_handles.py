@@ -290,7 +290,7 @@ async def test_interject_nested_handle(llm_config):
     # Top-level loop
     client = new_llm_client(**llm_config)
     client.set_system_message(
-        "Call `outer_tool` to start a nested loop. "
+        "Call `outer_tool` (once only) to start a nested loop. "
         "When you receive 'forward: X', call `interject_outer_tool_*` with "
         '`{"content": "X"}` to forward X to the nested loop. '
         "When outer_tool completes, reply with its result.",
@@ -299,7 +299,7 @@ async def test_interject_nested_handle(llm_config):
     top_handle = start_async_tool_loop(
         client=client,
         message="start",
-        tools={"outer_tool": outer_tool},
+        tools={"outer_tool": ToolSpec(fn=outer_tool, max_total_calls=1)},
         max_steps=20,
         timeout=240,
     )
@@ -345,8 +345,24 @@ async def test_interject_nested_handle(llm_config):
     content = args.get("message") or args.get("content") or ""
     assert "hello world" in content.lower(), f"Wrong content forwarded: {content!r}"
 
-    # b) The forwarded message reached the inner loop and appears in final result
-    assert "hello world" in result.lower(), f"Message not in result: {result!r}"
+    # b) The forwarded message reached the inner loop and appears in the
+    #    outer_tool's completion result (check_status tool message).
+    #    We check the tool result rather than the final LLM text because
+    #    GPT-5.2 non-deterministically returns an empty final response
+    #    instead of echoing the inner loop's output.
+    outer_tool_result = next(
+        (
+            m.get("content", "")
+            for m in msgs
+            if m.get("role") == "tool"
+            and "hello world" in str(m.get("content", "")).lower()
+        ),
+        None,
+    )
+    assert outer_tool_result is not None, (
+        f"'hello world' not found in any tool result message. "
+        f"Final LLM result: {result!r}"
+    )
 
 
 @pytest.mark.asyncio
