@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 
 from tests.helpers import _handle_project, capture_events
-from unity.actor.code_act_actor import (
-    CodeActActor,
+from unity.actor.code_act_actor import CodeActActor
+from unity.actor.execution import (
     PythonExecutionSession,
     _CURRENT_SANDBOX,
     parts_to_text,

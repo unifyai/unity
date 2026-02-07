@@ -3,7 +3,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
-from unity.actor.code_act_actor import CodeActActor, PythonExecutionSession
+from unity.actor.code_act_actor import CodeActActor
+from unity.actor.execution import PythonExecutionSession
 
 
 @pytest.mark.asyncio
@@ -14,7 +15,7 @@ async def test_execute_code_notifications_with_notification_queue():
     and that user code can call notify({...}) from within the sandbox when a
     _notification_up_q is provided (as the async tool loop does automatically).
     """
-    from unity.actor.code_act_actor import _CURRENT_SANDBOX
+    from unity.actor.execution import _CURRENT_SANDBOX
 
     # Create a notification queue that simulates what the async tool loop provides
     notification_q: asyncio.Queue[dict] = asyncio.Queue()

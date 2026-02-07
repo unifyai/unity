@@ -1,8 +1,8 @@
 import pytest
 from pydantic import TypeAdapter
 
-from unity.actor.code_act_actor import (
-    CodeActActor,
+from unity.actor.code_act_actor import CodeActActor
+from unity.actor.execution import (
     PythonExecutionSession,
     ExecutionResult,
     parts_to_text,

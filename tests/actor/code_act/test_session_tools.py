@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from unity.actor.code_act_actor import (
-    CodeActActor,
-    PythonExecutionSession,
-    _CURRENT_SANDBOX,
-)
+from unity.actor.code_act_actor import CodeActActor
+from unity.actor.execution import PythonExecutionSession, _CURRENT_SANDBOX
 from unity.actor.environments.state_managers import StateManagerEnvironment
 
 
