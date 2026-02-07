@@ -2965,16 +2965,20 @@ async def async_tool_loop_inner(
 
                     # first check any dynamic helpers we generated for long-running handles
                     if name in dynamic_tools:
+                        # Global dispatchers (e.g. ask_about_completed_tool) are not
+                        # tied to any specific live call — skip the suffix check.
+                        _is_global_dispatcher = name == "ask_about_completed_tool"
                         # Disambiguation: only treat as a dynamic helper when its suffix targets a live call
                         _helper_targets_live = True
-                        try:
-                            _suffix = str(name).split("_")[-1]
-                            _helper_targets_live = any(
-                                str(inf.call_id).endswith(_suffix)
-                                for inf in tools_data.info.values()
-                            )
-                        except Exception:
-                            _helper_targets_live = True
+                        if not _is_global_dispatcher:
+                            try:
+                                _suffix = str(name).split("_")[-1]
+                                _helper_targets_live = any(
+                                    str(inf.call_id).endswith(_suffix)
+                                    for inf in tools_data.info.values()
+                                )
+                            except Exception:
+                                _helper_targets_live = True
                         if _helper_targets_live:
                             fn = dynamic_tools[name]
 

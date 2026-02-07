@@ -695,9 +695,69 @@ class DynamicToolFactory:
         if handle_available:
             self._expose_public_methods(create_tool_ctx, handle)
 
+    def _create_ask_about_completed_tool(self) -> None:
+        """Expose a single dispatcher that lets the LLM ask follow-up questions
+        about any steerable inner tool that has already completed.
+
+        The dispatcher routes by ``tool_id`` (the original ``call_id``) to the
+        retained ``ask`` closure for that tool, which spins up a retrospective
+        inspection loop against the completed inner handle's transcript.
+        """
+        completed = self.tools_data._completed_askable_tools
+
+        # Build a dynamic docstring listing all askable completed tools
+        tool_lines = []
+        for cid, meta in completed.items():
+            args_str = meta["arg_repr"]
+            tool_lines.append(f'  - tool_id="{cid}": {meta["name"]}({args_str})')
+        listing = "\n".join(tool_lines)
+
+        doc = (
+            "Ask a follow-up question about a completed tool to understand its "
+            "internal reasoning, intermediate steps, or any details not visible in "
+            "the outer transcript.\n\n"
+            "Available completed tools:\n"
+            f"{listing}\n\n"
+            "Parameters\n"
+            "----------\n"
+            "tool_id : str\n"
+            "    The tool_id of the completed tool to query (see listing above).\n"
+            "question : str\n"
+            "    The follow-up question to ask about the completed tool's execution."
+        )
+
+        # Capture reference for closure
+        _completed = completed
+
+        async def _ask_about_completed_tool(
+            tool_id: str,
+            question: str,
+            **_kw,
+        ):
+            entry = _completed.get(tool_id)
+            if entry is None:
+                available = list(_completed.keys())
+                return (
+                    f"No completed tool found with tool_id={tool_id!r}. "
+                    f"Available tool_ids: {available}"
+                )
+            ask_fn = entry["ask_fn"]
+            return await ask_fn(question=question, **_kw)
+
+        _ask_about_completed_tool.__doc__ = doc
+
+        self._register_tool(
+            func_name="ask_about_completed_tool",
+            fallback_doc=doc,
+            fn=_ask_about_completed_tool,
+        )
+
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
         # Expose a single global `wait` helper when anything is in flight
         if self.tools_data.pending:
             self._create_wait_tool()
+        # Expose a single dispatcher for retrospective asking about completed tools
+        if self.tools_data._completed_askable_tools:
+            self._create_ask_about_completed_tool()

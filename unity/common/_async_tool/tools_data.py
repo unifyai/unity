@@ -206,6 +206,9 @@ class ToolsData:
         self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
         self._completed_ask_handles: Dict[str, Callable] = {}
         self._task_ask_keys: Dict[asyncio.Task, str] = {}
+        # Metadata for completed steerable tools, keyed by call_id.
+        # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable}
+        self._completed_askable_tools: Dict[str, dict] = {}
 
     def get_ask_tools(self) -> Dict[str, Callable]:
         """Return a snapshot of currently available ``ask_*`` dynamic tools.
@@ -295,12 +298,32 @@ class ToolsData:
         self.info[coro] = metadata
 
     def pop_task(self, coro: asyncio.Task) -> ToolCallMetadata:
-        # Before removing, retain the ask_* dynamic tool handle for this task so handle.ask() can propagate post-completion.
+        # Before removing, retain the ask_* dynamic tool handle for this task
+        # so handle.ask() can propagate post-completion.
+        info = self.info.get(coro)
         ask_name = self._task_ask_keys.pop(coro, None)
         if ask_name is not None:
             dt = self._dynamic_tools_ref
             if dt and isinstance(dt, dict) and ask_name in dt:
-                self._completed_ask_handles[ask_name] = dt[ask_name]
+                ask_fn = dt[ask_name]
+                self._completed_ask_handles[ask_name] = ask_fn
+                # Store metadata for the ask_about_completed_tool dispatcher.
+                if info is not None:
+                    call_id = info.call_id
+                    arg_json = info.call_dict["function"].get("arguments", "{}")
+                    try:
+                        arg_dict = json.loads(arg_json)
+                        arg_repr = ", ".join(
+                            f"{k}={v!r}" for k, v in arg_dict.items()
+                        )
+                    except Exception:
+                        arg_repr = arg_json
+                    self._completed_askable_tools[call_id] = {
+                        "name": info.name,
+                        "call_id": call_id,
+                        "arg_repr": arg_repr,
+                        "ask_fn": ask_fn,
+                    }
         self.pending.discard(coro)
         return self.info.pop(coro, None)
 
