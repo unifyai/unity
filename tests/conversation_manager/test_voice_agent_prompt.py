@@ -42,8 +42,6 @@ DEFERRAL_PHRASES = [
     "let me find",
     "checking on that",
     "looking into that",
-    "i don't have that information",
-    "i don't have access",
 ]
 
 # The model used by the fast brain in production
@@ -398,10 +396,12 @@ class TestPromptContent:
         ).flatten()
         assert "Call participants" not in prompt
 
-    def test_data_access_mentions_instructions(self, boss_call_prompt: str):
-        """Data access section mentions data from instructions is usable."""
-        assert "Data provided in my instructions" in boss_call_prompt
+    def test_data_handling_section_present(self, boss_call_prompt: str):
+        """Prompt contains the data handling rules section."""
+        assert "How I handle data" in boss_call_prompt
+        assert "Never fabricate data" in boss_call_prompt
 
-    def test_answer_directly_mentions_instructions(self, boss_call_prompt: str):
-        """Communication guidelines mention answering from instruction data."""
-        assert "my name, boss details, contact details" in boss_call_prompt
+    def test_deferral_examples_present(self, boss_call_prompt: str):
+        """Prompt contains active deferral examples (not refusal language)."""
+        assert "Let me check on that" in boss_call_prompt
+        assert "I can't access" not in boss_call_prompt.split("NEVER say")[0]

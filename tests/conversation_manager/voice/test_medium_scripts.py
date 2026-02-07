@@ -629,8 +629,8 @@ class TestVoiceAgentPromptBuilding:
         # Now uses Markdown headers - section should not exist for boss calls
         assert "Contact details\n---------------" not in prompt
 
-    def test_prompt_contains_conversation_manager_section(self, boss_contact):
-        """Voice agent prompt explains conversation manager interaction."""
+    def test_prompt_contains_data_handling_section(self, boss_contact):
+        """Voice agent prompt explains data handling rules and notifications."""
         from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 
         prompt = build_voice_agent_prompt(
@@ -640,23 +640,9 @@ class TestVoiceAgentPromptBuilding:
             is_boss_user=True,
         ).flatten()
 
-        # Now uses Markdown headers
-        assert "Conversation manager\n--------------------" in prompt
+        assert "How I handle data\n-----------------" in prompt
         assert "notification" in prompt.lower()
-
-    def test_prompt_contains_communication_guidelines(self, boss_contact):
-        """Voice agent prompt includes communication guidelines."""
-        from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
-
-        prompt = build_voice_agent_prompt(
-            bio="Test assistant",
-            boss_first_name=boss_contact["first_name"],
-            boss_surname=boss_contact["surname"],
-            is_boss_user=True,
-        ).flatten()
-
-        # Now uses Markdown headers
-        assert "Communication guidelines\n------------------------" in prompt
+        assert "never fabricate" in prompt.lower()
 
 
 # =============================================================================
