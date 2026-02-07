@@ -1290,10 +1290,9 @@ async def test_outer_handle_ask_propagates_to_completed_inner_ask(llm_config):
         inner_client = new_llm_client(**llm_config)
         inner_client.set_system_message(
             "You are a solver. Perform these steps in order:\n"
-            "1️⃣ Call `fetch_data` to get the raw dataset.\n"
-            "2️⃣ Call `compute_answer` passing the data you received.\n"
-            "3️⃣ Reply with **only** the numeric result returned by "
-            "`compute_answer` — nothing else, no explanation.",
+            "1. Call `fetch_data` to get the raw dataset.\n"
+            "2. Call `compute_answer` passing the data you received.\n"
+            "3. Reply with **only** the numeric result returned by `compute_answer` — nothing else, no explanation.",
         )
         h = start_async_tool_loop(
             client=inner_client,
