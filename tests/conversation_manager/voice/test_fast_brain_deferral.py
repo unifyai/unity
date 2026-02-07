@@ -38,6 +38,8 @@ MODEL_GPT_REALTIME = "gpt-realtime"
 # 1. Going to check/lookup data (deferred to slow brain)
 # 2. Acknowledging it doesn't have the data immediately
 DEFERRAL_PATTERNS = [
+    # Active "I'm on it" language — the only acceptable deferral style.
+    # The fast brain should imply it IS fetching the data, not that it CAN'T.
     r"let me check",
     r"let me look",
     r"i'll check",
@@ -55,23 +57,14 @@ DEFERRAL_PATTERNS = [
     r"pull.{0,10}(up|that)",  # "pulling that up", "pull that up"
     r"let me see",
     r"i'll see what",
-    r"i don't have.{0,50}(on hand|at the moment|right now|available|yet|here|in this)",
-    r"don't have.{0,30}(information|address|number|email|calendar|your|in this|yet)",
-    r"need to (check|look|find)",
-    r"don't have access",
-    r"can't see",
-    r"i can't access",
+    r"let me.{0,10}(verify|confirm|get)",  # "let me verify", "let me get that"
     r"want me to check",  # "Want me to check your schedule?"
     r"shall i check",
     r"should i check",
-    r"not seeing.{0,20}(calendar|schedule|here|that|it|your)",  # "I'm not seeing your calendar here"
-    r"(don't|do not) (see|have).{0,20}(calendar|schedule|that|it|here)",  # "I don't see your calendar"
-    r"(can't|cannot) (see|find|access).{0,20}(calendar|schedule|that|it|here)",  # broader "can't see/find"
     r"i('d| would) need to.{0,20}(check|look|verify|confirm)",  # "I'd need to check that"
-    r"let me.{0,10}(verify|confirm|get)",  # "let me verify", "let me get that"
     r"i('ll| will) need to",  # "I'll need to look into that"
-    r"not sure.{0,30}(off.hand|right now|at the moment|without checking)",  # "I'm not sure off-hand"
-    r"would need to (check|look|verify)",  # "I would need to check"
+    r"need to (check|look|find)",
+    r"would need to (check|look|verify)",
 ]
 
 # Patterns indicating hallucinated data (should NOT appear)
