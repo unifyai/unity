@@ -552,23 +552,18 @@ class TestRapidUtteranceHandling:
             #   t=2.4: run 5 COMPLETES (if we wait)
             #   Result: 4 cancelled, 1 completed
 
-            # Poll for LLM runs to complete (deterministic wait instead of fixed sleep)
-            # We expect at least 1 completion. With fix, we get 2 completions (first + final).
-            # Use generous timeout for slow CI environments, but poll frequently.
-            MAX_WAIT = 30.0  # generous timeout for uncached LLM or slow CI
+            # Wait for all LLM runs to resolve (completed or cancelled).
+            # With fix: 2 events (run 1 completes at ~2s, run 5 completes at ~4s)
+            # With bug: 5 events (4 instant cancellations + 1 completion at ~2.4s)
+            # Minimum possible total is 2 (fix case), so wait for that.
+            EXPECTED_MIN_TOTAL = 2
+            MAX_WAIT = 30.0  # generous safety timeout
             POLL_INTERVAL = 0.1
             import time as _time
 
             start = _time.perf_counter()
             while _time.perf_counter() - start < MAX_WAIT:
-                completed_so_far = sum(
-                    1 for status, _ in llm_completions if status == "completed"
-                )
-                # With the fix, we expect 2 completions (first run + final pending)
-                # With the bug, we'd see cancellations instead
-                if completed_so_far >= 1:
-                    # Give a small buffer for any additional completions to register
-                    await asyncio.sleep(0.5)
+                if len(llm_completions) >= EXPECTED_MIN_TOTAL:
                     break
                 await asyncio.sleep(POLL_INTERVAL)
 
