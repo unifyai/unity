@@ -363,7 +363,7 @@ async def test_function_not_found_by_description(monkeypatch):
 
     # Mock search to return empty results to test the error path
     def mock_search(*args, **kwargs):
-        return []
+        return {"metadata": []}
 
     monkeypatch.setattr(fm, "search_functions", mock_search)
 
