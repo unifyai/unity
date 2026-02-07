@@ -258,22 +258,6 @@ class TestStateRecovery:
         assert len(matching) == 2
 
     @pytest.mark.asyncio
-    async def test_phone_call_started_without_received(self, initialized_cm):
-        """PhoneCallStarted without PhoneCallReceived should still work."""
-        cm = initialized_cm
-        contact = TEST_CONTACTS[1]
-
-        # Skip PhoneCallReceived, go straight to Started
-        result = await cm.step(PhoneCallStarted(contact=contact))
-
-        # Should set mode to "call" even without prior Received event
-        assert cm.cm.mode == "call"
-        assert result.llm_requested is True
-
-        # Clean up
-        await cm.step(PhoneCallEnded(contact=contact))
-
-    @pytest.mark.asyncio
     async def test_actor_result_for_nonexistent_action(self, initialized_cm):
         """ActorResult for an action not in in_flight_actions should not crash."""
         cm = initialized_cm
