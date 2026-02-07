@@ -8,7 +8,7 @@ dst="$src/../unity_${purpose}"
 [ -d "$dst" ] && { echo "Already exists: $dst" >&2; exit 1; }
 
 origin=$(git -C "$src" remote get-url origin)
-git clone --branch staging --reference "$src" "$origin" "$dst"
+git clone --branch staging "$origin" "$dst"
 
 cd "$dst"
 git submodule update --init --recursive
