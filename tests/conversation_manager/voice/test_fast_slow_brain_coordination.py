@@ -858,9 +858,8 @@ class TestStaleGuidanceFiltering:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Give time for slow brain to complete - includes LLM call to GuidanceFilter
-            # which can take several seconds (opus-4.5 without thinking)
-            await asyncio.sleep(10.0)
+            # Wait for slow brain to complete (includes LLM call to GuidanceFilter)
+            await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # ─────────────────────────────────────────────────────────────────
             # Step 6: Verify that stale guidance was NOT sent to fast brain
@@ -1024,6 +1023,8 @@ class TestStaleGuidanceFiltering:
                         "app:call:call_guidance",
                         guidance_event.to_json(),
                     )
+
+                guidance_published.set()
                 return None
 
             cm._run_llm = slow_brain_with_relevant_guidance
@@ -1034,7 +1035,6 @@ class TestStaleGuidanceFiltering:
             # KEY DIFFERENCE FROM STALE TEST: User asks for CLARIFICATION about
             # information that IS IN THE GUIDANCE. This is unambiguously relevant.
             # ─────────────────────────────────────────────────────────────────
-            await asyncio.sleep(0.2)
             utterance2 = InboundPhoneUtterance(
                 contact=boss_contact,
                 content="Sorry, which room did you say the meeting is in?",
@@ -1047,9 +1047,7 @@ class TestStaleGuidanceFiltering:
 
             # Let slow brain finish and wait for guidance to be published
             slow_brain_can_finish.set()
-            # Wait for the mock to complete - includes LLM call to GuidanceFilter
-            # which can take several seconds (opus-4.5 without thinking)
-            await asyncio.sleep(10.0)
+            await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # Guidance about meeting should be sent - it DIRECTLY ANSWERS the follow-up
             # question about the room (Conference Room B is in the guidance)
@@ -1189,6 +1187,7 @@ class TestUserCorrectionsAndRestatements:
             original_run_llm = cm._run_llm
             slow_brain_started = asyncio.Event()
             slow_brain_can_finish = asyncio.Event()
+            guidance_published = asyncio.Event()
 
             async def slow_brain_with_status_meeting_guidance():
                 """
@@ -1236,6 +1235,7 @@ class TestUserCorrectionsAndRestatements:
                         guidance_event.to_json(),
                     )
 
+                guidance_published.set()
                 return None
 
             cm._run_llm = slow_brain_with_status_meeting_guidance
@@ -1275,8 +1275,8 @@ class TestUserCorrectionsAndRestatements:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Wait for guidance filter (LLM call)
-            await asyncio.sleep(10.0)
+            # Wait for slow brain to complete (includes LLM call to GuidanceFilter)
+            await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # ─────────────────────────────────────────────────────────────────
             # Step 5: Verify guidance about WRONG meeting was blocked
@@ -1429,6 +1429,7 @@ class TestFastBrainIncorrectInformation:
             original_run_llm = cm._run_llm
             slow_brain_started = asyncio.Event()
             slow_brain_can_finish = asyncio.Event()
+            guidance_published = asyncio.Event()
 
             async def slow_brain_with_correct_meeting_time():
                 """
@@ -1475,6 +1476,7 @@ class TestFastBrainIncorrectInformation:
                         guidance_event.to_json(),
                     )
 
+                guidance_published.set()
                 return None
 
             cm._run_llm = slow_brain_with_correct_meeting_time
@@ -1502,8 +1504,8 @@ class TestFastBrainIncorrectInformation:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Wait for guidance filter (LLM call)
-            await asyncio.sleep(10.0)
+            # Wait for slow brain to complete (includes LLM call to GuidanceFilter)
+            await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # ─────────────────────────────────────────────────────────────────
             # Step 4: Verify CORRECT guidance was sent (not blocked)
