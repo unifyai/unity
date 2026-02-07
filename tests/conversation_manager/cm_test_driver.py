@@ -77,7 +77,11 @@ class CMStepDriver:
         return getattr(self._cm, name)
 
     async def step(
-        self, event: Event, *, publish: bool = False, run_llm: bool = True,
+        self,
+        event: Event,
+        *,
+        publish: bool = False,
+        run_llm: bool = True,
     ) -> StepResult:
         """Process one event deterministically and return produced output events.
 

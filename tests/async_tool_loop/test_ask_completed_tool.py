@@ -7,7 +7,6 @@ outer LLM retrospectively query completed inner steerable tools about their
 internal reasoning and intermediate steps.
 """
 
-import asyncio
 import pytest
 
 from unity.common.async_tool_loop import (
@@ -15,9 +14,6 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
 )
 from unity.common.llm_client import new_llm_client
-from tests.async_helpers import (
-    _wait_for_condition,
-)
 
 
 @pytest.mark.asyncio
@@ -119,15 +115,14 @@ async def test_llm_uses_ask_about_completed_tool_after_inner_completes(llm_confi
                 for m in msgs
                 if m.get("role") == "assistant"
                 for tc in (m.get("tool_calls") or [])
-            ]
+            ],
         )
     )
 
     # The final reply should contain at least one of the source names,
     # proving the LLM successfully retrieved inner-only details.
     assert any(
-        src in final_result
-        for src in ["NOAA-2024", "OceanographyJournal", "MarineBio"]
+        src in final_result for src in ["NOAA-2024", "OceanographyJournal", "MarineBio"]
     ), (
         f"Final reply should mention at least one source from the inner tool, "
         f"but got: {final_result!r}"
@@ -222,14 +217,14 @@ async def test_ask_about_completed_tool_with_multiple_completed_tools(llm_config
         if tc.get("function", {}).get("name") == "ask_about_completed_tool"
     ]
 
-    assert len(ask_calls) >= 1, (
-        "The outer LLM should have called ask_about_completed_tool at least once"
-    )
+    assert (
+        len(ask_calls) >= 1
+    ), "The outer LLM should have called ask_about_completed_tool at least once"
 
     # The final reply should contain alpha's secret value
-    assert "42" in final_result, (
-        f"Final reply should mention alpha_secret_value=42, but got: {final_result!r}"
-    )
+    assert (
+        "42" in final_result
+    ), f"Final reply should mention alpha_secret_value=42, but got: {final_result!r}"
 
 
 @pytest.mark.asyncio

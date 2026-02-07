@@ -15,7 +15,6 @@ from typing import Any, Callable, List, Union
 
 from .types import ImagePart, TextPart
 
-
 # ---------------------------------------------------------------------------
 # ContextVars for per-execution stream isolation
 # ---------------------------------------------------------------------------

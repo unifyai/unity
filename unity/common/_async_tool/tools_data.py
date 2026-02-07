@@ -313,9 +313,7 @@ class ToolsData:
                     arg_json = info.call_dict["function"].get("arguments", "{}")
                     try:
                         arg_dict = json.loads(arg_json)
-                        arg_repr = ", ".join(
-                            f"{k}={v!r}" for k, v in arg_dict.items()
-                        )
+                        arg_repr = ", ".join(f"{k}={v!r}" for k, v in arg_dict.items())
                     except Exception:
                         arg_repr = arg_json
                     self._completed_askable_tools[call_id] = {

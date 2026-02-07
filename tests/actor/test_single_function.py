@@ -217,7 +217,9 @@ def greet_pet(name: str) -> str:
     )
 
     result = await handle.result()
-    assert result.result is not None and ("Good boy" in str(result.result) or "Buddy" in str(result.result))
+    assert result.result is not None and (
+        "Good boy" in str(result.result) or "Buddy" in str(result.result)
+    )
 
 
 @pytest.mark.asyncio
@@ -981,7 +983,9 @@ async def test_verification_fails_for_failed_function():
 
     # Should fail verification
     assert handle._verification_passed is False
-    assert result.error is not None and ("verification failed" in result.error.lower() or "error" in result.error.lower())
+    assert result.error is not None and (
+        "verification failed" in result.error.lower() or "error" in result.error.lower()
+    )
     assert handle._verification_reason is not None
 
 
@@ -1092,14 +1096,14 @@ async def verified_sum(a: int, b: int) -> dict:
 
     # Verification should not have run
     assert handle._verification_passed is None
-    assert result.result is not None and ("success" in str(result.result).lower() or "3" in str(result.result))
+    assert result.result is not None and (
+        "success" in str(result.result).lower() or "3" in str(result.result)
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # Steerable Function Forwarding Tests
 # ────────────────────────────────────────────────────────────────────────────
-
-
 
 
 # ────────────────────────────────────────────────────────────────────────────
