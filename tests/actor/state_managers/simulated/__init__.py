@@ -1,1 +1,1 @@
-"""Simulated state manager routing tests for HierarchicalActor."""
+"""Simulated state manager routing tests for CodeActActor."""

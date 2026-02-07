@@ -619,18 +619,12 @@ class MagnitudeBackend(ComputerBackend):
                     ) as resp:
                         if resp.status >= 400:
                             try:
-                                from unity.actor.hierarchical_actor import (
-                                    ReplanFromParentException,
-                                )
-
                                 error_data = await resp.json()
                                 error_type = error_data.get(
                                     "error",
                                     "unknown_http_error",
                                 )
                                 message = error_data.get("message", "No error message.")
-                                if error_type == "misalignment":
-                                    raise ReplanFromParentException(message)
                                 raise ComputerAgentError(error_type, message)
                             except Exception as e:
                                 raise ComputerAgentError(

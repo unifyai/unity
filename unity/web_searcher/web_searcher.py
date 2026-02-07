@@ -51,7 +51,7 @@ class WebSearcher(BaseWebSearcher):
     def __init__(self):
         super().__init__()
         self.tavily_client = TavilyClient(api_key=SETTINGS.web.TAVILY_API_KEY or None)
-        self._hierarchical_actor = None
+        self._actor = None
         self._default_function_id = None
 
         # Resolve context for Websites table (single-table store)
@@ -97,13 +97,13 @@ class WebSearcher(BaseWebSearcher):
         self._provision_storage()
 
     @property
-    def hierarchical_actor(self):
-        """Lazily initialize and return the HierarchicalActor instance."""
-        if self._hierarchical_actor is None:
-            from ..actor.hierarchical_actor import HierarchicalActor
+    def actor(self):
+        """Lazily initialize and return the CodeActActor instance."""
+        if self._actor is None:
+            from ..actor.code_act_actor import CodeActActor
 
-            self._hierarchical_actor = HierarchicalActor()
-        return self._hierarchical_actor
+            self._actor = CodeActActor()
+        return self._actor
 
     def _ensure_default_function_exists(self) -> None:
         """Ensure the default website entrypoint exists and record its function_id.
@@ -114,7 +114,7 @@ class WebSearcher(BaseWebSearcher):
             return
 
         try:
-            fm = self.hierarchical_actor.function_manager
+            fm = self.actor.function_manager
             fn_path = Path(__file__).parent / "functions" / "search_website_for_info.py"
             source = fn_path.read_text(encoding="utf-8")
             fm.add_functions(
@@ -646,14 +646,13 @@ class WebSearcher(BaseWebSearcher):
 
         # Start the actor plan with explicit entrypoint args
         queries_desc = ", ".join(queries[:3]) + ("..." if len(queries) > 3 else "")
-        plan = await self.hierarchical_actor.act(
+        handle = await self.actor.act(
             description=f"Search website for information: {queries_desc}. Start with {host}",
             entrypoint=function_id,
             entrypoint_args=[queries, host, creds],
             persist=False,
-            new_session=True,
         )
-        result = await plan.result()
+        result = await handle.result()
         return str(result)
 
     def _delete_website(

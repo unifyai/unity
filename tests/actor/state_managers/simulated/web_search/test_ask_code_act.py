@@ -40,7 +40,7 @@ async def test_code_act_live_events_use_web_tool(
             clarification_enabled=False,
         )
 
-        # Mirror HierarchicalActor web routing tests: only verify routing reaches web tool.
+        # Only verify routing reaches web tool.
         await wait_for_recorded_primitives_call(
             calls,
             "primitives.web.ask",
