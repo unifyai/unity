@@ -374,6 +374,58 @@ class TestHandleLifecycle:
 
 
 # =============================================================================
+# Unit Tests: ask_question future management
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_ask_question_resets_future_after_await():
+    """
+    ask_question has two code paths that consume user_reply_future:
+
+      1. "Patient mode" — future already done when ask_question is called.
+         Returns the result and resets the future to a fresh one. (Correct.)
+
+      2. "Await mode" — future is pending, so ask_question awaits it.
+         Returns the result but does NOT reset the future. (Bug.)
+
+    When the await path forgets to reset, a second ask_question call sees the
+    still-done future and immediately returns the stale first reply instead of
+    blocking for fresh user input.
+
+    This reproduces the exact ask_question / user_reply_future closure pattern
+    from ConversationManagerHandle.ask() in handle.py.
+    """
+    user_reply_future: asyncio.Future = asyncio.Future()
+
+    # Exact logic from handle.py ask_question (minus the event_broker publish,
+    # which is a side-effect irrelevant to future management).
+    async def ask_question(text: str):
+        nonlocal user_reply_future
+        if user_reply_future.done():
+            user_msg = user_reply_future.result()
+            user_reply_future = asyncio.Future()
+            return f"User replied: {user_msg}"
+        user_msg = await asyncio.wait_for(user_reply_future, timeout=5)
+        return f"User replied: {user_msg}"
+
+    # --- First call: goes through the await path ---
+    asyncio.get_event_loop().call_later(
+        0.05, user_reply_future.set_result, "vague answer",
+    )
+    result1 = await ask_question("What is your phone number?")
+    assert result1 == "User replied: vague answer"
+
+    # After the await path returns, the future must be reset so that a
+    # subsequent ask_question call blocks for a fresh reply.
+    assert not user_reply_future.done(), (
+        "user_reply_future was not reset after the await path returned. "
+        "A second ask_question will see .done()==True and immediately return "
+        "the stale first reply instead of blocking for new user input."
+    )
+
+
+# =============================================================================
 # Integration Tests: ask() with PATH 1 (Inference)
 # =============================================================================
 
