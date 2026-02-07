@@ -182,7 +182,7 @@ async def entrypoint(ctx: agents.JobContext):
         contact_bio=contact.get("bio") or None,
         is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
-    )
+    ).flatten()
     print("PRINTING SYSTEM PROMPT")
     print(system_prompt)
 

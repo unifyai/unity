@@ -260,6 +260,7 @@ def stub_external_deps(monkeypatch):
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.file_manager.prompt_builders.now", _static_now)
+    monkeypatch.setattr("unity.conversation_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.conversation_manager.events.prompt_now", _static_now)
     monkeypatch.setattr(
         "unity.conversation_manager.domains.contact_index.prompt_now",

@@ -6,7 +6,7 @@ by programmatically building prompts using shared utilities from common/prompt_h
 
 from __future__ import annotations
 
-from ..common.prompt_helpers import now
+from ..common.prompt_helpers import now, PromptParts
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -127,7 +127,7 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     is_voice_call: bool = False,
-) -> str:
+) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
     Parameters
@@ -149,8 +149,8 @@ def build_system_prompt(
 
     Returns
     -------
-    str
-        The complete system prompt.
+    PromptParts
+        Structured prompt parts (call .to_list() for LLM, .flatten() for plain string).
     """
     # Build reusable blocks using internal helpers
     boss_details = _build_boss_details_block(
@@ -173,11 +173,11 @@ def build_system_prompt(
         else ""
     )
 
-    # Build the full prompt using Markdown-style sections
-    parts = []
+    # Build the full prompt using PromptParts for structured output
+    parts = PromptParts()
 
     # Role
-    parts.append(
+    parts.add(
         f"""Role
 ----
 I am a fully remote virtual employee. I am not a chatbot or an AI assistant — I am a remote team member who works for my boss. I should conduct myself the way a competent, self-sufficient remote colleague would.
@@ -186,14 +186,14 @@ I communicate with my boss and their contacts directly through different mediums
     )
 
     # Bio
-    parts.append(
+    parts.add(
         f"""Bio
 ---
 {bio}""",
     )
 
     # Onboarding reference
-    parts.append(
+    parts.add(
         """Onboarding reference
 --------------------
 When my boss or their contacts ask what I can do, how to get started, or how I work, I draw from the following naturally and briefly — answering only what was asked, never reciting a list.
@@ -227,7 +227,7 @@ A: I can't be physically present. Everything else a remote worker can do — com
     )
 
     # Boss details
-    parts.append(
+    parts.add(
         f"""Boss details
 ------------
 The following are my boss's details:
@@ -235,7 +235,7 @@ The following are my boss's details:
     )
 
     # Input format
-    parts.append(
+    parts.add(
         f"""Input format
 ------------
 My input will be the current state of all conversations I am having at the moment.
@@ -252,7 +252,7 @@ Messages from the current turn have **NEW** tag prepended:
     )
 
     # Output format
-    parts.append(
+    parts.add(
         f"""Output format
 -------------
 My output will be in the following format:
@@ -286,7 +286,7 @@ For communication tools, provide the contact_id when the contact is in the activ
     )
 
     # Action steering guidelines
-    parts.append(
+    parts.add(
         """Action steering guidelines
 --------------------------
 **Understanding in-flight actions:**
@@ -331,7 +331,7 @@ The key distinction: `interject_*` is proactive (I'm volunteering information), 
     )
 
     # Conversational restraint
-    parts.append(
+    parts.add(
         """Conversational restraint
 ------------------------
 CRITICAL: I have a tendency to be over-eager and verbose. I must fight this aggressively.
@@ -379,7 +379,7 @@ I do NOT need to poll or check on actions - the system will wake me when somethi
 
     # Communication guidelines
     phone_guidelines_section = f"\n{phone_guidelines}" if phone_guidelines else ""
-    parts.append(
+    parts.add(
         f"""Communication guidelines
 ------------------------
 Communicate naturally and casually. Keep responses short.
@@ -407,7 +407,7 @@ This is a hard constraint, not a suggestion. Even if my boss asks me to contact 
     )
 
     # Uncertainty handling
-    parts.append(
+    parts.add(
         """Uncertainty handling
 --------------------
 When I am uncertain whether I have the information needed to complete a request, I use the **parallel strategy**: simultaneously ask for clarification AND call `act` to search.
@@ -428,7 +428,7 @@ When I am uncertain whether I have the information needed to complete a request,
     )
 
     # Act capabilities
-    parts.append(
+    parts.add(
         """Act capabilities
 ----------------
 The `act` tool CREATES NEW WORK. It is my gateway to getting things done beyond the immediate conversation. When my boss asks me to look into something, review a document, check a spreadsheet, use software, browse the web, or do any real work — this is what `act` is for. From my boss's perspective, I'm going away to do the work. From my perspective, I'm delegating to `act`. My boss does not need to know about `act` — they just need to see results.
@@ -460,7 +460,7 @@ Examples of questions that should trigger `act`:
     )
 
     # Concurrent action and acknowledgment
-    parts.append(
+    parts.add(
         """Concurrent action and acknowledgment
 ------------------------------------
 **CRITICAL: When calling `act`, call it IN THE SAME RESPONSE as a brief acknowledgment message.**
@@ -495,23 +495,20 @@ NOT: first act, then in a separate response send_sms. That's inefficient.
 
     # Add voice calls guide if on a voice call
     if is_voice_call:
-        parts.append(voice_calls_guide)
+        parts.add(voice_calls_guide)
 
     # Add scenarios
     phone_scenarios_section = f"\n{phone_scenarios}" if phone_scenarios else ""
-    parts.append(
+    parts.add(
         f"""Scenarios
 ---------
 - If my boss gives a wrong contact address, I will receive an error after the communication attempt, or worse, it might be a completely different person. Simply inform my boss about the error and ask them if there could be something wrong with the contact detail. On the following communication attempt, just change the wrong contact details (phone number or email), and the detail will be implicitly updated.{phone_scenarios_section}""",
     )
 
-    # Join all parts
-    prompt = "\n\n".join(parts)
+    # Add time footer (dynamic content - changes per call)
+    parts.add(f"Current time: {now()}.", static=False)
 
-    # Add time footer using shared utility
-    prompt = f"{prompt}\n\nCurrent time: {now()}."
-
-    return prompt
+    return parts
 
 
 def build_ask_handle_prompt(
@@ -519,12 +516,11 @@ def build_ask_handle_prompt(
     question: str,
     recent_transcript: str,
     response_format_schema: dict | None = None,
-) -> tuple[str, str]:
+) -> PromptParts:
     """Build the system prompt for ConversationManagerHandle.ask().
 
-    Returns a tuple of (static_prompt, dynamic_prompt) for cacheability.
-    The static prompt contains role and tool guidance, while the dynamic
-    prompt contains the specific question and recent transcript context.
+    Returns structured PromptParts with static role/tool guidance and dynamic
+    question/transcript context properly separated for caching.
 
     Parameters
     ----------
@@ -537,10 +533,13 @@ def build_ask_handle_prompt(
 
     Returns
     -------
-    tuple[str, str]
-        (static_prompt, dynamic_prompt) - static is cacheable, dynamic is question-specific.
+    PromptParts
+        Structured prompt parts (call .to_list() for LLM, .flatten() for plain string).
     """
-    static_prompt = f"""You are determining the user's answer to a specific question.
+    parts = PromptParts()
+
+    parts.add(
+        """You are determining the user's answer to a specific question.
 
 **Tools available:**
 - `ask_question(text)` - Ask the user a question and wait for their reply. Use this when you cannot infer the answer from the transcript.
@@ -550,16 +549,22 @@ def build_ask_handle_prompt(
 1. First, check if the answer is already in the RECENT_TRANSCRIPT below.
 2. If you can confidently infer the answer from the transcript, provide it directly.
 3. If the transcript doesn't contain the answer or is ambiguous, use `ask_question` to ask the user.
-4. When asking the user, match their language (inferred from transcript).
+4. When asking the user, match their language (inferred from transcript).""",
+    )
 
-Current time: {now()}."""
+    # Dynamic content: time footer
+    parts.add(f"Current time: {now()}.", static=False)
 
-    dynamic_prompt = f"""**Question to answer:** {question}
+    # Dynamic content: question and transcript context
+    parts.add(
+        f"""**Question to answer:** {question}
 
 **Recent transcript:**
-{recent_transcript}"""
+{recent_transcript}""",
+        static=False,
+    )
 
-    return static_prompt, dynamic_prompt
+    return parts
 
 
 def build_voice_agent_prompt(
@@ -579,7 +584,7 @@ def build_voice_agent_prompt(
     contact_bio: str | None = None,
     contact_rolling_summary: str | None = None,
     participants: list[dict] | None = None,
-) -> str:
+) -> PromptParts:
     """Build the system prompt for the Voice Agent (fast brain).
 
     The Voice Agent handles the actual voice conversation autonomously,
@@ -622,8 +627,8 @@ def build_voice_agent_prompt(
 
     Returns
     -------
-    str
-        The complete Voice Agent system prompt.
+    PromptParts
+        Structured prompt parts (call .to_list() for LLM, .flatten() for plain string).
     """
     # Build boss details block
     boss_details_lines = [
@@ -643,11 +648,11 @@ def build_voice_agent_prompt(
     # Build name line for role section
     name_line = f" My name is {assistant_name}." if assistant_name else ""
 
-    # Build parts
-    parts = []
+    # Build parts using PromptParts for structured output
+    parts = PromptParts()
 
     # Role
-    parts.append(
+    parts.add(
         f"""Role
 ----
 I am a general-purpose assistant communicating with {caller_description} directly over the phone.{name_line}
@@ -661,14 +666,14 @@ I assume the language is English.""",
     )
 
     # Bio
-    parts.append(
+    parts.add(
         f"""Bio
 ---
 {bio}""",
     )
 
     # Data access - CRITICAL section
-    parts.append(
+    parts.add(
         """Data access (CRITICAL)
 ----------------------
 I do NOT have direct access to external data. I cannot look up:
@@ -699,7 +704,7 @@ If the data appears ANYWHERE in this conversation history (from me, the user, or
     )
 
     # Internal notifications
-    parts.append(
+    parts.add(
         """Notifications
 -------------
 I will occasionally receive notifications (marked as `[notification]`). These provide me with:
@@ -721,7 +726,7 @@ I will occasionally receive notifications (marked as `[notification]`). These pr
     )
 
     # Communication guidelines
-    parts.append(
+    parts.add(
         """Communication guidelines
 ------------------------
 My job is to keep the conversation flowing naturally.
@@ -754,7 +759,7 @@ My job is to keep the conversation flowing naturally.
     )
 
     # Boss details
-    parts.append(
+    parts.add(
         f"""Boss details
 ------------
 The following are my boss's details:
@@ -772,7 +777,7 @@ The following are my boss's details:
         if contact_bio:
             contact_lines.append(f"- Bio: {contact_bio}")
         contact_details = "\n".join(contact_lines)
-        parts.append(
+        parts.add(
             f"""Contact details
 ---------------
 The following are the details of the person I am speaking with:
@@ -794,7 +799,7 @@ The following are the details of the person I am speaking with:
                 name = f"{p.get('first_name', '')} {p.get('surname', '')}".strip()
                 participant_blocks.append(f"**{name}**\n" + "\n".join(p_lines))
         if participant_blocks:
-            parts.append(
+            parts.add(
                 "Call participants\n"
                 "-----------------\n"
                 "The following people are on this call:\n\n"
@@ -803,7 +808,7 @@ The following are the details of the person I am speaking with:
 
     # Add conversation history if available
     if contact_rolling_summary:
-        parts.append(
+        parts.add(
             f"""Conversation history
 --------------------
 This is a summary of my past conversations with the person on this call:
@@ -813,10 +818,7 @@ This is a summary of my past conversations with the person on this call:
 I use this context to personalize the conversation, but I don't explicitly reference "my records" or "our past conversations" unless natural to do so.""",
         )
 
-    # Join all parts
-    prompt = "\n\n".join(parts)
+    # Add time footer (dynamic content - changes per call)
+    parts.add(f"Current time: {now()}.", static=False)
 
-    # Add time footer using shared utility
-    prompt = f"{prompt}\n\nCurrent time: {now()}."
-
-    return prompt
+    return parts

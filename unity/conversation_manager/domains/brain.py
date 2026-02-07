@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, create_model
 
+from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
 from unity.conversation_manager.types import Mode
 
@@ -94,7 +95,7 @@ class BrainSpec:
     tangling prompt/model construction with execution and side effects.
     """
 
-    system_prompt: str
+    system_prompt: PromptParts
     state_prompt: str
     response_model: type["BaseModel"]
 

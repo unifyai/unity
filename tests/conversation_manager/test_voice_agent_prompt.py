@@ -134,7 +134,7 @@ def boss_call_prompt(base_prompt_kwargs: dict) -> str:
     return build_voice_agent_prompt(
         **base_prompt_kwargs,
         is_boss_user=True,
-    )
+    ).flatten()
 
 
 @pytest.fixture
@@ -148,7 +148,7 @@ def contact_call_prompt(base_prompt_kwargs: dict) -> str:
         contact_phone_number="+15559876543",
         contact_email="marcus@clientcorp.com",
         contact_bio="VP of Engineering at ClientCorp. Leading their cloud migration project. Prefers concise communication.",
-    )
+    ).flatten()
 
 
 @pytest.fixture
@@ -174,7 +174,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
                 "bio": "Product Manager at TechStartup. Coordinates between engineering and clients.",
             },
         ],
-    )
+    ).flatten()
 
 
 # =============================================================================
@@ -215,7 +215,7 @@ class TestAssistantName:
         without errors (graceful degradation).
         """
         kwargs = {**base_prompt_kwargs, "assistant_name": None}
-        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True)
+        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
 
         # Should not contain "My name is" when name is not set
         assert "My name is" not in prompt
@@ -374,7 +374,7 @@ class TestPromptContent:
     def test_no_name_when_none(self, base_prompt_kwargs: dict):
         """Prompt omits name line when assistant_name is None."""
         kwargs = {**base_prompt_kwargs, "assistant_name": None}
-        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True)
+        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
         assert "My name is" not in prompt
 
     def test_no_contact_bio_when_none(self, base_prompt_kwargs: dict):
@@ -387,12 +387,15 @@ class TestPromptContent:
             contact_phone_number="+15550000000",
             contact_email="john@example.com",
             contact_bio=None,
-        )
+        ).flatten()
         assert "- Bio:" not in prompt.split("Contact details")[1].split("\n\n")[0]
 
     def test_no_participants_when_none(self, base_prompt_kwargs: dict):
         """Prompt omits participants section when not provided."""
-        prompt = build_voice_agent_prompt(**base_prompt_kwargs, is_boss_user=True)
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
         assert "Call participants" not in prompt
 
     def test_data_access_mentions_instructions(self, boss_call_prompt: str):
