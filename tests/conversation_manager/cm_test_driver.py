@@ -76,17 +76,23 @@ class CMStepDriver:
         """Proxy attribute access to the underlying ConversationManager."""
         return getattr(self._cm, name)
 
-    async def step(self, event: Event, *, publish: bool = False) -> StepResult:
+    async def step(
+        self, event: Event, *, publish: bool = False, run_llm: bool = True,
+    ) -> StepResult:
         """Process one event deterministically and return produced output events.
 
         This bypasses the normal async event-driven flow by:
         - Recording any requested LLM runs during event handling
-        - Running the LLM immediately (if requested)
+        - Running the LLM immediately (if requested and ``run_llm`` is True)
         - Capturing and applying any published output events to local state
 
         Args:
             event: Input event to process.
             publish: Whether to forward published events to the broker.
+            run_llm: Whether to execute the LLM when the event handler requests
+                it.  Set to ``False`` for infrastructure-only tests that verify
+                event handling (thread indexing, role tagging, etc.) without
+                introducing nondeterminism from the LLM deciding to respond.
 
         Returns:
             StepResult with output events produced during this step.
@@ -135,7 +141,7 @@ class CMStepDriver:
             llm_requested = bool(step_requests)
             step_requests.clear()
 
-            if llm_requested:
+            if llm_requested and run_llm:
                 llm_ran = True
                 tool_name = await self._cm._run_llm()
                 # Track tool call for test assertions
