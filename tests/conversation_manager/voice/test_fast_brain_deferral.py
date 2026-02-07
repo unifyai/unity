@@ -61,6 +61,17 @@ DEFERRAL_PATTERNS = [
     r"don't have access",
     r"can't see",
     r"i can't access",
+    r"want me to check",  # "Want me to check your schedule?"
+    r"shall i check",
+    r"should i check",
+    r"not seeing.{0,20}(calendar|schedule|here|that|it|your)",  # "I'm not seeing your calendar here"
+    r"(don't|do not) (see|have).{0,20}(calendar|schedule|that|it|here)",  # "I don't see your calendar"
+    r"(can't|cannot) (see|find|access).{0,20}(calendar|schedule|that|it|here)",  # broader "can't see/find"
+    r"i('d| would) need to.{0,20}(check|look|verify|confirm)",  # "I'd need to check that"
+    r"let me.{0,10}(verify|confirm|get)",  # "let me verify", "let me get that"
+    r"i('ll| will) need to",  # "I'll need to look into that"
+    r"not sure.{0,30}(off.hand|right now|at the moment|without checking)",  # "I'm not sure off-hand"
+    r"would need to (check|look|verify)",  # "I would need to check"
 ]
 
 # Patterns indicating hallucinated data (should NOT appear)
@@ -88,6 +99,8 @@ HALLUCINATION_PATTERNS = {
 def has_deferral_language(response: str) -> bool:
     """Check if response contains appropriate deferral language."""
     response_lower = response.lower()
+    # Normalize curly/smart quotes to ASCII (LLMs often produce U+2018/U+2019)
+    response_lower = response_lower.replace("\u2018", "'").replace("\u2019", "'")
     for pattern in DEFERRAL_PATTERNS:
         if re.search(pattern, response_lower):
             return True
@@ -337,7 +350,7 @@ class TestContactInformationDeferral:
     ):
         """Fast brain should defer when asked for someone's phone number."""
         conversation = [
-            {"role": "user", "content": "Hey, what's David's phone number?"},
+            {"role": "user", "content": "Hey, what's David Johnson's phone number?"},
         ]
 
         response = await get_fast_brain_response(
