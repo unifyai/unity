@@ -270,6 +270,13 @@ async def run_cm_until_wait(
         # Run until `wait`.
         for _ in range(max_steps):
             tool_name = await cm._run_llm()
+
+            # Await any pending steering tasks (e.g., async ask_*)
+            # so their events flow through our patches while active.
+            pending = set(cm._pending_steering_tasks)
+            if pending:
+                await asyncio.wait(pending, timeout=120)
+
             if tool_name == "wait" or tool_name is None:
                 break
         return output_events
