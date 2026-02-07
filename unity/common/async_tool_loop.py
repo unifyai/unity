@@ -425,7 +425,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         #     (LLM sees only the system header + follow-up user question).
         from .llm_client import new_llm_client
 
-        inspection_client = new_llm_client()
+        parent_model: str | None = None
+        with suppress(Exception):
+            if self._client is not None:
+                parent_model = self._client.endpoint
+
+        inspection_client = new_llm_client(parent_model)
 
         # Build system message with transcript and optional parent context
         sys_msg_parts = [
