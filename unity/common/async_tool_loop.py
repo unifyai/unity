@@ -146,10 +146,10 @@ class SteerableToolHandle(SteerableHandle):
         self,
         reason: Optional[str] = None,
     ) -> None:
-        """Stop this task immediately, cancelling any pending work.
+        """Stop this tool, cancelling any pending work.
 
-        Use this when the task should be terminated. This is a destructive
-        action that cannot be undone.
+        While any tools are still running you cannot end the conversation;
+        stop or wait for all in-flight tools to complete, then respond.
 
         Parameters
         ----------
