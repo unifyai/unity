@@ -2,19 +2,22 @@
 tests/async_tool_loop/test_utils.py
 =========================================
 
-Unit tests for utility functions in unity.common._async_tool.utils.
+Unit tests for utility functions in unity.common._async_tool.
 """
 
 import asyncio
+import json
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel, Field
 
 from unity.common._async_tool.utils import (
     get_handle_paused_state,
     maybe_await,
     try_parse_json,
 )
+from unity.common._async_tool.formatting import serialize_tool_content
 
 # =============================================================================
 # get_handle_paused_state tests
@@ -197,3 +200,35 @@ class TestTryParseJson:
         """Returns None unchanged."""
         result = try_parse_json(None)
         assert result is None
+
+
+# =============================================================================
+# serialize_tool_content – Pydantic model payloads
+# =============================================================================
+
+
+class _SampleModel(BaseModel):
+    name: str = Field(..., description="A name.")
+    value: int = Field(..., description="A number.")
+
+
+class TestSerializeToolContentPydanticModel:
+    """serialize_tool_content should serialize Pydantic models as clean JSON,
+    not fall through to str() which produces Python repr."""
+
+    def test_pydantic_model_serialized_as_json(self):
+        """A BaseModel payload should produce valid JSON, not a Python repr."""
+        model = _SampleModel(name="alice", value=42)
+
+        result = serialize_tool_content(
+            tool_name="my_tool",
+            payload=model,
+            is_final=True,
+        )
+
+        assert isinstance(result, str), (
+            f"Expected str, got {type(result).__name__}"
+        )
+        parsed = json.loads(result)
+        assert parsed["name"] == "alice"
+        assert parsed["value"] == 42
