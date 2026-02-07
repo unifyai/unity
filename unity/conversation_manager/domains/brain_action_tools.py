@@ -807,7 +807,7 @@ class ConversationManagerBrainActionTools:
         self,
         *,
         contact_id: int | str,
-        context: str = "",
+        context: str,
         phone_number: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -829,11 +829,38 @@ class ConversationManagerBrainActionTools:
             contact_id: The contact_id of the person to call (from
                 active_conversations or returned by ``find_contacts`` /
                 ``create_contact``).
-            context: Briefly describe why you are calling and any key information
-                the voice agent should know when the call connects (e.g. "We need
-                to confirm the Thursday 3pm meeting and ask about dietary
-                preferences for the team lunch"). This is delivered to the voice
-                agent as initial guidance before the recipient picks up.
+            context: **Mission briefing for the voice agent.** This is the
+                voice agent's sole source of context about what to do on the
+                call. Once the call connects, the voice agent speaks first
+                and will not receive any further guidance from you until the
+                other person responds or an external event arrives. Everything
+                the voice agent needs to open and conduct the conversation
+                must be in this string.
+
+                Include:
+                - **Purpose**: Why are we calling? What is the goal?
+                - **Key information**: Specific facts, names, dates, or
+                  details the voice agent needs (e.g. "the meeting is
+                  Thursday at 3pm at the downtown office").
+                - **Questions to ask**: What specific information do we need
+                  from the other person?
+                - **Tone / relationship**: How does the boss know this person?
+                  Any relevant social context (e.g. "this is a close friend"
+                  vs "this is a new business contact").
+                - **Constraints**: Anything to avoid saying, sensitive topics,
+                  or fallback behavior if the person is unavailable or
+                  confused.
+
+                Be thorough — a well-briefed voice agent produces a natural,
+                purposeful conversation. A vague context produces an awkward
+                opening.
+
+                Example: "Call to confirm the Thursday 3pm meeting with the
+                design team at the downtown office. Ask if Sarah has any
+                dietary preferences for the team lunch we're ordering. She's
+                a senior designer and long-time colleague — friendly and
+                informal tone is fine. If she can't make Thursday, ask what
+                times work Friday instead."
             phone_number: The recipient's phone number.  Required when the
                 contact does not yet have a phone number on file; omit when
                 the contact already has one.

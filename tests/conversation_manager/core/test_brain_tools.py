@@ -863,7 +863,10 @@ class TestMakeCallTool:
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
-        result = await brain_action_tools.make_call(contact_id=5)
+        result = await brain_action_tools.make_call(
+            contact_id=5,
+            context="Calling to confirm the Thursday meeting",
+        )
 
         assert result["status"] == "ok"
 
@@ -883,7 +886,10 @@ class TestMakeCallTool:
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact_without_phone])
 
-        result = await brain_action_tools.make_call(contact_id=5)
+        result = await brain_action_tools.make_call(
+            contact_id=5,
+            context="Calling to confirm the Thursday meeting",
+        )
 
         assert result["status"] == "error"
         assert "does not have" in result["error"]
@@ -917,29 +923,10 @@ class TestMakeCallTool:
         assert mock_cm.call_manager.initial_call_guidance == guidance_text
 
     @pytest.mark.asyncio
-    async def test_context_not_set_when_empty(
-        self,
-        brain_action_tools,
-        mock_cm,
-    ):
-        """When context is empty (default), initial_call_guidance is not set."""
-        contact = {
-            "contact_id": 5,
-            "first_name": "Test",
-            "surname": "Person",
-            "phone_number": "+1234567890",
-            "should_respond": True,
-        }
-        _setup_mock_contacts(mock_cm.contact_index, [contact])
-
-        # Preset to empty to track whether it's written
-        mock_cm.call_manager.initial_call_guidance = ""
-
-        result = await brain_action_tools.make_call(contact_id=5)
-
-        assert result["status"] == "ok"
-        # Should remain empty — the code only writes when context is truthy
-        assert mock_cm.call_manager.initial_call_guidance == ""
+    async def test_context_is_required(self, brain_action_tools):
+        """context is a required argument — calling without it raises TypeError."""
+        with pytest.raises(TypeError):
+            await brain_action_tools.make_call(contact_id=5)
 
 
 class TestActTool:

@@ -238,6 +238,7 @@ class TestMakeCallImplicitPhoneNumber:
 
         result = await brain_action_tools.make_call(
             contact_id=5,
+            context="Calling to discuss project timeline",
             phone_number="+15559990000",
         )
 
@@ -263,6 +264,7 @@ class TestMakeCallImplicitPhoneNumber:
 
         result = await brain_action_tools.make_call(
             contact_id=5,
+            context="Calling to discuss project timeline",
             phone_number="+15559990000",
         )
 
@@ -286,6 +288,7 @@ class TestMakeCallImplicitPhoneNumber:
 
         result = await brain_action_tools.make_call(
             contact_id=5,
+            context="Calling to discuss project timeline",
             phone_number="+15552222222",
         )
 
@@ -309,7 +312,10 @@ class TestMakeCallImplicitPhoneNumber:
         }
         _setup_mock_contacts(mock_cm.contact_index, [contact])
 
-        result = await brain_action_tools.make_call(contact_id=5)
+        result = await brain_action_tools.make_call(
+            contact_id=5,
+            context="Calling to discuss project timeline",
+        )
 
         assert result["status"] == "error"
         assert "phone" in result["error"].lower()
