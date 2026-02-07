@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import inspect
 from typing import Optional, Type, TypeVar, TYPE_CHECKING
 from pydantic import BaseModel
 from enum import Enum
@@ -288,43 +287,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                     if raw_result is None:
                         return None
 
-                    # Convert result to dict for processing
-                    if hasattr(raw_result, "model_dump"):
-                        final_payload = raw_result.model_dump()
-                    # Parse result if response_format was specified
-                    if response_format:
-                        if isinstance(raw_result, str):
-                            # Parse JSON string into the Pydantic model
-                            if inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                BaseModel,
-                            ):
-                                return response_format.model_validate_json(raw_result)
-                            elif inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                Enum,
-                            ):
-                                import json
-
-                                data = json.loads(raw_result)
-                                if isinstance(data, dict) and "value" in data:
-                                    return response_format(data["value"])
-                                return response_format(data)
-                        elif isinstance(raw_result, dict):
-                            if inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                BaseModel,
-                            ):
-                                return response_format.model_validate(raw_result)
-                            elif inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                Enum,
-                            ):
-                                if "value" in raw_result:
-                                    return response_format(raw_result["value"])
-                                return response_format(raw_result)
-                        elif isinstance(raw_result, response_format):
-                            return raw_result
                     return raw_result
 
                 finally:
