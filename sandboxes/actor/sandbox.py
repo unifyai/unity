@@ -3,9 +3,8 @@
 An interactive, steerable sandbox for running and testing Actor implementations.
 
 This sandbox serves as a sophisticated command-line environment to launch,
-monitor, and interact with any of the core actor classes (Hierarchical and
-CodeAct). It fully supports advanced interactive features like in-flight
-interjection, clarification, and steering commands.
+monitor, and interact with the CodeActActor. It fully supports advanced
+interactive features like in-flight interjection, clarification, and steering commands.
 
 Usage examples:
     # CodeAct without computer tools (data analysis, state managers only)
@@ -13,9 +12,6 @@ Usage examples:
 
     # CodeAct with web automation
     python -m sandboxes.actor.sandbox --actor code_act -p MyProject
-
-    # Hierarchical actor with web automation
-    python -m sandboxes.actor.sandbox --actor hierarchical -p MyProject
 """
 
 from __future__ import annotations
@@ -48,7 +44,6 @@ from sandboxes.utils import (
 )
 from unity.actor.base import BaseActor
 from unity.actor.code_act_actor import CodeActActor
-from unity.actor.hierarchical_actor import HierarchicalActor
 
 LG = logging.getLogger("actor_sandbox")
 
@@ -80,17 +75,7 @@ def _create_actor(args) -> BaseActor:
     actor_choice = args.actor.lower()
     LG.info(f"Instantiating actor: {actor_choice}")
 
-    if actor_choice == "hierarchical":
-        if args.no_computer:
-            LG.warning(
-                "HierarchicalActor requires computer tools - ignoring --no-computer flag",
-            )
-        return HierarchicalActor(
-            headless=args.headless,
-            agent_server_url=args.agent_url,
-            computer_mode="magnitude",
-        )
-    elif actor_choice == "code_act":
+    if actor_choice == "code_act":
         if args.no_computer:
             # No computer tools - just state managers via Primitives
             from unity.actor.environments import StateManagerEnvironment
@@ -130,7 +115,7 @@ async def _main_async() -> None:
         "--actor",
         "-a",
         type=str,
-        choices=["hierarchical", "code_act"],
+        choices=["code_act"],
         default="code_act",
         help="Select the actor implementation to run.",
     )

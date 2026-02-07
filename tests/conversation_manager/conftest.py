@@ -177,7 +177,7 @@ async def conversation_manager(request) -> CMStepDriver:
     print("  Using SimulatedActor for deterministic testing")
 
     # Create SimulatedActor for fast, deterministic testing
-    # (avoids HierarchicalActor's computer environment setup)
+    # (avoids full actor computer environment setup)
     #
     # Uses steps=None, duration=None so actions run indefinitely until explicitly
     # completed via trigger_completion() in test cleanup. This makes tests fully

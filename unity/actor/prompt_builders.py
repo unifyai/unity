@@ -932,40 +932,6 @@ def _build_interjection_static_prefix(
             ```
 
         ---
-        ### Routing Interjections to In-Flight Handles (SteerableToolPane)
-
-        If the dynamic prompt includes an **In-Flight Handles (Steerable)** section, there are active in-flight
-        handles that can receive interjections. You must decide whether to route the user's interjection to those
-        handles, in addition to choosing your primary `action`.
-
-        Use these optional routing fields in your JSON:
-        - `routing_action`: one of `"none"`, `"targeted"`, `"broadcast_filtered"`
-        - `target_handle_ids`: list of handle ids (required when `routing_action="targeted"`)
-        - `broadcast_filter`: filter dict (used when `routing_action="broadcast_filtered"`)
-        - `routed_message`: optional rewritten message for the routed handles (defaults to the user's interjection)
-
-        Routing guidelines:
-        1. If the user referenced one or more specific handle ids, use `routing_action="targeted"` and copy those ids.
-        2. If the instruction applies broadly (e.g., "be concise", "stop asking clarifying questions"), use
-           `routing_action="broadcast_filtered"` with a filter like `{{"capabilities":["interjectable"]}}` and optionally
-           constrain by `origin_tool_prefixes` (e.g., `["primitives.contacts"]`).
-        3. If there are no active handles, or the interjection is only about plan-level code changes, use `routing_action="none"`.
-        4. Routing complements the primary `action` (you may both patch the plan and route to in-flight handles).
-
-        **Routing-only example (NO PATCHES):**
-            - User: "Be concise and don't ask clarifying questions — apply this to whatever is currently running."
-            - Correct JSON:
-            ```json
-            {{
-              "action": "modify_task",
-              "reason": "No plan change needed; route the preference to in-flight handles.",
-              "routing_action": "broadcast_filtered",
-              "broadcast_filter": {{"capabilities": ["interjectable"]}},
-              "routed_message": "Please be concise and avoid asking clarifying questions."
-            }}
-            ```
-
-        ---
         ### Tool Reference
 
         **Available Tools:**
@@ -2244,7 +2210,7 @@ def build_initial_plan_prompt(
     response_format: Optional[type[BaseModel]] = None,
 ) -> str:
     """
-    Dynamically builds the system prompt for the Hierarchical Actor.
+    Dynamically builds the system prompt for initial plan generation.
     """
     formatted_functions = _format_existing_functions(
         existing_functions,

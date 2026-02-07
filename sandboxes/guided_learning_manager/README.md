@@ -146,7 +146,7 @@ captures/guided_learning/instrumentation/<session>/
 
 ## Actor Integration
 
-The sandbox can integrate with the HierarchicalActor to learn workflows from demonstrations.
+The sandbox can integrate with the CodeActActor to learn workflows from demonstrations.
 
 ### Examples
 

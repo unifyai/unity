@@ -50,10 +50,8 @@ from sandboxes.guided_learning_manager.plan_display import (
 )
 
 if TYPE_CHECKING:
-    from unity.actor.hierarchical_actor import (
-        HierarchicalActor,
-        HierarchicalActorHandle,
-    )
+    from unity.actor.code_act_actor import CodeActActor
+    from unity.common.async_tool_loop import SteerableToolHandle
     from unity.guided_learning_manager import GuidedLearningStep
 
 
@@ -126,8 +124,8 @@ class ActorIntegrationManager:
     """
 
     def __init__(self):
-        self.actor: Optional["HierarchicalActor"] = None
-        self.actor_handle: Optional["HierarchicalActorHandle"] = None
+        self.actor: Optional["CodeActActor"] = None
+        self.actor_handle: Optional["SteerableToolHandle"] = None
         self.plan_formatter: PlanDisplayFormatter = PlanDisplayFormatter()
         self.config: Optional[ActorIntegrationConfig] = None
 
@@ -152,12 +150,9 @@ class ActorIntegrationManager:
         Initialize Actor with correct mode and mocking.
 
         Steps:
-        1. Create HierarchicalActor with appropriate computer_mode
+        1. Create CodeActActor with appropriate computer_mode
         2. Mock primitives using mocking infrastructure
-        3. Create HierarchicalActorHandle with goal=None, persist=True
-        4. Cancel auto-started execution task
-        5. Set plan_source_code = "" to skip initial generation
-        6. Inject SimpleMockVerificationClient
+        3. Create actor handle via act()
         7. Start concurrent clarification handler task
 
         Args:
@@ -166,10 +161,7 @@ class ActorIntegrationManager:
         Raises:
             RuntimeError: If agent-service is not available in execution mode
         """
-        from unity.actor.hierarchical_actor import (
-            HierarchicalActor,
-            HierarchicalActorHandle,
-        )
+        from unity.actor.code_act_actor import CodeActActor
         from unity.actor.environments import (
             ComputerEnvironment,
             StateManagerEnvironment,
@@ -250,9 +242,9 @@ class ActorIntegrationManager:
                 description="A sandbox web searcher for guided learning.",
             )
 
-        # Step 3: Create HierarchicalActor with both environments
+        # Step 3: Create CodeActActor with both environments
         state_manager_env = StateManagerEnvironment(primitives)
-        self.actor = HierarchicalActor(
+        self.actor = CodeActActor(
             headless=config.headless,
             computer_mode=config.computer_mode,
             connect_now=config.connect_now,
@@ -263,24 +255,12 @@ class ActorIntegrationManager:
             ],
         )
 
-        # Step 3: Create HierarchicalActorHandle
+        # Step 3: Create actor handle
         # Using a learning goal so interjections have context for plan building.
-        # With persist=True, after the initial plan completes, the Actor transitions
-        # to PAUSED_FOR_INTERJECTION state where it waits for further instructions.
-        self.actor_handle = HierarchicalActorHandle(
-            actor=self.actor,
-            goal="The user is demonstrating a workflow which you must replicate. Start with an empty plan and build it gradually as you receive more demonstrations from the user. Each demonstration should build the plan incrementally.",
-            persist=True,  # Transitions to PAUSED_FOR_INTERJECTION after initial execution
+        self.actor_handle = await self.actor.act(
+            description="The user is demonstrating a workflow which you must replicate. Start with an empty plan and build it gradually as you receive more demonstrations from the user. Each demonstration should build the plan incrementally.",
+            persist=True,
         )
-
-        # Step 4: Wait for initial plan to complete and enter PAUSED_FOR_INTERJECTION
-        # The Actor will generate a simple plan based on the goal, execute it (no-op),
-        # and then transition to PAUSED_FOR_INTERJECTION ready for user demonstrations.
-        await self.actor_handle.awaiting_next_instruction()
-
-        # Step 6: Inject SimpleMockVerificationClient
-        if config.mock_verification:
-            self.actor_handle.verification_client = SimpleMockVerificationClient()
 
         # Step 7: Start concurrent clarification handler task
         self.clarification_handler_task = asyncio.create_task(

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import os
 
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
-from unity.actor.hierarchical_actor import VerificationAssessment
 from unity.manager_registry import ManagerRegistry
 
 
@@ -92,21 +91,3 @@ def configure_real_managers(
     monkeypatch.setattr(unity, "_list_all_assistants", lambda: [], raising=False)
 
     _apply_impl_overrides(monkeypatch, impl="real")
-
-
-@pytest.fixture
-def mock_verification(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Monkeypatch verification to always return success."""
-
-    async def _mock_check_state(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> VerificationAssessment:
-        return VerificationAssessment(status="ok", reason="Mock verification success")
-
-    monkeypatch.setattr(
-        "unity.actor.hierarchical_actor.HierarchicalActor._check_state_against_goal",
-        _mock_check_state,
-        raising=True,
-    )
