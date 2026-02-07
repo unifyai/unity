@@ -49,10 +49,10 @@ async def wait_for_operations_queue(timeout: float = 5.0) -> None:
     """
     from unity.conversation_manager.domains import managers_utils
 
-    # Give pending asyncio.create_task() calls time to run and add to queue
-    # Without this, the queue may appear empty because the task that adds
-    # items to the queue hasn't run yet
-    await asyncio.sleep(0.1)
+    # Yield to the event loop so the fire-and-forget create_task() in the
+    # event handler can execute its Queue.put() (non-blocking on an unbounded
+    # queue, so a single yield is sufficient).
+    await asyncio.sleep(0)
 
     try:
         await asyncio.wait_for(
