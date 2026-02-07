@@ -244,7 +244,7 @@ To pull the latest changes across all adjacent clones at once:
 ./pull_adjacent.sh
 ```
 
-This runs `git pull --ff-only` in every sibling `unity_*` directory (skipping the current repo), so all clones stay up to date with a single command.
+This runs `git pull --ff-only` in the current repo and every sibling `unity_*` directory, so all clones stay up to date with a single command.
 
 ### Cursor Cloud Agent Secrets (Required)
 
