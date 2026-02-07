@@ -495,7 +495,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "Triggering main CM brain",
                 icon_override="🔀",
             )
-            await self.request_llm_run(delay=0, cancel_running=True)
+            # Voice mode: cancel_running=False so running LLM tasks complete
+            # while only pending tasks are replaced ("queue of 2"). This
+            # prevents rapid user speech from cancelling every LLM run.
+            # Text mode: cancel_running=True — rapid messages should get
+            # fresh responses with the latest context.
+            cancel_running = not self.mode.is_voice
+            await self.request_llm_run(delay=0, cancel_running=cancel_running)
 
     # this is non-blocking, it will quickly submit the
     # coro and return
@@ -570,8 +576,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(SETTINGS.UNIFY_MODEL)
-        client.set_system_message(system_prompt.to_list())
-        client.set_prompt_caching(["system"])
+        client.set_system_message(system_prompt)
         messages = self._preprocess_messages(self.chat_history + [input_message])
         result = await single_shot_tool_decision(
             client,
@@ -917,7 +922,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             brain_spec = build_brain_spec(self)
             decision = await self.proactive_speech.decide(
                 conversation_turns,
-                brain_spec.system_prompt.flatten(),
+                brain_spec.system_prompt,
                 elapsed_seconds=elapsed_seconds,
             )
             self._session_logger.debug(
