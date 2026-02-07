@@ -30,6 +30,9 @@ from unity.conversation_manager.domains.brain_tools import (
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
 )
+from unity.file_manager.filesystem_adapters.local_adapter import (
+    LocalFileSystemAdapter,
+)
 from unity.conversation_manager.domains.notifications import (
     NotificationBar,
 )
@@ -442,11 +445,16 @@ class TestSendUnifyMessageTool:
         large_file = tmp_path / "large_file.bin"
         large_file.write_bytes(b"x" * (26 * 1024 * 1024))
 
-        result = await brain_action_tools.send_unify_message(
-            content="Here's the file",
-            contact_id=1,
-            attachment_filepath=str(large_file),
-        )
+        # Root the adapter at tmp_path so test files pass the subpath check
+        with patch(
+            "unity.file_manager.filesystem_adapters.local_adapter.LocalFileSystemAdapter",
+            lambda: LocalFileSystemAdapter(root=str(tmp_path)),
+        ):
+            result = await brain_action_tools.send_unify_message(
+                content="Here's the file",
+                contact_id=1,
+                attachment_filepath=str(large_file),
+            )
 
         assert result["status"] == "error"
         assert "too large" in result["error"].lower()
@@ -467,8 +475,12 @@ class TestSendUnifyMessageTool:
         test_file = tmp_path / "test_document.pdf"
         test_file.write_bytes(b"PDF content here")
 
-        # Mock the upload and send functions
+        # Root the adapter at tmp_path so test files pass the subpath check
         with (
+            patch(
+                "unity.file_manager.filesystem_adapters.local_adapter.LocalFileSystemAdapter",
+                lambda: LocalFileSystemAdapter(root=str(tmp_path)),
+            ),
             patch(
                 "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
             ) as mock_upload,
@@ -520,10 +532,16 @@ class TestSendUnifyMessageTool:
         test_file = tmp_path / "test_document.pdf"
         test_file.write_bytes(b"PDF content")
 
-        # Mock upload to fail
-        with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
-        ) as mock_upload:
+        # Root the adapter at tmp_path so test files pass the subpath check
+        with (
+            patch(
+                "unity.file_manager.filesystem_adapters.local_adapter.LocalFileSystemAdapter",
+                lambda: LocalFileSystemAdapter(root=str(tmp_path)),
+            ),
+            patch(
+                "unity.conversation_manager.domains.brain_action_tools.comms_utils.upload_unify_attachment",
+            ) as mock_upload,
+        ):
             mock_upload.return_value = {
                 "success": False,
                 "error": "Storage service unavailable",
@@ -643,12 +661,17 @@ class TestSendEmailTool:
         # Write 26MB of data
         large_file.write_bytes(b"x" * (26 * 1024 * 1024))
 
-        result = await brain_action_tools.send_email(
-            to=[1],
-            subject="Test",
-            body="Hello",
-            attachment_filepath=str(large_file),
-        )
+        # Root the adapter at tmp_path so test files pass the subpath check
+        with patch(
+            "unity.file_manager.filesystem_adapters.local_adapter.LocalFileSystemAdapter",
+            lambda: LocalFileSystemAdapter(root=str(tmp_path)),
+        ):
+            result = await brain_action_tools.send_email(
+                to=[1],
+                subject="Test",
+                body="Hello",
+                attachment_filepath=str(large_file),
+            )
 
         assert result["status"] == "error"
         assert "too large" in result["error"].lower()
@@ -669,10 +692,16 @@ class TestSendEmailTool:
         test_file = tmp_path / "report.pdf"
         test_file.write_bytes(b"PDF report content")
 
-        # Mock the send function
-        with patch(
-            "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
-        ) as mock_send:
+        # Root the adapter at tmp_path so test files pass the subpath check
+        with (
+            patch(
+                "unity.file_manager.filesystem_adapters.local_adapter.LocalFileSystemAdapter",
+                lambda: LocalFileSystemAdapter(root=str(tmp_path)),
+            ),
+            patch(
+                "unity.conversation_manager.domains.brain_action_tools.comms_utils.send_email_via_address",
+            ) as mock_send,
+        ):
             mock_send.return_value = {"success": True, "id": "sent-email-123"}
 
             result = await brain_action_tools.send_email(
