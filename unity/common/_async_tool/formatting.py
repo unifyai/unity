@@ -92,6 +92,13 @@ def serialize_tool_content(
     if isinstance(payload, FormattedToolResult):
         return payload.to_llm_content()
 
+    # Pydantic models → dict so the existing dict serialization path handles them.
+    try:
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json")
+    except Exception:
+        pass
+
     # Legacy path: Final result – promote embedded images, keep a clean textual view without raw base64
     # Additionally, when payload is a pure string that contains JSON, parse & pretty-print it; otherwise keep as-is.
     parsed_payload = payload
