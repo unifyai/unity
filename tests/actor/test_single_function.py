@@ -8,6 +8,7 @@ import pytest
 from unity.actor.single_function_actor import (
     SingleFunctionActor,
 )
+from unity.actor.execution import ExecutionResult
 from unity.function_manager.function_manager import FunctionManager
 from tests.helpers import _handle_project
 
@@ -1098,6 +1099,280 @@ async def verified_sum(a: int, b: int) -> dict:
 # Steerable Function Forwarding Tests
 # ────────────────────────────────────────────────────────────────────────────
 
+
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7. Steerable handle detection and forwarding tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_steerable_function_detected_and_forwarded():
+    """A function returning a SteerableToolHandle should be detected via
+    _extract_nested_handle and wired to the outer handle for steering."""
+    from unity.common.async_tool_loop import SteerableHandle
+
+    fm = FunctionManager()
+
+    steerable_impl = '''
+async def steerable_workflow(goal: str):
+    """A workflow that returns a steerable handle."""
+    client = new_llm_client()
+    client.set_system_message("You are helpful. Be very brief.")
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=goal,
+        tools={},
+        loop_id="test-steerable",
+        timeout=30,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[steerable_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["steerable_workflow"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={"goal": "Say only the word 'hello'"},
+        verify=False,
+    )
+
+    # Wait for the handle to determine if the result is steerable
+    await handle._handle_ready.wait()
+
+    assert handle.is_steerable
+    assert handle.inner_handle is not None
+    assert isinstance(handle.inner_handle, SteerableHandle)
+
+    # Intermediate content should have been published as a notification
+    notification = handle._notification_q.get_nowait()
+    assert notification["type"] == "intermediate_result"
+    # The notification content is an ExecutionResult with the handle replaced by a sentinel
+    intermediate = notification["content"]
+    assert isinstance(intermediate.result, str)  # sentinel string, not a handle
+
+    await handle.stop("test cleanup")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_steerable_function_result_forwarded():
+    """result() from a steerable function should forward to the inner handle."""
+    fm = FunctionManager()
+
+    steerable_impl = '''
+async def steerable_brief_response(message: str):
+    """A workflow that returns a steerable handle for brief responses."""
+    client = new_llm_client()
+    client.set_system_message("Respond with exactly one word only.")
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=message,
+        tools={},
+        loop_id="test-brief",
+        timeout=30,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[steerable_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["steerable_brief_response"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={"message": "Say only 'done'"},
+        verify=False,
+    )
+
+    # result() should forward to the inner handle and return a string (not ExecutionResult)
+    result = await asyncio.wait_for(handle.result(), timeout=60.0)
+    assert result is not None
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_steerable_function_stop_forwarded():
+    """stop() on a steerable function should forward to the inner handle."""
+    fm = FunctionManager()
+
+    steerable_impl = '''
+async def steerable_slow_task(duration: int):
+    """A slow steerable workflow."""
+    client = new_llm_client()
+    client.set_system_message("Count slowly to the given number, one at a time.")
+
+    handle = start_async_tool_loop(
+        client=client,
+        message=f"Count to {duration} slowly",
+        tools={},
+        loop_id="test-slow",
+        timeout=300,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[steerable_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["steerable_slow_task"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={"duration": 100},
+        verify=False,
+    )
+
+    # Wait for inner handle to be wired up
+    await handle._handle_ready.wait()
+    assert handle.is_steerable
+
+    # stop() should forward to the inner handle
+    await handle.stop("test stop")
+
+    # result should complete after stop
+    result = await asyncio.wait_for(handle.result(), timeout=10.0)
+    assert result is not None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_non_steerable_function_not_marked_steerable():
+    """A regular function should not be marked as steerable."""
+    fm = FunctionManager()
+    simple_function = _create_async_function(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(function_id=simple_function["function_id"])
+
+    result = await handle.result()
+
+    assert not handle.is_steerable
+    assert handle.inner_handle is None
+    # Non-steerable result is an ExecutionResult
+    assert isinstance(result, ExecutionResult)
+    assert result.result is not None
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_codeact_actor_compositional_function_steerable():
+    """A compositional function wrapping CodeActActor should be steerable."""
+    from unity.common.async_tool_loop import SteerableHandle
+
+    fm = FunctionManager()
+
+    codeact_impl = '''
+async def codeact_workflow(goal: str):
+    """A workflow powered by CodeActActor."""
+    from unity.actor.code_act_actor import CodeActActor
+
+    actor = CodeActActor()
+    handle = await actor.act(
+        description=goal,
+        clarification_enabled=False,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[codeact_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["codeact_workflow"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={"goal": "Say hello briefly"},
+        verify=False,
+    )
+
+    await handle._handle_ready.wait()
+
+    assert handle.is_steerable
+    assert handle.inner_handle is not None
+    assert isinstance(handle.inner_handle, SteerableHandle)
+
+    await handle.stop("test cleanup")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_codeact_compositional_search_no_primitives_with_interjection():
+    """Search for a CodeActActor compositional function (no primitives) and test interjection passthrough."""
+    from unity.common.async_tool_loop import SteerableHandle
+
+    fm = FunctionManager()
+
+    codeact_impl = '''
+async def counting_workflow(target: int):
+    """A workflow that counts numbers slowly using CodeActActor.
+
+    This function uses an AI agent to count from 1 to the target number,
+    announcing each number one at a time.
+    """
+    from unity.actor.code_act_actor import CodeActActor
+
+    actor = CodeActActor()
+    handle = await actor.act(
+        description=f"Count from 1 to {target}, saying each number one at a time. Take your time.",
+        clarification_enabled=False,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[codeact_impl])
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="count numbers slowly",
+        include_primitives=False,
+        call_kwargs={"target": 10},
+        verify=False,
+    )
+
+    await handle._handle_ready.wait()
+
+    assert handle.is_steerable, "Handle should be steerable"
+    assert handle.inner_handle is not None, "Inner handle should be available"
+    assert isinstance(
+        handle.inner_handle,
+        SteerableHandle,
+    ), "Inner handle should be SteerableHandle"
+
+    # Interjection should forward to the inner CodeActActor handle
+    await handle.interject(
+        "Actually, skip ahead and just say the final number directly.",
+    )
+
+    await handle.stop("test cleanup")
 
 
 # ────────────────────────────────────────────────────────────────────────────
