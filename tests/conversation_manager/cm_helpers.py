@@ -24,6 +24,22 @@ T = TypeVar("T")
 
 
 # =============================================================================
+# Test Setup Helpers
+# =============================================================================
+
+
+def make_contacts_visible(cm: "CMStepDriver", *contact_ids: int) -> None:
+    """Add contacts to active_conversations so the LLM can see their contact_ids.
+
+    Use this in tests that are about email routing mechanics (to/cc/bcc),
+    not about contact resolution.  The contacts must already exist in the
+    ContactManager (e.g., via TEST_CONTACTS in conftest).
+    """
+    for cid in contact_ids:
+        cm.contact_index.get_or_create_conversation(cid)
+
+
+# =============================================================================
 # Event Filtering Helpers
 # =============================================================================
 

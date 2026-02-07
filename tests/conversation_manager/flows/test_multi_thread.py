@@ -23,6 +23,7 @@ from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     filter_events_by_type,
     assert_has_one,
+    make_contacts_visible,
 )
 from tests.conversation_manager.conftest import (
     TEST_CONTACTS,
@@ -34,18 +35,6 @@ from unity.conversation_manager.events import (
     EmailSent,
     UnifyMessageReceived,
 )
-
-
-def _make_contacts_visible(cm, *contact_ids: int) -> None:
-    """Add contacts to active_conversations so the LLM can see their contact_ids.
-
-    Use this in tests that are about email routing mechanics (to/cc/bcc),
-    not about contact resolution.  The contacts must already exist in the
-    ContactManager (e.g., via TEST_CONTACTS in conftest).
-    """
-    for cid in contact_ids:
-        cm.cm.contact_index.get_or_create_conversation(cid)
-
 
 pytestmark = pytest.mark.eval
 
@@ -305,7 +294,7 @@ async def test_email_thread_fork_with_different_recipients(initialized_cm):
     cm = initialized_cm
     alice = TEST_CONTACTS[0]  # Alice Smith
 
-    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
+    make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     email_id = "CAKx7fQ_fork_test@mail.gmail.com"
 
@@ -424,7 +413,7 @@ async def test_email_thread_with_external_recipients(initialized_cm):
     bob = TEST_CONTACTS[1]  # Bob Johnson
     charlie = TEST_CONTACTS[2]  # Charlie Davis
 
-    _make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
+    make_contacts_visible(cm, 2, 3, 4)  # Alice, Bob, Charlie
 
     email_id = "CAKx7fQ_external_test@mail.gmail.com"
 
