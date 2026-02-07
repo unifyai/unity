@@ -374,8 +374,6 @@ The container includes:
 - Virtual desktop (X11/VNC)
 - PipeWire audio
 - Agent service (Node.js)
-- CodeSandbox service
-
 ### Cloud Deployment
 
 Unity uses Google Cloud Build for CI/CD:
@@ -417,7 +415,6 @@ unity/
 │       └── _async_tool/     # Async tool loop infrastructure
 ├── tests/                   # Test suite
 ├── agent-service/           # Node.js web/desktop agent
-├── codesandbox-service/     # CodeSandbox integration
 ├── desktop/                 # Virtual desktop setup
 ├── scripts/                 # Utility scripts
 └── sandboxes/               # Interactive development sandboxes

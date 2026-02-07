@@ -240,7 +240,7 @@ class FileStorageMap(BaseModel):
     )
     source_provider: Optional[str] = Field(
         default=None,
-        description="Provider/adapter name (e.g., Local, GoogleDrive).",
+        description="Provider/adapter name (e.g., Local).",
     )
 
     # Storage contexts

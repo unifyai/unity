@@ -12,7 +12,7 @@ Additionally provides:
 - list, stat: light helpers for inspection
 
 Construction controls via CLI:
-- adapter selection (local|codesandbox|interact|google_drive)
+- adapter selection (local)
 - local root vs rootless
 - default parse return mode (compact|full|none)
 - optional default response_format (schema/model) for ask_about_file
@@ -394,7 +394,7 @@ async def _main_async() -> None:
         "--adapter",
         "-a",
         type=str,
-        choices=["local", "codesandbox", "interact", "google_drive"],
+        choices=["local"],
         default="local",
     )
     parser.add_argument(
@@ -467,18 +467,6 @@ async def _main_async() -> None:
             fm = FileManager(adapter=LocalFileSystemAdapter(root_dir=root_path))
         else:
             fm = LocalFileManager()
-    elif args.adapter == "codesandbox":
-        from unity.file_manager.managers.codesandbox import CodeSandboxFileManager
-
-        fm = CodeSandboxFileManager()
-    elif args.adapter == "interact":
-        from unity.file_manager.managers.interact import InteractFileManager
-
-        fm = InteractFileManager()
-    elif args.adapter == "google_drive":
-        from unity.file_manager.managers.google_drive import GoogleDriveFileManager
-
-        fm = GoogleDriveFileManager()
     else:
         fm = LocalFileManager()
 

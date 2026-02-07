@@ -28,7 +28,7 @@ class FileRecordFields(BaseModel):
     )
     source_provider: Optional[str] = Field(
         default=None,
-        description="Provider/adapter name (e.g., Local, GoogleDrive, CodeSandbox).",
+        description="Provider/adapter name (e.g., Local).",
     )
 
     # Processing status
@@ -257,7 +257,7 @@ class FileInfo(BaseModel):
     # Identity fields
     source_provider: Optional[str] = Field(
         default=None,
-        description="Provider/adapter name (e.g., Local, GoogleDrive, CodeSandbox).",
+        description="Provider/adapter name (e.g., Local).",
     )
     source_uri: Optional[str] = Field(
         default=None,

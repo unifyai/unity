@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from unity.file_manager.types.ingest import IngestPipelineResult
     from unity.data_manager.base import BaseDataManager as DataManager
 
-from .base import BaseFileManager, BaseGlobalFileManager
+from .base import BaseFileManager
 from unity.data_manager.types import PlotResult as _VizPlotResult
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.llm_client import new_llm_client
@@ -1137,30 +1137,3 @@ class SimulatedFileManager(BaseFileManager):
         Returns an empty list to satisfy the API contract.
         """
         return []
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Simulated GlobalFileManager
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class SimulatedGlobalFileManager(BaseGlobalFileManager):
-    """
-    Simulated counterpart to GlobalFileManager. Aggregates multiple FileManagers
-    and provides the list_filesystems helper. For filesystem‑wide operations,
-    use ``FunctionManager`` to compose bespoke logic.
-    """
-
-    def __init__(self, managers: List[BaseFileManager]):
-        self._managers: List[BaseFileManager] = list(managers)
-
-    def list_filesystems(self) -> List[str]:
-        names = [
-            getattr(m.__class__, "__name__", "FileManager") for m in self._managers
-        ]
-        return sorted(set(names))
-
-    @functools.wraps(BaseGlobalFileManager.clear, updated=())
-    def clear(self) -> None:  # type: ignore[override]
-        """Re-initialise the simulated manager."""
-        type(self).__init__(self, managers=self._managers)

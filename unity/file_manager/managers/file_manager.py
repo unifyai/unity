@@ -81,7 +81,7 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         adapter : BaseFileSystemAdapter | None, default None
-            Filesystem adapter (e.g., Local, CodeSandbox, Interact). When None,
+            Filesystem adapter (e.g., Local). When None,
             adapter-backed operations will raise.
         parser : BaseParser | None, default None
             Parser used for extracting tables/text/metadata from bytes. Defaults
@@ -504,7 +504,7 @@ class FileManager(BaseFileManager):
         Returns
         -------
         str
-            The base adapter type (e.g., "Local", "CodeSandbox", "Interact").
+            The base adapter type (e.g., "Local").
         """
         if not adapter_name:
             return "Unknown"

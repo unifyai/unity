@@ -445,39 +445,3 @@ def test_simulated_file_manager_reduce_shapes(simulated_file_manager):
         group_by=["status", "file_id"],
     )
     assert isinstance(grouped_list, dict)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 11. Simulated GlobalFileManager                                            #
-# ────────────────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def simulated_global_file_manager():
-    """Fixture for a SimulatedGlobalFileManager with two underlying managers."""
-    fm1 = sim_mod.SimulatedFileManager()
-    fm2 = sim_mod.SimulatedFileManager()
-    fm1.clear_simulated_files()
-    fm2.clear_simulated_files()
-    fm1.add_simulated_file(
-        "greeting.txt",
-        records=[{"content": "Hello world"}],
-        full_text="Hello world from manager one",
-        description="Greeting file",
-    )
-    fm2.add_simulated_file(
-        "plan.md",
-        records=[{"content": "Strategy notes"}],
-        full_text="Strategy notes from manager two",
-        description="Plan file",
-    )
-    gfm = sim_mod.SimulatedGlobalFileManager([fm1, fm2])
-    yield gfm
-
-
-def test_global_list_filesystems(simulated_global_file_manager):
-    """Test that list_filesystems returns the expected manager class names."""
-    gfm = simulated_global_file_manager
-    filesystems = gfm.list_filesystems()
-    assert isinstance(filesystems, list)
-    assert "SimulatedFileManager" in filesystems

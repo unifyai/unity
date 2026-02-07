@@ -68,7 +68,7 @@ CLI flags
 Adapter options:
 
 ```
---adapter local|codesandbox|interact|google_drive (default: local)
+--adapter local (default: local)
 --root <path>       Root directory for local adapter
 --rootless          Use Local adapter without a root (absolute-path mode)
 --return-mode       Default parse return mode for seeding: compact|full|none
