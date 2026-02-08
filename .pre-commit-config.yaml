@@ -42,5 +42,5 @@ repos:
     name: Format with Black
     entry: black
     language: python
-    additional_dependencies: [black>=25.9.0]
+    additional_dependencies: [black==26.1.0]
     types: [python]
