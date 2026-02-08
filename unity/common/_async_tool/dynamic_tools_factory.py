@@ -726,8 +726,9 @@ class DynamicToolFactory:
             "    The follow-up question to ask about the completed tool's execution."
         )
 
-        # Capture reference for closure
+        # Capture references for closure
         _completed = completed
+        _all_completed_names = self.tools_data._completed_tool_names
 
         async def _ask_about_completed_tool(
             tool_id: str,
@@ -735,14 +736,26 @@ class DynamicToolFactory:
             **_kw,
         ):
             entry = _completed.get(tool_id)
-            if entry is None:
-                available = list(_completed.keys())
+            if entry is not None:
+                return await entry["ask_fn"](question=question, **_kw)
+
+            # Not askable — distinguish "exists but not steerable" from "doesn't exist"
+            tool_name = _all_completed_names.get(tool_id)
+            if tool_name is not None:
                 return (
-                    f"No completed tool found with tool_id={tool_id!r}. "
-                    f"Available tool_ids: {available}"
+                    f"Cannot ask about tool_id={tool_id!r} ({tool_name}). "
+                    f"This tool completed successfully but was not steerable — "
+                    f"it executed as a direct function call with no inner "
+                    f"reasoning trajectory to inspect. Its result is already "
+                    f"visible in the outer transcript above."
                 )
-            ask_fn = entry["ask_fn"]
-            return await ask_fn(question=question, **_kw)
+
+            available = list(_completed.keys())
+            return (
+                f"No tool found with tool_id={tool_id!r}. "
+                f"This ID does not match any completed tool call. "
+                f"Available tool_ids for retrospective inspection: {available}"
+            )
 
         _ask_about_completed_tool.__doc__ = doc
 

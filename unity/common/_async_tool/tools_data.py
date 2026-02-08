@@ -199,6 +199,8 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
+        # Tool name for every completed tool (steerable or not), keyed by call_id.
+        self._completed_tool_names: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
         # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
@@ -718,6 +720,7 @@ class ToolsData:
 
         # 3️⃣  remember so later lookups can answer instantly
         self.completed_results[call_id] = result
+        self._completed_tool_names[call_id] = name
 
         # 4️⃣  update / insert tool-result message --------------------------
         asst_msg = info.assistant_msg
