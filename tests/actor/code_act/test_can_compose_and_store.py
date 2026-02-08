@@ -223,6 +223,115 @@ async def test_code_act_can_store_true_stores_function():
 
 
 # ---------------------------------------------------------------------------
+# storage_check_on_return=True — eval tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_storage_check_on_return_stores_discovered_function():
+    """
+    When storage_check_on_return=True, the CodeActActor should compose and
+    execute code, return the result immediately, and then a fire-and-forget
+    background loop should review the trajectory and store any reusable
+    functions via FunctionManager_add_functions.
+    """
+    fm = MagicMock()
+    fm.search_functions = MagicMock(return_value={"metadata": []})
+    fm.filter_functions = MagicMock(return_value={"metadata": []})
+    fm.list_functions = MagicMock(return_value={"metadata": []})
+    fm.add_functions = MagicMock(return_value={"greet": "added"})
+
+    actor = CodeActActor(
+        function_manager=fm,
+        headless=True,
+        computer_mode="mock",
+        timeout=60,
+    )
+    try:
+        handle = await actor.act(
+            "Write a Python function called `greet` that takes a `name` parameter "
+            "and returns f'Hello, {name}!'. Execute it with name='World' to verify it works.",
+            storage_check_on_return=True,
+            persist=False,
+            clarification_enabled=False,
+        )
+        result = await asyncio.wait_for(handle.result(), timeout=90)
+
+        # result() returns immediately (the original result, not the storage check).
+        assert result is not None
+
+        # The storage check runs in the background. Poll briefly for
+        # add_functions to be called (fire-and-forget, so we give it time).
+        deadline = asyncio.get_event_loop().time() + 60
+        while asyncio.get_event_loop().time() < deadline:
+            if fm.add_functions.called:
+                break
+            await asyncio.sleep(0.5)
+
+        fm.add_functions.assert_called()
+        call_kwargs = fm.add_functions.call_args.kwargs
+        impl = str(call_kwargs.get("implementations", ""))
+        assert "greet" in impl, f"Expected 'greet' in stored implementation, got: {impl}"
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# storage_check_on_return — skip cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_storage_check_on_return_skipped_when_can_store_false():
+    """
+    storage_check_on_return=True with can_store=False should NOT start a
+    background storage check loop. The result returns normally.
+    """
+    fm = MagicMock()
+    fm.search_functions = MagicMock(return_value={"metadata": []})
+    fm.filter_functions = MagicMock(return_value={"metadata": []})
+    fm.list_functions = MagicMock(return_value={"metadata": []})
+    fm.add_functions = MagicMock(return_value={})
+
+    actor = CodeActActor(
+        function_manager=fm,
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    try:
+        handle = await actor.act(
+            "What is 2 + 2?",
+            storage_check_on_return=True,
+            can_store=False,
+            persist=False,
+            clarification_enabled=False,
+        )
+        result = await asyncio.wait_for(handle.result(), timeout=60)
+        assert result is not None
+
+        # Give a small window to confirm no background task was started.
+        await asyncio.sleep(2)
+
+        # No storage check should have run.
+        assert not actor._storage_check_tasks, (
+            "Expected no storage check tasks when can_store=False"
+        )
+        fm.add_functions.assert_not_called()
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Description type acceptance
 # ---------------------------------------------------------------------------
 
