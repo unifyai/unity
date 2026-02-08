@@ -19,7 +19,9 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
+from unity.file_manager.managers.local import LocalFileManager
 from unity.common.context_registry import ContextRegistry
+from unity.manager_registry import ManagerRegistry
 
 # ────────────────────────────────────────────────────────────────────────────
 # Sample Functions
@@ -60,8 +62,13 @@ dependencies = []
 
 
 @pytest.fixture
-def function_manager_factory():
-    """Factory fixture that creates FunctionManager instances."""
+def function_manager_factory(tmp_path):
+    """Factory fixture that creates FunctionManager instances.
+
+    Uses tmp_path as the LocalFileManager root so function files are written to
+    an ephemeral directory rather than ~/Unity/Local (which on macOS's
+    case-insensitive filesystem can collide with the repo checkout).
+    """
     managers = []
 
     def _create():
@@ -69,7 +76,10 @@ def function_manager_factory():
         ContextRegistry.forget(FunctionManager, "Functions/Compositional")
         ContextRegistry.forget(FunctionManager, "Functions/Primitives")
         ContextRegistry.forget(FunctionManager, "Functions/Meta")
-        fm = FunctionManager()
+        # Clear the LocalFileManager singleton so we can create one rooted at tmp_path
+        ManagerRegistry.clear()
+        local_fm = LocalFileManager(root=str(tmp_path / "Local"))
+        fm = FunctionManager(file_manager=local_fm)
         managers.append(fm)
         return fm
 
