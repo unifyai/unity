@@ -14,8 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json as _json
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
+
+from pydantic import BaseModel as _BaseModel
+from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
 
@@ -50,6 +54,73 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from unity.conversation_manager.conversation_manager import ConversationManager
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schema dict → Pydantic model conversion
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SCHEMA_TYPE_MAP: dict[str, type] = {
+    "string": str,
+    "str": str,
+    "integer": int,
+    "int": int,
+    "number": float,
+    "float": float,
+    "boolean": bool,
+    "bool": bool,
+}
+
+
+def _resolve_schema_type(schema: Any, name_hint: str) -> type:
+    """Resolve a single schema value to a Python type.
+
+    Handles:
+    - String type names (``"string"``, ``"integer"``, …)
+    - Nested dicts (recursively creates a child Pydantic model)
+    - Lists where the first element defines the item schema
+    """
+    if isinstance(schema, str):
+        return _SCHEMA_TYPE_MAP.get(schema.lower(), str)
+    if isinstance(schema, dict):
+        return schema_dict_to_pydantic(schema, name_hint)
+    if isinstance(schema, list) and len(schema) > 0:
+        item_type = _resolve_schema_type(schema[0], f"{name_hint}Item")
+        return list[item_type]  # type: ignore[valid-type]
+    return str  # fallback for unrecognised shapes
+
+
+def schema_dict_to_pydantic(
+    schema: dict,
+    model_name: str = "ResponseFormat",
+) -> type[_BaseModel]:
+    """Convert a simplified schema dict to a dynamic Pydantic model.
+
+    The schema uses a concise, LLM-friendly format:
+
+    - **String values** are type names: ``"string"``, ``"integer"``,
+      ``"number"``, ``"boolean"`` (shorthand ``"str"``, ``"int"``, etc.
+      also accepted).
+    - **Dict values** define nested object schemas (recursively converted).
+    - **List values** define array types; the first element is the item
+      schema.
+
+    Examples::
+
+        # Flat
+        {"email": "string", "age": "integer"}
+
+        # Nested with array
+        {"contacts": [{"name": "string", "phone": "string"}], "total": "integer"}
+    """
+    fields: dict[str, tuple[type, ...]] = {}
+    for field_name, field_schema in schema.items():
+        field_type = _resolve_schema_type(
+            field_schema,
+            f"{model_name}{field_name.title()}",
+        )
+        fields[field_name] = (field_type, ...)
+    return _create_model(model_name, **fields)
 
 
 def _coerce_contact_id(v: Any) -> int:
@@ -912,7 +983,12 @@ class ConversationManagerBrainActionTools:
         await self._event_broker.publish("app:comms:make_call", event.to_json())
         return {"status": "ok"}
 
-    async def act(self, *, query: str) -> dict[str, Any]:
+    async def act(
+        self,
+        *,
+        query: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
 
@@ -934,6 +1010,34 @@ class ConversationManagerBrainActionTools:
 
         Args:
             query: Natural language description of what to do or find.
+            response_format: An optional structured schema describing the shape of
+                the result you need back.  When provided, the action is required to
+                return a JSON object conforming to this schema (via a dedicated
+                ``final_response`` tool) instead of free-form text.
+
+                The schema uses a concise format where keys are field names and
+                values describe their types:
+
+                - Type strings: ``"string"``, ``"integer"``, ``"number"``,
+                  ``"boolean"`` (shorthand ``"str"``, ``"int"``, etc. also work).
+                - Nested objects: use a dict value, e.g.
+                  ``{"address": {"city": "string", "zip": "string"}}``.
+                - Arrays: use a single-element list whose element defines the item
+                  schema, e.g. ``[{"name": "string", "email": "string"}]``.
+
+                **Examples:**
+
+                - Simple flat fields::
+
+                      {"email": "string", "phone": "string"}
+
+                - Nested with array::
+
+                      {"contacts": [{"name": "string", "email": "string"}],
+                       "total_count": "integer"}
+
+                When omitted (the default), the action returns free-form text and
+                the result is whatever the actor decides to report.
         """
         global _next_handle_id
 
@@ -947,9 +1051,16 @@ class ConversationManagerBrainActionTools:
             else None
         )
 
+        # Convert the LLM-provided schema dict into a Pydantic model that the
+        # Actor's async tool loop uses for structured output validation.
+        pydantic_response_format = None
+        if response_format is not None:
+            pydantic_response_format = schema_dict_to_pydantic(response_format)
+
         handle = await self._cm.actor.act(
             query,
             _parent_chat_context=parent_context,
+            response_format=pydantic_response_format,
         )
 
         handle_id = _next_handle_id
