@@ -294,18 +294,34 @@ async def _run_storage_check(
             language: str = "python",
             overwrite: bool = False,
         ) -> Any:
-            """Store new reusable functions for future use."""
+            """Store new reusable functions, or update existing ones by name.
+
+            When ``overwrite=True`` and a function with the same name already
+            exists, its implementation is replaced with the new one.
+            """
             return fm.add_functions(
                 implementations=implementations,
                 language=language,
                 overwrite=bool(overwrite),
             )
 
+        async def FunctionManager_delete_functions(
+            function_ids: list[int],
+        ) -> Any:
+            """Delete functions by their IDs.
+
+            Use this to remove obsolete, redundant, or superseded functions
+            from the store. Obtain ``function_id`` values from the results
+            of search, filter, or list calls.
+            """
+            return fm.delete_function(function_id=function_ids)
+
         tools: Dict[str, Callable] = {
             "FunctionManager_search_functions": FunctionManager_search_functions,
             "FunctionManager_filter_functions": FunctionManager_filter_functions,
             "FunctionManager_list_functions": FunctionManager_list_functions,
             "FunctionManager_add_functions": FunctionManager_add_functions,
+            "FunctionManager_delete_functions": FunctionManager_delete_functions,
         }
 
         # ── Wire ask_about_completed_tool from snapshot ───────────────────
@@ -345,8 +361,9 @@ async def _run_storage_check(
 
         system_prompt = (
             "You are a function librarian. A CodeActActor has just completed a task. "
-            "Your job is to review the execution trajectory and decide whether any "
-            "newly composed code should be stored as reusable functions for future use.\n\n"
+            "Your job is to review the execution trajectory and maintain the function "
+            "library: store valuable new functions, improve existing ones, merge "
+            "redundant entries, and remove obsolete ones.\n\n"
             "## Completed Trajectory\n\n"
             f"{trajectory_json}\n\n"
             "## Final Result\n\n"
@@ -354,16 +371,26 @@ async def _run_storage_check(
             "## Instructions\n\n"
             "1. Review the trajectory for any Python functions that were composed "
             "and executed during the task.\n"
-            "2. For each candidate function, search the existing function store "
-            "(via `FunctionManager_search_functions`) to check if a similar "
-            "function already exists.\n"
-            "3. If there is a genuine gap — a useful, reusable function that does "
-            "not already exist in the store — store it via "
-            "`FunctionManager_add_functions`.\n"
-            "4. Do NOT store trivial one-liners, test scaffolding, or functions "
+            "2. Search the existing function store "
+            "(via `FunctionManager_search_functions`) to understand what already "
+            "exists.\n"
+            "3. Decide what actions (if any) would improve the library. You can:\n"
+            "   - **Add** a genuinely new, reusable function "
+            "(`FunctionManager_add_functions`).\n"
+            "   - **Update** an existing function with a better implementation "
+            "(`FunctionManager_add_functions` with `overwrite=True`).\n"
+            "   - **Merge** two or more overlapping functions into a single, "
+            "more general one: add the merged version, then delete the old "
+            "entries (`FunctionManager_delete_functions`).\n"
+            "   - **Delete** functions that are now redundant or superseded "
+            "(`FunctionManager_delete_functions`).\n"
+            "4. Prefer a clean, non-redundant library over a large one. Merging "
+            "two similar functions into one general-purpose function is better "
+            "than keeping both.\n"
+            "5. Do NOT store trivial one-liners, test scaffolding, or functions "
             "that are too specific to this particular task to be reusable.\n"
-            "5. When done (or if there is nothing worth storing), respond with a "
-            "brief summary of what you stored (or that nothing was needed)."
+            "6. When done (or if there is nothing worth changing), respond with a "
+            "brief summary of what you did (or that nothing was needed)."
         )
 
         client = new_llm_client(

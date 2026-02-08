@@ -332,6 +332,106 @@ async def test_storage_check_on_return_skipped_when_can_store_false():
 
 
 # ---------------------------------------------------------------------------
+# storage_check_on_return — reorganization (merge + delete)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_storage_check_on_return_merges_redundant_functions():
+    """
+    The storage check loop should recognise overlapping functions in the
+    store and merge them: add a unified version and delete the old ones.
+
+    Setup: the FunctionManager already contains two narrow greeting
+    functions (greet_formal, greet_casual). The actor composes and
+    executes a general-purpose `greet` function that subsumes both.
+    The storage check should detect the overlap, store the merged
+    version, and delete the now-redundant entries.
+    """
+    _existing_functions = [
+        {
+            "function_id": 101,
+            "name": "greet_formal",
+            "docstring": "Return a formal greeting.",
+            "implementation": (
+                "def greet_formal(name):\n"
+                '    return f"Good day, {name}."'
+            ),
+        },
+        {
+            "function_id": 102,
+            "name": "greet_casual",
+            "docstring": "Return a casual greeting.",
+            "implementation": (
+                "def greet_casual(name):\n"
+                '    return f"Hey {name}!"'
+            ),
+        },
+    ]
+
+    fm = MagicMock()
+    # Discovery tools return the two existing overlapping functions.
+    fm.search_functions = MagicMock(return_value=_existing_functions)
+    fm.filter_functions = MagicMock(return_value=_existing_functions)
+    fm.list_functions = MagicMock(return_value={
+        f["name"]: f for f in _existing_functions
+    })
+    fm.add_functions = MagicMock(return_value={"greet": "added"})
+    fm.delete_function = MagicMock(return_value={"greet_formal": "deleted", "greet_casual": "deleted"})
+
+    actor = CodeActActor(
+        function_manager=fm,
+        headless=True,
+        computer_mode="mock",
+        timeout=60,
+    )
+    try:
+        handle = await actor.act(
+            "Write a general-purpose Python function called `greet` that takes "
+            "`name` and `style` ('formal' or 'casual') parameters. "
+            "For formal: return f'Good day, {name}.'; "
+            "for casual: return f'Hey {name}!'. "
+            "Execute it with name='Alice' and style='formal' to verify.",
+            storage_check_on_return=True,
+            persist=False,
+            clarification_enabled=False,
+        )
+        result = await asyncio.wait_for(handle.result(), timeout=90)
+        assert result is not None
+
+        # Poll for the storage check to complete (fire-and-forget).
+        deadline = asyncio.get_event_loop().time() + 60
+        while asyncio.get_event_loop().time() < deadline:
+            # The LLM should both add the merged function AND delete the old ones.
+            if fm.add_functions.called and fm.delete_function.called:
+                break
+            await asyncio.sleep(0.5)
+
+        # The merged function should have been stored.
+        fm.add_functions.assert_called()
+        add_kwargs = fm.add_functions.call_args.kwargs
+        impl = str(add_kwargs.get("implementations", ""))
+        assert "greet" in impl, f"Expected 'greet' in stored implementation, got: {impl}"
+
+        # The old redundant functions should have been deleted.
+        fm.delete_function.assert_called()
+        delete_kwargs = fm.delete_function.call_args.kwargs
+        deleted_ids = delete_kwargs.get("function_id", [])
+        if isinstance(deleted_ids, int):
+            deleted_ids = [deleted_ids]
+        assert set(deleted_ids) & {101, 102}, (
+            f"Expected deletion of function_ids 101 and/or 102, got: {deleted_ids}"
+        )
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Description type acceptance
 # ---------------------------------------------------------------------------
 
