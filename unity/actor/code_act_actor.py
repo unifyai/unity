@@ -516,6 +516,41 @@ class CodeActActor(BaseCodeActActor):
             - Use **read_only** to "peek" without mutating state (what-if exploration).
             - Use `list_sessions()` and `inspect_state()` to decide which session to use.
 
+            Steerable handles
+            -----------------
+            State manager primitives (e.g. ``primitives.contacts.ask(...)``)
+            return **steerable handles** — live in-flight operations that can
+            be paused, resumed, interjected, or stopped from the outer loop.
+
+            You control whether to steer an operation or let it complete
+            internally, depending on what the task requires:
+
+            - **Return the handle as the last expression** to hand control
+              back to the outer loop. The handle is automatically adopted:
+              progress is shown as intermediate output, dynamic steering
+              helpers (``stop_*``, etc.) become available, and the final
+              result replaces the placeholder when the inner operation
+              completes. Use this when you may need to steer, monitor, or
+              cancel the operation mid-flight.
+
+              .. code-block:: python
+
+                  # Last expression is the handle → adopted for steering
+                  await primitives.contacts.ask(text="Who is Alice?")
+
+            - **Await the result inside the code** to let the operation
+              complete before returning. The outer loop receives only the
+              finished result with no steering opportunity. Use this when
+              you need the answer immediately for further processing within
+              the same code block.
+
+              .. code-block:: python
+
+                  # Blocks until done; result available for further logic
+                  handle = await primitives.contacts.ask(text="Who is Alice?")
+                  answer = await handle.result()
+                  print(f"Found: {answer}")
+
             Output
             ------
             Returns either a dict or an ExecutionResult object with the following fields:
@@ -525,6 +560,8 @@ class CodeActActor(BaseCodeActActor):
               execution, a plain string.
             - **stderr**: Same format as stdout (list for in-process Python, string otherwise).
             - **result**: The evaluated result of the last expression (Any), or None.
+              If the last expression is a steerable handle, it is automatically
+              adopted by the outer loop for mid-flight steering (see above).
             - **error**: Error message string if execution failed, otherwise None.
             - **language**: The language used for execution.
             - **state_mode**: The state mode used ("stateless", "stateful", or "read_only").
