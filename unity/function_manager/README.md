@@ -329,7 +329,7 @@ These are always available (from `create_execution_globals()`):
 | **Typing** | `typing`, `Any`, `Callable`, `Dict`, `List`, `Optional`, `Tuple`, `Set`, `Union`, `Literal` |
 | **Pydantic** | `pydantic`, `BaseModel`, `Field` |
 | **Primitives** | `primitives` – lazy access to all state managers |
-| **Steerable** | `SteerableHandle`, `SteerableToolHandle`, `start_async_tool_loop`, `new_llm_client` |
+| **Steerable** | `SteerableToolHandle`, `start_async_tool_loop`, `new_llm_client` |
 
 #### Injected by Actor at Runtime
 
@@ -383,19 +383,19 @@ Compositional functions can optionally return a **steerable handle** instead of 
 
 A steerable function is one that:
 1. Starts a background task (e.g., an async tool loop, an actor)
-2. Returns a `SteerableHandle` immediately (before the task completes)
+2. Returns a `SteerableToolHandle` immediately (before the task completes)
 3. Allows the caller to interact with the running task via the handle
 
 ### Runtime Detection
 
-Steerability is detected at **runtime** via `isinstance(result, SteerableHandle)`:
+Steerability is detected at **runtime** via `isinstance(result, SteerableToolHandle)`:
 
 ```python
-from unity.common.async_tool_loop import SteerableHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 
 result = await my_function()
 
-if isinstance(result, SteerableHandle):
+if isinstance(result, SteerableToolHandle):
     # Function returned a steerable handle - can forward steering operations
     await result.interject("Please also check for errors")
     final_result = await result.result()
@@ -409,7 +409,7 @@ else:
 Use the steerable infrastructure available in the execution globals:
 
 ```python
-async def my_steerable_workflow(goal: str) -> SteerableHandle:
+async def my_steerable_workflow(goal: str) -> SteerableToolHandle:
     """
     A steerable workflow that uses an async tool loop.
 
@@ -437,8 +437,7 @@ These are injected into the execution globals by `create_execution_globals()`:
 
 | Name | Purpose |
 |------|---------|
-| `SteerableHandle` | Base ABC for runtime `isinstance` checks |
-| `SteerableToolHandle` | Concrete handle class (extends `SteerableHandle`) |
+| `SteerableToolHandle` | Base ABC for steerable handles and runtime `isinstance` checks |
 | `start_async_tool_loop` | Factory function to create async tool loop handles |
 | `new_llm_client` | Factory to create LLM clients for async tool loops |
 
@@ -458,7 +457,7 @@ Steerable handles provide these methods:
 ### Example: Steerable Research Workflow
 
 ```python
-async def steerable_research(topic: str) -> SteerableHandle:
+async def steerable_research(topic: str) -> SteerableToolHandle:
     """
     Research a topic with the ability to steer mid-flight.
 

@@ -37,8 +37,13 @@ if TYPE_CHECKING:
 from abc import ABC, abstractmethod
 
 
-class SteerableHandle(ABC):
-    """Abstract base class for steerable handles.
+class SteerableToolHandle(ABC):
+    """Abstract base class for steerable tool handles.
+
+    Defines the full steering surface: query (``ask``, ``interject``),
+    lifecycle (``stop``, ``pause``, ``resume``), completion (``done``,
+    ``result``), and event APIs (``next_clarification``,
+    ``next_notification``, ``answer_clarification``).
 
     Notes on context parameters
     ---------------------------
@@ -62,10 +67,9 @@ class SteerableHandle(ABC):
     base ``stop(reason)`` signature, and ``ConversationManagerHandle.interject``
     replaces ``_parent_chat_context_cont`` with ``pinned`` / ``interjection_id``.
 
-    The signatures defined on this class (and on ``SteerableToolHandle``)
-    represent the **minimum universal contract** — the set of parameters that
-    every handle is guaranteed to accept.  Callers that hold a reference typed
-    as ``SteerableHandle`` or ``SteerableToolHandle`` may safely pass only
+    The signatures defined here represent the **minimum universal contract** —
+    the set of parameters that every handle is guaranteed to accept.  Callers
+    that hold a reference typed as ``SteerableToolHandle`` may safely pass only
     these base parameters.
 
     When dispatching a steering call to a handle whose concrete type is
@@ -77,12 +81,18 @@ class SteerableHandle(ABC):
     """
 
     @abstractmethod
+    def __init__(
+        self,
+    ) -> None:
+        pass
+
+    @abstractmethod
     async def ask(
         self,
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-    ) -> "SteerableHandle":
+    ) -> "SteerableToolHandle":
         """
         Query the status or progress of this running task (async - result arrives on next turn).
 
@@ -117,29 +127,6 @@ class SteerableHandle(ABC):
         message : str
             The user interjection to inject into the loop.
         """
-
-
-class SteerableToolHandle(SteerableHandle):
-    """Abstract base class for steerable tool handles.
-
-    This class extends :class:`SteerableHandle` with lifecycle methods
-    (``stop``, ``pause``, ``resume``), completion queries (``done``,
-    ``result``), and event APIs (``next_clarification``,
-    ``next_notification``, ``answer_clarification``).
-
-    The **signature extension contract** documented on
-    :class:`SteerableHandle` applies equally here: derived classes may add
-    domain-specific keyword arguments to any method (e.g. ``cancel`` on
-    ``stop``).  Callers that delegate to a handle of unknown concrete type
-    should use ``forward_handle_call`` rather than inline ``try/except``
-    fallbacks to accommodate these extensions safely.
-    """
-
-    @abstractmethod
-    def __init__(
-        self,
-    ) -> None:
-        pass
 
     @abstractmethod
     async def stop(
