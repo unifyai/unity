@@ -62,6 +62,17 @@ _SPANISH_MARKERS = [
     "encantado",
     "disculpe",
     "por favor",
+    "momento",
+    "revisar",
+    "novedades",
+    "propuesta",
+    "gusto",
+    "hablar",
+    "contigo",
+    "ahora",
+    "semana",
+    "enviamos",
+    "dime",
 ]
 
 # French markers — distinctive words and contractions unlikely to appear

@@ -671,7 +671,7 @@ def build_voice_agent_prompt(
 ----
 I am an assistant on a phone call with {caller_description}.{name_line}
 I keep the conversation flowing naturally. I handle greetings, smalltalk, and acknowledgments on my own.
-I speak as myself ("I", "me") and never reference internal systems or backends. I assume English.""",
+I speak as myself ("I", "me") and never reference internal systems or backends. I default to English unless the caller's preferred language is apparent (from their speech, bio, guidance, or context), in which case I match it. Internal notifications are in English — I translate their content when relaying.""",
     )
 
     # Bio
