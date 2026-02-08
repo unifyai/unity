@@ -77,7 +77,7 @@ class CallEventSocketServer:
         """
         self._event_broker = event_broker
         self._on_event = on_event
-        self._forward_channels = forward_channels or ["app:call:*"]
+        self._forward_channels = forward_channels if forward_channels is not None else ["app:call:*"]
         self._socket_path: str | None = None
         self._server_socket: socket.socket | None = None
         self._accept_task: asyncio.Task | None = None
@@ -89,6 +89,9 @@ class CallEventSocketServer:
         # Buffer for messages that arrive before any client connects.
         # Flushed to the first client that connects.
         self._pending_messages: list[tuple[str, str]] = []
+        # Signalled once the forward subscription is active, so callers of
+        # start() can be sure published events will reach the server.
+        self._forward_ready = asyncio.Event()
 
     @property
     def socket_path(self) -> str | None:
@@ -122,11 +125,14 @@ class CallEventSocketServer:
         self._server_socket.setblocking(False)
 
         self._running = True
+        self._forward_ready.clear()
         self._accept_task = asyncio.create_task(self._accept_connections())
 
-        # Start forwarding events to clients
+        # Start forwarding events to clients and wait for subscription to be
+        # active so that events published immediately after start() are not lost.
         if self._forward_channels:
             self._forward_task = asyncio.create_task(self._forward_events_to_clients())
+            await self._forward_ready.wait()
 
         print(f"[CallEventSocketServer] Listening on {self._socket_path}")
         print(f"[CallEventSocketServer] Forwarding channels: {self._forward_channels}")
@@ -329,6 +335,7 @@ class CallEventSocketServer:
             async with self._event_broker.pubsub() as pubsub:
                 # Subscribe to all forward channel patterns
                 await pubsub.psubscribe(*self._forward_channels)
+                self._forward_ready.set()
                 print(
                     f"[CallEventSocketServer] Subscribed to forward channels: "
                     f"{self._forward_channels}",
@@ -356,8 +363,9 @@ class CallEventSocketServer:
                             print(f"[CallEventSocketServer] Forward loop error: {e}")
 
         except asyncio.CancelledError:
-            pass
+            self._forward_ready.set()
         except Exception as e:
+            self._forward_ready.set()
             print(f"[CallEventSocketServer] Forward subscription error: {e}")
 
     async def _send_to_all_clients(self, channel: str, event_json: str) -> None:
