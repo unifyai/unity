@@ -16,6 +16,7 @@ from tests.conversation_manager.actions.integration.helpers import (
     assert_no_errors,
     get_actor_started_event,
     inject_actor_result,
+    steer_action,
     wait_for_actor_completion,
     wait_for_condition,
 )
@@ -49,8 +50,8 @@ async def test_pause_resume_inflight_handle(initialized_cm_codeact):
     handle_id = actor_event.handle_id
     handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
-    # Pause immediately (avoid races with very fast completions).
-    await handle.pause()
+    # Pause via the CM steering tool path (records in handle_actions).
+    await steer_action(cm, handle_id, "pause")
 
     await wait_for_condition(
         lambda: get_handle_paused_state(handle) is True,
@@ -59,7 +60,7 @@ async def test_pause_resume_inflight_handle(initialized_cm_codeact):
         timeout_message="Timed out waiting for handle to enter paused state.",
     )
 
-    await handle.resume()
+    await steer_action(cm, handle_id, "resume")
 
     _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
     assert_no_errors(result)
@@ -85,10 +86,9 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
     )
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
-    # Stop the action deterministically and ensure CM moves it to completed_actions.
-    await handle.stop(reason="test_stop")
+    # Stop via the CM steering tool path (records in handle_actions, moves to completed_actions).
+    await steer_action(cm, handle_id, "stop", reason="test_stop")
     actor_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     # Manually inject the ActorResult event to trigger CM's event handler
@@ -120,11 +120,13 @@ async def test_interject_midflight_constraints(initialized_cm_codeact):
     )
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    handle = cm.cm.in_flight_actions[handle_id]["handle"]
 
-    await handle.interject(
-        "Only include items explicitly mentioning a dollar amount.",
-        _parent_chat_context_cont=cm.cm.chat_history,
+    # Interject via the CM steering tool path (records in handle_actions, propagates context diff).
+    await steer_action(
+        cm,
+        handle_id,
+        "interject",
+        message="Only include items explicitly mentioning a dollar amount.",
     )
 
     _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
@@ -161,8 +163,9 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
     handle_id_a = get_actor_started_event(result_a).handle_id
     handle_a = cm.cm.in_flight_actions[handle_id_a]["handle"]
 
-    # Pause A and wait until paused state is visible.
-    await handle_a.pause()
+    # Pause A via the CM steering tool path (records in handle_actions so the
+    # rendered state shows the pause event and the LLM won't spuriously resume).
+    await steer_action(cm, handle_id_a, "pause")
     await wait_for_condition(
         lambda: get_handle_paused_state(handle_a) is True,
         timeout=300,
@@ -193,8 +196,8 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
     # A should still be paused (i.e., steering isolation; no cross-talk).
     assert get_handle_paused_state(handle_a) is True
 
-    # Cleanup A (stop) so we don't leak in-flight state.
-    await handle_a.stop(reason="test_concurrency_cleanup")
+    # Cleanup A (stop) via the CM steering tool path.
+    await steer_action(cm, handle_id_a, "stop", reason="test_concurrency_cleanup")
     _ = await wait_for_actor_completion(cm, handle_id_a, timeout=300)
     assert_no_errors(result_a)
 

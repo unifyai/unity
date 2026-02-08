@@ -58,6 +58,78 @@ async def wait_for_condition(
 
 
 # ---------------------------------------------------------------------------
+# CM steering helpers (go through the real CM steering tool path)
+# ---------------------------------------------------------------------------
+
+
+def _get_steering_tool(
+    cm: Any,
+    handle_id: int,
+    operation: str,
+) -> tuple[str, Any]:
+    """Look up a CM steering tool closure for an in-flight action.
+
+    Returns the (tool_name, tool_fn) pair. The tool closure records the event
+    in ``handle_actions`` and calls the underlying handle method, matching
+    exactly what the CM brain does when it invokes a steering tool.
+
+    Args:
+        cm: CMStepDriver instance.
+        handle_id: The action handle ID.
+        operation: One of "pause", "resume", "stop", "interject", "ask".
+
+    Raises:
+        AssertionError: If no matching tool is found (e.g. asking for
+            ``pause`` when the action is already paused).
+    """
+    from unity.conversation_manager.domains.brain_action_tools import (
+        ConversationManagerBrainActionTools,
+    )
+
+    action_tools = ConversationManagerBrainActionTools(cm.cm)
+    steering_tools = action_tools.build_action_steering_tools()
+
+    suffix = f"__{handle_id}"
+    matches = {
+        name: fn
+        for name, fn in steering_tools.items()
+        if name.startswith(f"{operation}_") and name.endswith(suffix)
+    }
+    assert matches, (
+        f"No {operation}_* steering tool found for handle_id={handle_id}. "
+        f"Available: {list(steering_tools.keys())}"
+    )
+    name, fn = next(iter(matches.items()))
+    return name, fn
+
+
+async def steer_action(
+    cm: Any,
+    handle_id: int,
+    operation: str,
+    **kwargs: Any,
+) -> dict:
+    """Invoke a CM steering tool for an in-flight action.
+
+    This goes through the real CM steering tool path (the same closure the CM
+    brain calls), so ``handle_actions`` is populated and the rendered state
+    will accurately reflect the steering event.
+
+    Args:
+        cm: CMStepDriver instance.
+        handle_id: The action handle ID.
+        operation: One of "pause", "resume", "stop", "interject", "ask".
+        **kwargs: Forwarded to the steering tool (e.g. ``reason="..."`` for
+            stop, ``message="..."`` for interject).
+
+    Returns:
+        The dict returned by the steering tool closure.
+    """
+    _name, tool_fn = _get_steering_tool(cm, handle_id, operation)
+    return await tool_fn(**kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Event helpers
 # ---------------------------------------------------------------------------
 
@@ -70,15 +142,22 @@ def get_actor_started_event(result: Any) -> ActorHandleStarted:
 
 
 def extract_actor_handle(cm: Any, handle_id: int) -> Any:
-    """Extract the SteerableToolHandle stored in ConversationManager.in_flight_actions."""
-    handle_data = cm.cm.in_flight_actions.get(handle_id)
+    """Extract the SteerableToolHandle for a given handle_id.
+
+    Checks both ``in_flight_actions`` and ``completed_actions`` so callers
+    can await the result of a handle that was stopped via the CM steering
+    tool path (which moves the handle to ``completed_actions``).
+    """
+    handle_data = cm.cm.in_flight_actions.get(handle_id) or cm.cm.completed_actions.get(
+        handle_id,
+    )
     assert (
         handle_data is not None
-    ), f"No in-flight action found for handle_id={handle_id}"
+    ), f"No action found for handle_id={handle_id} (checked in_flight and completed)"
     handle = handle_data.get("handle")
     assert (
         handle is not None
-    ), f"In-flight action missing handle for handle_id={handle_id}"
+    ), f"Action missing handle for handle_id={handle_id}"
     return handle
 
 
