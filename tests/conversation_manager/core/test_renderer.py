@@ -673,7 +673,7 @@ class TestComputeSnapshotDiff:
 
 
 class TestRenderStateWithTracking:
-    """Tests for render_state_with_tracking method."""
+    """Tests for render_state with element tracking."""
 
     @pytest.fixture
     def contact_index(self):
@@ -697,10 +697,10 @@ class TestRenderStateWithTracking:
         contact_index,
         notification_bar,
     ):
-        """render_state_with_tracking returns SnapshotState with full_render."""
+        """render_state returns SnapshotState with full_render."""
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
 
-        result = renderer.render_state_with_tracking(
+        result = renderer.render_state(
             contact_index,
             notification_bar,
             in_flight_actions={},
@@ -735,7 +735,7 @@ class TestRenderStateWithTracking:
 
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
 
-        result = renderer.render_state_with_tracking(
+        result = renderer.render_state(
             contact_index,
             notification_bar,
             in_flight_actions={},
@@ -762,7 +762,7 @@ class TestRenderStateWithTracking:
 
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
 
-        result = renderer.render_state_with_tracking(
+        result = renderer.render_state(
             contact_index,
             notification_bar,
             in_flight_actions={},
@@ -793,7 +793,7 @@ class TestRenderStateWithTracking:
 
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
 
-        result = renderer.render_state_with_tracking(
+        result = renderer.render_state(
             contact_index,
             notification_bar,
             in_flight_actions=in_flight_actions,
@@ -902,36 +902,6 @@ class TestRenderCompletedActions:
         last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
 
         result = renderer.render_state(
-            contact_index,
-            notification_bar,
-            in_flight_actions={},
-            completed_actions=completed_actions,
-            last_snapshot=last_snapshot,
-        )
-
-        assert "<completed_actions>" in result
-        assert "Test completed action" in result
-
-    def test_render_state_with_tracking_includes_completed_actions(
-        self,
-        renderer,
-    ):
-        """render_state_with_tracking includes completed_actions section."""
-        from unity.conversation_manager.domains.contact_index import ContactIndex
-        from unity.conversation_manager.domains.notifications import NotificationBar
-
-        contact_index = ContactIndex()
-        notification_bar = NotificationBar()
-        completed_actions = {
-            0: {
-                "handle": MagicMock(),
-                "query": "Test completed action",
-                "handle_actions": [],
-            },
-        }
-        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
-
-        result = renderer.render_state_with_tracking(
             contact_index,
             notification_bar,
             in_flight_actions={},

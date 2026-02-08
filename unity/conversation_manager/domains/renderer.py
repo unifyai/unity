@@ -449,26 +449,11 @@ class Renderer:
         in_flight_actions: dict = None,
         completed_actions: dict = None,
         last_snapshot: datetime = None,
-    ) -> str:
-        """Render the full state as a string."""
-        return (
-            f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
-            f"{self.render_in_flight_actions(in_flight_actions)}\n\n"
-            f"{self.render_completed_actions(completed_actions)}\n\n"
-            f"{self.render_active_conversations(contact_index, last_snapshot=last_snapshot)}"
-        )
-
-    def render_state_with_tracking(
-        self,
-        contact_index: ContactIndex,
-        notification_bar: NotificationBar = None,
-        in_flight_actions: dict = None,
-        completed_actions: dict = None,
-        last_snapshot: datetime = None,
     ) -> SnapshotState:
-        """Render state and return SnapshotState with constituent element tracking.
+        """Render the full conversation state.
 
-        This enables computing incremental diffs for context propagation.
+        Returns a SnapshotState containing the rendered string and constituent
+        element tracking for incremental diff computation.
         """
         from unity.common.prompt_helpers import now as prompt_now
 
