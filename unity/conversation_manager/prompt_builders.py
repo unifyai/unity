@@ -704,21 +704,39 @@ The following are my boss's details:
 
     # Add contact block if not boss
     if not is_boss_user:
-        contact_lines = [
-            f"- First Name: {contact_first_name}",
-            f"- Surname: {contact_surname}",
-            f"- Phone Number: {contact_phone_number}",
-            f"- Email: {contact_email}",
-        ]
-        if contact_bio:
-            contact_lines.append(f"- Bio: {contact_bio}")
-        contact_details = "\n".join(contact_lines)
-        parts.add(
-            f"""Contact details
+        has_name = contact_first_name or contact_surname
+        if has_name:
+            contact_lines = [
+                f"- First Name: {contact_first_name}",
+                f"- Surname: {contact_surname}",
+                f"- Phone Number: {contact_phone_number}",
+                f"- Email: {contact_email}",
+            ]
+            if contact_bio:
+                contact_lines.append(f"- Bio: {contact_bio}")
+            contact_details = "\n".join(contact_lines)
+            parts.add(
+                f"""Contact details
 ---------------
 The following are the details of the person I am speaking with:
 {contact_details}""",
-        )
+            )
+        else:
+            # Nameless contact — bio is the primary identifier
+            contact_lines = []
+            if contact_bio:
+                contact_lines.append(f"- Bio: {contact_bio}")
+            if contact_phone_number:
+                contact_lines.append(f"- Phone Number: {contact_phone_number}")
+            if contact_email:
+                contact_lines.append(f"- Email: {contact_email}")
+            contact_details = "\n".join(contact_lines)
+            parts.add(
+                f"""Contact details
+---------------
+{contact_details}
+This contact has no personal name on file. Any name given during the call belongs to whoever answered, not to the contact itself.""",
+            )
 
     # Add participants block for multi-party calls (e.g. Unify Meet)
     if participants:
