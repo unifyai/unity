@@ -549,8 +549,17 @@ class Renderer:
                     and not a.get("response")
                 ]
 
-                action_render = f"<action id='{handle_id}' short_name='{short_name}' status='{status}'>\n"
+                is_persistent = handle_data.get("persist", False)
+                mode_attr = " mode='persistent'" if is_persistent else ""
+                action_render = f"<action id='{handle_id}' short_name='{short_name}' status='{status}'{mode_attr}>\n"
                 action_render += f"<original_request>{query}</original_request>\n"
+                if is_persistent:
+                    action_render += (
+                        "<note>Persistent session — will NOT self-complete. "
+                        "Use stop_* to end it. Responses marked 'awaiting_input' "
+                        "mean the actor finished its turn and needs your next "
+                        "interject_* to continue.</note>\n"
+                    )
 
                 action_render += "<steering_tools>\n"
                 for action_name, description in iter_steering_tools_for_action(

@@ -834,6 +834,57 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     await cm.request_llm_run()
 
 
+@EventHandler.register(ActorSessionResponse)
+async def _(event: ActorSessionResponse, cm: "ConversationManager", *args, **kwargs):
+    """A persistent session completed a turn and is awaiting input.
+
+    This is semantically distinct from ``ActorNotification`` (progress update):
+    a response means the actor is *done with this turn* and will not proceed
+    until the brain interjects with the next instruction.
+    """
+    action_data = cm.in_flight_actions.get(event.handle_id, {})
+    action_query = action_data.get("query", f"Action {event.handle_id}")
+    short_desc = (
+        action_query[:30] + "..." if len(action_query) > 30 else action_query
+    )
+
+    cm.notifications_bar.push_notif(
+        "Action",
+        f"Response from session: {short_desc}\n{event.content}",
+        event.timestamp,
+        pinned=True,
+        id=f"action_response_{event.handle_id}",
+    )
+
+    from unity.common.prompt_helpers import now as prompt_now
+
+    if action_data and "handle_actions" in action_data:
+        action_data["handle_actions"].append(
+            {
+                "action_name": "response",
+                "query": event.content,
+                "status": "awaiting_input",
+                "timestamp": prompt_now(),
+            },
+        )
+    await cm.request_llm_run()
+
+
+@EventHandler.register(ActorNotification)
+async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs):
+    """A progress notification from an in-flight action.
+
+    Unlike ``ActorResponse``, notifications arrive while the actor is still
+    working.  They are unpinned (transient) and informational.
+    """
+    cm.notifications_bar.push_notif(
+        "Action",
+        f"Progress: {event.response}",
+        event.timestamp,
+    )
+    await cm.request_llm_run()
+
+
 @EventHandler.register((ActorPause, ActorResume))
 async def _(
     event: ActorPause | ActorResume,

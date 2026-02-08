@@ -77,46 +77,70 @@ async def actor_watch_notifications(
     handle_id: int,
     handle: SteerableToolHandle,
 ) -> None:
-    """Forward notifications as handle responses until handle completes."""
+    """Forward notifications and responses from the handle until it completes.
+
+    The handle's notification queue carries two kinds of messages:
+
+    - **``type="notification"``** — progress updates emitted by ``notify()``
+      while the actor is still working.
+    - **``type="response"``** — turn-complete signals emitted when a
+      persistent session enters its wait state. These mean the actor has
+      finished the current turn and is awaiting the next ``interject``.
+
+    Each type is published as a distinct CM event so the brain can tell
+    them apart.
+    """
     while not handle.done():
-        # await notification
         try:
             notif = await asyncio.wait_for(handle.next_notification(), timeout=30)
         except asyncio.TimeoutError:
             continue
 
-        # Extract a human-friendly message.
-        #
-        # Contract:
-        # - Notifications may be plain strings (already display-ready), OR
-        # - Structured dict payloads (recommended: include both "type" and "message").
-        #
-        # We keep this adapter strict and predictable: prefer "message"; otherwise
-        # fall back to "type"; otherwise JSON-dump the payload.
-        msg: str
-        if isinstance(notif, dict):
-            if notif.get("message") is not None:
-                msg = str(notif.get("message"))
-            elif notif.get("type") is not None:
-                msg = str(notif.get("type"))
-            else:
-                try:
-                    import json as _json
+        # Determine whether this is a turn-complete response or a progress
+        # notification. The loop emits responses with {"type": "response", ...}.
+        is_response = isinstance(notif, dict) and notif.get("type") == "response"
 
-                    msg = _json.dumps(notif, ensure_ascii=False, default=str)
-                except Exception:
-                    msg = str(notif)
+        if is_response:
+            content = str(notif.get("content", ""))
+            await event_broker.publish(
+                "app:actor:session_response",
+                ActorSessionResponse(
+                    handle_id=handle_id,
+                    content=content,
+                ).to_json(),
+            )
         else:
-            msg = str(notif)
+            # Extract a human-friendly message.
+            #
+            # Contract:
+            # - Notifications may be plain strings (already display-ready), OR
+            # - Structured dict payloads (recommended: include both "type" and "message").
+            #
+            # We keep this adapter strict and predictable: prefer "message";
+            # otherwise fall back to "type"; otherwise JSON-dump the payload.
+            msg: str
+            if isinstance(notif, dict):
+                if notif.get("message") is not None:
+                    msg = str(notif.get("message"))
+                elif notif.get("type") is not None:
+                    msg = str(notif.get("type"))
+                else:
+                    try:
+                        import json as _json
 
-        # publish response
-        await event_broker.publish(
-            "app:actor:notification",
-            ActorNotification(
-                handle_id=handle_id,
-                response=msg,
-            ).to_json(),
-        )
+                        msg = _json.dumps(notif, ensure_ascii=False, default=str)
+                    except Exception:
+                        msg = str(notif)
+            else:
+                msg = str(notif)
+
+            await event_broker.publish(
+                "app:actor:notification",
+                ActorNotification(
+                    handle_id=handle_id,
+                    response=msg,
+                ).to_json(),
+            )
 
 
 async def actor_watch_clarifications(
