@@ -450,7 +450,7 @@ class Renderer:
         completed_actions: dict = None,
         last_snapshot: datetime = None,
     ) -> str:
-        """Render the full state as a string (backward compatible)."""
+        """Render the full state as a string."""
         return (
             f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
             f"{self.render_in_flight_actions(in_flight_actions)}\n\n"
@@ -472,29 +472,21 @@ class Renderer:
         """
         from unity.common.prompt_helpers import now as prompt_now
 
-        # Collect constituent elements while rendering
         message_elements: list[MessageElement] = []
         notification_elements: list[NotificationElement] = []
         action_elements: list[ActionElement] = []
 
-        # Render notifications with tracking
-        notif_render = self._render_notification_bar_with_tracking(
+        notif_render = self.render_notification_bar(
             notification_bar,
             last_snapshot=last_snapshot,
             elements_out=notification_elements,
         )
-
-        # Render in-flight actions with tracking
-        actions_render = self._render_in_flight_actions_with_tracking(
+        actions_render = self.render_in_flight_actions(
             in_flight_actions,
             elements_out=action_elements,
         )
-
-        # Render completed actions (no element tracking needed)
         completed_render = self.render_completed_actions(completed_actions)
-
-        # Render active conversations with tracking
-        convs_render = self._render_active_conversations_with_tracking(
+        convs_render = self.render_active_conversations(
             contact_index,
             last_snapshot=last_snapshot,
             elements_out=message_elements,
@@ -510,13 +502,13 @@ class Renderer:
             snapshot_time=prompt_now(as_string=False),
         )
 
-    def _render_notification_bar_with_tracking(
+    def render_notification_bar(
         self,
         notification_bar: NotificationBar,
         last_snapshot: datetime = None,
         elements_out: list[NotificationElement] | None = None,
     ) -> str:
-        """Render notification bar and track elements."""
+        """Render the notification bar."""
         if notification_bar is None:
             return "<notifications>\n</notifications>"
 
@@ -546,12 +538,12 @@ class Renderer:
 
         return f"<notifications>\n" + "\n".join(rendered_lines) + "\n</notifications>"
 
-    def _render_in_flight_actions_with_tracking(
+    def render_in_flight_actions(
         self,
         in_flight_actions: dict,
         elements_out: list[ActionElement] | None = None,
     ) -> str:
-        """Render in-flight actions and track elements."""
+        """Render in-flight actions with their status and history."""
         out = "<in_flight_actions>\n"
         if not in_flight_actions:
             out += "No actions currently executing.\n"
@@ -647,7 +639,7 @@ class Renderer:
         out += "</in_flight_actions>"
         return out
 
-    def _render_active_conversations_with_tracking(
+    def render_active_conversations(
         self,
         contact_index: ContactIndex,
         last_snapshot: datetime = None,
@@ -655,14 +647,14 @@ class Renderer:
         max_global_messages: int = 50,
         elements_out: list[MessageElement] | None = None,
     ) -> str:
-        """Render active conversations and track message elements."""
+        """Render all active conversations."""
         # Fetch assistant's timezone once for all contacts
         assistant_timezone = _get_assistant_timezone()
 
         contacts = []
         for contact_id, conv_state in contact_index.active_conversations.items():
             contact_info = contact_index.get_contact(contact_id) or {}
-            rendered = self._render_contact_with_tracking(
+            rendered = self.render_contact(
                 contact_info=contact_info,
                 conv_state=conv_state,
                 max_messages=max_messages,
@@ -677,7 +669,7 @@ class Renderer:
         contacts_str = "\n\n".join(contacts)
         return f"<active_conversations>\n{contacts_str}\n</active_conversations>"
 
-    def _render_contact_with_tracking(
+    def render_contact(
         self,
         contact_info: dict,
         conv_state: ConversationState,
@@ -688,7 +680,7 @@ class Renderer:
         contact_index: ContactIndex | None = None,
         assistant_timezone: str | None = None,
     ) -> str:
-        """Render a single contact's conversation and track message elements."""
+        """Render a single contact's conversation."""
         contact_id = conv_state.contact_id
         first_name = contact_info.get("first_name") or ""
         surname = contact_info.get("surname") or ""
@@ -708,7 +700,7 @@ class Renderer:
         # Render threads with tracking
         global_thread = ""
         if conv_state.global_thread:
-            global_thread = self._render_thread_with_tracking(
+            global_thread = self.render_thread(
                 "global",
                 conv_state.global_thread,
                 contact_id=contact_id,
@@ -722,7 +714,7 @@ class Renderer:
             )
 
         per_medium_threads = "\n\n".join(
-            self._render_thread_with_tracking(
+            self.render_thread(
                 str(t_name),
                 t,
                 contact_id=contact_id,
@@ -754,11 +746,11 @@ class Renderer:
             f"</contact>"
         )
 
-    def _render_thread_with_tracking(
+    def render_thread(
         self,
         thread_name: str,
         thread,
-        contact_id: int,
+        contact_id: int = None,
         max_messages: int = 5,
         last_snapshot: datetime = None,
         elements_out: list[MessageElement] | None = None,
@@ -767,7 +759,7 @@ class Renderer:
         contact_timezone: str | None = None,
         assistant_timezone: str | None = None,
     ) -> str:
-        """Render a thread and track message elements."""
+        """Render a thread."""
         thread_list = list(thread)
         displayed_messages = thread_list[-max_messages:]
         start_index = len(thread_list) - len(displayed_messages)
@@ -799,139 +791,6 @@ class Renderer:
             f"<{thread_name}>\n" + "\n".join(rendered_messages) + f"\n</{thread_name}>"
         )
 
-    def render_active_conversations(
-        self,
-        contact_index: ContactIndex,
-        max_messages: int = 5,
-        max_global_messages: int = 50,
-        last_snapshot: datetime = None,
-    ):
-        """Render all active conversations, fetching contact info from ContactManager."""
-        # Fetch assistant's timezone once for all contacts
-        assistant_timezone = _get_assistant_timezone()
-
-        contacts = []
-        for contact_id, conv_state in contact_index.active_conversations.items():
-            # Fetch contact info from ContactManager (source of truth)
-            contact_info = contact_index.get_contact(contact_id) or {}
-            rendered = self.render_contact(
-                contact_info=contact_info,
-                conv_state=conv_state,
-                max_messages=max_messages,
-                max_global_messages=max_global_messages,
-                last_snapshot=last_snapshot,
-                contact_index=contact_index,
-                assistant_timezone=assistant_timezone,
-            )
-            contacts.append(rendered)
-
-        contacts_str = "\n\n".join(contacts)
-        return f"<active_conversations>\n{contacts_str}\n</active_conversations>"
-
-    def render_contact(
-        self,
-        contact_info: dict,
-        conv_state: ConversationState,
-        max_messages: int = 5,
-        max_global_messages: int = 50,
-        last_snapshot: datetime = None,
-        contact_index: ContactIndex | None = None,
-        assistant_timezone: str | None = None,
-    ):
-        """
-        Render a single contact's conversation.
-
-        Args:
-            contact_info: Contact data from ContactManager (name, email, response_policy, etc.)
-            conv_state: Conversation state from ContactIndex (threads, on_call)
-            contact_index: ContactIndex for looking up participant timezones in emails
-            assistant_timezone: Assistant's timezone for timezone comparison display
-        """
-        contact_id = conv_state.contact_id
-        first_name = contact_info.get("first_name") or ""
-        surname = contact_info.get("surname") or ""
-        phone_number = contact_info.get("phone_number") or ""
-        email_address = contact_info.get("email_address") or ""
-        timezone = contact_info.get("timezone") or ""
-        bio = contact_info.get("bio") or ""
-        rolling_summary = contact_info.get("rolling_summary") or ""
-        response_policy = contact_info.get("response_policy") or ""
-        should_respond = contact_info.get("should_respond", True)
-        is_boss = contact_id == 1
-
-        # Compute contact name for timezone display
-        contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"
-        contact_timezone = contact_info.get("timezone")
-
-        # Render threads
-        global_thread = (
-            self.render_thread(
-                "global",
-                conv_state.global_thread,
-                max_messages=max_global_messages,
-                last_snapshot=last_snapshot,
-                contact_index=contact_index,
-                contact_name=contact_name,
-                contact_timezone=contact_timezone,
-                assistant_timezone=assistant_timezone,
-            )
-            if conv_state.global_thread
-            else ""
-        )
-        per_medium_threads = "\n\n".join(
-            self.render_thread(
-                t_name,
-                t,
-                max_messages=max_messages,
-                last_snapshot=last_snapshot,
-                contact_index=contact_index,
-                contact_name=contact_name,
-                contact_timezone=contact_timezone,
-                assistant_timezone=assistant_timezone,
-            )
-            for t_name, t in conv_state.threads.items()
-            if t
-        )
-        threads_content = (
-            f"{global_thread}\n\n{per_medium_threads}"
-            if global_thread
-            else per_medium_threads
-        )
-
-        return (
-            f'<contact contact_id="{contact_id}" first_name="{first_name}" surname="{surname}" '
-            f'is_boss="{is_boss}" phone_number="{phone_number}" email_address="{email_address}" '
-            f'timezone="{timezone}" on_call="{conv_state.on_call}" should_respond="{should_respond}">\n'
-            f"<bio>{bio}</bio>\n"
-            f"<rolling_summary>{rolling_summary}</rolling_summary>\n"
-            f"<response_policy>{response_policy}</response_policy>\n"
-            f"<threads>\n{threads_content}\n</threads>\n"
-            f"</contact>"
-        )
-
-    def render_thread(
-        self,
-        thread_name,
-        thread,
-        max_messages=5,
-        last_snapshot=None,
-        contact_index: ContactIndex | None = None,
-        contact_name: str | None = None,
-        contact_timezone: str | None = None,
-        assistant_timezone: str | None = None,
-    ):
-        messages = "\n".join(
-            self.render_message(
-                m,
-                last_snapshot,
-                contact_index=contact_index,
-                contact_name=contact_name,
-                contact_timezone=contact_timezone,
-                assistant_timezone=assistant_timezone,
-            )
-            for m in list(thread)[-max_messages:]
-        )
-        return f"<{thread_name}>\n{messages}\n</{thread_name}>"
 
     def render_message(
         self,
@@ -1061,111 +920,6 @@ class Renderer:
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
 
-    def render_notification_bar(
-        self,
-        notification_bar: NotificationBar,
-        last_snapshot=None,
-    ):
-        pinned_notifs = [n for n in notification_bar.notifications if n.pinned]
-        new_notifs = [
-            n
-            for n in notification_bar.notifications
-            if not n.pinned and n.timestamp > last_snapshot
-        ]
-        all_notifs = pinned_notifs + new_notifs
-        rendered_notifs = "\n".join(
-            f'{"[PINNED] " if n.pinned else ""}[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}'
-            for n in all_notifs
-        )
-        return f"<notifications>\n{rendered_notifs}\n</notifications>"
-
-    def render_in_flight_actions(self, in_flight_actions: dict):
-        """Render currently in-flight actions with their status and history.
-
-        These are actions that are ALREADY EXECUTING - work is in progress.
-        Use steering tools to interact with them, don't duplicate with `act`.
-        """
-        out = "<in_flight_actions>\n"
-        if not in_flight_actions:
-            out += "No actions currently executing.\n"
-        else:
-            for handle_id, handle_data in in_flight_actions.items():
-                query = handle_data.get("query", "")
-                short_name = derive_short_name(query)
-                handle = handle_data.get("handle")
-                handle_actions = handle_data.get("handle_actions", [])
-
-                # Determine status based on pause state
-                is_paused = get_handle_paused_state(handle)
-                status = "paused" if is_paused else "executing"
-
-                pending_clarifications = [
-                    a
-                    for a in handle_actions
-                    if a.get("action_name") == "clarification_request"
-                    and not a.get("response")
-                ]
-
-                out += f"<action id='{handle_id}' short_name='{short_name}' status='{status}'>\n"
-                out += f"<original_request>{query}</original_request>\n"
-
-                out += "<steering_tools>\n"
-                for action_name, description in iter_steering_tools_for_action(
-                    handle_id,
-                    query,
-                    pending_clarifications,
-                    is_paused=is_paused,
-                ):
-                    out += f"  - {action_name}: {description}\n"
-                out += "</steering_tools>\n"
-
-                if handle_actions:
-                    out += "<history>\n"
-                    for a in handle_actions:
-                        action_type = a.get("action_name", "")
-                        action_query = a.get("query", "")
-                        action_status = a.get("status", "")
-                        action_ts = a.get("timestamp", "")
-
-                        attrs = f"type='{action_type}'"
-                        if action_ts:
-                            attrs += f" timestamp='{action_ts}'"
-                        if action_status:
-                            attrs += f" status='{action_status}'"
-                        out += f"<event {attrs}>\n"
-
-                        if action_query:
-                            out += f"  <content>{action_query}</content>\n"
-                        if a_res := a.get("response"):
-                            out += f"  <response>{a_res}</response>\n"
-
-                        # Show pending note for in-flight ask operations
-                        if action_status == "pending" and action_type.startswith(
-                            "ask_",
-                        ):
-                            out += (
-                                "  <note>Result pending - you will receive another "
-                                "turn when the answer is ready.</note>\n"
-                            )
-
-                        if action_type == "clarification_request" and not a.get(
-                            "response",
-                        ):
-                            call_id = a.get("call_id", "")
-                            suffix = safe_call_id_suffix(call_id)
-                            action = build_action_name(
-                                "answer_clarification",
-                                short_name,
-                                handle_id,
-                                suffix,
-                            )
-                            out += f"  <pending>Use {action} to respond</pending>\n"
-                        out += "</event>\n"
-                    out += "</history>\n"
-
-                out += "</action>\n"
-        out += "</in_flight_actions>"
-        return out
 
     def render_completed_actions(self, completed_actions: dict):
         """Render completed actions that are available for querying.
