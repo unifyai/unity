@@ -33,9 +33,20 @@ def build_code_act_prompt(
     """
     from unity.common.prompt_helpers import render_tools_block
 
-    rules_and_examples = _build_code_act_rules_and_examples(environments=environments)
-    primary_tool_reference = ""
-    if tools:
+    has_execute_code = bool(tools and "execute_code" in tools)
+
+    rules_and_examples = _build_code_act_rules_and_examples(
+        environments=environments,
+        has_execute_code=has_execute_code,
+    )
+
+    has_computer_env = "computer_primitives" in environments
+    # Detect FunctionManager tools early for critical rules section
+    has_fm_tools = tools and any(
+        str(k).startswith("FunctionManager_") for k in tools.keys()
+    )
+
+    if has_execute_code:
         primary_names = [
             "execute_code",
             "list_sessions",
@@ -44,28 +55,26 @@ def build_code_act_prompt(
             "close_all_sessions",
         ]
         primary_tools = {k: tools[k] for k in primary_names if k in tools}
-        if primary_tools:
-            primary_tool_reference = _build_tool_signatures(primary_tools)
+        primary_tool_reference = (
+            _build_tool_signatures(primary_tools) if primary_tools else ""
+        )
 
-    has_computer_env = "computer_primitives" in environments
-    role_line = (
-        "You are an expert agent that solves tasks by writing and executing code."
-    )
-    capabilities_line = (
-        "Your primary tool is a multi-language, multi-session execution environment where you can run Python and shell code, "
-        "and (when enabled) control computer interfaces and other tool domains."
-        if has_computer_env
-        else "Your primary tool is a multi-language, multi-session execution environment where you can use whatever tool "
-        "domains are available via injected environment globals (e.g. state managers, and optionally computer/desktop)."
-    )
+        role_line = (
+            "You are an expert agent that solves tasks by writing and executing code."
+        )
+        capabilities_line = (
+            "Your primary tool is a multi-language, multi-session execution environment where you can run Python and shell code, "
+            "and (when enabled) control computer interfaces and other tool domains."
+            if has_computer_env
+            else "Your primary tool is a multi-language, multi-session execution environment where you can use whatever tool "
+            "domains are available via injected environment globals (e.g. state managers, and optionally computer/desktop)."
+        )
 
-    # Detect FunctionManager tools early for critical rules section
-    has_fm_tools = tools and any(
-        str(k).startswith("FunctionManager_") for k in tools.keys()
-    )
-    critical_rules = _build_critical_rules_section(has_function_manager=has_fm_tools)
+        critical_rules = _build_critical_rules_section(
+            has_function_manager=has_fm_tools,
+        )
 
-    prompt = f"""
+        prompt = f"""
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
 
@@ -78,6 +87,32 @@ They are the only supported way to run Python/shell code and manage sessions.
 ```json
 {primary_tool_reference or "{{}}"}
 ```
+
+{rules_and_examples}
+"""
+    else:
+        # can_compose=False mode: no code sandbox, only stored function execution.
+        role_line = (
+            "You are an expert agent that solves tasks by discovering and executing "
+            "pre-stored functions from a function library."
+        )
+        capabilities_line = (
+            "You do NOT write or execute arbitrary code. Instead, you use the "
+            "FunctionManager discovery tools to find relevant stored functions, "
+            "then invoke them via `execute_function`."
+        )
+
+        prompt = f"""
+### Your Role: Function Execution Agent
+{role_line} {capabilities_line}
+
+### Workflow
+1. **Discover** stored functions using `FunctionManager_search_functions`,
+   `FunctionManager_filter_functions`, or `FunctionManager_list_functions`.
+2. **Pick** the best match by name from the search results.
+3. **Execute** it via `execute_function(function_name=..., call_kwargs=...)`.
+4. If no matching function exists, report that clearly — do NOT attempt to
+   write or compose code yourself.
 
 {rules_and_examples}
 """
@@ -103,8 +138,9 @@ They are the only supported way to run Python/shell code and manage sessions.
                 f"{render_tools_block(additional_tools)}\n"
             )
 
-        # FunctionManager guidance block when FunctionManager tools are present.
-        if has_fm_tools:
+        # FunctionManager guidance block: only include execute_code interaction
+        # guidance when execute_code is actually available in the tool set.
+        if has_fm_tools and has_execute_code:
             prompt += """
 ### Function Library (DETAILED GUIDANCE)
 
@@ -1899,6 +1935,7 @@ def _build_code_act_rules_and_examples(
     computer_primitives=None,
     *,
     environments: Mapping[str, "BaseEnvironment"] | None = None,
+    has_execute_code: bool = True,
 ) -> str:
     """
     Builds the reusable rules/examples block for CodeAct-style execution.
@@ -1913,32 +1950,34 @@ def _build_code_act_rules_and_examples(
 
     parts: list[str] = []
 
-    # Always include domain-agnostic execution rules first.
-    parts.append(_build_generic_execution_rules())
+    # execute_code-specific rules and examples are only relevant when the tool
+    # is available. When can_compose=False the tool is masked and the LLM
+    # should not receive any references to it.
+    if has_execute_code:
+        # Domain-agnostic execution rules (session state, imports, etc.)
+        parts.append(_build_generic_execution_rules())
 
-    # Add core patterns (error handling, clarification) - these complement the
-    # primitives examples and are useful regardless of which environments are active.
-    from unity.actor.prompt_examples import (
-        get_code_act_pattern_examples,
-        get_code_act_function_first_examples,
-        get_code_act_session_examples,
-    )
-
-    core_patterns = get_code_act_pattern_examples()
-    if core_patterns:
-        parts.append(f"### Core Patterns\n\n{core_patterns}")
-
-    # Add function-first guidance when FunctionManager is likely available
-    function_first = get_code_act_function_first_examples()
-    if function_first:
-        parts.append(f"### Function-First Workflow (CRITICAL)\n\n{function_first}")
-
-    # Add multi-language + multi-session examples for execute_code.
-    session_examples = get_code_act_session_examples()
-    if session_examples:
-        parts.append(
-            f"### Sessions & Multi-Language Execution (CRITICAL)\n\n{session_examples}",
+        from unity.actor.prompt_examples import (
+            get_code_act_pattern_examples,
+            get_code_act_function_first_examples,
+            get_code_act_session_examples,
         )
+
+        core_patterns = get_code_act_pattern_examples()
+        if core_patterns:
+            parts.append(f"### Core Patterns\n\n{core_patterns}")
+
+        function_first = get_code_act_function_first_examples()
+        if function_first:
+            parts.append(
+                f"### Function-First Workflow (CRITICAL)\n\n{function_first}",
+            )
+
+        session_examples = get_code_act_session_examples()
+        if session_examples:
+            parts.append(
+                f"### Sessions & Multi-Language Execution (CRITICAL)\n\n{session_examples}",
+            )
 
     cp = None
     if "computer_primitives" in environments:
