@@ -173,6 +173,56 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
 
 
 # ---------------------------------------------------------------------------
+# can_store=True — verify storing actually works
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_code_act_can_store_true_stores_function():
+    """
+    When can_store=True (the default), the LLM should be able to compose a
+    function via execute_code, then store it via FunctionManager_add_functions
+    for future reuse.
+    """
+    fm = MagicMock()
+    fm.search_functions = MagicMock(return_value={"metadata": []})
+    fm.filter_functions = MagicMock(return_value={"metadata": []})
+    fm.list_functions = MagicMock(return_value={"metadata": []})
+    fm.add_functions = MagicMock(return_value={"greet": "added"})
+
+    actor = CodeActActor(
+        function_manager=fm,
+        headless=True,
+        computer_mode="mock",
+        timeout=60,
+    )
+    try:
+        handle = await actor.act(
+            "Write a Python function called `greet` that takes a `name` parameter "
+            "and returns f'Hello, {name}!'. Then store it using "
+            "FunctionManager_add_functions so it can be reused in the future.",
+            can_store=True,
+            persist=False,
+            clarification_enabled=False,
+        )
+        await asyncio.wait_for(handle.result(), timeout=60)
+
+        # The LLM should have called add_functions with the implementation.
+        fm.add_functions.assert_called_once()
+        call_kwargs = fm.add_functions.call_args.kwargs
+        impl = call_kwargs.get("implementations", "")
+        # The implementation should contain the function definition.
+        assert "greet" in str(impl), f"Expected 'greet' in implementation, got: {impl}"
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Description type acceptance
 # ---------------------------------------------------------------------------
 
