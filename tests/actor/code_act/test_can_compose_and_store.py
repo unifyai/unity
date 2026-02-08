@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
 
-
 # ---------------------------------------------------------------------------
 # can_compose=False — symbolic tests
 # ---------------------------------------------------------------------------
@@ -273,7 +272,9 @@ async def test_storage_check_on_return_stores_discovered_function():
         fm.add_functions.assert_called()
         call_kwargs = fm.add_functions.call_args.kwargs
         impl = str(call_kwargs.get("implementations", ""))
-        assert "greet" in impl, f"Expected 'greet' in stored implementation, got: {impl}"
+        assert (
+            "greet" in impl
+        ), f"Expected 'greet' in stored implementation, got: {impl}"
     finally:
         try:
             await actor.close()
@@ -320,9 +321,9 @@ async def test_storage_check_on_return_skipped_when_can_store_false():
         await asyncio.sleep(2)
 
         # No storage check should have run.
-        assert not actor._storage_check_tasks, (
-            "Expected no storage check tasks when can_store=False"
-        )
+        assert (
+            not actor._storage_check_tasks
+        ), "Expected no storage check tasks when can_store=False"
         fm.add_functions.assert_not_called()
     finally:
         try:
@@ -356,18 +357,14 @@ async def test_storage_check_on_return_merges_redundant_functions():
             "name": "greet_formal",
             "docstring": "Return a formal greeting.",
             "implementation": (
-                "def greet_formal(name):\n"
-                '    return f"Good day, {name}."'
+                "def greet_formal(name):\n" '    return f"Good day, {name}."'
             ),
         },
         {
             "function_id": 102,
             "name": "greet_casual",
             "docstring": "Return a casual greeting.",
-            "implementation": (
-                "def greet_casual(name):\n"
-                '    return f"Hey {name}!"'
-            ),
+            "implementation": ("def greet_casual(name):\n" '    return f"Hey {name}!"'),
         },
     ]
 
@@ -375,11 +372,13 @@ async def test_storage_check_on_return_merges_redundant_functions():
     # Discovery tools return the two existing overlapping functions.
     fm.search_functions = MagicMock(return_value=_existing_functions)
     fm.filter_functions = MagicMock(return_value=_existing_functions)
-    fm.list_functions = MagicMock(return_value={
-        f["name"]: f for f in _existing_functions
-    })
+    fm.list_functions = MagicMock(
+        return_value={f["name"]: f for f in _existing_functions},
+    )
     fm.add_functions = MagicMock(return_value={"greet": "added"})
-    fm.delete_function = MagicMock(return_value={"greet_formal": "deleted", "greet_casual": "deleted"})
+    fm.delete_function = MagicMock(
+        return_value={"greet_formal": "deleted", "greet_casual": "deleted"},
+    )
 
     actor = CodeActActor(
         function_manager=fm,
@@ -413,7 +412,9 @@ async def test_storage_check_on_return_merges_redundant_functions():
         fm.add_functions.assert_called()
         add_kwargs = fm.add_functions.call_args.kwargs
         impl = str(add_kwargs.get("implementations", ""))
-        assert "greet" in impl, f"Expected 'greet' in stored implementation, got: {impl}"
+        assert (
+            "greet" in impl
+        ), f"Expected 'greet' in stored implementation, got: {impl}"
 
         # The old redundant functions should have been deleted.
         fm.delete_function.assert_called()
@@ -421,9 +422,10 @@ async def test_storage_check_on_return_merges_redundant_functions():
         deleted_ids = delete_kwargs.get("function_id", [])
         if isinstance(deleted_ids, int):
             deleted_ids = [deleted_ids]
-        assert set(deleted_ids) & {101, 102}, (
-            f"Expected deletion of function_ids 101 and/or 102, got: {deleted_ids}"
-        )
+        assert set(deleted_ids) & {
+            101,
+            102,
+        }, f"Expected deletion of function_ids 101 and/or 102, got: {deleted_ids}"
     finally:
         try:
             await actor.close()

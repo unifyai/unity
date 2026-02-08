@@ -1833,7 +1833,9 @@ class CodeActActor(BaseCodeActActor):
             else bool(storage_check_on_return)
         )
         # storage_check_on_return only applies when both can_compose and can_store are True.
-        if effective_storage_check and (not effective_can_compose or not effective_can_store):
+        if effective_storage_check and (
+            not effective_can_compose or not effective_can_store
+        ):
             effective_storage_check = False
 
         # can_compose=False requires a FunctionManager so the LLM has execute_function

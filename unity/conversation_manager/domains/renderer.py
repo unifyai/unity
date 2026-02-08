@@ -776,7 +776,6 @@ class Renderer:
             f"<{thread_name}>\n" + "\n".join(rendered_messages) + f"\n</{thread_name}>"
         )
 
-
     def render_message(
         self,
         message: Message | EmailMessage | UnifyMessage | GuidanceMessage,
@@ -904,7 +903,6 @@ class Renderer:
                 tz_block_line = f"\n{tz_block}"
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
-
 
     def render_completed_actions(self, completed_actions: dict):
         """Render completed actions that are available for querying.

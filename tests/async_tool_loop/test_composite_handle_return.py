@@ -173,9 +173,9 @@ class TestExtractNestedHandle:
         obj = FakeExecutionResult(result=h)
         handles, cleaned = _extract_nested_handle(obj)
         assert len(handles) == 1
-        assert handles[0][0] is h, (
-            "_extract_nested_handle should find a handle inside a Pydantic model"
-        )
+        assert (
+            handles[0][0] is h
+        ), "_extract_nested_handle should find a handle inside a Pydantic model"
         assert handles[0][1] == "h0"
         # The cleaned model should have the handle replaced with a labeled sentinel
         assert getattr(cleaned, "result", None) == _handle_label_sentinel("h0")

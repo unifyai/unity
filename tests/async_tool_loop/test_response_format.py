@@ -49,9 +49,10 @@ async def test_structured_output_response_format(llm_config) -> None:
     final_reply = await handle.result()
 
     # result() returns a Pydantic model instance when response_format is set.
-    assert isinstance(final_reply, SimpleGreeting), (
-        f"Expected SimpleGreeting instance, got {type(final_reply).__name__}"
-    )
+    assert isinstance(
+        final_reply,
+        SimpleGreeting,
+    ), f"Expected SimpleGreeting instance, got {type(final_reply).__name__}"
     assert final_reply.greeting.strip(), "Greeting must be non-empty"
     assert isinstance(final_reply.lucky_number, int)
 
@@ -99,9 +100,10 @@ async def test_no_additional_formatting_roundtrip(llm_config) -> None:  # noqa: 
     final_reply = await handle.result()
 
     # result() returns a Pydantic model instance when response_format is set.
-    assert isinstance(final_reply, SimpleEcho), (
-        f"Expected SimpleEcho instance, got {type(final_reply).__name__}"
-    )
+    assert isinstance(
+        final_reply,
+        SimpleEcho,
+    ), f"Expected SimpleEcho instance, got {type(final_reply).__name__}"
     assert final_reply.text.strip(), "Text must be non-empty"
 
     # Ensure *no* follow-up formatting prompt was injected.
@@ -151,9 +153,10 @@ async def test_result_returns_pydantic_model(llm_config) -> None:
     answer = await handle.result()
 
     # The core assertion: result() delivers a model, not a string.
-    assert isinstance(answer, MathAnswer), (
-        f"Expected MathAnswer instance, got {type(answer).__name__}: {answer!r}"
-    )
+    assert isinstance(
+        answer,
+        MathAnswer,
+    ), f"Expected MathAnswer instance, got {type(answer).__name__}: {answer!r}"
     assert answer.result == 42
 
 
@@ -176,6 +179,7 @@ async def test_result_returns_string_without_response_format(llm_config) -> None
 
     answer = await handle.result()
 
-    assert isinstance(answer, str), (
-        f"Expected str, got {type(answer).__name__}: {answer!r}"
-    )
+    assert isinstance(
+        answer,
+        str,
+    ), f"Expected str, got {type(answer).__name__}: {answer!r}"
