@@ -124,6 +124,64 @@ async def test_create_contact_triggers_act(initialized_cm):
     assert_efficient(result, 3)
 
 
+@pytest.mark.asyncio
+@_handle_project
+async def test_save_service_number_act_query_describes_entity(initialized_cm):
+    """
+    Boss shares a service/support number -> act query should describe the
+    organisation, not the name of whoever answered the phone.
+
+    Scenario: boss says "Save this number 8005551234 — it's the Acme billing
+    support line. Sarah answered when I called." The act query should frame
+    the contact as a service number for Acme, not as "add Sarah".
+    """
+    cm = initialized_cm
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content=(
+                "Save this number 8005551234 - it's the Acme billing support "
+                "line. Sarah answered when I called."
+            ),
+        ),
+    )
+
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Saving a service number should trigger act",
+        cm=cm,
+    )
+
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
+    act_query = actor_events[0].query.lower()
+
+    # The query should reference the service/company, not "add Sarah"
+    assert "8005551234" in act_query, (
+        f"act query should include the phone number, got: {actor_events[0].query}"
+    )
+    assert "acme" in act_query or "billing" in act_query or "support" in act_query, (
+        f"act query should describe the service/organisation, got: {actor_events[0].query}"
+    )
+    # Must NOT frame this as adding a person named Sarah
+    query_words = act_query.split()
+    # Check that "sarah" doesn't appear as a contact name in typical patterns
+    sarah_as_contact = (
+        "add sarah" in act_query
+        or "create sarah" in act_query
+        or "save sarah" in act_query
+        or "contact sarah" in act_query
+        or ("sarah" in act_query and "first_name" in act_query)
+    )
+    assert not sarah_as_contact, (
+        f"act query should NOT frame Sarah as the contact name — she is a "
+        f"transient representative, got: {actor_events[0].query}"
+    )
+
+    assert_efficient(result, 3)
+
+
 # ---------------------------------------------------------------------------
 #  Knowledge-related requests -> should trigger act
 # ---------------------------------------------------------------------------
