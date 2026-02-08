@@ -648,8 +648,14 @@ jobs:
                   "$key_upper" == *_PASSWORD || "$key_upper" == *_TOKEN || \
                   "$key_upper" == *_CREDENTIAL* || "$key_upper" == *_API_* || \
                   "$key_upper" == *APIKEY* ]]; then
-              echo "::add-mask::$value"
-              echo "Masked: $key"
+              # Skip values shorter than 4 characters to avoid catastrophic masking
+              # (e.g. a value of "3" would replace every digit 3 with *** everywhere)
+              if (( ${#value} >= 4 )); then
+                echo "::add-mask::$value"
+                echo "Masked: $key"
+              else
+                echo "Skipped masking $key (value too short: ${#value} chars)"
+              fi
             fi
           fi
         done < .env
