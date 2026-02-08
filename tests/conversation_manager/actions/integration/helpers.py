@@ -155,9 +155,7 @@ def extract_actor_handle(cm: Any, handle_id: int) -> Any:
         handle_data is not None
     ), f"No action found for handle_id={handle_id} (checked in_flight and completed)"
     handle = handle_data.get("handle")
-    assert (
-        handle is not None
-    ), f"Action missing handle for handle_id={handle_id}"
+    assert handle is not None, f"Action missing handle for handle_id={handle_id}"
     return handle
 
 

@@ -158,12 +158,12 @@ async def test_save_service_number_act_query_describes_entity(initialized_cm):
     act_query = actor_events[0].query.lower()
 
     # The query should reference the service/company, not "add Sarah"
-    assert "8005551234" in act_query, (
-        f"act query should include the phone number, got: {actor_events[0].query}"
-    )
-    assert "acme" in act_query or "billing" in act_query or "support" in act_query, (
-        f"act query should describe the service/organisation, got: {actor_events[0].query}"
-    )
+    assert (
+        "8005551234" in act_query
+    ), f"act query should include the phone number, got: {actor_events[0].query}"
+    assert (
+        "acme" in act_query or "billing" in act_query or "support" in act_query
+    ), f"act query should describe the service/organisation, got: {actor_events[0].query}"
     # Must NOT frame this as adding a person named Sarah
     query_words = act_query.split()
     # Check that "sarah" doesn't appear as a contact name in typical patterns

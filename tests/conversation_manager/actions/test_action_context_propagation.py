@@ -159,14 +159,16 @@ class TestActStartedInHistory:
         actions = handle_data["handle_actions"]
 
         # The first entry should record that the action was started.
-        assert len(actions) >= 1, "handle_actions should contain at least the 'started' event"
+        assert (
+            len(actions) >= 1
+        ), "handle_actions should contain at least the 'started' event"
         started = actions[0]
-        assert "started" in started.get("action_name", "").lower(), (
-            f"First handle_actions entry should be a 'started' event, got: {started}"
-        )
-        assert started.get("timestamp"), (
-            f"'started' event must have a timestamp, got: {started}"
-        )
+        assert (
+            "started" in started.get("action_name", "").lower()
+        ), f"First handle_actions entry should be a 'started' event, got: {started}"
+        assert started.get(
+            "timestamp",
+        ), f"'started' event must have a timestamp, got: {started}"
 
     @pytest.mark.asyncio
     @_handle_project
@@ -189,15 +191,15 @@ class TestActStartedInHistory:
         )
         rendered = snapshot.full_render
 
-        assert "<history>" in rendered, (
-            "Rendered state should contain <history> for the in-flight action"
-        )
-        assert "started" in rendered.lower(), (
-            "Rendered <history> should contain a 'started' event"
-        )
-        assert "timestamp=" in rendered, (
-            "Rendered 'started' event should include a timestamp attribute"
-        )
+        assert (
+            "<history>" in rendered
+        ), "Rendered state should contain <history> for the in-flight action"
+        assert (
+            "started" in rendered.lower()
+        ), "Rendered <history> should contain a 'started' event"
+        assert (
+            "timestamp=" in rendered
+        ), "Rendered 'started' event should include a timestamp attribute"
 
 
 class TestActCompletionInHistory:
@@ -205,7 +207,10 @@ class TestActCompletionInHistory:
 
     @pytest.mark.asyncio
     @_handle_project
-    async def test_actor_result_logs_completed_event_with_timestamp(self, initialized_cm):
+    async def test_actor_result_logs_completed_event_with_timestamp(
+        self,
+        initialized_cm,
+    ):
         """
         When an ActorResult event is processed, it should append a timestamped
         'completed' event to handle_actions before moving the action to
@@ -237,24 +242,25 @@ class TestActCompletionInHistory:
         )
 
         # The action should now be in completed_actions.
-        assert handle_id in cm.completed_actions, (
-            "Action should move to completed_actions after ActorResult"
-        )
+        assert (
+            handle_id in cm.completed_actions
+        ), "Action should move to completed_actions after ActorResult"
         actions = cm.completed_actions[handle_id]["handle_actions"]
 
         # Find a completion event in the history.
         completed_events = [
-            a for a in actions
+            a
+            for a in actions
             if "completed" in a.get("action_name", "").lower()
             or "result" in a.get("action_name", "").lower()
         ]
-        assert len(completed_events) >= 1, (
-            f"handle_actions should contain a completion event, got: {actions}"
-        )
+        assert (
+            len(completed_events) >= 1
+        ), f"handle_actions should contain a completion event, got: {actions}"
         completed = completed_events[0]
-        assert completed.get("timestamp"), (
-            f"Completion event must have a timestamp, got: {completed}"
-        )
+        assert completed.get(
+            "timestamp",
+        ), f"Completion event must have a timestamp, got: {completed}"
 
 
 class TestSteeringContextPropagation:

@@ -185,7 +185,7 @@ async def test_update_contacts_preserves_nameless_service_contact(monkeypatch):
     transcript = _build_transcript(
         "I called the Acme Corp billing line (8005550199). Sarah from the "
         "billing department answered and confirmed our next invoice is due "
-        "March 15. She said to email billing@acme.com for follow-ups."
+        "March 15. She said to email billing@acme.com for follow-ups.",
     )
     answer = await mm.update_contacts(
         transcript,
@@ -198,20 +198,20 @@ async def test_update_contacts_preserves_nameless_service_contact(monkeypatch):
 
     # Verify: no update_contact call set first_name or surname
     for kw in captured_update_kwargs:
-        assert kw.get("first_name") is None, (
-            f"update_contact should not set first_name on a service contact, got: {kw}"
-        )
-        assert kw.get("surname") is None, (
-            f"update_contact should not set surname on a service contact, got: {kw}"
-        )
+        assert (
+            kw.get("first_name") is None
+        ), f"update_contact should not set first_name on a service contact, got: {kw}"
+        assert (
+            kw.get("surname") is None
+        ), f"update_contact should not set surname on a service contact, got: {kw}"
 
     # Verify: no create_contact call was made with a name resembling the rep
     for kw in captured_create_kwargs:
         fn = (kw.get("first_name") or "").lower()
         sn = (kw.get("surname") or "").lower()
-        assert "sarah" not in fn and "sarah" not in sn, (
-            f"Should not create a new contact for a transient representative, got: {kw}"
-        )
+        assert (
+            "sarah" not in fn and "sarah" not in sn
+        ), f"Should not create a new contact for a transient representative, got: {kw}"
 
 
 # --------------------------------------------------------------------------- #
