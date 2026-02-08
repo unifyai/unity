@@ -21,6 +21,7 @@ from unity.common.async_tool_loop import (
 from unity.common._async_tool.tools_data import (
     _extract_nested_handle,
     _HANDLE_SENTINEL,
+    _handle_label_sentinel,
 )
 from unity.common.tool_spec import ToolSpec
 from unity.common.llm_client import new_llm_client
@@ -94,37 +95,55 @@ class TestExtractNestedHandle:
     def test_handle_in_dict(self):
         h = self._make_handle()
         obj = {"data": 42, "handle": h}
-        handle, cleaned = _extract_nested_handle(obj)
-        assert handle is h
-        assert cleaned == {"data": 42, "handle": _HANDLE_SENTINEL}
+        handles, cleaned = _extract_nested_handle(obj)
+        assert len(handles) == 1
+        assert handles[0][0] is h
+        assert handles[0][1] == "h0"
+        assert cleaned == {"data": 42, "handle": _handle_label_sentinel("h0")}
 
     def test_handle_in_list(self):
         h = self._make_handle()
         obj = ["some_data", h]
-        handle, cleaned = _extract_nested_handle(obj)
-        assert handle is h
-        assert cleaned == ["some_data", _HANDLE_SENTINEL]
+        handles, cleaned = _extract_nested_handle(obj)
+        assert len(handles) == 1
+        assert handles[0][0] is h
+        assert handles[0][1] == "h0"
+        assert cleaned == ["some_data", _handle_label_sentinel("h0")]
 
     def test_handle_in_tuple(self):
         h = self._make_handle()
         obj = (False, h)
-        handle, cleaned = _extract_nested_handle(obj)
-        assert handle is h
-        assert cleaned == (False, _HANDLE_SENTINEL)
+        handles, cleaned = _extract_nested_handle(obj)
+        assert len(handles) == 1
+        assert handles[0][0] is h
+        assert handles[0][1] == "h0"
+        assert cleaned == (False, _handle_label_sentinel("h0"))
 
     def test_handle_deeply_nested(self):
         h = self._make_handle()
         obj = {"result": {"nested": [{"deep": h}]}}
-        handle, cleaned = _extract_nested_handle(obj)
-        assert handle is h
-        assert cleaned == {"result": {"nested": [{"deep": _HANDLE_SENTINEL}]}}
+        handles, cleaned = _extract_nested_handle(obj)
+        assert len(handles) == 1
+        assert handles[0][0] is h
+        assert handles[0][1] == "h0"
+        assert cleaned == {
+            "result": {"nested": [{"deep": _handle_label_sentinel("h0")}]},
+        }
 
-    def test_multiple_handles_raises(self):
+    def test_multiple_handles_extracted(self):
         h1 = self._make_handle()
         h2 = self._make_handle()
         obj = {"a": h1, "b": h2}
-        with pytest.raises(ValueError, match="2 SteerableToolHandles"):
-            _extract_nested_handle(obj)
+        handles, cleaned = _extract_nested_handle(obj)
+        assert len(handles) == 2
+        assert handles[0][0] is h1
+        assert handles[0][1] == "h0"
+        assert handles[1][0] is h2
+        assert handles[1][1] == "h1"
+        assert cleaned == {
+            "a": _handle_label_sentinel("h0"),
+            "b": _handle_label_sentinel("h1"),
+        }
 
     def test_plain_values_untouched(self):
         obj = {"x": 1, "y": "hello", "z": [True, None, 3.14]}
@@ -152,12 +171,14 @@ class TestExtractNestedHandle:
 
         h = self._make_handle()
         obj = FakeExecutionResult(result=h)
-        handle, cleaned = _extract_nested_handle(obj)
-        assert handle is h, (
+        handles, cleaned = _extract_nested_handle(obj)
+        assert len(handles) == 1
+        assert handles[0][0] is h, (
             "_extract_nested_handle should find a handle inside a Pydantic model"
         )
-        # The cleaned model should have the handle replaced with the sentinel
-        assert getattr(cleaned, "result", None) == _HANDLE_SENTINEL
+        assert handles[0][1] == "h0"
+        # The cleaned model should have the handle replaced with a labeled sentinel
+        assert getattr(cleaned, "result", None) == _handle_label_sentinel("h0")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -433,20 +454,26 @@ async def test_composite_return_with_nested_loop(llm_config):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Integration test: multiple handles in return raises
+#  Integration test: multiple handles in return (adopted independently)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_multiple_handles_in_return_raises(llm_config):
-    """Returning more than one handle in a composite structure should raise."""
+async def test_multi_handle_return_completes(llm_config):
+    """Tool returns two handles in a dict. Both are adopted as independent
+    steerable tasks and the shared placeholder is progressively updated as
+    each handle completes.
+    """
 
-    class DummyHandle(SteerableToolHandle):
+    gate_a = asyncio.Event()
+    gate_b = asyncio.Event()
+
+    class HandleA(SteerableToolHandle):
         def __init__(self):
             self._done = asyncio.Event()
 
         async def ask(self, question, **kw):
-            return ""
+            return "handle_a progress"
 
         async def interject(self, message, **kw):
             pass
@@ -464,8 +491,9 @@ async def test_multiple_handles_in_return_raises(llm_config):
             return self._done.is_set()
 
         async def result(self):
-            await self._done.wait()
-            return "done"
+            await gate_a.wait()
+            self._done.set()
+            return "alpha-result"
 
         async def next_clarification(self):
             return {}
@@ -476,42 +504,92 @@ async def test_multiple_handles_in_return_raises(llm_config):
         async def answer_clarification(self, cid, ans):
             pass
 
-    async def bad_tool() -> dict:
-        """Returns two handles — should trigger an error."""
-        return {"h1": DummyHandle(), "h2": DummyHandle()}
+    class HandleB(SteerableToolHandle):
+        def __init__(self):
+            self._done = asyncio.Event()
 
-    bad_tool.__name__ = "bad_tool"
-    bad_tool.__qualname__ = "bad_tool"
+        async def ask(self, question, **kw):
+            return "handle_b progress"
+
+        async def interject(self, message, **kw):
+            pass
+
+        def stop(self, reason=None, **kw):
+            self._done.set()
+
+        def pause(self, **kw):
+            pass
+
+        def resume(self, **kw):
+            pass
+
+        def done(self):
+            return self._done.is_set()
+
+        async def result(self):
+            await gate_b.wait()
+            self._done.set()
+            return "beta-result"
+
+        async def next_clarification(self):
+            return {}
+
+        async def next_notification(self):
+            return {}
+
+        async def answer_clarification(self, cid, ans):
+            pass
+
+    async def dual_tool() -> dict:
+        """Return two steerable handles."""
+        return {"alpha": HandleA(), "beta": HandleB()}
+
+    dual_tool.__name__ = "dual_tool"
+    dual_tool.__qualname__ = "dual_tool"
 
     client = new_llm_client(**llm_config)
     client.set_system_message(
-        "Call `bad_tool` with no arguments. Reply with 'done' when finished.",
+        "You are running inside an automated test.\n"
+        "1️⃣  Call `dual_tool` with no arguments.\n"
+        "2️⃣  Wait for the results to complete.\n"
+        "3️⃣  Reply with exactly 'all done'.",
     )
 
     outer_handle = start_async_tool_loop(
         client=client,
         message="start",
-        tools={"bad_tool": bad_tool},
-        max_steps=10,
-        timeout=60,
+        tools={"dual_tool": ToolSpec(fn=dual_tool, max_total_calls=1)},
+        max_steps=25,
+        timeout=240,
     )
 
-    # The loop should surface the ValueError as a tool error (not crash the loop).
-    # The LLM will see the traceback and should still produce a final reply.
-    final = await outer_handle.result()
-    assert final is not None, "Loop should still complete despite the tool error"
+    # Wait for the tool to be called and the placeholder to appear
+    await _wait_for_tool_request(client, "dual_tool")
+    await _wait_for_tool_result(client, tool_name="dual_tool", min_results=1)
 
-    # Verify the error was surfaced in a tool message
-    tool_msgs = [
-        m
-        for m in client.messages
-        if m.get("role") == "tool" and m.get("name") == "bad_tool"
-    ]
-    assert tool_msgs, "Expected a tool message for bad_tool"
-    error_content = tool_msgs[0].get("content", "")
+    # Verify intermediate content shows labeled sentinels
+    tool_msgs = real_tool_messages(client.messages, tool_name="dual_tool")
+    assert tool_msgs, "Expected a tool message placeholder for dual_tool"
+    ph_content = tool_msgs[0].get("content", "")
+    assert "h0" in ph_content, f"Expected h0 sentinel; got: {ph_content}"
+    assert "h1" in ph_content, f"Expected h1 sentinel; got: {ph_content}"
+
+    # Release both gates so handles complete
+    gate_a.set()
+    gate_b.set()
+
+    final = await outer_handle.result()
+    assert final is not None, "Loop should complete"
+
+    # Final placeholder should contain both handle results
+    tool_msgs_final = real_tool_messages(client.messages, tool_name="dual_tool")
+    final_content = tool_msgs_final[0].get("content", "")
     assert (
-        "SteerableToolHandle" in error_content or "ValueError" in error_content
-    ), f"Error should mention multiple handles; got: {error_content}"
+        "alpha-result" in final_content
+    ), f"Expected alpha-result in final placeholder; got: {final_content}"
+    assert (
+        "beta-result" in final_content
+    ), f"Expected beta-result in final placeholder; got: {final_content}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
