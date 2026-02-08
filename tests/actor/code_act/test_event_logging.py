@@ -3,6 +3,8 @@
 This module is intentionally compact and covers the highest-signal behaviors:
 
 - `execute_code` boundary emits ManagerMethod events and restores `TOOL_LOOP_LINEAGE`.
+- `execute_function` boundary emits ManagerMethod events with `execute_function({name})`
+  in the lineage and restores `TOOL_LOOP_LINEAGE`.
 - FunctionManager boundary (`_LineageTrackedFunction`) composes with `execute_code`
   so that nested manager calls carry the full hierarchy.
 - Concurrency does not cause lineage crosstalk between sibling function calls.
@@ -149,6 +151,143 @@ async def test_execute_code_boundary_marks_error_when_executor_raises(monkeypatc
     assert mm[0].payload.get("status") == "error"
     assert "RuntimeError" in str(mm[0].payload.get("error_type"))
     assert out.get("error")
+
+
+# ---------------------------------------------------------------------------
+# execute_function boundary unit tests
+# ---------------------------------------------------------------------------
+
+
+class _StubFunctionManager:
+    """Minimal stand-in for FunctionManager used by execute_function tests."""
+
+    async def execute_function(self, **kwargs):
+        return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+
+    # The constructor probes these; stubs avoid AttributeError.
+    search_functions = None
+    filter_functions = None
+    list_functions = None
+
+
+class _BoomFunctionManager(_StubFunctionManager):
+    """Like _StubFunctionManager but raises on execute_function."""
+
+    async def execute_function(self, **kwargs):
+        raise RuntimeError("boom")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
+    """execute_function pushes execute_function({name}) onto lineage and restores it."""
+    actor = CodeActActor(
+        environments=[],
+        headless=True,
+        computer_mode="mock",
+        function_manager=_StubFunctionManager(),
+    )
+
+    execute_function = actor.get_tools("act")["execute_function"]
+    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
+    try:
+        async with capture_events("ManagerMethod") as events:
+            out = await execute_function(
+                function_name="greet",
+                call_kwargs={"name": "Alice"},
+            )
+        EVENT_BUS.join_published()
+
+        assert out.get("error") is None
+        assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
+
+        mm = [
+            e
+            for e in events
+            if e.payload.get("manager") == "CodeActActor"
+            and e.payload.get("method") == "execute_function"
+        ]
+        assert sorted([e.payload.get("phase") for e in mm]) == ["incoming", "outgoing"]
+        assert mm[0].payload.get("hierarchy") == [
+            "CodeActActor.act",
+            "execute_function(greet)",
+        ]
+        assert "execute_function(greet)(" in str(mm[0].payload.get("hierarchy_label"))
+    finally:
+        TOOL_LOOP_LINEAGE.reset(token)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_function_boundary_marks_error_and_cleans_lineage():
+    """execute_function publishes status=error and restores lineage on failure."""
+    actor = CodeActActor(
+        environments=[],
+        headless=True,
+        computer_mode="mock",
+        function_manager=_BoomFunctionManager(),
+    )
+
+    execute_function = actor.get_tools("act")["execute_function"]
+    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
+    try:
+        async with capture_events("ManagerMethod") as events:
+            with pytest.raises(RuntimeError, match="boom"):
+                await execute_function(
+                    function_name="fail_fn",
+                    call_kwargs=None,
+                )
+        EVENT_BUS.join_published()
+
+        assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
+
+        outgoing = [
+            e
+            for e in events
+            if e.payload.get("manager") == "CodeActActor"
+            and e.payload.get("method") == "execute_function"
+            and e.payload.get("phase") == "outgoing"
+        ]
+        assert len(outgoing) == 1
+        assert outgoing[0].payload.get("status") == "error"
+        assert "RuntimeError" in str(outgoing[0].payload.get("error_type"))
+        assert outgoing[0].payload.get("hierarchy") == [
+            "CodeActActor.act",
+            "execute_function(fail_fn)",
+        ]
+    finally:
+        TOOL_LOOP_LINEAGE.reset(token)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_function_propagates_lineage_to_nested_manager():
+    """State managers called inside execute_function inherit the full lineage."""
+
+    captured_lineage: list[str] = []
+
+    class _CapturingFunctionManager(_StubFunctionManager):
+        async def execute_function(self, **kwargs):
+            captured_lineage.extend(TOOL_LOOP_LINEAGE.get([]))
+            return {"result": "captured", "error": None, "stdout": "", "stderr": ""}
+
+    actor = CodeActActor(
+        environments=[],
+        headless=True,
+        computer_mode="mock",
+        function_manager=_CapturingFunctionManager(),
+    )
+
+    execute_function = actor.get_tools("act")["execute_function"]
+    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
+    try:
+        await execute_function(function_name="my_func", call_kwargs=None)
+        assert captured_lineage == [
+            "CodeActActor.act",
+            "execute_function(my_func)",
+        ]
+    finally:
+        TOOL_LOOP_LINEAGE.reset(token)
 
 
 # ---------------------------------------------------------------------------

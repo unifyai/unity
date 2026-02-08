@@ -1305,6 +1305,51 @@ class CodeActActor(BaseCodeActActor):
                         "FunctionManager is not configured on this actor.",
                     )
 
+                # ── Lineage boundary (mirrors execute_code) ──────────────
+                _ef_suffix = _token_hex(2)
+                _ef_call_id = new_call_id()
+                _ef_parent = TOOL_LOOP_LINEAGE.get([])
+                _ef_parent_lineage = (
+                    list(_ef_parent) if isinstance(_ef_parent, list) else []
+                )
+                _ef_hierarchy = [
+                    *_ef_parent_lineage,
+                    f"execute_function({function_name})",
+                ]
+                _ef_hierarchy_label = build_hierarchy_label(
+                    _ef_hierarchy,
+                    _ef_suffix,
+                )
+                _ef_lineage_token = TOOL_LOOP_LINEAGE.set(_ef_hierarchy)
+
+                async def _ef_pub_safe(**payload: Any) -> None:
+                    try:
+                        await publish_manager_method_event(
+                            _ef_call_id,
+                            "CodeActActor",
+                            "execute_function",
+                            hierarchy=_ef_hierarchy,
+                            hierarchy_label=_ef_hierarchy_label,
+                            **payload,
+                        )
+                    except Exception as e:
+                        log_boundary_event(
+                            _ef_hierarchy_label,
+                            f"Warning: failed to publish event: {type(e).__name__}: {e}",
+                            icon="⚠️",
+                            level="warning",
+                        )
+
+                try:
+                    await _ef_pub_safe(phase="incoming")
+                except Exception:
+                    pass
+                log_boundary_event(
+                    _ef_hierarchy_label,
+                    f"Executing function {function_name}...",
+                    icon="🛠️",
+                )
+
                 primitives = None
                 try:
                     env = self.environments.get("primitives")
@@ -1313,15 +1358,38 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     primitives = None
 
-                return await fm.execute_function(
-                    function_name=function_name,
-                    call_kwargs=call_kwargs,
-                    primitives=primitives,
-                    computer_primitives=self._computer_primitives,
-                    venv_pool=self._venv_pool,
-                    shell_pool=self._shell_pool,
-                    state_mode="stateless",
-                )
+                try:
+                    result = await fm.execute_function(
+                        function_name=function_name,
+                        call_kwargs=call_kwargs,
+                        primitives=primitives,
+                        computer_primitives=self._computer_primitives,
+                        venv_pool=self._venv_pool,
+                        shell_pool=self._shell_pool,
+                        state_mode="stateless",
+                    )
+                except Exception as exc:
+                    try:
+                        await _ef_pub_safe(
+                            phase="outgoing",
+                            status="error",
+                            error=str(exc),
+                            error_type=type(exc).__name__,
+                        )
+                    except Exception:
+                        pass
+                    raise
+                else:
+                    try:
+                        await _ef_pub_safe(phase="outgoing", status="ok")
+                    except Exception:
+                        pass
+                    return result
+                finally:
+                    try:
+                        TOOL_LOOP_LINEAGE.reset(_ef_lineage_token)
+                    except Exception:
+                        pass
 
             tools["execute_function"] = execute_function
 
