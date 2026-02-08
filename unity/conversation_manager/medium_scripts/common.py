@@ -8,8 +8,6 @@ import logging
 import sys
 from typing import Awaitable, Callable, Iterable, Optional
 
-import unillm
-
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
     PhoneCallStarted,
@@ -117,88 +115,6 @@ async def start_event_broker_receive() -> bool:
     inbound events (call_guidance, call_status, etc.) from the parent.
     """
     return await event_broker.start_receiving()
-
-
-# ---------------------------------------------------------------------------
-# STS (Speech-to-Speech) Usage Tracking
-# ---------------------------------------------------------------------------
-#
-# We estimate audio token usage from call duration and bill using LiteLLM's
-# pricing data for the gpt-4o-realtime-preview model.
-#
-# Key assumptions (all approximate):
-#   - Audio is processed at ~150 tokens/second (OpenAI's internal tokenization)
-#   - We assume 50% of call duration is active speech (conservative estimate)
-#   - We split usage 50/50 between input (user speech) and output (assistant)
-#
-# This uses deduct_credits_for_usage from unillm which leverages LiteLLM's
-# comprehensive pricing table for accurate Realtime API billing.
-# ---------------------------------------------------------------------------
-
-# Configuration for STS usage estimation
-_STS_BILLING_MODEL = "gpt-4o-realtime-preview"
-_STS_TOKENS_PER_SECOND = 150  # Approximate audio tokenization rate
-_STS_SPEECH_RATIO = 0.5  # Assume 50% of call is active speech
-_STS_INPUT_OUTPUT_SPLIT = 0.5  # Assume roughly equal speaking time
-
-
-def log_sts_usage(
-    call_duration_seconds: float,
-    contact: Optional[dict] = None,
-    tags: Optional[list[str]] = None,
-) -> None:
-    """
-    Log estimated usage for an STS (Speech-to-Speech) call and deduct credits.
-
-    Estimates audio token usage from call duration and deducts credits using
-    LiteLLM's pricing data for the Realtime API.
-
-    Args:
-        call_duration_seconds: Total duration of the call in seconds.
-        contact: Optional contact dict for tagging/identification (unused, kept for API compat).
-        tags: Optional additional tags (unused, kept for API compatibility).
-    """
-    if call_duration_seconds <= 0:
-        logger.warning("Skipping STS usage logging: call duration <= 0")
-        return
-
-    # Estimate active speech time
-    speech_seconds = call_duration_seconds * _STS_SPEECH_RATIO
-
-    # Convert to estimated audio tokens
-    total_audio_tokens = int(speech_seconds * _STS_TOKENS_PER_SECOND)
-
-    # Split between input (user) and output (assistant)
-    input_audio_tokens = int(total_audio_tokens * _STS_INPUT_OUTPUT_SPLIT)
-    output_audio_tokens = total_audio_tokens - input_audio_tokens
-
-    # Build response body in Realtime API format for billing
-    response_body = {
-        "usage": {
-            "input_tokens": input_audio_tokens,
-            "output_tokens": output_audio_tokens,
-            "input_token_details": {
-                "text_tokens": 0,
-                "audio_tokens": input_audio_tokens,
-            },
-            "output_token_details": {
-                "text_tokens": 0,
-                "audio_tokens": output_audio_tokens,
-            },
-        },
-    }
-
-    try:
-        cost = unillm.deduct_credits_for_usage(_STS_BILLING_MODEL, response_body)
-        logger.info(
-            f"Logged STS usage: {call_duration_seconds:.1f}s call → "
-            f"{total_audio_tokens} audio tokens "
-            f"({input_audio_tokens} in / {output_audio_tokens} out), "
-            f"cost: ${cost:.6f}",
-        )
-    except Exception as e:
-        # Don't let billing failures crash the call cleanup
-        logger.error(f"Failed to log STS usage: {e}")
 
 
 # Default inactivity timeout used by both agents
