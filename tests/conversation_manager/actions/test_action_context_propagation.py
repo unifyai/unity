@@ -200,6 +200,63 @@ class TestActStartedInHistory:
         )
 
 
+class TestActCompletionInHistory:
+    """Tests that ActorResult logs a timestamped 'completed' event in handle_actions."""
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_actor_result_logs_completed_event_with_timestamp(self, initialized_cm):
+        """
+        When an ActorResult event is processed, it should append a timestamped
+        'completed' event to handle_actions before moving the action to
+        completed_actions. This gives the LLM a full lifecycle timeline
+        (started → … → completed) in the rendered history.
+        """
+        from unity.conversation_manager.domains.event_handlers import EventHandler
+        from unity.conversation_manager.events import ActorResult
+
+        cm = initialized_cm.cm
+
+        brain_tools = ConversationManagerBrainActionTools(cm)
+        await brain_tools.act(query="Find all contacts in New York")
+
+        assert len(cm.in_flight_actions) == 1
+        handle_id = next(iter(cm.in_flight_actions))
+
+        # Simulate actor completion by dispatching an ActorResult event
+        # through the real event handler (same path as production).
+        result_event = ActorResult(
+            handle_id=handle_id,
+            success=True,
+            result="Found 3 contacts in New York.",
+        )
+        await EventHandler.handle_event(
+            result_event,
+            cm,
+            is_voice_call=False,
+        )
+
+        # The action should now be in completed_actions.
+        assert handle_id in cm.completed_actions, (
+            "Action should move to completed_actions after ActorResult"
+        )
+        actions = cm.completed_actions[handle_id]["handle_actions"]
+
+        # Find a completion event in the history.
+        completed_events = [
+            a for a in actions
+            if "completed" in a.get("action_name", "").lower()
+            or "result" in a.get("action_name", "").lower()
+        ]
+        assert len(completed_events) >= 1, (
+            f"handle_actions should contain a completion event, got: {actions}"
+        )
+        completed = completed_events[0]
+        assert completed.get("timestamp"), (
+            f"Completion event must have a timestamp, got: {completed}"
+        )
+
+
 class TestSteeringContextPropagation:
     """Tests that verify steering tools pass the correct parent context."""
 
