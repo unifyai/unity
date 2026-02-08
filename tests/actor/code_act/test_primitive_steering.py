@@ -12,7 +12,6 @@ Uses simulated managers backed by a real LLM for realistic behavior.
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 
@@ -47,13 +46,21 @@ def _force_simulated(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(f"UNITY_{name}_IMPL", "simulated")
         attr = name.lower()
         if hasattr(SETTINGS, attr):
-            monkeypatch.setattr(getattr(SETTINGS, attr), "IMPL", "simulated", raising=False)
+            monkeypatch.setattr(
+                getattr(SETTINGS, attr),
+                "IMPL",
+                "simulated",
+                raising=False,
+            )
 
     ManagerRegistry.clear()
 
 
 async def _wait_for_inner_handle_adopted(
-    handle, *, count: int = 1, timeout: float = 120.0,
+    handle,
+    *,
+    count: int = 1,
+    timeout: float = 120.0,
 ) -> None:
     """Wait until the outer loop has adopted at least *count* inner handles.
 
@@ -77,8 +84,7 @@ async def _wait_for_inner_handle_adopted(
             pass
         await asyncio.sleep(0.3)
     raise AssertionError(
-        f"Expected {count} inner handle(s) adopted within timeout, "
-        f"but found fewer",
+        f"Expected {count} inner handle(s) adopted within timeout, " f"but found fewer",
     )
 
 

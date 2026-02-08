@@ -14,8 +14,6 @@ Coverage
 
 from __future__ import annotations
 
-import asyncio
-import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +21,6 @@ import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 from unity.common.context_registry import ContextRegistry
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # Fixtures

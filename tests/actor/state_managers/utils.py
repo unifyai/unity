@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-import re
 import types
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Literal, Optional
-from unittest.mock import AsyncMock
+from typing import Any, AsyncIterator, Literal, Optional
 
 from tests.async_helpers import _wait_for_condition
 from unity.actor.code_act_actor import CodeActActor

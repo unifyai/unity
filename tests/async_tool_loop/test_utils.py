@@ -226,9 +226,7 @@ class TestSerializeToolContentPydanticModel:
             is_final=True,
         )
 
-        assert isinstance(result, str), (
-            f"Expected str, got {type(result).__name__}"
-        )
+        assert isinstance(result, str), f"Expected str, got {type(result).__name__}"
         parsed = json.loads(result)
         assert parsed["name"] == "alice"
         assert parsed["value"] == 42

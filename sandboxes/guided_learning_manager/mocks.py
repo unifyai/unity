@@ -27,7 +27,6 @@ from unittest.mock import MagicMock, AsyncMock
 
 from pydantic import BaseModel
 
-from unity.actor.code_act_actor import CodeActActor
 from unity.common.async_tool_loop import SteerableToolHandle
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -71,6 +70,7 @@ class SimpleMockVerificationClient:
     async def _side_effect(self, *args, **kwargs) -> str:
         """Return a successful verification assessment."""
         import json
+
         return json.dumps({"status": "ok", "reason": "Mock verification success."})
 
 

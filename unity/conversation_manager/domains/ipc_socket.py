@@ -77,7 +77,9 @@ class CallEventSocketServer:
         """
         self._event_broker = event_broker
         self._on_event = on_event
-        self._forward_channels = forward_channels if forward_channels is not None else ["app:call:*"]
+        self._forward_channels = (
+            forward_channels if forward_channels is not None else ["app:call:*"]
+        )
         self._socket_path: str | None = None
         self._server_socket: socket.socket | None = None
         self._accept_task: asyncio.Task | None = None

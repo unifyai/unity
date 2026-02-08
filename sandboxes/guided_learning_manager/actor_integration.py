@@ -41,9 +41,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from sandboxes.guided_learning_manager.mocks import (
-    SimpleMockVerificationClient,
-)
 from sandboxes.guided_learning_manager.plan_display import (
     PlanDisplayFormatter,
     PlanDisplayState,

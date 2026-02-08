@@ -6,7 +6,6 @@ from the voice agent subprocess back to the parent ConversationManager process.
 """
 
 import asyncio
-import json
 import os
 import time as _time
 import pytest
@@ -87,7 +86,9 @@ class TestCallEventSocketServer:
             received_events.append((channel, event_json))
 
         server = CallEventSocketServer(
-            mock_event_broker, on_event=on_event, forward_channels=[],
+            mock_event_broker,
+            on_event=on_event,
+            forward_channels=[],
         )
         socket_path = await server.start()
 

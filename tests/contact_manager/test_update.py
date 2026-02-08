@@ -449,9 +449,9 @@ async def test_nameless_service_contact_preserves_no_name(
     )["contacts"]
     assert len(contacts) == 1
     contact = contacts[0]
-    assert contact.first_name is None, (
-        f"first_name should be None for a service contact, got '{contact.first_name}'"
-    )
-    assert contact.surname is None, (
-        f"surname should be None for a service contact, got '{contact.surname}'"
-    )
+    assert (
+        contact.first_name is None
+    ), f"first_name should be None for a service contact, got '{contact.first_name}'"
+    assert (
+        contact.surname is None
+    ), f"surname should be None for a service contact, got '{contact.surname}'"
