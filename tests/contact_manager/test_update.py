@@ -397,3 +397,61 @@ async def test_set_timezone_hint(
     # Verify timezone has been set to Asia/Kolkata (Mumbai's IANA timezone)
     updated = cm.filter_contacts(filter=f"contact_id == {diana_id}")["contacts"][0]
     assert updated.timezone == "Asia/Kolkata"
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_nameless_service_contact_preserves_no_name(
+    contact_manager_mutation_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """A service/org contact should keep first_name and surname as None even
+    when a named representative appears in a transcript.
+
+    Scenario: a support-line contact exists with only a phone number and a bio
+    describing it as "Acme Corp billing support line".  A transcript excerpt
+    shows someone named "Sarah" answering the call.  The ContactManager should
+    update details about the call but must NOT populate the contact's name
+    fields with "Sarah" — she is a transient representative, not the contact's
+    identity.
+    """
+    cm, _ = contact_manager_mutation_scenario
+
+    # 1. Seed a nameless service contact
+    outcome = cm._create_contact(
+        phone_number="8005550199",
+        bio="Acme Corp billing support line",
+    )
+    service_contact_id = outcome["details"]["contact_id"]
+
+    # 2. Provide a transcript-like parent context where a rep introduces herself
+    parent_ctx = [
+        {
+            "role": "user",
+            "content": (
+                "I just called the Acme Corp billing support line (8005550199). "
+                "Someone named Sarah from the billing department answered and "
+                "confirmed our next invoice is due March 15. She said to email "
+                "billing@acme.com for follow-ups."
+            ),
+        },
+    ]
+    command = (
+        "Update the Acme billing support contact with any useful new details "
+        "from this transcript."
+    )
+
+    handle = await cm.update(command, _parent_chat_context=parent_ctx)
+    await handle.result()
+
+    # 3. Verify: name fields must still be None (Sarah is a transient rep)
+    contacts = cm.filter_contacts(
+        filter=f"contact_id == {service_contact_id}",
+    )["contacts"]
+    assert len(contacts) == 1
+    contact = contacts[0]
+    assert contact.first_name is None, (
+        f"first_name should be None for a service contact, got '{contact.first_name}'"
+    )
+    assert contact.surname is None, (
+        f"surname should be None for a service contact, got '{contact.surname}'"
+    )

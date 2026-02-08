@@ -314,6 +314,15 @@ Basic create/update
 • Update a known contact id
   `{update_fname}(contact_id=42, phone_number='+15551234567')`
 
+Nameless contacts (organisation / service contacts)
+----------------------------------------------------
+Some contacts represent an organisation or service rather than a specific person — e.g. a support hotline, a help‑desk email, a company switchboard.  For these, leave `first_name` and `surname` as None and use `bio` to describe the entity:
+  `{create_fname}(phone_number='+18005551234', bio='Acme Corp billing support line')`
+
+If a transcript mentions a name during an interaction with such a contact (e.g. "Hi, this is Sarah from Billing"), that person is a transient representative — do NOT write their name into the contact's `first_name`/`surname`.  The contact detail belongs to the organisation, not to whoever happens to answer.
+
+Conversely, if a contact has no name simply because the name is unknown (e.g. "call my friend at this number"), populate the name as soon as it is discovered.  Use the `bio`, `response_policy`, and surrounding context to judge which case applies.
+
 Asking Questions
 ----------------
 • It can often be very difficult to keep track of your own 'update' progress purely via tool call histories. If you're unsure, always just `ask`!
