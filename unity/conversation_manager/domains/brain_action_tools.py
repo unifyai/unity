@@ -964,7 +964,13 @@ class ConversationManagerBrainActionTools:
         self._cm.in_flight_actions[handle_id] = {
             "handle": handle,
             "query": query,
-            "handle_actions": [],
+            "handle_actions": [
+                {
+                    "action_name": "act_started",
+                    "query": query,
+                    "timestamp": prompt_now(),
+                },
+            ],
             "initial_snapshot_state": initial_snapshot_state,
         }
 
