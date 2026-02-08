@@ -814,6 +814,18 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
         event.timestamp,
         pinned=True,
     )
+    # Log completion in handle_actions before moving to completed_actions.
+    from unity.common.prompt_helpers import now as prompt_now
+
+    if action_data and "handle_actions" in action_data:
+        action_data["handle_actions"].append(
+            {
+                "action_name": "act_completed",
+                "query": event.result,
+                "timestamp": prompt_now(),
+            },
+        )
+
     # Move to completed_actions (preserves handle for post-completion ask queries)
     completed = cm.in_flight_actions.pop(event.handle_id, None)
     if completed:
