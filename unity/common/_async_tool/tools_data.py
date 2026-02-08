@@ -38,7 +38,8 @@ _HANDLE_SENTINEL = "<steerable handle — now in-flight>"
 
 
 def _extract_nested_handle(obj):
-    """Walk *obj* (dict / list / tuple) looking for a single ``SteerableToolHandle``.
+    """Walk *obj* (dict / list / tuple / Pydantic model) looking for a single
+    ``SteerableToolHandle``.
 
     Returns ``(handle, cleaned_obj)`` where *cleaned_obj* is a shallow copy of
     *obj* with the handle replaced by :data:`_HANDLE_SENTINEL`.
@@ -68,6 +69,26 @@ def _extract_nested_handle(obj):
 
         if isinstance(node, tuple):
             return tuple(_walk(v) for v in node)
+
+        # Pydantic BaseModel: walk public field values so handles inside
+        # e.g. ExecutionResult.result are detected.
+        try:
+            from pydantic import BaseModel
+
+            if isinstance(node, BaseModel):
+                changed = False
+                updates = {}
+                for field_name in node.model_fields:
+                    val = getattr(node, field_name)
+                    cleaned_val = _walk(val)
+                    if cleaned_val is not val:
+                        updates[field_name] = cleaned_val
+                        changed = True
+                if changed:
+                    return node.model_copy(update=updates)
+                return node
+        except ImportError:
+            pass
 
         return node
 
