@@ -132,6 +132,33 @@ class TestExtractNestedHandle:
         assert handle is None
         assert cleaned is obj
 
+    def test_handle_inside_pydantic_model(self):
+        """A handle nested inside a Pydantic model attribute should be found.
+
+        This mirrors the execute_code path: PythonExecutionSession returns a
+        dict that gets wrapped in ExecutionResult (a BaseModel). If the
+        executed code returned a SteerableToolHandle, it ends up in the
+        ``result`` attribute. _extract_nested_handle must detect it.
+        """
+        from pydantic import BaseModel, ConfigDict
+        from typing import Any
+
+        class FakeExecutionResult(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+            stdout: str = ""
+            stderr: str = ""
+            result: Any = None
+            error: str | None = None
+
+        h = self._make_handle()
+        obj = FakeExecutionResult(result=h)
+        handle, cleaned = _extract_nested_handle(obj)
+        assert handle is h, (
+            "_extract_nested_handle should find a handle inside a Pydantic model"
+        )
+        # The cleaned model should have the handle replaced with the sentinel
+        assert getattr(cleaned, "result", None) == _HANDLE_SENTINEL
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Integration test: composite dict return with handle
