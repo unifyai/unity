@@ -169,7 +169,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install black
-      run: pip install black
+      run: pip install black==26.1.0
 
     - name: Run black check
       run: black --diff --color --check .
