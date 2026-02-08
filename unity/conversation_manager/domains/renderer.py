@@ -591,11 +591,14 @@ class Renderer:
                         action_type = a.get("action_name", "")
                         action_query = a.get("query", "")
                         action_status = a.get("status", "")
+                        action_ts = a.get("timestamp", "")
 
+                        attrs = f"type='{action_type}'"
+                        if action_ts:
+                            attrs += f" timestamp='{action_ts}'"
                         if action_status:
-                            action_render += f"<event type='{action_type}' status='{action_status}'>\n"
-                        else:
-                            action_render += f"<event type='{action_type}'>\n"
+                            attrs += f" status='{action_status}'"
+                        action_render += f"<event {attrs}>\n"
 
                         if action_query:
                             action_render += f"  <content>{action_query}</content>\n"
@@ -1122,12 +1125,14 @@ class Renderer:
                         action_type = a.get("action_name", "")
                         action_query = a.get("query", "")
                         action_status = a.get("status", "")
+                        action_ts = a.get("timestamp", "")
 
-                        # Include status attribute if present (for ask operations)
+                        attrs = f"type='{action_type}'"
+                        if action_ts:
+                            attrs += f" timestamp='{action_ts}'"
                         if action_status:
-                            out += f"<event type='{action_type}' status='{action_status}'>\n"
-                        else:
-                            out += f"<event type='{action_type}'>\n"
+                            attrs += f" status='{action_status}'"
+                        out += f"<event {attrs}>\n"
 
                         if action_query:
                             out += f"  <content>{action_query}</content>\n"

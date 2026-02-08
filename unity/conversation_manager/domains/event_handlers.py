@@ -376,11 +376,14 @@ async def _(
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     if isinstance(event, ActorClarificationRequest):
         if event.handle_id in cm.in_flight_actions:
+            from unity.common.prompt_helpers import now as prompt_now
+
             cm.in_flight_actions[event.handle_id]["handle_actions"].append(
                 {
                     "action_name": "clarification_request",
                     "query": event.query,
                     "call_id": event.call_id,
+                    "timestamp": prompt_now(),
                 },
             )
             action_query = cm.in_flight_actions[event.handle_id].get("query", "")

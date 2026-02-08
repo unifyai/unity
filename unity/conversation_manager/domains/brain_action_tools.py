@@ -17,6 +17,8 @@ import inspect
 import re
 from typing import TYPE_CHECKING, Any
 
+from unity.common.prompt_helpers import now as prompt_now
+
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
@@ -1134,6 +1136,7 @@ class ConversationManagerBrainActionTools:
                         "action_name": f"ask_{handle_id}",
                         "query": param_value,
                         "status": "pending",
+                        "timestamp": prompt_now(),
                     },
                 )
 
@@ -1230,6 +1233,7 @@ class ConversationManagerBrainActionTools:
                                     "action_name": f"ask_{handle_id}",
                                     "query": param_value,
                                     "status": "pending",
+                                    "timestamp": prompt_now(),
                                 },
                             )
 
@@ -1290,6 +1294,7 @@ class ConversationManagerBrainActionTools:
                                 {
                                     "action_name": f"{operation}_{handle_id}",
                                     "query": param_value,
+                                    "timestamp": prompt_now(),
                                 },
                             )
 
@@ -1333,6 +1338,7 @@ class ConversationManagerBrainActionTools:
                                 {
                                     "action_name": f"{operation}_{handle_id}",
                                     "query": param_value,
+                                    "timestamp": prompt_now(),
                                 },
                             )
                         await handle.stop(reason=param_value or None)
@@ -1347,6 +1353,7 @@ class ConversationManagerBrainActionTools:
                                 {
                                     "action_name": f"{operation}_{handle_id}",
                                     "query": param_value,
+                                    "timestamp": prompt_now(),
                                 },
                             )
                         await handle.pause()
@@ -1357,6 +1364,7 @@ class ConversationManagerBrainActionTools:
                                 {
                                     "action_name": f"{operation}_{handle_id}",
                                     "query": param_value,
+                                    "timestamp": prompt_now(),
                                 },
                             )
                         await handle.resume()
@@ -1367,6 +1375,7 @@ class ConversationManagerBrainActionTools:
                                 {
                                     "action_name": f"{operation}_{handle_id}",
                                     "query": param_value,
+                                    "timestamp": prompt_now(),
                                 },
                             )
                         if call_id:
@@ -1380,6 +1389,7 @@ class ConversationManagerBrainActionTools:
                                 {
                                     "action_name": f"{operation}_{handle_id}",
                                     "query": param_value,
+                                    "timestamp": prompt_now(),
                                 },
                             )
                         result = f"Unknown operation: {operation}"
