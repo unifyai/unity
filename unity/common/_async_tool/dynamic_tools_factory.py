@@ -606,8 +606,10 @@ class DynamicToolFactory:
             info.clar_down_queue = h_dn_q
 
         _call_id: str = info.call_id
-        # Create a sanitized version of the call_id for use in function names.
-        _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
+        # Compact, sanitized suffix of the call_id for use in function names.
+        # Capped at 8 chars to conserve the 64-char tool-name budget (OpenAI limit)
+        # while retaining enough uniqueness (~2.8 trillion combos for alphanumeric).
+        _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1][-8:]
         _fn_name: str = info.name
         _arg_json: str = info.call_dict["function"]["arguments"]
         try:
