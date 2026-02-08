@@ -2332,6 +2332,7 @@ async def async_tool_loop_inner(
                     await _msg_dispatcher.append_msgs([sys_notice])
 
                 _persist_response_emitted = False
+                _persist_response_content = None  # captured by send_response for surfacing
 
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
@@ -2389,6 +2390,7 @@ async def async_tool_loop_inner(
                             if persist:
                                 # Treat as current-turn response; don't terminate.
                                 _persist_response_emitted = True
+                                _persist_response_content = json.dumps(payload)
                                 break  # exit the for-loop over tool_calls
                             return json.dumps(payload)
                         except Exception as _exc:
@@ -2447,6 +2449,7 @@ async def async_tool_loop_inner(
 
                         if persist:
                             _persist_response_emitted = True
+                            _persist_response_content = answer
                             break
                         return answer
 
@@ -3315,6 +3318,32 @@ async def async_tool_loop_inner(
 
             # ── persist mode: wait for next interjection instead of returning ──
             if persist:
+                # Surface the turn-complete response to the outer handle so the
+                # ConversationManager can distinguish "response (awaiting input)"
+                # from in-progress "notification" events.
+                _response_to_surface = (
+                    _persist_response_content
+                    if _persist_response_content is not None
+                    else final_content
+                )
+                _outer = (
+                    outer_handle_container[0] if outer_handle_container else None
+                )
+                if (
+                    _outer is not None
+                    and hasattr(_outer, "_notification_q")
+                    and _response_to_surface
+                ):
+                    await _outer._notification_q.put(
+                        {
+                            "type": "response",
+                            "content": _response_to_surface,
+                        },
+                    )
+                # Reset for the next turn
+                _persist_response_content = None
+                _persist_response_emitted = False
+
                 logger.info(
                     "Persist mode: waiting for next interjection...",
                     prefix="⏸️",

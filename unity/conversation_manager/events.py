@@ -565,10 +565,28 @@ class ActorClarificationResponse(Event):
 
 @dataclass
 class ActorNotification(Event):
-    """Event to forward a notification from an Actor handle."""
+    """Event to forward a progress notification from an Actor handle.
+
+    Notifications arrive while the actor is still working. They carry
+    status/progress updates and do not indicate turn completion.
+    """
 
     handle_id: int
     response: str
+
+
+@dataclass
+class ActorSessionResponse(Event):
+    """Event signalling that a persistent actor session has completed a turn.
+
+    Unlike ``ActorNotification``, a session response means the actor has
+    finished its current work and is **waiting for the next instruction**
+    (via ``interject``).  The ``content`` field carries the actor's output
+    for this turn.
+    """
+
+    handle_id: int
+    content: str
 
 
 @dataclass

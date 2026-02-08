@@ -988,6 +988,7 @@ class ConversationManagerBrainActionTools:
         *,
         query: str,
         response_format: Optional[dict] = None,
+        persist: bool = False,
     ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
@@ -1038,6 +1039,26 @@ class ConversationManagerBrainActionTools:
 
                 When omitted (the default), the action returns free-form text and
                 the result is whatever the actor decides to report.
+            persist: If True, the action runs as a **persistent session** that does
+                not self-complete.  The actor stays alive after each response and
+                waits for the next ``interject`` before continuing.  Use this for
+                long-running interactive sessions (e.g. guided onboarding, live
+                screen-sharing walkthroughs, multi-step workflows with a tight
+                feedback loop between conversation and action).
+
+                **Key differences from the default (persist=False):**
+
+                - The action will **never** complete on its own.  You must
+                  explicitly call ``stop_*`` to end the session.
+                - Intermediate responses from the actor appear as **response**
+                  events in the action's history (marked ``awaiting_input``).
+                  Each response means the actor has finished its current turn
+                  and is waiting for your next instruction via ``interject_*``.
+                - Progress updates (notifications) may still arrive while the
+                  actor is working, before it sends a response.
+
+                The default (False) is a one-shot task: the actor works until
+                done and the result arrives as an ``ActorResult``.
         """
         global _next_handle_id
 
@@ -1061,6 +1082,7 @@ class ConversationManagerBrainActionTools:
             query,
             _parent_chat_context=parent_context,
             response_format=pydantic_response_format,
+            persist=persist,
         )
 
         handle_id = _next_handle_id
@@ -1075,6 +1097,7 @@ class ConversationManagerBrainActionTools:
         self._cm.in_flight_actions[handle_id] = {
             "handle": handle,
             "query": query,
+            "persist": persist,
             "handle_actions": [
                 {
                     "action_name": "act_started",
