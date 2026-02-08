@@ -6,18 +6,63 @@ from unittest.mock import AsyncMock, MagicMock
 from unity.actor.code_act_actor import CodeActActor
 
 
+# ---------------------------------------------------------------------------
+# can_compose=False — symbolic tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(30)
+async def test_code_act_can_compose_false_requires_function_manager():
+    """
+    can_compose=False without a function_manager should raise RuntimeError
+    because there would be no usable tools (no execute_code, no execute_function).
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    # The ManagerRegistry provides a default FM, so override it to None.
+    actor.function_manager = None
+    try:
+        with pytest.raises(RuntimeError, match="function_manager is required"):
+            await actor.act("Do something", can_compose=False)
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# can_compose=False — eval tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
 async def test_code_act_can_compose_false_executes_best_matching_function():
     """
-    When can_compose=False, CodeActActor should avoid the LLM tool loop and instead:
-    - semantic search for a best-match stored function
-    - execute it via FunctionManager.execute_function
+    When can_compose=False, the LLM should discover stored functions via
+    FunctionManager discovery tools and invoke them via execute_function.
+    It must NOT use execute_code.
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(
-        return_value=[{"function_id": 123, "name": "my_task", "docstring": "do thing"}],
+        return_value={
+            "metadata": [
+                {
+                    "function_id": 123,
+                    "name": "my_task",
+                    "docstring": "Does the thing requested by the user",
+                },
+            ],
+        },
     )
+    fm.filter_functions = MagicMock(return_value={"metadata": []})
+    fm.list_functions = MagicMock(return_value={"metadata": []})
     fm.execute_function = AsyncMock(
         return_value={"result": "OK", "error": None, "stdout": "", "stderr": ""},
     )
@@ -26,15 +71,18 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
         function_manager=fm,
         headless=True,
         computer_mode="mock",
-        timeout=30,
+        timeout=60,
     )
     try:
-        handle = await actor.act("Do the thing", can_compose=False, persist=False)
-        res = await asyncio.wait_for(handle.result(), timeout=30)
-        assert res == "OK"
+        handle = await actor.act(
+            "Do the thing",
+            can_compose=False,
+            persist=False,
+            clarification_enabled=False,
+        )
+        await asyncio.wait_for(handle.result(), timeout=60)
 
-        fm.search_functions.assert_called_once()
-        assert fm.search_functions.call_args.kwargs["query"] == "Do the thing"
+        # The LLM should have discovered the function and executed it.
         fm.execute_function.assert_called_once()
         assert fm.execute_function.call_args.kwargs["function_name"] == "my_task"
     finally:
@@ -44,34 +92,47 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
             pass
 
 
+@pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
-async def test_code_act_can_compose_false_errors_when_no_functions_match():
+@pytest.mark.timeout(120)
+async def test_code_act_can_compose_false_no_functions_match():
+    """
+    When can_compose=False and no stored functions match the query, the LLM
+    should report the failure gracefully without calling execute_function.
+    """
     fm = MagicMock()
-    fm.search_functions = MagicMock(return_value=[])
+    fm.search_functions = MagicMock(return_value={"metadata": []})
+    fm.filter_functions = MagicMock(return_value={"metadata": []})
+    fm.list_functions = MagicMock(return_value={"metadata": []})
     fm.execute_function = AsyncMock()
 
     actor = CodeActActor(
         function_manager=fm,
         headless=True,
         computer_mode="mock",
-        timeout=30,
+        timeout=60,
     )
     try:
         handle = await actor.act(
             "Do something completely unique",
             can_compose=False,
             persist=False,
+            clarification_enabled=False,
         )
-        out = await asyncio.wait_for(handle.result(), timeout=30)
-        assert "Error:" in str(out)
-        assert "no matching functions" in str(out).lower()
+        await asyncio.wait_for(handle.result(), timeout=60)
+
+        # No matching function to execute.
         fm.execute_function.assert_not_called()
     finally:
         try:
             await actor.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# can_store=False
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -114,52 +175,9 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
             pass
 
 
-@pytest.mark.asyncio
-@pytest.mark.timeout(60)
-async def test_code_act_can_compose_false_rejects_non_string_description():
-    """
-    When can_compose=False, the description must be a string.
-    Passing a dict or list should raise TypeError.
-    """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value=[])
-
-    actor = CodeActActor(
-        function_manager=fm,
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-    )
-    try:
-        # Test with dict description
-        with pytest.raises(
-            TypeError,
-            match="can_compose=False requires description to be a string",
-        ):
-            await actor.act(
-                {"role": "user", "content": "Do something"},
-                can_compose=False,
-                persist=False,
-            )
-
-        # Test with list description
-        with pytest.raises(
-            TypeError,
-            match="can_compose=False requires description to be a string",
-        ):
-            await actor.act(
-                [{"role": "user", "content": "Do something"}],
-                can_compose=False,
-                persist=False,
-            )
-
-        # Semantic search should never be called since we fail before that
-        fm.search_functions.assert_not_called()
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
+# ---------------------------------------------------------------------------
+# Description type acceptance
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
