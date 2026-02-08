@@ -936,7 +936,10 @@ class TestActorEventHandlers:
         assert 1 in mock_cm.completed_actions
         assert mock_cm.completed_actions[1]["query"] == "Test action"
         assert len(mock_cm.notifications_bar.notifications) == 1
-        assert "Action completed" in mock_cm.notifications_bar.notifications[0].content
+        notif = mock_cm.notifications_bar.notifications[0]
+        assert "Action completed" in notif.content
+        assert notif.pinned is True
+        assert notif.interjection_id == "action_completion_1"
 
     @pytest.mark.asyncio
     async def test_actor_clarification_request_updates_handle_actions(self, mock_cm):
