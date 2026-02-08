@@ -106,6 +106,115 @@ async def test_update_contacts_invokes_expected_tools(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# 1b. update_contacts – nameless service contact keeps no name                #
+# --------------------------------------------------------------------------- #
+@pytest.mark.eval
+@pytest.mark.asyncio
+@_handle_project
+async def test_update_contacts_preserves_nameless_service_contact(monkeypatch):
+    """When a transcript mentions a named representative on a service/org
+    contact (no first_name/surname, bio describes the entity), the
+    MemoryManager must NOT write the representative's name into the
+    contact's name fields.
+    """
+    captured_update_kwargs: list[dict] = []
+    captured_create_kwargs: list[dict] = []
+
+    # --- spy on update_contact to capture kwargs -------------------------
+    orig_cm_update = SimulatedContactManager.update_contact
+
+    def spy_cm_update(self, **kw):
+        captured_update_kwargs.append(kw)
+        return orig_cm_update(self, **kw)
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "update_contact",
+        spy_cm_update,
+        raising=True,
+    )
+
+    # --- spy on _create_contact to capture kwargs ------------------------
+    orig_cm_create = SimulatedContactManager._create_contact
+
+    def spy_cm_create(self, **kw):
+        captured_create_kwargs.append(kw)
+        return orig_cm_create(self, **kw)
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_create_contact",
+        spy_cm_create,
+        raising=True,
+    )
+
+    # --- filter_contacts returns the nameless service contact -------------
+    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+        return [
+            Contact(
+                contact_id=10,
+                first_name=None,
+                surname=None,
+                phone_number="8005550199",
+                bio="Acme Corp billing support line",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "filter_contacts",
+        _fake_filter_contacts,
+        raising=True,
+    )
+
+    # --- run the method --------------------------------------------------
+    cm = SimulatedContactManager(
+        description=(
+            "TEST SCENARIO: Nameless service contact. The contacts list contains"
+            " exactly one contact: contact_id=10, first_name=None, surname=None,"
+            " phone_number='8005550199', bio='Acme Corp billing support line'."
+            " This is an organisation contact, NOT a person. Any names mentioned"
+            " in the transcript belong to transient representatives, not to this"
+            " contact's identity. SimulatedContactManager should accept updates"
+            " and return concise confirmations. No external I/O."
+        ),
+    )
+    mm = SimulatedMemoryManager(
+        contact_manager=cm,
+    )
+    transcript = _build_transcript(
+        "I called the Acme Corp billing line (8005550199). Sarah from the "
+        "billing department answered and confirmed our next invoice is due "
+        "March 15. She said to email billing@acme.com for follow-ups."
+    )
+    answer = await mm.update_contacts(
+        transcript,
+        update_bios=False,
+        update_rolling_summaries=False,
+        update_response_policies=False,
+    )
+
+    assert isinstance(answer, str) and answer.strip(), "Return should be non-empty"
+
+    # Verify: no update_contact call set first_name or surname
+    for kw in captured_update_kwargs:
+        assert kw.get("first_name") is None, (
+            f"update_contact should not set first_name on a service contact, got: {kw}"
+        )
+        assert kw.get("surname") is None, (
+            f"update_contact should not set surname on a service contact, got: {kw}"
+        )
+
+    # Verify: no create_contact call was made with a name resembling the rep
+    for kw in captured_create_kwargs:
+        fn = (kw.get("first_name") or "").lower()
+        sn = (kw.get("surname") or "").lower()
+        assert "sarah" not in fn and "sarah" not in sn, (
+            f"Should not create a new contact for a transient representative, got: {kw}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # 2. update_contact_bio – restricted column write                             #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
