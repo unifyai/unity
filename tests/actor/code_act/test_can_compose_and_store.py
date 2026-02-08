@@ -49,20 +49,17 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
     FunctionManager discovery tools and invoke them via execute_function.
     It must NOT use execute_code.
     """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(
-        return_value={
-            "metadata": [
-                {
-                    "function_id": 123,
-                    "name": "my_task",
-                    "docstring": "Does the thing requested by the user",
-                },
-            ],
+    _fn_metadata = [
+        {
+            "function_id": 123,
+            "name": "my_task",
+            "docstring": "Does the thing requested by the user",
         },
-    )
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
+    ]
+    fm = MagicMock()
+    fm.search_functions = MagicMock(return_value={"metadata": _fn_metadata})
+    fm.filter_functions = MagicMock(return_value={"metadata": _fn_metadata})
+    fm.list_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.execute_function = AsyncMock(
         return_value={"result": "OK", "error": None, "stdout": "", "stderr": ""},
     )

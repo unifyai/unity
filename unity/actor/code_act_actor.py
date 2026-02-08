@@ -1688,6 +1688,44 @@ class CodeActActor(BaseCodeActActor):
 
         base_tools = _filter_tools(self.get_tools("act"))
 
+        # When execute_code is masked (can_compose=False), strip the
+        # execute_code comparison from execute_function's docstring so the
+        # LLM has no awareness that a code sandbox exists.
+        if "execute_function" in base_tools and "execute_code" not in base_tools:
+            base_tools["execute_function"].__doc__ = (
+                "Execute a stored function by name and return its result.\n"
+                "\n"
+                "The function is looked up in the FunctionManager by exact name\n"
+                "and executed directly. Only functions discovered via the\n"
+                "FunctionManager discovery tools can be invoked.\n"
+                "\n"
+                "Workflow\n"
+                "-------\n"
+                "1. Discover functions via `FunctionManager_search_functions`,\n"
+                "   `FunctionManager_filter_functions`, or\n"
+                "   `FunctionManager_list_functions`.\n"
+                "2. Pick the best match by name.\n"
+                "3. Call `execute_function(function_name=..., call_kwargs=...)`.\n"
+                "\n"
+                "Parameters\n"
+                "----------\n"
+                "function_name : str\n"
+                "    Exact name of the stored function to execute (as returned by\n"
+                "    the FunctionManager discovery tools).\n"
+                "call_kwargs : dict, optional\n"
+                "    Keyword arguments to pass to the function. Omit or pass None /\n"
+                "    an empty dict for functions that take no arguments.\n"
+                "\n"
+                "Returns\n"
+                "-------\n"
+                "dict\n"
+                "    A dict with:\n"
+                "    - **result**: The function's return value (any JSON-serializable type).\n"
+                "    - **error**: Traceback string if the function raised, else None.\n"
+                "    - **stdout**: Captured standard output (string).\n"
+                "    - **stderr**: Captured standard error (string).\n"
+            )
+
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
