@@ -32,11 +32,12 @@ from __future__ import annotations
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 
 from unity.contact_manager.simulated import SimulatedContactManager
+from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.domains.proactive_speech import (
     ProactiveDecision,
     ProactiveSpeech,
@@ -48,11 +49,17 @@ from unity.conversation_manager.types import Medium, Mode
 # =============================================================================
 
 
+def _default_prompt_parts() -> PromptParts:
+    pp = PromptParts()
+    pp.add("You are a helpful assistant.")
+    return pp
+
+
 @dataclass
 class MockBrainSpec:
-    """Mock brain spec for testing."""
+    """Mock brain spec matching the real BrainSpec's PromptParts-typed system_prompt."""
 
-    system_prompt: str = "You are a helpful assistant."
+    system_prompt: PromptParts = field(default_factory=_default_prompt_parts)
 
 
 def _make_noop_coro():
