@@ -383,7 +383,7 @@ async def test_dynamic_helpers_use_base_docstrings(client):
     for k, v in registered_docs.items():
         if k.startswith("interject_"):
             assert "Provide additional information or instructions" in v
-    # ask (from SteerableHandle.ask)
+    # ask (from SteerableToolHandle.ask)
     for k, v in registered_docs.items():
         if k.startswith("ask_"):
             assert "Query the status or progress of this running task" in v

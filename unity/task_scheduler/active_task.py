@@ -310,7 +310,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         # introspects the target signature and silently drops kwargs the actor
         # does not accept (e.g. ``cancel``), avoiding fragile try/except
         # TypeError cascades.  See the signature extension contract documented
-        # on SteerableHandle.
+        # on SteerableToolHandle.
         await forward_handle_call(
             self._actor_handle,
             "stop",

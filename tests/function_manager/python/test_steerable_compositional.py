@@ -2,14 +2,14 @@
 Tests for steerable compositional functions.
 
 Verifies that compositional functions can create and return steerable handles,
-and that runtime detection via isinstance(result, SteerableHandle) works correctly.
+and that runtime detection via isinstance(result, SteerableToolHandle) works correctly.
 """
 
 import asyncio
 
 import pytest
 
-from unity.common.async_tool_loop import SteerableHandle, SteerableToolHandle
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.execution_env import create_execution_globals
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -18,31 +18,26 @@ from unity.function_manager.execution_env import create_execution_globals
 
 
 def test_steerable_handle_runtime_detection():
-    """Runtime isinstance check should correctly identify SteerableHandle subclasses."""
+    """Runtime isinstance check should correctly identify SteerableToolHandle subclasses."""
     globals_dict = create_execution_globals()
 
-    # The SteerableHandle from globals should be the same class
-    assert globals_dict["SteerableHandle"] is SteerableHandle
     assert globals_dict["SteerableToolHandle"] is SteerableToolHandle
-
-    # isinstance checks should work with the globals reference
-    # (This is important because executed code uses globals_dict["SteerableHandle"])
 
 
 def test_steerable_detection_with_non_handle():
     """Non-handle return values should not be detected as steerable."""
     # Plain values should not be steerable
-    assert not isinstance("hello", SteerableHandle)
-    assert not isinstance(42, SteerableHandle)
-    assert not isinstance({"key": "value"}, SteerableHandle)
-    assert not isinstance(None, SteerableHandle)
+    assert not isinstance("hello", SteerableToolHandle)
+    assert not isinstance(42, SteerableToolHandle)
+    assert not isinstance({"key": "value"}, SteerableToolHandle)
+    assert not isinstance(None, SteerableToolHandle)
 
     # Async functions returning plain values are not steerable
     async def plain_function():
         return "plain result"
 
     result = asyncio.run(plain_function())
-    assert not isinstance(result, SteerableHandle)
+    assert not isinstance(result, SteerableToolHandle)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -76,8 +71,6 @@ async def my_steerable_workflow(goal: str):
     # Call the function
     handle = await globals_dict["my_steerable_workflow"]("Say hello")
 
-    # Verify it returns a SteerableHandle
-    assert isinstance(handle, SteerableHandle)
     assert isinstance(handle, SteerableToolHandle)
 
     # Clean up - stop the handle
@@ -108,7 +101,7 @@ async def create_handle():
     exec(code, globals_dict)
 
     handle = await globals_dict["create_handle"]()
-    assert isinstance(handle, SteerableHandle)
+    assert isinstance(handle, SteerableToolHandle)
 
     # Stop the handle
     handle.stop("stopping early")
@@ -138,7 +131,7 @@ async def create_simple_handle():
     exec(code, globals_dict)
 
     handle = await globals_dict["create_simple_handle"]()
-    assert isinstance(handle, SteerableHandle)
+    assert isinstance(handle, SteerableToolHandle)
 
     # Wait for result with timeout
     result = await asyncio.wait_for(handle.result(), timeout=30.0)
@@ -163,8 +156,7 @@ async def plain_workflow(x: int, y: int) -> int:
 
     result = asyncio.run(globals_dict["plain_workflow"](2, 3))
 
-    # Should NOT be a SteerableHandle
-    assert not isinstance(result, SteerableHandle)
+    assert not isinstance(result, SteerableToolHandle)
     assert result == 5
 
 
@@ -175,7 +167,7 @@ def test_steerable_detection_pattern():
     # This is the pattern that SingleFunctionActor will use
     def is_steerable(result):
         """Check if a result is a steerable handle."""
-        return isinstance(result, globals_dict["SteerableHandle"])
+        return isinstance(result, globals_dict["SteerableToolHandle"])
 
     # Test with various values
     assert not is_steerable("string")
@@ -187,14 +179,14 @@ def test_steerable_detection_pattern():
 
 @pytest.mark.asyncio
 async def test_compositional_function_with_type_annotation():
-    """Compositional function with SteerableHandle return type annotation should work."""
+    """Compositional function with SteerableToolHandle return type annotation should work."""
     globals_dict = create_execution_globals()
 
     # Function with explicit return type annotation
     code = """
 from typing import Optional
 
-async def typed_steerable_workflow(goal: str) -> SteerableHandle:
+async def typed_steerable_workflow(goal: str) -> SteerableToolHandle:
     \"\"\"A typed steerable workflow.\"\"\"
     client = new_llm_client()
     client.set_system_message("Be brief.")
@@ -211,7 +203,7 @@ async def typed_steerable_workflow(goal: str) -> SteerableHandle:
     exec(code, globals_dict)
 
     handle = await globals_dict["typed_steerable_workflow"]("Hi")
-    assert isinstance(handle, SteerableHandle)
+    assert isinstance(handle, SteerableToolHandle)
 
     # Clean up
     await handle.stop("cleanup")
@@ -239,7 +231,7 @@ async def test_compositional_function_returns_codeact_actor_handle():
 
     # Define a compositional function that creates and returns a CodeActActor handle
     code = """
-async def codeact_workflow(goal: str) -> SteerableHandle:
+async def codeact_workflow(goal: str) -> SteerableToolHandle:
     \"\"\"
     A steerable workflow powered by CodeActActor.
 
@@ -268,12 +260,8 @@ async def codeact_workflow(goal: str) -> SteerableHandle:
     # Verify it's detected as steerable (the key assertion)
     assert isinstance(
         handle,
-        SteerableHandle,
-    ), "CodeActActor handle should be detected as SteerableHandle"
-    assert isinstance(
-        handle,
         SteerableToolHandle,
-    ), "CodeActActor handle should be a SteerableToolHandle"
+    ), "CodeActActor handle should be detected as SteerableToolHandle"
 
     # Verify handle methods are available (these would be forwarded by SingleFunctionActor)
     assert hasattr(handle, "interject")

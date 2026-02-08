@@ -31,7 +31,6 @@ from pydantic import BaseModel, Field
 from unity.actor.execution import ExecutionResult, TextPart, execute_callable
 from unity.common._async_tool.tools_data import _extract_nested_handle
 from unity.common.async_tool_loop import (
-    SteerableHandle,
     SteerableToolHandle,
     start_async_tool_loop,
 )
@@ -249,7 +248,7 @@ class SingleFunctionActorHandle(BaseActorHandle):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
-    ) -> SteerableHandle:
+    ) -> SteerableToolHandle:
         if self._inner_handle is not None:
             return await self._inner_handle.ask(
                 question,

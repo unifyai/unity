@@ -15,7 +15,7 @@ A conversational actor that uses a stateful code execution sandbox. It operates 
 
 ### SingleFunctionActor
 
-A minimal actor that executes a single function or primitive. Useful for testing stored functions, deploying rigid pre-defined workflows, and executing action primitives (state manager methods) directly. Supports steerable forwarding when the executed function returns a `SteerableHandle`.
+A minimal actor that executes a single function or primitive. Useful for testing stored functions, deploying rigid pre-defined workflows, and executing action primitives (state manager methods) directly. Supports steerable forwarding when the executed function returns a `SteerableToolHandle`.
 
 ## How to Run an Actor
 

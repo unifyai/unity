@@ -183,8 +183,7 @@ def test_steerable_infrastructure_available():
     """Steerable handle infrastructure should be available in execution globals."""
     globals_dict = create_execution_globals()
 
-    # Core steerable classes should be present
-    assert "SteerableHandle" in globals_dict
+    # Core steerable class should be present
     assert "SteerableToolHandle" in globals_dict
 
     # Factory function for creating async tool loops
@@ -196,36 +195,29 @@ def test_steerable_infrastructure_available():
     assert callable(globals_dict["new_llm_client"])
 
 
-def test_steerable_handle_inheritance():
-    """SteerableToolHandle should inherit from SteerableHandle."""
+def test_steerable_handle_is_abc():
+    """SteerableToolHandle should be an ABC."""
+    from abc import ABC
+
     globals_dict = create_execution_globals()
 
-    SteerableHandle = globals_dict["SteerableHandle"]
     SteerableToolHandle = globals_dict["SteerableToolHandle"]
-
-    # Verify inheritance relationship
-    assert issubclass(SteerableToolHandle, SteerableHandle)
+    assert issubclass(SteerableToolHandle, ABC)
 
 
 def test_steerable_handle_isinstance_check():
-    """isinstance checks with SteerableHandle should work in execution context."""
+    """isinstance checks with SteerableToolHandle should work in execution context."""
     globals_dict = create_execution_globals()
 
-    # Verify isinstance can be used with SteerableHandle
-    # (testing that the class is properly exposed for runtime type checking)
     code = """
 from abc import ABC
 
-# SteerableHandle is an ABC, so we can't instantiate it directly
+# SteerableToolHandle is an ABC, so we can't instantiate it directly
 # But we can verify it's available and is an ABC
-is_abc = issubclass(SteerableHandle, ABC)
-
-# Verify SteerableToolHandle inherits from SteerableHandle
-is_subclass = issubclass(SteerableToolHandle, SteerableHandle)
+is_abc = issubclass(SteerableToolHandle, ABC)
 """
     exec(code, globals_dict)
     assert globals_dict["is_abc"] is True
-    assert globals_dict["is_subclass"] is True
 
 
 def test_steerable_not_in_base_globals():
@@ -233,7 +225,6 @@ def test_steerable_not_in_base_globals():
     base = create_base_globals()
 
     # These should NOT be in base globals
-    assert "SteerableHandle" not in base
     assert "SteerableToolHandle" not in base
     assert "start_async_tool_loop" not in base
     assert "new_llm_client" not in base

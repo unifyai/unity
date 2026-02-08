@@ -12,7 +12,7 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         self._done = False
         self._paused = False
 
-    # SteerableHandle API
+    # SteerableToolHandle API
     async def ask(
         self,
         question: str,
