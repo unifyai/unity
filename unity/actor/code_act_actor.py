@@ -3,6 +3,7 @@ import contextvars
 import copy
 import functools
 import inspect
+import json
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -229,6 +230,276 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
         return None
 
 
+# ---------------------------------------------------------------------------
+# Fire-and-forget storage check loop
+# ---------------------------------------------------------------------------
+
+
+async def _run_storage_check(
+    *,
+    trajectory: list[dict],
+    ask_tools: dict,
+    actor: "CodeActActor",
+    original_result: str,
+) -> None:
+    """Review a completed CodeActActor trajectory for reusable functions.
+
+    Runs a standalone async tool loop with FunctionManager discovery and
+    storage tools (no execution) plus ``ask_about_completed_tool`` for
+    drilling into inner tool results.  Errors are swallowed — this is a
+    best-effort, fire-and-forget operation.
+    """
+    try:
+        fm = actor.function_manager
+        if fm is None:
+            return
+
+        # ── Build sandbox-free FunctionManager tools ──────────────────────
+
+        async def FunctionManager_search_functions(
+            query: str,
+            n: int = 5,
+        ) -> Any:
+            """Search for existing stored functions by semantic similarity."""
+            return fm.search_functions(
+                query=query,
+                n=n,
+                include_implementations=True,
+            )
+
+        async def FunctionManager_filter_functions(
+            filter: Optional[str] = None,
+            offset: int = 0,
+            limit: int = 100,
+        ) -> Any:
+            """Filter existing stored functions using a filter expression."""
+            return fm.filter_functions(
+                filter=filter,
+                offset=offset,
+                limit=limit,
+                include_implementations=True,
+            )
+
+        async def FunctionManager_list_functions(
+            include_implementations: bool = False,
+        ) -> Any:
+            """List all stored functions."""
+            return fm.list_functions(
+                include_implementations=include_implementations,
+            )
+
+        async def FunctionManager_add_functions(
+            implementations: str | list[str],
+            *,
+            language: str = "python",
+            overwrite: bool = False,
+        ) -> Any:
+            """Store new reusable functions for future use."""
+            return fm.add_functions(
+                implementations=implementations,
+                language=language,
+                overwrite=bool(overwrite),
+            )
+
+        tools: Dict[str, Callable] = {
+            "FunctionManager_search_functions": FunctionManager_search_functions,
+            "FunctionManager_filter_functions": FunctionManager_filter_functions,
+            "FunctionManager_list_functions": FunctionManager_list_functions,
+            "FunctionManager_add_functions": FunctionManager_add_functions,
+        }
+
+        # ── Wire ask_about_completed_tool from snapshot ───────────────────
+
+        if ask_tools:
+            completed_info: list[str] = []
+            for name, fn in ask_tools.items():
+                completed_info.append(f"- `{name}`")
+
+            async def ask_about_completed_tool(
+                tool_name: str,
+                question: str,
+            ) -> str:
+                """Ask a follow-up question about a completed tool from the trajectory.
+
+                Use this to inspect the internal reasoning or detailed results of
+                any tool that ran during the completed execution.
+                """
+                fn = ask_tools.get(tool_name)
+                if fn is None:
+                    return f"Tool '{tool_name}' not found. Available: {list(ask_tools.keys())}"
+                handle = await fn(question=question)
+                if hasattr(handle, "result"):
+                    result = handle.result
+                    if callable(result):
+                        result = result()
+                    if inspect.isawaitable(result):
+                        result = await result
+                    return str(result)
+                return str(handle)
+
+            tools["ask_about_completed_tool"] = ask_about_completed_tool
+
+        # ── Build prompt ──────────────────────────────────────────────────
+
+        trajectory_json = json.dumps(trajectory, indent=2, default=str)
+
+        system_prompt = (
+            "You are a function librarian. A CodeActActor has just completed a task. "
+            "Your job is to review the execution trajectory and decide whether any "
+            "newly composed code should be stored as reusable functions for future use.\n\n"
+            "## Completed Trajectory\n\n"
+            f"{trajectory_json}\n\n"
+            "## Final Result\n\n"
+            f"{original_result}\n\n"
+            "## Instructions\n\n"
+            "1. Review the trajectory for any Python functions that were composed "
+            "and executed during the task.\n"
+            "2. For each candidate function, search the existing function store "
+            "(via `FunctionManager_search_functions`) to check if a similar "
+            "function already exists.\n"
+            "3. If there is a genuine gap — a useful, reusable function that does "
+            "not already exist in the store — store it via "
+            "`FunctionManager_add_functions`.\n"
+            "4. Do NOT store trivial one-liners, test scaffolding, or functions "
+            "that are too specific to this particular task to be reusable.\n"
+            "5. When done (or if there is nothing worth storing), respond with a "
+            "brief summary of what you stored (or that nothing was needed)."
+        )
+
+        client = new_llm_client(
+            actor._model,
+            reasoning_effort=None,
+            service_tier=None,
+        )
+        client.set_system_message(system_prompt)
+
+        storage_handle = start_async_tool_loop(
+            client=client,
+            message="Review the trajectory and store any reusable functions.",
+            tools=tools,
+            loop_id="StorageCheck(CodeActActor.act)",
+            max_steps=30,
+            timeout=120,
+        )
+        await storage_handle.result()
+    except Exception:
+        # Fire-and-forget: swallow all errors.
+        pass
+
+
+class _StorageCheckHandle(SteerableToolHandle):
+    """Wraps an inner handle and runs a fire-and-forget storage check after completion.
+
+    Steering methods forward transparently to the inner handle during execution.
+    ``result()`` returns the original result immediately after kicking off a
+    background loop that reviews the trajectory for reusable functions.
+    """
+
+    def __init__(
+        self,
+        *,
+        inner: "AsyncToolLoopHandle",
+        actor: "CodeActActor",
+    ) -> None:
+        self._inner = inner
+        self._actor = actor
+
+    # ── Steering: forward to inner handle ──────────────────────────────────
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        _parent_chat_context: list[dict] | None = None,
+        **kwargs,
+    ) -> "SteerableToolHandle":
+        return await self._inner.ask(
+            question,
+            _parent_chat_context=_parent_chat_context,
+            **kwargs,
+        )
+
+    async def interject(
+        self,
+        message: str,
+        *,
+        _parent_chat_context_cont: list[dict] | None = None,
+        **kwargs,
+    ) -> None:
+        return await self._inner.interject(
+            message,
+            _parent_chat_context_cont=_parent_chat_context_cont,
+            **kwargs,
+        )
+
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
+        return await self._inner.stop(reason=reason, **kwargs)
+
+    async def pause(self, **kwargs) -> Optional[str]:
+        return await self._inner.pause(**kwargs)
+
+    async def resume(self, **kwargs) -> Optional[str]:
+        return await self._inner.resume(**kwargs)
+
+    def done(self) -> bool:
+        return self._inner.done()
+
+    async def result(self) -> str:
+        # Snapshot trajectory and ask tools BEFORE calling inner result()
+        # (which triggers cleanup that may destroy the client/task state).
+        trajectory: list[dict] = []
+        ask_tools: dict = {}
+        try:
+            client = getattr(self._inner, "_client", None)
+            if client is not None:
+                trajectory = list(getattr(client, "messages", []) or [])
+        except Exception:
+            pass
+        try:
+            _get_ask = getattr(self._inner._task, "get_ask_tools", lambda: {})
+            ask_tools = _get_ask()
+        except Exception:
+            pass
+
+        original_result = await self._inner.result()
+
+        # Fire-and-forget: kick off the storage check in the background.
+        try:
+            task = asyncio.create_task(
+                _run_storage_check(
+                    trajectory=trajectory,
+                    ask_tools=ask_tools,
+                    actor=self._actor,
+                    original_result=original_result,
+                ),
+            )
+            self._actor._storage_check_tasks.append(task)
+            # Auto-remove from tracking list when done.
+            task.add_done_callback(
+                lambda t: (
+                    self._actor._storage_check_tasks.remove(t)
+                    if t in self._actor._storage_check_tasks
+                    else None
+                ),
+            )
+        except Exception:
+            pass
+
+        return original_result
+
+    async def next_clarification(self) -> dict:
+        return await self._inner.next_clarification()
+
+    async def next_notification(self) -> dict:
+        return await self._inner.next_notification()
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return await self._inner.answer_clarification(call_id, answer)
+
+    def get_history(self) -> list[dict]:
+        return self._inner.get_history()
+
+
 class CodeActActor(BaseCodeActActor):
     """
     An actor that uses a conversational tool loop and a stateful code execution
@@ -248,6 +519,7 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
+        storage_check_on_return: bool = False,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
         prompt_caching: Optional["PromptCacheParam"] = None,
@@ -311,6 +583,8 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
+        self.storage_check_on_return: bool = bool(storage_check_on_return)
+        self._storage_check_tasks: list[asyncio.Task] = []
         self._model = model
         self._preprocess_msgs = preprocess_msgs
         self._prompt_caching = prompt_caching
@@ -1516,6 +1790,7 @@ class CodeActActor(BaseCodeActActor):
         persist: Optional[bool] = None,
         can_compose: Optional[bool] = None,
         can_store: Optional[bool] = None,
+        storage_check_on_return: Optional[bool] = None,
         **kwargs,
     ) -> SteerableToolHandle:
         if not self._main_event_loop:
@@ -1525,6 +1800,14 @@ class CodeActActor(BaseCodeActActor):
             self.can_compose if can_compose is None else bool(can_compose)
         )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
+        effective_storage_check = (
+            self.storage_check_on_return
+            if storage_check_on_return is None
+            else bool(storage_check_on_return)
+        )
+        # storage_check_on_return only applies when both can_compose and can_store are True.
+        if effective_storage_check and (not effective_can_compose or not effective_can_store):
+            effective_storage_check = False
 
         # can_compose=False requires a FunctionManager so the LLM has execute_function
         # and the discovery tools available. Without it there are no usable tools.
@@ -1853,10 +2136,20 @@ class CodeActActor(BaseCodeActActor):
         # Update agent context with handle reference
         new_ctx.handle = handle
 
+        # Wrap in StorageCheckHandle for post-completion function review.
+        if effective_storage_check:
+            handle = _StorageCheckHandle(inner=handle, actor=self)
+
         return handle
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
+        # Cancel any fire-and-forget storage check tasks.
+        for t in self._storage_check_tasks:
+            if not t.done():
+                t.cancel()
+        self._storage_check_tasks.clear()
+
         # Close any in-process session sandboxes owned by the session executor.
         try:
             await self._session_executor.close()
