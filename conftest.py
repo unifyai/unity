@@ -589,7 +589,7 @@ def pytest_unconfigure(config):
             f"📁 This run's logs: {root_path / 'logs' / 'pytest' / subdir}/",
         )
         tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
-        tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'llm' / subdir}/")
+        tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'unillm' / subdir}/")
         tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
