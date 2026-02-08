@@ -42,6 +42,7 @@ async def test_code_act_persist_keeps_loop_alive_until_stopped():
 
         # Stop should terminate the loop.
         await asyncio.wait_for(handle.stop("test complete"), timeout=30)
+        await handle.result()
         assert handle.done()
     finally:
         try:
