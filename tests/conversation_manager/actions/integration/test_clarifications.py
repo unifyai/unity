@@ -100,8 +100,13 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
     resp_call_id = str(clar.get("call_id") or "")
     await handle.answer_clarification(resp_call_id, "John Smith")
 
-    # End the handle to complete the flow deterministically.
-    await handle.stop(reason="clarification_answered")
+    # User asks to stop the action so the flow completes deterministically.
+    result_stop = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content="That's enough, cancel that contact search.",
+        ),
+    )
     _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert_no_errors(result)
