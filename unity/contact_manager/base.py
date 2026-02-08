@@ -126,6 +126,29 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         • When no clarification tool exists, proceed with sensible defaults or
           best‑guess values and state those assumptions in the final reply.
 
+        Nameless Contacts
+        -----------------
+        Contacts may legitimately have ``first_name`` and ``surname`` set to
+        ``None``.  Whether to populate the name depends on what the contact
+        *represents*, which is conveyed by the ``bio`` and surrounding context:
+
+        • **Organisation / service contacts** – a support hotline, a help-desk
+          email, a company switchboard, etc.  The contact detail belongs to the
+          *entity*, not to any individual.  ``first_name`` and ``surname`` should
+          stay ``None``; the ``bio`` should describe the organisation or service
+          (e.g. "Acme Corp billing support line").  Individual names encountered
+          during a specific interaction (e.g. "Hi, this is Sarah from Billing")
+          are transient representatives and must **not** be written into the
+          contact's name fields.
+        • **Unknown-name personal contacts** – a real person whose name simply
+          hasn't been discovered yet (e.g. "call my friend at this number").
+          Here, ``first_name`` / ``surname`` **should** be populated as soon as
+          the name becomes known.
+
+        Use the ``bio``, ``response_policy``, and any available context to
+        determine which case applies before deciding whether to set or leave
+        the name fields.
+
         Parameters
         ----------
         text : str
