@@ -122,7 +122,7 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
         cm.in_flight_actions,
         cm.completed_actions,
         cm.last_snapshot,
-    )
+    ).full_render
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}

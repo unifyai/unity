@@ -550,7 +550,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Also capture the structured snapshot state for incremental diff computation.
         # This enables interject operations to send only changes since the initial act().
-        self._current_snapshot_state = self.prompt_renderer.render_state_with_tracking(
+        self._current_snapshot_state = self.prompt_renderer.render_state(
             self.contact_index,
             self.notifications_bar,
             self.in_flight_actions,
