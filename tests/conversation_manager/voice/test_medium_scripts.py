@@ -33,7 +33,6 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - create_end_call with pre_shutdown_callback
    - setup_inactivity_timeout
    - configure_from_cli argument parsing
-   - log_sts_usage billing heuristic
 
 3. **Voice Agent prompt**:
    - build_voice_agent_prompt output structure
@@ -300,24 +299,203 @@ class TestCommonHelpers:
         assert common.should_dispatch_livekit_agent() is False
 
 
-class TestSTSUsageLogging:
-    """Tests for STS usage logging and billing heuristics."""
+# =============================================================================
+# Integration Tests: STS Per-Turn Usage Logging via unillm.log_usage
+# =============================================================================
 
-    def test_log_sts_usage_skips_zero_duration(self, caplog):
-        """log_sts_usage logs warning and skips for duration <= 0."""
-        from unity.conversation_manager.medium_scripts.common import log_sts_usage
 
-        log_sts_usage(call_duration_seconds=0)
+class TestSTSPerTurnUsageLogging:
+    """Tests that the sts_call metrics_collected handler calls unillm.log_usage
+    with real token usage from the Realtime API, replacing the old
+    duration-based heuristic."""
 
-        assert "Skipping STS usage logging" in caplog.text
+    def test_metrics_handler_calls_log_usage(self, tmp_path, monkeypatch):
+        """The _on_metrics handler converts RealtimeModelMetrics to a
+        unillm.log_usage call with the correct usage dict and transcript."""
+        from unittest.mock import patch, MagicMock
+        from livekit.agents.metrics import RealtimeModelMetrics
 
-    def test_log_sts_usage_skips_negative_duration(self, caplog):
-        """log_sts_usage logs warning and skips for negative duration."""
-        from unity.conversation_manager.medium_scripts.common import log_sts_usage
+        # Build a realistic RealtimeModelMetrics (as LiveKit would emit)
+        metrics = RealtimeModelMetrics(
+            label="gpt-realtime",
+            model="gpt-4o-realtime-preview",
+            request_id="req_abc123",
+            timestamp=1000.0,
+            duration=2.5,
+            ttft=0.3,
+            cancelled=False,
+            input_tokens=200,
+            output_tokens=100,
+            total_tokens=300,
+            tokens_per_second=40.0,
+            input_token_details=RealtimeModelMetrics.InputTokenDetails(
+                audio_tokens=170,
+                text_tokens=30,
+                image_tokens=0,
+                cached_tokens=0,
+                cached_tokens_details=None,
+            ),
+            output_token_details=RealtimeModelMetrics.OutputTokenDetails(
+                text_tokens=15,
+                audio_tokens=85,
+                image_tokens=0,
+            ),
+        )
 
-        log_sts_usage(call_duration_seconds=-10)
+        # Simulate the handler logic from sts_call.py
+        # (extracted here since sts_call.entrypoint requires a LiveKit room)
+        usage = {
+            "input_tokens": metrics.input_tokens,
+            "output_tokens": metrics.output_tokens,
+            "total_tokens": metrics.total_tokens,
+            "input_token_details": {
+                "audio_tokens": metrics.input_token_details.audio_tokens,
+                "text_tokens": metrics.input_token_details.text_tokens,
+                "cached_tokens": metrics.input_token_details.cached_tokens,
+            },
+            "output_token_details": {
+                "audio_tokens": metrics.output_token_details.audio_tokens,
+                "text_tokens": metrics.output_token_details.text_tokens,
+            },
+        }
 
-        assert "Skipping STS usage logging" in caplog.text
+        transcript = [
+            {"role": "user", "content": "What time is the meeting?"},
+            {"role": "assistant", "content": "Let me check on that."},
+        ]
+
+        # Configure unillm file logging
+        from unillm import settings as unillm_settings
+        from unillm import logger as unillm_logger
+
+        monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
+        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
+        monkeypatch.setattr(
+            unillm_settings.SETTINGS, "UNILLM_LOG_DIR", str(tmp_path),
+        )
+        monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
+        monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
+        monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
+
+        import unillm as _unillm
+
+        with patch("unillm.logger.unify.deduct_credits") as mock_deduct:
+            billed_cost = _unillm.log_usage(
+                metrics.model,
+                usage,
+                transcript=transcript,
+                label=metrics.model,
+            )
+
+        # Credits should have been deducted
+        mock_deduct.assert_called_once()
+        assert billed_cost > 0
+
+        # A log file should exist with usage details
+        log_files = list(tmp_path.glob("*_usage.txt"))
+        assert len(log_files) == 1
+
+        content = log_files[0].read_text()
+        assert "gpt-4o-realtime-preview" in content
+        assert "audio_tokens" in content
+        assert "What time is the meeting?" in content
+        assert "Let me check on that." in content
+
+    def test_usage_dict_shape_matches_realtime_api(self):
+        """The usage dict built from RealtimeModelMetrics has the shape
+        that unillm.log_usage and compute_full_cost_from_usage expect."""
+        from livekit.agents.metrics import RealtimeModelMetrics
+        from unillm.costs import compute_full_cost_from_usage
+
+        metrics = RealtimeModelMetrics(
+            label="test",
+            model="gpt-4o-realtime-preview",
+            request_id="req_1",
+            timestamp=0.0,
+            duration=1.0,
+            ttft=0.1,
+            cancelled=False,
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            tokens_per_second=50.0,
+            input_token_details=RealtimeModelMetrics.InputTokenDetails(
+                audio_tokens=80,
+                text_tokens=20,
+                image_tokens=0,
+                cached_tokens=0,
+                cached_tokens_details=None,
+            ),
+            output_token_details=RealtimeModelMetrics.OutputTokenDetails(
+                text_tokens=10,
+                audio_tokens=40,
+                image_tokens=0,
+            ),
+        )
+
+        usage = {
+            "input_tokens": metrics.input_tokens,
+            "output_tokens": metrics.output_tokens,
+            "total_tokens": metrics.total_tokens,
+            "input_token_details": {
+                "audio_tokens": metrics.input_token_details.audio_tokens,
+                "text_tokens": metrics.input_token_details.text_tokens,
+                "cached_tokens": metrics.input_token_details.cached_tokens,
+            },
+            "output_token_details": {
+                "audio_tokens": metrics.output_token_details.audio_tokens,
+                "text_tokens": metrics.output_token_details.text_tokens,
+            },
+        }
+
+        # compute_full_cost_from_usage should handle this without error
+        cost = compute_full_cost_from_usage("gpt-4o-realtime-preview", usage)
+        assert cost > 0
+
+    def test_cancelled_response_still_logs(self, tmp_path, monkeypatch):
+        """Interrupted/cancelled responses still produce a log file with
+        partial usage (OpenAI still bills for partial audio tokens)."""
+        from unittest.mock import patch
+        from unillm import settings as unillm_settings
+        from unillm import logger as unillm_logger
+
+        monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
+        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
+        monkeypatch.setattr(
+            unillm_settings.SETTINGS, "UNILLM_LOG_DIR", str(tmp_path),
+        )
+        monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
+        monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
+        monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
+
+        # Partial usage from a cancelled response (user interrupted)
+        usage = {
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "total_tokens": 60,
+            "input_token_details": {
+                "audio_tokens": 40,
+                "text_tokens": 10,
+                "cached_tokens": 0,
+            },
+            "output_token_details": {
+                "audio_tokens": 8,
+                "text_tokens": 2,
+            },
+        }
+
+        import unillm as _unillm
+
+        with patch("unillm.logger.unify.deduct_credits"):
+            billed_cost = _unillm.log_usage(
+                "gpt-4o-realtime-preview",
+                usage,
+            )
+
+        assert billed_cost > 0
+
+        log_files = list(tmp_path.glob("*_usage.txt"))
+        assert len(log_files) == 1
 
 
 # =============================================================================

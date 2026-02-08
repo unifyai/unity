@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import json
-import time
 from typing import AsyncIterable
 
 from dotenv import load_dotenv
@@ -36,6 +35,8 @@ from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.session_details import SESSION_DETAILS
 
 # Shared helpers
+import unillm
+
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,
@@ -44,7 +45,6 @@ from unity.conversation_manager.medium_scripts.common import (
     publish_call_started,
     configure_from_cli,
     should_dispatch_livekit_agent,
-    log_sts_usage,
     start_event_broker_receive,
 )
 
@@ -152,26 +152,8 @@ async def entrypoint(ctx: JobContext) -> None:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
-    # Track call start time for usage logging
-    # See common.py for detailed comments on the STS billing heuristic
-    call_start_time = time.time()
-
-    def log_call_usage() -> None:
-        """Log STS usage when call ends (pre-shutdown callback)."""
-        call_duration = time.time() - call_start_time
-        log_sts_usage(
-            call_duration_seconds=call_duration,
-            contact=contact,
-            tags=[f"channel:{channel}"],
-        )
-
     # Shared end_call + inactivity + participant disconnect handler
-    # Pass usage logging callback to run before shutdown
-    end_call = create_end_call(
-        contact,
-        channel,
-        pre_shutdown_callback=log_call_usage,
-    )
+    end_call = create_end_call(contact, channel)
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
@@ -295,6 +277,35 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Get realtime session (only available after session.start())
     rt = agent.realtime_llm_session
+
+    # Log real usage per turn via unillm (replaces duration-based heuristic)
+    @rt.on("metrics_collected")
+    def _on_metrics(metrics):
+        usage = {
+            "input_tokens": metrics.input_tokens,
+            "output_tokens": metrics.output_tokens,
+            "total_tokens": metrics.total_tokens,
+            "input_token_details": {
+                "audio_tokens": metrics.input_token_details.audio_tokens,
+                "text_tokens": metrics.input_token_details.text_tokens,
+                "cached_tokens": metrics.input_token_details.cached_tokens,
+            },
+            "output_token_details": {
+                "audio_tokens": metrics.output_token_details.audio_tokens,
+                "text_tokens": metrics.output_token_details.text_tokens,
+            },
+        }
+        transcript = [
+            {"role": item.role, "content": item.text_content or ""}
+            for item in rt.chat_ctx.items
+            if item.text_content
+        ]
+        unillm.log_usage(
+            metrics.model,
+            usage,
+            transcript=transcript,
+            label=metrics.model,
+        )
 
     # For outbound calls, wait for call_answered before speaking.
     # Unlike call.py, the Realtime API bypasses llm_node, so we must wait here.
