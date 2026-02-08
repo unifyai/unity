@@ -32,34 +32,82 @@ if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .message_dispatcher import LoopMessageDispatcher
 
 
-# Sentinel string inserted in place of an extracted SteerableToolHandle
-# so the LLM sees where the handle lived in the original return structure.
+# Sentinel for bare top-level handles (no label needed).
 _HANDLE_SENTINEL = "<steerable handle — now in-flight>"
 
 
+def _handle_label_sentinel(label: str) -> str:
+    """Labeled sentinel for a handle inside a composite return."""
+    return f"[{label}: steerable]"
+
+
+@dataclasses.dataclass
+class _MultiHandleState:
+    """Shared state for multiple handles spawned from one tool return."""
+
+    parent_call_id: str
+    parent_name: str
+    placeholder_msg: dict
+    template: Any  # cleaned structure with labeled sentinels
+    results: dict  # label -> raw result (None while pending)
+
+    def update_placeholder(self) -> None:
+        """Rebuild the shared placeholder with any completed results merged in."""
+        updated = _rebuild_multi_handle_content(self.template, self.results)
+        all_done = all(v is not None for v in self.results.values())
+        self.placeholder_msg["content"] = serialize_tool_content(
+            tool_name=self.parent_name,
+            payload=updated,
+            is_final=all_done,
+        )
+
+
+def _rebuild_multi_handle_content(template, results):
+    """Replace labeled sentinels in *template* with completed results."""
+
+    def _walk(node):
+        if isinstance(node, str):
+            for label, raw in results.items():
+                if node == _handle_label_sentinel(label) and raw is not None:
+                    return raw
+            return node
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        if isinstance(node, tuple):
+            return tuple(_walk(v) for v in node)
+        return node
+
+    return _walk(template)
+
+
 def _extract_nested_handle(obj):
-    """Walk *obj* (dict / list / tuple / Pydantic model) looking for a single
-    ``SteerableToolHandle``.
+    """Walk *obj* (dict / list / tuple / Pydantic model) looking for ``SteerableToolHandle`` instances.
 
-    Returns ``(handle, cleaned_obj)`` where *cleaned_obj* is a shallow copy of
-    *obj* with the handle replaced by :data:`_HANDLE_SENTINEL`.
+    Returns ``(result, cleaned_obj)`` where:
 
-    If no handle is found returns ``(None, obj)`` unchanged.
-    Raises ``ValueError`` when more than one handle is found.
+    - **Bare top-level handle**: ``result`` is the handle itself, ``cleaned_obj``
+      is :data:`_HANDLE_SENTINEL`.
+    - **Handles nested in containers** (one or more): ``result`` is a list of
+      ``(handle, label)`` tuples (``"h0"``, ``"h1"``, …), ``cleaned_obj`` is a
+      copy of *obj* with handles replaced by labeled sentinels.
+    - **No handles**: ``(None, obj)`` unchanged.
     """
     from unity.common.async_tool_loop import SteerableToolHandle
 
     if isinstance(obj, SteerableToolHandle):
-        # Top-level handle — the caller should use the direct-handle path.
         return obj, _HANDLE_SENTINEL
 
     found: list = []
+    counter = [0]
 
     def _walk(node):
-        """Recursively walk and return a cleaned copy, collecting handles."""
         if isinstance(node, SteerableToolHandle):
-            found.append(node)
-            return _HANDLE_SENTINEL
+            label = f"h{counter[0]}"
+            counter[0] += 1
+            found.append((node, label))
+            return _handle_label_sentinel(label)
 
         if isinstance(node, dict):
             return {k: _walk(v) for k, v in node.items()}
@@ -94,14 +142,8 @@ def _extract_nested_handle(obj):
 
     cleaned = _walk(obj)
 
-    if len(found) > 1:
-        raise ValueError(
-            f"Tool return value contains {len(found)} SteerableToolHandles; "
-            "at most one is allowed.",
-        )
-
     if found:
-        return found[0], cleaned
+        return found, cleaned
 
     return None, obj
 
@@ -668,15 +710,32 @@ class ToolsData:
             raw = task.result()
 
             # ───────────────────────────────────────────────────────────────
-            #  NEW:  the tool *did not really finish* – it returned *another*
-            #        AsyncToolLoopHandle.  We:
-            #        (1) schedule `handle.result()` as a *new* task,
-            #        (2) keep the **same** `call_id` so the continue/-cancel
-            #            helpers keep working,
-            #        (3) create / patch one placeholder "still running…"
-            #            tool-message in the transcript.
+            #  Multi-handle child: progressive placeholder update.
+            #  Each child completes independently; the shared placeholder
+            #  is rebuilt with the newly resolved result.
             # ───────────────────────────────────────────────────────────────
-            # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
+            mh_state = getattr(info, "_multi_handle_state", None)
+            if mh_state is not None:
+                label = info._multi_handle_label
+                mh_state.results[label] = raw
+                mh_state.update_placeholder()
+                self.completed_results[call_id] = serialize_tool_content(
+                    tool_name=name,
+                    payload=raw,
+                    is_final=True,
+                )
+                self._completed_tool_names[call_id] = name
+                consecutive_failures.reset_failures()
+                if self._logger.log_steps:
+                    self._logger.info(
+                        f"{name} [{label}] - {call_id}",
+                        prefix="✅  MultiHandle Child Completed",
+                    )
+                return True
+
+            # ───────────────────────────────────────────────────────────────
+            #  Bare handle: the tool returned a SteerableToolHandle directly.
+            # ───────────────────────────────────────────────────────────────
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
@@ -690,19 +749,19 @@ class ToolsData:
                 return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
-            #  Composite return: a handle nested inside a dict/list/tuple
-            #  alongside intermediate data that should be surfaced to the LLM
-            #  as progress while the handle is steered.
+            #  Composite return: one or more handles nested inside a
+            #  dict/list/tuple alongside intermediate data surfaced to the
+            #  LLM as progress while each handle is steered independently.
             # ───────────────────────────────────────────────────────────────
-            nested_handle, cleaned = _extract_nested_handle(raw)
-            if nested_handle is not None:
-                await self.adopt_nested(
+            nested_handles, cleaned = _extract_nested_handle(raw)
+            if nested_handles is not None:
+                await self.adopt_multi_nested(
                     info,
-                    nested_handle,
+                    nested_handles,
+                    cleaned,
                     msg_dispatcher=msg_dispatcher,
                     assistant_meta=assistant_meta,
                     outer_handle_container=outer_handle_container,
-                    intermediate_content=cleaned,
                 )
                 return True  # ⬅️  LLM turn required — intermediate content to process
 
@@ -715,6 +774,27 @@ class ToolsData:
 
             consecutive_failures.reset_failures()
         except Exception:
+            # Multi-handle child error: update shared placeholder and return early
+            mh_state = getattr(info, "_multi_handle_state", None)
+            if mh_state is not None:
+                label = info._multi_handle_label
+                error_tb = traceback.format_exc()
+                mh_state.results[label] = f"[{label}: error]\n{error_tb}"
+                mh_state.update_placeholder()
+                self.completed_results[call_id] = error_tb
+                self._completed_tool_names[call_id] = name
+                consecutive_failures.increment_failures()
+                if self._logger.log_steps:
+                    self._logger.error(
+                        f"{name} [{label}] - {call_id}\n{error_tb}",
+                        prefix="❌  MultiHandle Child Failed",
+                    )
+                if consecutive_failures.has_exceeded_failures():
+                    raise RuntimeError(
+                        "Aborted after too many consecutive tool failures.",
+                    )
+                return True
+
             consecutive_failures.increment_failures()
             result = traceback.format_exc()
             if self._logger.log_steps:
@@ -899,3 +979,96 @@ class ToolsData:
         if self._on_handle_adopted is not None:
             with suppress(Exception):
                 self._on_handle_adopted(nested_task)
+
+    # ── Helper: adopt multiple handles from a single composite return --------
+    async def adopt_multi_nested(
+        self,
+        info: "ToolCallMetadata",
+        handles: list,
+        intermediate_content: Any,
+        *,
+        msg_dispatcher,
+        assistant_meta,
+        outer_handle_container,
+    ) -> None:
+        """Adopt multiple handles from a single tool's composite return.
+
+        Creates one placeholder for the parent call_id with intermediate content
+        showing labeled sentinels (``[h0: steerable]``, etc.), then schedules
+        each handle as an independent child task with a synthesized call_id.
+
+        Each child completes independently, progressively updating the shared
+        placeholder via :class:`_MultiHandleState`.
+        """
+        parent_call_id = info.call_id
+
+        # Create / update placeholder with intermediate content
+        placeholder_content = serialize_tool_content(
+            tool_name=info.name,
+            payload=intermediate_content,
+            is_final=False,
+        )
+        ph = info.tool_reply_msg
+        if ph is None:
+            ph = create_tool_call_message(
+                name=info.name,
+                call_id=parent_call_id,
+                content=placeholder_content,
+            )
+            await insert_tool_message_after_assistant(
+                assistant_meta,
+                info.assistant_msg,
+                ph,
+                self._client,
+                msg_dispatcher,
+                skip_event_bus=True,
+            )
+        else:
+            ph["content"] = placeholder_content
+
+        # Shared state that all children reference
+        state = _MultiHandleState(
+            parent_call_id=parent_call_id,
+            parent_name=info.name,
+            placeholder_msg=ph,
+            template=intermediate_content,
+            results={label: None for _, label in handles},
+        )
+
+        for handle, label in handles:
+            # Append label directly (no underscore) so the 8-char safe_call_id
+            # includes both parent uniqueness and the handle label, avoiding
+            # collisions when multiple parents each have an h0.
+            synth_call_id = f"{parent_call_id}{label}"
+
+            # Schedule the handle's result coroutine
+            if inspect.iscoroutinefunction(handle.result):
+                nested_coro = handle.result()
+            else:
+                nested_coro = asyncio.to_thread(handle.result)
+            nested_task = asyncio.create_task(nested_coro)
+
+            # Wire clarification channels from the handle
+            h_up_q = getattr(handle, "clarification_up_q", None)
+            h_down_q = getattr(handle, "clarification_down_q", None)
+
+            metadata = dataclasses.replace(
+                info,
+                call_id=synth_call_id,
+                handle=handle,
+                is_interjectable=hasattr(handle, "interject"),
+                tool_reply_msg=ph,
+                clar_up_queue=h_up_q,
+                clar_down_queue=h_down_q,
+                notification_queue=None,
+                _multi_handle_state=state,
+                _multi_handle_label=label,
+            )
+            self.save_task(nested_task, metadata)
+
+            if h_up_q is not None:
+                self.clarification_channels[synth_call_id] = (h_up_q, h_down_q)
+
+            if self._on_handle_adopted is not None:
+                with suppress(Exception):
+                    self._on_handle_adopted(nested_task)
