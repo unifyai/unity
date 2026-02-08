@@ -813,6 +813,7 @@ async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
         f"Action completed: {short_desc}\nResult: {event.result}",
         event.timestamp,
         pinned=True,
+        id=f"action_completion_{event.handle_id}",
     )
     # Log completion in handle_actions before moving to completed_actions.
     from unity.common.prompt_helpers import now as prompt_now

@@ -1480,6 +1480,145 @@ class TestToolDocstrings:
 # =============================================================================
 
 
+class TestCompletedActionTools:
+    """Tests for completed action tools (ask and close)."""
+
+    def test_build_completed_action_tools_includes_ask_and_close(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """build_completed_action_tools generates both ask_* and close_* tools."""
+        mock_cm.completed_actions = {
+            0: {
+                "query": "Find contacts",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+
+        tools = brain_action_tools.build_completed_action_tools()
+        tool_names = list(tools.keys())
+
+        ask_tools = [n for n in tool_names if n.startswith("ask_")]
+        close_tools = [n for n in tool_names if n.startswith("close_")]
+        assert len(ask_tools) == 1, f"Expected 1 ask tool, got {ask_tools}"
+        assert len(close_tools) == 1, f"Expected 1 close tool, got {close_tools}"
+
+    @pytest.mark.asyncio
+    async def test_close_tool_removes_completed_action(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """close_* tool removes the action from completed_actions."""
+        mock_cm.completed_actions = {
+            0: {
+                "query": "Find contacts",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+
+        tools = brain_action_tools.build_completed_action_tools()
+        close_tool = next(fn for name, fn in tools.items() if name.startswith("close_"))
+
+        result = await close_tool()
+        assert result["status"] == "closed"
+        assert result["handle_id"] == 0
+        assert 0 not in mock_cm.completed_actions
+
+    @pytest.mark.asyncio
+    async def test_close_tool_removes_pinned_notification(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """close_* tool removes the pinned completion notification."""
+        from datetime import datetime, timezone
+
+        # Simulate the notification that ActorResult handler creates
+        mock_cm.notifications_bar.push_notif(
+            "Action",
+            "Action completed: Find contacts\nResult: Found 3 contacts",
+            datetime.now(tz=timezone.utc),
+            pinned=True,
+            id="action_completion_0",
+        )
+        mock_cm.completed_actions = {
+            0: {
+                "query": "Find contacts",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+
+        assert len(mock_cm.notifications_bar.notifications) == 1
+
+        tools = brain_action_tools.build_completed_action_tools()
+        close_tool = next(fn for name, fn in tools.items() if name.startswith("close_"))
+
+        await close_tool()
+
+        assert 0 not in mock_cm.completed_actions
+        assert len(mock_cm.notifications_bar.notifications) == 0
+
+    def test_close_tool_not_in_steering_tools(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """close_* should NOT appear in in-flight action steering tools."""
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test action",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+
+        steering_tools = brain_action_tools.build_action_steering_tools()
+        close_tools = [n for n in steering_tools if n.startswith("close_")]
+        assert len(close_tools) == 0, (
+            f"close_* should not appear for in-flight actions: {close_tools}"
+        )
+
+    def test_no_completed_actions_yields_no_tools(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Empty completed_actions yields no tools."""
+        mock_cm.completed_actions = {}
+        tools = brain_action_tools.build_completed_action_tools()
+        assert len(tools) == 0
+
+    def test_multiple_completed_actions_yield_tools_for_each(
+        self,
+        brain_action_tools,
+        mock_cm,
+    ):
+        """Each completed action gets its own ask_* and close_* tool pair."""
+        mock_cm.completed_actions = {
+            0: {
+                "query": "Find contacts",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+            1: {
+                "query": "Create a task",
+                "handle": MagicMock(),
+                "handle_actions": [],
+            },
+        }
+
+        tools = brain_action_tools.build_completed_action_tools()
+        ask_tools = [n for n in tools if n.startswith("ask_")]
+        close_tools = [n for n in tools if n.startswith("close_")]
+        assert len(ask_tools) == 2
+        assert len(close_tools) == 2
+
+
 class TestBrainToolsIntegration:
     """Integration tests for brain tools working together."""
 

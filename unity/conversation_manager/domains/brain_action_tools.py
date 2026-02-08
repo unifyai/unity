@@ -1045,6 +1045,8 @@ class ConversationManagerBrainActionTools:
             ]
 
             for op in STEERING_OPERATIONS:
+                if op.name == "close":
+                    continue  # close is for completed actions only
                 # Conditionally skip pause/resume based on current state
                 # is_paused=True: skip pause, only offer resume
                 # is_paused=False or None: skip resume, only offer pause (default to running)
@@ -1088,10 +1090,11 @@ class ConversationManagerBrainActionTools:
         return tools
 
     def build_completed_action_tools(self) -> dict[str, "Callable[..., Any]"]:
-        """Build ask-only tools for completed actions.
+        """Build ask and close tools for completed actions.
 
         Completed actions preserve their trajectory and remain available
-        for `ask` queries about their execution and results.
+        for `ask` queries about their execution and results, and can be
+        dismissed via `close` to remove them from state entirely.
         """
         tools: dict[str, Callable[..., Any]] = {}
 
@@ -1100,7 +1103,7 @@ class ConversationManagerBrainActionTools:
             short_name = derive_short_name(query)
             handle = handle_data.get("handle")
 
-            # Only build the ask tool for completed actions
+            # ask tool — query the completed action's trajectory/results
             ask_op = OPERATION_MAP["ask"]
             tool_name = build_action_name(ask_op.name, short_name, handle_id)
             tool_fn = self._make_completed_action_ask_tool(
@@ -1111,6 +1114,15 @@ class ConversationManagerBrainActionTools:
                 query,
             )
             tools[tool_name] = tool_fn
+
+            # close tool — dismiss the completed action from state
+            close_op = OPERATION_MAP["close"]
+            close_tool_name = build_action_name(close_op.name, short_name, handle_id)
+            close_tool_fn = self._make_completed_action_close_tool(
+                handle_id,
+                query,
+            )
+            tools[close_tool_name] = close_tool_fn
 
         return tools
 
@@ -1203,6 +1215,31 @@ class ConversationManagerBrainActionTools:
             docstring or f"Ask about completed action: {query}"
         )
         return ask_completed_action
+
+    def _make_completed_action_close_tool(
+        self,
+        handle_id: int,
+        query: str,
+    ) -> "Callable[..., Any]":
+        """Create a close tool closure for a completed action.
+
+        Removes the action from ``completed_actions`` and its associated
+        pinned completion notification, so neither appear on future turns.
+        """
+        cm = self._cm
+
+        async def close_completed_action() -> dict[str, Any]:
+            cm.completed_actions.pop(handle_id, None)
+            cm.notifications_bar.remove_notif(f"action_completion_{handle_id}")
+            return {"status": "closed", "handle_id": handle_id}
+
+        close_completed_action.__signature__ = inspect.Signature([])
+        close_completed_action.__doc__ = (
+            "Dismiss this completed action, removing it and its tools "
+            "from future turns."
+            f"\n\nFor action: {query}"
+        )
+        return close_completed_action
 
     def _make_steering_tool(
         self,
