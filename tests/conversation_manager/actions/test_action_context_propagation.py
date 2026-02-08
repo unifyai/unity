@@ -137,6 +137,69 @@ class TestActContextPropagation:
             cm.actor.act = original_act
 
 
+class TestActStartedInHistory:
+    """Tests that act() logs a timestamped 'started' event in handle_actions."""
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_act_logs_started_event_with_timestamp(self, initialized_cm):
+        """
+        Calling act() should append an 'act_started' event (with a timestamp)
+        to handle_actions so the rendered <history> includes an entry for when
+        the action was created.
+        """
+        cm = initialized_cm.cm
+
+        brain_tools = ConversationManagerBrainActionTools(cm)
+        await brain_tools.act(query="Find all contacts in New York")
+
+        # Exactly one in-flight action should exist.
+        assert len(cm.in_flight_actions) == 1
+        handle_data = next(iter(cm.in_flight_actions.values()))
+        actions = handle_data["handle_actions"]
+
+        # The first entry should record that the action was started.
+        assert len(actions) >= 1, "handle_actions should contain at least the 'started' event"
+        started = actions[0]
+        assert "started" in started.get("action_name", "").lower(), (
+            f"First handle_actions entry should be a 'started' event, got: {started}"
+        )
+        assert started.get("timestamp"), (
+            f"'started' event must have a timestamp, got: {started}"
+        )
+
+    @pytest.mark.asyncio
+    @_handle_project
+    async def test_act_started_appears_in_rendered_state(self, initialized_cm):
+        """
+        The rendered in-flight actions should include a <history> section
+        containing the timestamped 'started' event from the act() call.
+        """
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        cm = initialized_cm.cm
+
+        brain_tools = ConversationManagerBrainActionTools(cm)
+        await brain_tools.act(query="Search the web for weather")
+
+        renderer = Renderer()
+        snapshot = renderer.render_state(
+            contact_index=cm.contact_index,
+            in_flight_actions=cm.in_flight_actions,
+        )
+        rendered = snapshot.full_render
+
+        assert "<history>" in rendered, (
+            "Rendered state should contain <history> for the in-flight action"
+        )
+        assert "started" in rendered.lower(), (
+            "Rendered <history> should contain a 'started' event"
+        )
+        assert "timestamp=" in rendered, (
+            "Rendered 'started' event should include a timestamp attribute"
+        )
+
+
 class TestSteeringContextPropagation:
     """Tests that verify steering tools pass the correct parent context."""
 
