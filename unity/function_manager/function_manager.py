@@ -4820,15 +4820,22 @@ class FunctionManager(BaseFunctionManager):
         shell_pool: Optional["ShellPool"] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """
         Execute a stored function by name with optional state mode overrides.
 
         This method looks up a function by name from the function table and
         executes it. It automatically routes to the appropriate executor based
-        on the function's language (Python vs shell).
+        on the function's type:
 
-        State modes:
+        - **Primitives** (``is_primitive=True``): Resolved to their live
+          callable via ``get_primitive_callable`` and invoked directly. The
+          raw return value is passed through unmodified, which is critical
+          for primitives that return ``SteerableToolHandle`` instances.
+        - **Composed functions**: Executed via subprocess or in-process exec
+          and wrapped in a ``{"result", "error", "stdout", "stderr"}`` dict.
+
+        State modes (composed functions only):
         - "stateless" (default): Fresh subprocess with no inherited state. Pure
           function behavior. Backward compatible with previous behavior.
         - "stateful": Uses persistent pool connection. Variables from previous
@@ -4853,16 +4860,31 @@ class FunctionManager(BaseFunctionManager):
             computer_primitives: ComputerPrimitives instance for web/desktop RPC.
 
         Returns:
-            Dict with keys: result, error, stdout, stderr
+            For composed functions: dict with keys result, error, stdout, stderr.
+            For primitives: the raw return value of the callable (may be a
+            SteerableToolHandle or any other type).
 
         Raises:
             ValueError: If the function doesn't exist or has no implementation.
             ValueError: If state_mode requires a pool but none is provided.
         """
-        # Look up function by name
+        # Look up function by name (compositional first, then primitives)
         func_data = self._get_function_data_by_name(name=function_name)
+
+        if func_data is None:
+            func_data = self._get_primitive_data_by_name(name=function_name)
+
         if func_data is None:
             raise ValueError(f"Function '{function_name}' not found")
+
+        # Primitive execution: resolve callable and invoke directly.
+        if func_data.get("is_primitive"):
+            return await self._execute_primitive(
+                func_data=func_data,
+                call_kwargs=call_kwargs,
+                primitives=primitives,
+                computer_primitives=computer_primitives,
+            )
 
         implementation = func_data.get("implementation")
         if not isinstance(implementation, str) or not implementation.strip():
@@ -4896,6 +4918,46 @@ class FunctionManager(BaseFunctionManager):
             )
         else:
             raise ValueError(f"Unsupported function language: {language}")
+
+    # ------------------------------------------------------------------ #
+    #  Primitive Execution Helpers                                       #
+    # ------------------------------------------------------------------ #
+
+    def _get_primitive_data_by_name(self, *, name: str) -> Optional[Dict[str, Any]]:
+        """Look up primitive metadata by name from the in-memory registry."""
+        primitives = self._registry.collect_primitives(self._primitive_scope)
+        return primitives.get(name)
+
+    async def _execute_primitive(
+        self,
+        *,
+        func_data: Dict[str, Any],
+        call_kwargs: Optional[Dict[str, Any]],
+        primitives: Optional[Any],
+        computer_primitives: Optional[Any],
+    ) -> Any:
+        """Resolve a primitive callable and invoke it directly.
+
+        Returns the raw result of the callable (which may be a
+        SteerableToolHandle for async tool loop primitives).
+        """
+        from unity.function_manager.primitives.runtime import get_primitive_callable
+
+        callable_fn = get_primitive_callable(
+            func_data,
+            computer_primitives=computer_primitives,
+            primitives=primitives,
+        )
+        if callable_fn is None:
+            raise ValueError(
+                f"Could not resolve primitive callable for '{func_data.get('name')}'",
+            )
+
+        kwargs = call_kwargs or {}
+        result = callable_fn(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     # ------------------------------------------------------------------ #
     #  Remote Windows Execution Helpers                                  #
