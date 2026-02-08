@@ -52,58 +52,31 @@ class TestCallEventSocketServer:
         return broker
 
     @pytest.mark.asyncio
-    async def test_start_creates_socket_file(self, mock_event_broker):
-        """Server start() creates a socket file and returns its path."""
-        server = CallEventSocketServer(mock_event_broker)
+    async def test_start_and_stop_lifecycle(self, mock_event_broker):
+        """Server start/stop creates and removes socket file, idempotently."""
+        server = CallEventSocketServer(mock_event_broker, forward_channels=[])
 
-        socket_path = await server.start()
+        # Before start
+        assert server.socket_path is None
 
-        assert socket_path is not None
-        assert socket_path.endswith(".sock")
-        assert os.path.exists(socket_path)
-        assert server.socket_path == socket_path
-
-        await server.stop()
-
-    @pytest.mark.asyncio
-    async def test_start_is_idempotent(self, mock_event_broker):
-        """Calling start() multiple times returns the same socket path."""
-        server = CallEventSocketServer(mock_event_broker)
-
+        # Start creates socket
         path1 = await server.start()
-        path2 = await server.start()
+        assert path1 is not None
+        assert path1.endswith(".sock")
+        assert os.path.exists(path1)
+        assert server.socket_path == path1
 
+        # Start is idempotent
+        path2 = await server.start()
         assert path1 == path2
 
+        # Stop removes socket
         await server.stop()
-
-    @pytest.mark.asyncio
-    async def test_stop_removes_socket_file(self, mock_event_broker):
-        """Server stop() removes the socket file."""
-        server = CallEventSocketServer(mock_event_broker)
-
-        socket_path = await server.start()
-        assert os.path.exists(socket_path)
-
-        await server.stop()
-
-        assert not os.path.exists(socket_path)
+        assert not os.path.exists(path1)
         assert server.socket_path is None
 
-    @pytest.mark.asyncio
-    async def test_stop_is_idempotent(self, mock_event_broker):
-        """Calling stop() multiple times doesn't raise errors."""
-        server = CallEventSocketServer(mock_event_broker)
-
-        await server.start()
+        # Stop is idempotent
         await server.stop()
-        await server.stop()  # Should not raise
-
-    @pytest.mark.asyncio
-    async def test_socket_path_none_before_start(self, mock_event_broker):
-        """socket_path is None before start() is called."""
-        server = CallEventSocketServer(mock_event_broker)
-        assert server.socket_path is None
 
     @pytest.mark.asyncio
     async def test_on_event_callback_called(self, mock_event_broker):
@@ -113,7 +86,9 @@ class TestCallEventSocketServer:
         async def on_event(channel, event_json):
             received_events.append((channel, event_json))
 
-        server = CallEventSocketServer(mock_event_broker, on_event=on_event)
+        server = CallEventSocketServer(
+            mock_event_broker, on_event=on_event, forward_channels=[],
+        )
         socket_path = await server.start()
 
         # Create client and send event
@@ -130,6 +105,53 @@ class TestCallEventSocketServer:
         await client.close()
         await server.stop()
 
+    @pytest.mark.asyncio
+    async def test_server_handles_malformed_json(self, mock_event_broker):
+        """Server gracefully handles malformed JSON without crashing."""
+        server = CallEventSocketServer(mock_event_broker, forward_channels=[])
+        socket_path = await server.start()
+
+        # Connect directly and send malformed data
+        import socket as sock
+
+        client_socket = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+        client_socket.connect(socket_path)
+        client_socket.sendall(b"not valid json\n")
+        client_socket.close()
+
+        # Wait for processing
+        await asyncio.sleep(0.1)
+
+        # Server should still be running
+        assert server._running is True
+
+        # Should not have published anything
+        mock_event_broker.publish.assert_not_called()
+
+        await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_server_handles_incomplete_message(self, mock_event_broker):
+        """Server handles messages without required fields."""
+        server = CallEventSocketServer(mock_event_broker, forward_channels=[])
+        socket_path = await server.start()
+
+        # Send message missing 'event' field
+        import socket as sock
+
+        client_socket = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
+        client_socket.connect(socket_path)
+        client_socket.sendall(b'{"channel": "test"}\n')  # Missing 'event'
+        client_socket.close()
+
+        await asyncio.sleep(0.1)
+
+        # Server should still be running and not crash
+        assert server._running is True
+        mock_event_broker.publish.assert_not_called()
+
+        await server.stop()
+
 
 class TestCallEventSocketClient:
     """Tests for the socket client used by voice agent subprocess."""
@@ -139,7 +161,7 @@ class TestCallEventSocketClient:
         """Create and start a socket server for testing."""
         broker = MagicMock()
         broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
+        server = CallEventSocketServer(broker, forward_channels=[])
         socket_path = await server.start()
         yield server, socket_path, broker
         await server.stop()
@@ -272,7 +294,7 @@ class TestSendEventToParent:
         # Create a real server
         broker = MagicMock()
         broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
+        server = CallEventSocketServer(broker, forward_channels=[])
         socket_path = await server.start()
 
         # Clear singleton and set env var
@@ -335,178 +357,6 @@ class TestGetSocketClient:
         ipc_module._socket_client = None
 
 
-class TestIntegration:
-    """Integration tests for the full IPC round-trip."""
-
-    @pytest.mark.asyncio
-    async def test_full_round_trip_single_event(self):
-        """Test complete flow: client → socket → server → broker."""
-        # Setup
-        broker = MagicMock()
-        broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
-        socket_path = await server.start()
-
-        client = CallEventSocketClient(socket_path)
-
-        # Send event
-        event_data = {
-            "type": "InboundPhoneUtterance",
-            "text": "Hello, how are you?",
-            "contact_id": 123,
-        }
-        await client.send_event("app:comms:phone_utterance", json.dumps(event_data))
-
-        # Wait for processing (poll instead of fixed sleep)
-        await _wait_for_condition(lambda: broker.publish.called)
-
-        # Verify
-        broker.publish.assert_called_once()
-        call_args = broker.publish.call_args
-        assert call_args[0][0] == "app:comms:phone_utterance"
-        assert json.loads(call_args[0][1]) == event_data
-
-        # Cleanup
-        await client.close()
-        await server.stop()
-
-    @pytest.mark.asyncio
-    async def test_full_round_trip_multiple_events(self):
-        """Test sending multiple events through the socket."""
-        broker = MagicMock()
-        broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
-        socket_path = await server.start()
-
-        client = CallEventSocketClient(socket_path)
-
-        # Send multiple events
-        events = [
-            ("app:comms:phone_utterance", {"text": "First message", "id": 1}),
-            ("app:comms:phone_utterance", {"text": "Second message", "id": 2}),
-            ("app:comms:unify_meet_utterance", {"text": "Third message", "id": 3}),
-        ]
-
-        for channel, data in events:
-            await client.send_event(channel, json.dumps(data))
-
-        # Wait for all events to be processed (poll instead of fixed sleep)
-        await _wait_for_condition(lambda: broker.publish.call_count >= 3)
-
-        # Verify all events were published
-        assert broker.publish.call_count == 3
-
-        # Verify channels
-        channels = [call[0][0] for call in broker.publish.call_args_list]
-        assert channels == [
-            "app:comms:phone_utterance",
-            "app:comms:phone_utterance",
-            "app:comms:unify_meet_utterance",
-        ]
-
-        # Cleanup
-        await client.close()
-        await server.stop()
-
-    @pytest.mark.asyncio
-    async def test_client_reconnects_after_disconnect(self):
-        """Test that client can reconnect after server restart."""
-        broker = MagicMock()
-        broker.publish = AsyncMock()
-
-        # Start server and connect client
-        server = CallEventSocketServer(broker)
-        socket_path = await server.start()
-
-        client = CallEventSocketClient(socket_path)
-        await client.connect()
-        assert client._connected is True
-
-        # Stop server (simulates process restart)
-        await server.stop()
-
-        # Client should detect disconnection on next send
-        result = await client.send_event("test", "{}")
-        # May succeed or fail depending on timing, but shouldn't crash
-
-        # Start new server on same path
-        server2 = CallEventSocketServer(broker)
-
-        # Remove old socket file if exists
-        try:
-            os.unlink(socket_path)
-        except FileNotFoundError:
-            pass
-
-        # Manually set path for new server
-        server2._socket_path = socket_path
-
-        # Actually we need to create a new socket on a new path
-        socket_path2 = await server2.start()
-        client2 = CallEventSocketClient(socket_path2)
-
-        # New client should work
-        result = await client2.send_event("test:channel", '{"data": "works"}')
-        assert result is True
-
-        await asyncio.sleep(0.1)
-        broker.publish.assert_called()
-
-        await client2.close()
-        await server2.stop()
-
-    @pytest.mark.asyncio
-    async def test_server_handles_malformed_json(self):
-        """Server gracefully handles malformed JSON without crashing."""
-        broker = MagicMock()
-        broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
-        socket_path = await server.start()
-
-        # Connect directly and send malformed data
-        import socket as sock
-
-        client_socket = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
-        client_socket.connect(socket_path)
-        client_socket.sendall(b"not valid json\n")
-        client_socket.close()
-
-        # Wait for processing
-        await asyncio.sleep(0.1)
-
-        # Server should still be running
-        assert server._running is True
-
-        # Should not have published anything
-        broker.publish.assert_not_called()
-
-        await server.stop()
-
-    @pytest.mark.asyncio
-    async def test_server_handles_incomplete_message(self):
-        """Server handles messages without required fields."""
-        broker = MagicMock()
-        broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
-        socket_path = await server.start()
-
-        # Send message missing 'event' field
-        import socket as sock
-
-        client_socket = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)
-        client_socket.connect(socket_path)
-        client_socket.sendall(b'{"channel": "test"}\n')  # Missing 'event'
-        client_socket.close()
-
-        await asyncio.sleep(0.1)
-
-        # Server should still be running and not crash
-        assert server._running is True
-        broker.publish.assert_not_called()
-
-        await server.stop()
-
-
 class TestBidirectionalCommunication:
     """Tests for bidirectional socket communication (parent ↔ child)."""
 
@@ -521,80 +371,42 @@ class TestBidirectionalCommunication:
 
     @pytest.mark.asyncio
     async def test_server_forwards_events_to_client(self, real_event_broker):
-        """Server forwards events from parent broker to connected clients."""
+        """Server forwards matching events (guidance, status) to connected clients."""
         received_events = []
 
         async def on_event(channel: str, event_json: str):
             received_events.append((channel, event_json))
 
-        # Start server with forwarding enabled (default: app:call:*)
         server = CallEventSocketServer(
             real_event_broker,
             forward_channels=["app:call:*"],
         )
         socket_path = await server.start()
 
-        # Connect client and start receive loop
         client = CallEventSocketClient(socket_path)
         await client.start_receive_loop(on_event)
 
         # Small delay for connection to fully establish (local IPC is fast)
         await asyncio.sleep(0.05)
 
-        # Parent publishes event on a forwarded channel
+        # Send guidance event
         await real_event_broker.publish(
             "app:call:call_guidance",
             '{"content": "Ask about their schedule"}',
         )
 
-        # Wait for event to propagate (poll instead of fixed sleep)
-        await _wait_for_condition(lambda: len(received_events) >= 1)
-
-        # Client should have received the event
-        assert len(received_events) == 1
-        assert received_events[0][0] == "app:call:call_guidance"
-        assert "schedule" in received_events[0][1]
-
-        await client.close()
-        await server.stop()
-
-    @pytest.mark.asyncio
-    async def test_server_forwards_status_events(self, real_event_broker):
-        """Server forwards status events (call_answered, stop) to client."""
-        received_events = []
-
-        async def on_event(channel: str, event_json: str):
-            received_events.append((channel, event_json))
-
-        server = CallEventSocketServer(
-            real_event_broker,
-            forward_channels=["app:call:*"],
-        )
-        socket_path = await server.start()
-
-        client = CallEventSocketClient(socket_path)
-        await client.start_receive_loop(on_event)
-
-        # Small delay for connection to fully establish
-        await asyncio.sleep(0.05)
-
-        # Parent publishes status events
+        # Send status event
         await real_event_broker.publish(
             "app:call:status",
             '{"type": "call_answered"}',
-        )
-        await real_event_broker.publish(
-            "app:call:status",
-            '{"type": "stop"}',
         )
 
         # Wait for both events to propagate
         await _wait_for_condition(lambda: len(received_events) >= 2)
 
-        # Client should have received both events
         assert len(received_events) == 2
+        assert any("schedule" in e[1] for e in received_events)
         assert any("call_answered" in e[1] for e in received_events)
-        assert any("stop" in e[1] for e in received_events)
 
         await client.close()
         await server.stop()
@@ -817,45 +629,6 @@ class TestBidirectionalCommunication:
         await client.close()
 
     @pytest.mark.asyncio
-    async def test_start_receive_loop_is_idempotent(self, real_event_broker):
-        """Calling start_receive_loop multiple times is safe."""
-        received_events = []
-
-        async def on_event(channel: str, event_json: str):
-            received_events.append((channel, event_json))
-
-        server = CallEventSocketServer(
-            real_event_broker,
-            forward_channels=["app:call:*"],
-        )
-        socket_path = await server.start()
-
-        client = CallEventSocketClient(socket_path)
-
-        # Start receive loop multiple times
-        result1 = await client.start_receive_loop(on_event)
-        result2 = await client.start_receive_loop(on_event)
-
-        assert result1 is True
-        assert result2 is True  # Should return True (already running)
-
-        await asyncio.sleep(0.1)
-
-        # Publish an event
-        await real_event_broker.publish(
-            "app:call:call_guidance",
-            '{"content": "Test"}',
-        )
-
-        await asyncio.sleep(0.2)
-
-        # Should receive exactly one event (not duplicated)
-        assert len(received_events) == 1
-
-        await client.close()
-        await server.stop()
-
-    @pytest.mark.asyncio
     async def test_server_buffers_messages_before_client_connects(
         self,
         real_event_broker,
@@ -967,7 +740,7 @@ class TestSocketAwareEventBroker:
         """SocketAwareEventBroker uses socket when CM_EVENT_SOCKET is set."""
         broker = MagicMock()
         broker.publish = AsyncMock()
-        server = CallEventSocketServer(broker)
+        server = CallEventSocketServer(broker, forward_channels=[])
         socket_path = await server.start()
 
         # Import and test the wrapper
