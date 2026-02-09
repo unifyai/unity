@@ -1,9 +1,9 @@
 """
-tests/conversation_manager/core/unit/test_attachment_ingestion.py
+tests/conversation_manager/core/test_attachment_ingestion.py
 ================================================================
 
-Tests verifying that inbound attachment downloads are properly indexed
-in the FileManager so they can be accessed via primitives.files.* methods.
+Tests verifying that inbound attachment downloads are automatically ingested
+into the FileManager so they can be accessed via primitives.files.* methods.
 
 RUNNING THESE TESTS:
     These are isolated unit tests that use a real LocalFileManager backed
@@ -21,6 +21,10 @@ import pytest
 
 from unity.conversation_manager.domains import comms_utils
 from unity.file_manager.managers.local import LocalFileManager
+
+# Valid plain-text content that the parser can handle.
+SAMPLE_TEXT_CONTENT = b"Quarterly revenue report\nTotal revenue: $1,234,567\nNet profit: $456,789\n"
+SAMPLE_CSV_CONTENT = b"name,amount,date\nAlice,1000,2025-01-15\nBob,2500,2025-02-20\n"
 
 
 @pytest.fixture()
@@ -40,19 +44,18 @@ def real_file_manager(tmp_path):
 
 
 class TestAttachmentIngestion:
-    """After downloading an attachment, it must be indexed in FileManager."""
+    """After downloading an attachment, it must be fully ingested in FileManager."""
 
     @pytest.mark.asyncio
-    async def test_downloaded_attachment_is_indexed(self, real_file_manager):
+    async def test_downloaded_unify_attachment_is_ingested(self, real_file_manager):
         """Attachment downloaded via add_unify_message_attachments should be
-        indexed (describe().indexed_exists == True) so that the CodeActActor
-        can access it via primitives.files.describe / ask_about_file.
+        fully ingested: indexed, parsed, and its content queryable via
+        primitives.files.describe / ask_about_file.
         """
         fm = real_file_manager
 
-        # Simulate a successful download from a direct URL.
         mock_response = MagicMock()
-        mock_response.read = AsyncMock(return_value=b"PDF file content")
+        mock_response.read = AsyncMock(return_value=SAMPLE_TEXT_CONTENT)
         mock_response.raise_for_status = MagicMock()
 
         mock_session = MagicMock()
@@ -68,35 +71,27 @@ class TestAttachmentIngestion:
             attachments = [
                 {
                     "id": "att-1",
-                    "filename": "report.pdf",
+                    "filename": "report.txt",
                     "url": "https://storage.googleapis.com/signed-url-here",
                 },
             ]
             await comms_utils.add_unify_message_attachments(attachments)
 
-        # The file should exist on the filesystem.
-        display_name = "Downloads/report.pdf"
-        assert fm.exists(display_name), (
-            "File should exist on the filesystem after download"
-        )
+        display_name = "Downloads/report.txt"
+        assert fm.exists(display_name)
 
-        # The file must also be indexed so that primitives.files.describe()
-        # and primitives.files.ask_about_file() can find it.
         storage = fm.describe(file_path=display_name)
-        assert storage.indexed_exists, (
-            "Downloaded attachment must be indexed in FileManager so the "
-            "CodeActActor can access it via primitives.files.describe() and "
-            "primitives.files.ask_about_file(). Currently save_file_to_downloads "
-            "writes bytes to disk but never registers the file in the index."
-        )
+        assert storage.indexed_exists, "Downloaded attachment must be indexed"
+        assert storage.parsed_status == "success", "Attachment must be parsed"
+        assert storage.has_document, "Parsed content must be available"
 
     @pytest.mark.asyncio
-    async def test_downloaded_email_attachment_is_indexed(self, real_file_manager):
-        """Attachment downloaded via add_email_attachments should also be indexed."""
+    async def test_downloaded_email_attachment_is_ingested(self, real_file_manager):
+        """Attachment downloaded via add_email_attachments should be fully ingested."""
         fm = real_file_manager
 
         mock_response = MagicMock()
-        mock_response.read = AsyncMock(return_value=b"email attachment bytes")
+        mock_response.read = AsyncMock(return_value=SAMPLE_CSV_CONTENT)
 
         mock_session = MagicMock()
         mock_session.get = MagicMock(
@@ -116,7 +111,7 @@ class TestAttachmentIngestion:
             mock_settings.conversation.COMMS_URL = "http://localhost:8080"
 
             attachments = [
-                {"id": "att-email-1", "filename": "invoice.pdf"},
+                {"id": "att-email-1", "filename": "data.csv"},
             ]
             await comms_utils.add_email_attachments(
                 attachments,
@@ -124,13 +119,10 @@ class TestAttachmentIngestion:
                 gmail_message_id="msg-123",
             )
 
-        display_name = "Downloads/invoice.pdf"
-        assert fm.exists(display_name), (
-            "File should exist on the filesystem after email attachment download"
-        )
+        display_name = "Downloads/data.csv"
+        assert fm.exists(display_name)
 
         storage = fm.describe(file_path=display_name)
-        assert storage.indexed_exists, (
-            "Downloaded email attachment must be indexed in FileManager so the "
-            "CodeActActor can access it via primitives.files.* methods."
-        )
+        assert storage.indexed_exists, "Downloaded email attachment must be indexed"
+        assert storage.parsed_status == "success", "Email attachment must be parsed"
+        assert storage.has_document, "Parsed content must be available"
