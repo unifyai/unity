@@ -390,10 +390,9 @@ class TestTextMessageHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        contact = mock_cm.contact_index.active_conversations.get(2)
-        assert contact is not None
-        assert len(contact.threads[Medium.SMS_MESSAGE]) == 1
-        assert contact.threads[Medium.SMS_MESSAGE][0].content == "Hello there!"
+        msgs = mock_cm.contact_index.get_messages_for_contact(2, Medium.SMS_MESSAGE)
+        assert len(msgs) == 1
+        assert msgs[0].content == "Hello there!"
 
     @pytest.mark.asyncio
     async def test_sms_received_pushes_notification(self, mock_cm):
@@ -461,9 +460,8 @@ class TestTextMessageHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        contact = mock_cm.contact_index.active_conversations.get(2)
-        assert contact is not None
-        assert len(contact.threads[Medium.SMS_MESSAGE]) == 1
+        msgs = mock_cm.contact_index.get_messages_for_contact(2, Medium.SMS_MESSAGE)
+        assert len(msgs) == 1
         # Sent messages have assistant role, not user
 
     @pytest.mark.asyncio
@@ -482,12 +480,10 @@ class TestTextMessageHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        contact = mock_cm.contact_index.active_conversations.get(2)
-        assert contact is not None
-        assert len(contact.threads[Medium.EMAIL]) == 1
-        email_msg = contact.threads[Medium.EMAIL][0]
-        assert email_msg.subject == "Important Update"
-        assert email_msg.body == "Please review the attached."
+        msgs = mock_cm.contact_index.get_messages_for_contact(2, Medium.EMAIL)
+        assert len(msgs) == 1
+        assert msgs[0].subject == "Important Update"
+        assert msgs[0].body == "Please review the attached."
 
     @pytest.mark.asyncio
     async def test_unify_message_received_updates_index(self, mock_cm):
@@ -503,9 +499,8 @@ class TestTextMessageHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        contact = mock_cm.contact_index.active_conversations.get(2)
-        assert contact is not None
-        assert len(contact.threads[Medium.UNIFY_MESSAGE]) == 1
+        msgs = mock_cm.contact_index.get_messages_for_contact(2, Medium.UNIFY_MESSAGE)
+        assert len(msgs) == 1
 
     @pytest.mark.asyncio
     async def test_sent_messages_do_not_cancel_proactive_speech(self, mock_cm):
@@ -785,12 +780,9 @@ class TestVoiceUtteranceHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        contact = mock_cm.contact_index.active_conversations.get(2)
-        assert contact is not None
-        assert len(contact.threads[Medium.PHONE_CALL]) == 1
-        assert (
-            contact.threads[Medium.PHONE_CALL][0].content == "Hello, can you hear me?"
-        )
+        msgs = mock_cm.contact_index.get_messages_for_contact(2, Medium.PHONE_CALL)
+        assert len(msgs) == 1
+        assert msgs[0].content == "Hello, can you hear me?"
 
     @pytest.mark.asyncio
     async def test_inbound_utterance_cancels_proactive_speech(self, mock_cm):
@@ -850,9 +842,8 @@ class TestVoiceUtteranceHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        contact = mock_cm.contact_index.active_conversations.get(2)
-        assert contact is not None
-        assert len(contact.threads[Medium.PHONE_CALL]) == 1
+        msgs = mock_cm.contact_index.get_messages_for_contact(2, Medium.PHONE_CALL)
+        assert len(msgs) == 1
         # Guidance messages have role="guidance"
 
 

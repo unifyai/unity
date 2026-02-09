@@ -359,8 +359,10 @@ class TestSlowBrainAppropriateGuidance:
 
         # This should be recorded in the voice thread
         contact_id = boss_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get(Medium.PHONE_CALL, [])
+        voice_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         # Find guidance messages
         guidance_msgs = [msg for msg in voice_thread if msg.name == "guidance"]
@@ -392,8 +394,10 @@ class TestSlowBrainAppropriateGuidance:
 
         # Verify it was recorded
         contact_id = boss_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get(Medium.PHONE_CALL, [])
+        voice_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         guidance_msgs = [msg for msg in voice_thread if msg.name == "guidance"]
         assert any("Running 10 minutes late" in msg.content for msg in guidance_msgs)
@@ -760,9 +764,10 @@ class TestStaleGuidanceFiltering:
                 # This represents "when the slow brain started" - messages AFTER this
                 # timestamp are "new" (arrived while slow brain was thinking)
                 contact_id = boss_contact["contact_id"]
-                conv_state = cm.contact_index.get_conversation_state(contact_id)
-                voice_medium = Medium.PHONE_CALL
-                voice_thread = list(conv_state.threads.get(voice_medium, []))
+                voice_thread = cm.contact_index.get_messages_for_contact(
+                    contact_id,
+                    Medium.PHONE_CALL,
+                )
 
                 # Use the timestamp of the LAST message as reference
                 # Any message with timestamp > this is "new" (arrived after slow brain started)
@@ -980,9 +985,10 @@ class TestStaleGuidanceFiltering:
                 # This represents "when the slow brain started" - messages AFTER this
                 # timestamp are "new" (arrived while slow brain was thinking)
                 contact_id = boss_contact["contact_id"]
-                conv_state = cm.contact_index.get_conversation_state(contact_id)
-                voice_medium = Medium.PHONE_CALL
-                voice_thread = list(conv_state.threads.get(voice_medium, []))
+                voice_thread = cm.contact_index.get_messages_for_contact(
+                    contact_id,
+                    Medium.PHONE_CALL,
+                )
 
                 # Use the timestamp of the LAST message as reference
                 # Any message with timestamp > this is "new" (arrived after slow brain started)
@@ -1194,9 +1200,10 @@ class TestUserCorrectionsAndRestatements:
                 from unity.common.prompt_helpers import now as prompt_now
 
                 contact_id = boss_contact["contact_id"]
-                conv_state = cm.contact_index.get_conversation_state(contact_id)
-                voice_medium = Medium.PHONE_CALL
-                voice_thread = list(conv_state.threads.get(voice_medium, []))
+                voice_thread = cm.contact_index.get_messages_for_contact(
+                    contact_id,
+                    Medium.PHONE_CALL,
+                )
 
                 if voice_thread:
                     last_msg = voice_thread[-1]
@@ -1435,9 +1442,10 @@ class TestFastBrainIncorrectInformation:
                 from unity.common.prompt_helpers import now as prompt_now
 
                 contact_id = boss_contact["contact_id"]
-                conv_state = cm.contact_index.get_conversation_state(contact_id)
-                voice_medium = Medium.PHONE_CALL
-                voice_thread = list(conv_state.threads.get(voice_medium, []))
+                voice_thread = cm.contact_index.get_messages_for_contact(
+                    contact_id,
+                    Medium.PHONE_CALL,
+                )
 
                 if voice_thread:
                     last_msg = voice_thread[-1]
@@ -1555,10 +1563,10 @@ class TestFastBrainIncorrectInformation:
 
 def _get_guidance_messages(cm, contact_id: int) -> list:
     """Extract guidance messages from the voice thread for a contact."""
-    conv = cm.contact_index.get_conversation_state(contact_id)
-    if not conv:
-        return []
-    voice_thread = list(conv.threads.get(Medium.PHONE_CALL, []))
+    voice_thread = cm.contact_index.get_messages_for_contact(
+        contact_id,
+        Medium.PHONE_CALL,
+    )
     return [msg for msg in voice_thread if getattr(msg, "name", None) == "guidance"]
 
 

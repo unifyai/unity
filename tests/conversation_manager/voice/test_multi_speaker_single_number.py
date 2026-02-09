@@ -660,10 +660,10 @@ class TestSlowBrainMultiSpeakerAwareness:
             handle_id = next(iter(initialized_cm.cm.in_flight_actions))
 
             def _get_guidance_messages(cm, contact_id: int) -> list:
-                conv = cm.contact_index.get_conversation_state(contact_id)
-                if not conv:
-                    return []
-                voice_thread = list(conv.threads.get(Medium.PHONE_CALL, []))
+                voice_thread = cm.contact_index.get_messages_for_contact(
+                    contact_id,
+                    Medium.PHONE_CALL,
+                )
                 return [
                     msg
                     for msg in voice_thread

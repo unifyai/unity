@@ -538,11 +538,11 @@ class TestFullVoiceInputPipeline:
 
         # Verify it was added to the contact's voice thread
         contact_id = sample_contact["contact_id"]
-        conv_state = cm.contact_index.get_conversation_state(contact_id)
-        assert conv_state is not None
-
-        voice_thread = conv_state.threads.get(Medium.PHONE_CALL)
-        assert voice_thread is not None
+        voice_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
+        assert len(voice_thread) > 0
 
         messages = [msg.content for msg in voice_thread]
         assert "Hello, can you help me?" in messages
@@ -593,19 +593,20 @@ class TestFullVoiceInputPipeline:
 
         # Verify it's in the UNIFY_MEET thread, not PHONE_CALL
         contact_id = boss_contact["contact_id"]
-        conv_state = cm.contact_index.get_conversation_state(contact_id)
+        meet_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
+        phone_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
-        meet_thread = conv_state.threads.get(Medium.UNIFY_MEET)
-        phone_thread = conv_state.threads.get(Medium.PHONE_CALL)
-
-        assert meet_thread is not None
+        assert len(meet_thread) > 0
         assert "Let's discuss the project" in [msg.content for msg in meet_thread]
 
         # Phone thread should not have this message
-        if phone_thread:
-            assert "Let's discuss the project" not in [
-                msg.content for msg in phone_thread
-            ]
+        assert "Let's discuss the project" not in [msg.content for msg in phone_thread]
 
     @pytest.mark.asyncio
     async def test_multiple_transcript_phrases_processed(
@@ -636,8 +637,10 @@ class TestFullVoiceInputPipeline:
 
         # Verify all phrases are in the thread
         contact_id = sample_contact["contact_id"]
-        conv_state = cm.contact_index.get_conversation_state(contact_id)
-        voice_thread = conv_state.threads.get(Medium.PHONE_CALL)
+        voice_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         messages = [msg.content for msg in voice_thread]
         for phrase in phrases:
@@ -699,8 +702,10 @@ class TestVoiceInputEdgeCases:
 
         # Should be processed (truncated if necessary)
         contact_id = sample_contact["contact_id"]
-        conv_state = cm.contact_index.get_conversation_state(contact_id)
-        voice_thread = conv_state.threads.get(Medium.PHONE_CALL)
+        voice_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         # Just verify something was added
         assert len(voice_thread) > 0
@@ -729,8 +734,10 @@ class TestVoiceInputEdgeCases:
 
         # Verify content is preserved
         contact_id = sample_contact["contact_id"]
-        conv_state = cm.contact_index.get_conversation_state(contact_id)
-        voice_thread = conv_state.threads.get(Medium.PHONE_CALL)
+        voice_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         messages = [msg.content for msg in voice_thread]
         assert special_content in messages

@@ -362,11 +362,11 @@ class TestUnifyMeetUtteranceHandling:
 
         # Check message is in UNIFY_MEET thread
         contact_id = boss_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        assert conv is not None
-
-        meet_thread = conv.threads.get(Medium.UNIFY_MEET)
-        assert meet_thread is not None, "UNIFY_MEET thread should exist"
+        meet_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
+        assert len(meet_thread) > 0, "UNIFY_MEET thread should have messages"
 
         messages = [msg.content for msg in meet_thread]
         assert "Hello, can you hear me?" in messages
@@ -392,8 +392,10 @@ class TestUnifyMeetUtteranceHandling:
 
         # Check message is in UNIFY_MEET thread
         contact_id = boss_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        meet_thread = conv.threads.get(Medium.UNIFY_MEET)
+        meet_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
 
         messages = [msg.content for msg in meet_thread]
         assert "Yes, I can hear you clearly!" in messages
@@ -486,8 +488,10 @@ class TestUnifyMeetCallGuidance:
 
         # Check message is in UNIFY_MEET thread with role=guidance
         contact_id = boss_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        meet_thread = conv.threads.get(Medium.UNIFY_MEET)
+        meet_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
 
         guidance_msgs = [msg for msg in meet_thread if msg.name == "guidance"]
         assert len(guidance_msgs) >= 1
@@ -519,10 +523,14 @@ class TestUnifyMeetCallGuidance:
 
         # Verify it went to UNIFY_MEET thread, not PHONE_CALL
         contact_id = boss_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-
-        meet_thread = conv.threads.get(Medium.UNIFY_MEET, [])
-        phone_thread = conv.threads.get(Medium.PHONE_CALL, [])
+        meet_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
+        phone_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         meet_contents = " ".join([msg.content for msg in meet_thread])
         phone_contents = " ".join([msg.content for msg in phone_thread])
@@ -820,7 +828,10 @@ class TestFullUnifyMeetLifecycle:
         assert conv.on_call is False
 
         # Check all messages are in the thread
-        meet_thread = conv.threads.get(Medium.UNIFY_MEET, [])
+        meet_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
         contents = [msg.content for msg in meet_thread]
 
         assert any("project status" in c for c in contents)
