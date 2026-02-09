@@ -24,6 +24,7 @@ from unity.conversation_manager.domains.brain_tools import ConversationManagerBr
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
+from unity.conversation_manager.events import _SessionConfigBase
 from unity.common.prompt_helpers import now as prompt_now
 
 from unity.common.llm_client import new_llm_client
@@ -522,11 +523,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """Request an LLM run.
 
         The request is recorded and later scheduled by the event loop after
-        the current event is handled. Silently ignored before initialization
-        completes — the brain must not run until the global thread is hydrated.
+        the current event is handled.
         """
-        if not self.initialized:
-            return
         self._pending_llm_requests.append((delay, cancel_running))
 
     async def flush_llm_requests(self) -> None:
@@ -689,6 +687,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
+
+                # Block on initialization for all events except session
+                # config events (which trigger initialization themselves).
+                if not self.initialized and not isinstance(
+                    event,
+                    _SessionConfigBase,
+                ):
+                    from unity.conversation_manager.domains import managers_utils
+
+                    await managers_utils.wait_for_initialization(self)
+
                 await EventHandler.handle_event(
                     event,
                     self,
