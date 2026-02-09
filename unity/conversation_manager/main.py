@@ -13,6 +13,7 @@ The mode is determined by how this module is invoked:
 from __future__ import annotations
 
 from datetime import datetime
+import os
 import signal
 import sys
 from typing import TYPE_CHECKING
@@ -171,6 +172,17 @@ async def run_conversation_manager(
     """
     # Populate session details from environment
     _populate_session_details_from_env()
+
+    # Set the process working directory to ~/Unity/Local so that relative file
+    # paths in CodeActActor-generated code (e.g. "Downloads/report.pdf") resolve
+    # against the same root used by LocalFileSystemAdapter.  This must happen
+    # after settings/env are loaded but before any concurrent tasks are created,
+    # since os.chdir() is process-global.
+    from pathlib import Path as _P
+
+    _local_root = _P.home() / "Unity" / "Local"
+    _local_root.mkdir(parents=True, exist_ok=True)
+    os.chdir(_local_root)
 
     # Clean up dangling call processes
     if cleanup_call_processes:

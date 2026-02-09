@@ -65,7 +65,7 @@ def default_store(
     """
 
     # Resolve base directory
-    root = Path(base_dir) if base_dir is not None else Path.cwd() / "snapshots"
+    root = Path(base_dir) if base_dir is not None else Path.home() / "Unity" / "Local" / "snapshots"
     try:
         root.mkdir(parents=True, exist_ok=True)
     except Exception:
