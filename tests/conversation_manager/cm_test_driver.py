@@ -115,8 +115,11 @@ class CMStepDriver:
                 evt = None
             if evt is not None:
                 published_events.append(evt)
-            # Always forward to real broker so actor lifecycle events work correctly.
-            return await original_publish(channel, message)
+            # Don't forward to the real broker. The post-processing loop below
+            # handles all published events locally via EventHandler.handle_event().
+            # Forwarding would cause double-handling because wait_for_events()
+            # (running as a background task) also subscribes to these channels.
+            return 0
 
         step_requests: list[tuple[float, bool]] = []
         token = _step_llm_requests.set(step_requests)
@@ -231,14 +234,17 @@ class CMStepDriver:
                     ),
                 ):
                     all_output_events.append(evt)
-                # Handle the event locally
+                # Handle the event locally for deterministic state updates.
+                # Don't forward to the real broker — wait_for_events() (running
+                # as a background task) subscribes to these channels and would
+                # process the same event a second time, causing duplicate SMS
+                # sends, duplicate notifications, and uncontrolled LLM runs.
                 await EventHandler.handle_event(
                     evt,
                     self._cm,
                     is_voice_call=self._cm.call_manager.uses_realtime_api,
                 )
-            # Always forward to real broker so actor lifecycle events work correctly.
-            return await original_publish(channel, message)
+            return 0
 
         step_requests: list[tuple[float, bool]] = []
         token = _step_llm_requests.set(step_requests)
