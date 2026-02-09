@@ -81,8 +81,8 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         adapter : BaseFileSystemAdapter | None, default None
-            Filesystem adapter (e.g., Local). When None,
-            adapter-backed operations will raise.
+            Filesystem adapter (e.g., Local). When None, a
+            ``LocalFileSystemAdapter`` is created automatically.
         parser : BaseParser | None, default None
             Parser used for extracting tables/text/metadata from bytes. Defaults
             to ``DoclingParser`` with table and image extraction enabled.
@@ -94,6 +94,12 @@ class FileManager(BaseFileManager):
         """
         super().__init__()
         self.include_in_multi_assistant_table = False
+        if adapter is None:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
         self._adapter = adapter
         self.__parser: Optional[FileParser] = parser
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
