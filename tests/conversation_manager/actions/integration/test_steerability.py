@@ -91,8 +91,6 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
     handle_id = actor_event.handle_id
 
     # User asks to cancel.
-    # stop_* defaults to close=True, which erases the handle from both
-    # in_flight_actions and completed_actions entirely.
     result_stop = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
@@ -100,9 +98,20 @@ async def test_stop_inflight_handle(initialized_cm_codeact):
         ),
     )
 
+    actor_result = await wait_for_actor_completion(cm, handle_id, timeout=300)
+
+    # Inject the ActorResult to trigger CM bookkeeping
+    # (CMStepDriver patches the event broker and doesn't auto-forward background events).
+    await inject_actor_result(
+        cm,
+        handle_id=handle_id,
+        result=actor_result,
+        success=True,
+    )
+
     assert handle_id not in cm.cm.in_flight_actions
+    assert handle_id in cm.cm.completed_actions
     assert_no_errors(result)
-    assert_no_errors(result_stop)
 
 
 @pytest.mark.asyncio

@@ -1230,7 +1230,7 @@ class TestMakeSteeringTool:
 
     @pytest.mark.asyncio
     async def test_stop_operation_calls_handle_stop(self, brain_action_tools, mock_cm):
-        """Stop with default close=True erases the action entirely."""
+        """Stop moves the action to completed_actions."""
         mock_handle = MagicMock()
         mock_handle.stop = AsyncMock()
 
@@ -1254,56 +1254,7 @@ class TestMakeSteeringTool:
         mock_handle.stop.assert_called_once_with(reason="No longer needed")
         assert result["operation"] == "stop"
         assert 0 not in mock_cm.in_flight_actions
-        assert 0 not in mock_cm.completed_actions  # close=True erases entirely
-
-    @pytest.mark.asyncio
-    async def test_stop_close_false_preserves_in_completed(
-        self, brain_action_tools, mock_cm,
-    ):
-        """Stop with close=False moves the action to completed_actions."""
-        mock_handle = MagicMock()
-        mock_handle.stop = AsyncMock()
-
-        mock_cm.in_flight_actions = {
-            0: {
-                "query": "Test",
-                "handle": mock_handle,
-                "handle_actions": [],
-            },
-        }
-
-        tool = brain_action_tools._make_steering_tool(
-            handle_id=0,
-            handle=mock_handle,
-            operation="stop",
-            param_name="reason",
-            docstring="Stop the action",
-            query="Test",
-        )
-        result = await tool(reason="No longer needed", close=False)
-        mock_handle.stop.assert_called_once_with(reason="No longer needed")
-        assert result["operation"] == "stop"
-        assert 0 not in mock_cm.in_flight_actions
-        assert 0 in mock_cm.completed_actions  # close=False preserves for queries
-
-    def test_stop_tool_signature_includes_close(self, brain_action_tools, mock_cm):
-        """The stop_* tool exposes a ``close`` bool param so the LLM can see it."""
-        mock_handle = MagicMock()
-        mock_handle.stop = AsyncMock()
-
-        tool = brain_action_tools._make_steering_tool(
-            handle_id=0,
-            handle=mock_handle,
-            operation="stop",
-            param_name="reason",
-            docstring="Stop the action",
-            query="Test",
-        )
-        sig = inspect.signature(tool)
-        assert "close" in sig.parameters
-        p = sig.parameters["close"]
-        assert p.default is True
-        assert p.annotation is bool
+        assert 0 in mock_cm.completed_actions
 
     @pytest.mark.asyncio
     async def test_interject_operation_calls_handle_interject(
@@ -1549,87 +1500,10 @@ class TestCompletedActionTools:
         tool_names = list(tools.keys())
 
         ask_tools = [n for n in tool_names if n.startswith("ask_")]
-        close_tools = [n for n in tool_names if n.startswith("close_")]
         assert len(ask_tools) == 1, f"Expected 1 ask tool, got {ask_tools}"
-        assert len(close_tools) == 1, f"Expected 1 close tool, got {close_tools}"
-
-    @pytest.mark.asyncio
-    async def test_close_tool_removes_completed_action(
-        self,
-        brain_action_tools,
-        mock_cm,
-    ):
-        """close_* tool removes the action from completed_actions."""
-        mock_cm.completed_actions = {
-            0: {
-                "query": "Find contacts",
-                "handle": MagicMock(),
-                "handle_actions": [],
-            },
-        }
-
-        tools = brain_action_tools.build_completed_action_tools()
-        close_tool = next(fn for name, fn in tools.items() if name.startswith("close_"))
-
-        result = await close_tool()
-        assert result["status"] == "closed"
-        assert result["handle_id"] == 0
-        assert 0 not in mock_cm.completed_actions
-
-    @pytest.mark.asyncio
-    async def test_close_tool_removes_pinned_notification(
-        self,
-        brain_action_tools,
-        mock_cm,
-    ):
-        """close_* tool removes the pinned completion notification."""
-        from datetime import datetime, timezone
-
-        # Simulate the notification that ActorResult handler creates
-        mock_cm.notifications_bar.push_notif(
-            "Action",
-            "Action completed: Find contacts\nResult: Found 3 contacts",
-            datetime.now(tz=timezone.utc),
-            pinned=True,
-            id="action_completion_0",
+        assert not any(n.startswith("close_") for n in tool_names), (
+            f"close_* should not appear for completed actions: {tool_names}"
         )
-        mock_cm.completed_actions = {
-            0: {
-                "query": "Find contacts",
-                "handle": MagicMock(),
-                "handle_actions": [],
-            },
-        }
-
-        assert len(mock_cm.notifications_bar.notifications) == 1
-
-        tools = brain_action_tools.build_completed_action_tools()
-        close_tool = next(fn for name, fn in tools.items() if name.startswith("close_"))
-
-        await close_tool()
-
-        assert 0 not in mock_cm.completed_actions
-        assert len(mock_cm.notifications_bar.notifications) == 0
-
-    def test_close_tool_not_in_steering_tools(
-        self,
-        brain_action_tools,
-        mock_cm,
-    ):
-        """close_* should NOT appear in in-flight action steering tools."""
-        mock_cm.in_flight_actions = {
-            0: {
-                "query": "Test action",
-                "handle": MagicMock(),
-                "handle_actions": [],
-            },
-        }
-
-        steering_tools = brain_action_tools.build_action_steering_tools()
-        close_tools = [n for n in steering_tools if n.startswith("close_")]
-        assert (
-            len(close_tools) == 0
-        ), f"close_* should not appear for in-flight actions: {close_tools}"
 
     def test_no_completed_actions_yields_no_tools(
         self,
@@ -1646,7 +1520,7 @@ class TestCompletedActionTools:
         brain_action_tools,
         mock_cm,
     ):
-        """Each completed action gets its own ask_* and close_* tool pair."""
+        """Each completed action gets its own ask_* tool."""
         mock_cm.completed_actions = {
             0: {
                 "query": "Find contacts",
@@ -1662,9 +1536,8 @@ class TestCompletedActionTools:
 
         tools = brain_action_tools.build_completed_action_tools()
         ask_tools = [n for n in tools if n.startswith("ask_")]
-        close_tools = [n for n in tools if n.startswith("close_")]
         assert len(ask_tools) == 2
-        assert len(close_tools) == 2
+        assert not any(n.startswith("close_") for n in tools)
 
 
 class TestBrainToolsIntegration:

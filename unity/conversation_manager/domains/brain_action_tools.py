@@ -1230,8 +1230,6 @@ class ConversationManagerBrainActionTools:
             ]
 
             for op in STEERING_OPERATIONS:
-                if op.name == "close":
-                    continue  # close is for completed actions only
                 # Conditionally skip pause/resume based on current state
                 # is_paused=True: skip pause, only offer resume
                 # is_paused=False or None: skip resume, only offer pause (default to running)
@@ -1275,11 +1273,10 @@ class ConversationManagerBrainActionTools:
         return tools
 
     def build_completed_action_tools(self) -> dict[str, "Callable[..., Any]"]:
-        """Build ask and close tools for completed actions.
+        """Build ask tools for completed actions.
 
         Completed actions preserve their trajectory and remain available
-        for `ask` queries about their execution and results, and can be
-        dismissed via `close` to remove them from state entirely.
+        for `ask` queries about their execution and results.
         """
         tools: dict[str, Callable[..., Any]] = {}
 
@@ -1299,15 +1296,6 @@ class ConversationManagerBrainActionTools:
                 query,
             )
             tools[tool_name] = tool_fn
-
-            # close tool — dismiss the completed action from state
-            close_op = OPERATION_MAP["close"]
-            close_tool_name = build_action_name(close_op.name, short_name, handle_id)
-            close_tool_fn = self._make_completed_action_close_tool(
-                handle_id,
-                query,
-            )
-            tools[close_tool_name] = close_tool_fn
 
         return tools
 
@@ -1400,31 +1388,6 @@ class ConversationManagerBrainActionTools:
             docstring or f"Ask about completed action: {query}"
         )
         return ask_completed_action
-
-    def _make_completed_action_close_tool(
-        self,
-        handle_id: int,
-        query: str,
-    ) -> "Callable[..., Any]":
-        """Create a close tool closure for a completed action.
-
-        Removes the action from ``completed_actions`` and its associated
-        pinned completion notification, so neither appear on future turns.
-        """
-        cm = self._cm
-
-        async def close_completed_action() -> dict[str, Any]:
-            cm.completed_actions.pop(handle_id, None)
-            cm.notifications_bar.remove_notif(f"action_completion_{handle_id}")
-            return {"status": "closed", "handle_id": handle_id}
-
-        close_completed_action.__signature__ = inspect.Signature([])
-        close_completed_action.__doc__ = (
-            "Dismiss this completed action, removing it and its tools "
-            "from future turns."
-            f"\n\nFor action: {query}"
-        )
-        return close_completed_action
 
     def _make_steering_tool(
         self,
@@ -1570,22 +1533,10 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
                         await handle.stop(reason=param_value or None)
-                        should_close = kwargs.get("close", True)
-                        if should_close:
-                            # Erase the action entirely — no retrospective
-                            # ask_* queries will be possible.
-                            cm.in_flight_actions.pop(handle_id, None)
-                            cm.notifications_bar.remove_notif(
-                                f"action_completion_{handle_id}",
-                            )
-                            result = "Action stopped and closed"
-                        else:
-                            # Preserve handle in completed_actions so
-                            # ask_* can still query the trajectory.
-                            stopped = cm.in_flight_actions.pop(handle_id, None)
-                            if stopped:
-                                cm.completed_actions[handle_id] = stopped
-                            result = "Action stopped (kept for queries)"
+                        stopped = cm.in_flight_actions.pop(handle_id, None)
+                        if stopped:
+                            cm.completed_actions[handle_id] = stopped
+                        result = "Action stopped"
                     case "pause":
                         if handle_data:
                             handle_data["handle_actions"].append(
@@ -1646,41 +1597,10 @@ class ConversationManagerBrainActionTools:
                 steering_tool,
             )
 
-        # For stop operations, insert a `close` parameter so the LLM can
-        # choose whether to erase the action immediately or keep it for
-        # retrospective ask_* queries.
-        if operation == "stop":
-            existing_sig = getattr(steering_tool, "__signature__", None)
-            existing_params = (
-                list(existing_sig.parameters.values()) if existing_sig else []
-            )
-            close_param = inspect.Parameter(
-                "close",
-                inspect.Parameter.KEYWORD_ONLY,
-                default=True,
-                annotation=bool,
-            )
-            # Insert before any VAR_KEYWORD (**kwargs) parameter.
-            insert_idx = len(existing_params)
-            for i, p in enumerate(existing_params):
-                if p.kind == inspect.Parameter.VAR_KEYWORD:
-                    insert_idx = i
-                    break
-            existing_params.insert(insert_idx, close_param)
-            steering_tool.__signature__ = inspect.Signature(existing_params)
-
         # Always set a custom docstring that describes this specific action
         # (overrides any docstring copied from handle, e.g. from MagicMock in tests)
         steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
         if param_name:
             steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
-        if operation == "stop":
-            steering_tool.__doc__ += (
-                "\n    close: If True (default), the action is erased entirely "
-                "after stopping — it will disappear from state and no "
-                "retrospective ask_* queries will be possible. "
-                "Set to False to keep the stopped action in completed state "
-                "so its trajectory can still be queried via ask_*."
-            )
 
         return steering_tool
