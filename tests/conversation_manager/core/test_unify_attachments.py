@@ -12,12 +12,10 @@ These tests verify:
 
 RUNNING THESE TESTS:
     These are isolated unit tests that don't require unify API authentication.
-    Run with --confcutdir to skip the main conftest.py session hooks:
+    Run with --confcutdir to skip the parent conftest.py session hooks:
 
-    .venv/bin/python -m pytest tests/conversation_manager/core/unit/ \\
-        --confcutdir=tests/conversation_manager/core/unit -v
-
-Tests are behavior-focused and will fail (xfail) until features are implemented.
+    .venv/bin/python -m pytest tests/conversation_manager/core/test_unify_attachments.py \\
+        --confcutdir=tests/conversation_manager/core -v
 """
 
 from __future__ import annotations
