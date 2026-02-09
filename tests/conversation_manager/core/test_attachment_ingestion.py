@@ -23,7 +23,9 @@ from unity.conversation_manager.domains import comms_utils
 from unity.file_manager.managers.local import LocalFileManager
 
 # Valid plain-text content that the parser can handle.
-SAMPLE_TEXT_CONTENT = b"Quarterly revenue report\nTotal revenue: $1,234,567\nNet profit: $456,789\n"
+SAMPLE_TEXT_CONTENT = (
+    b"Quarterly revenue report\nTotal revenue: $1,234,567\nNet profit: $456,789\n"
+)
 SAMPLE_CSV_CONTENT = b"name,amount,date\nAlice,1000,2025-01-15\nBob,2500,2025-02-20\n"
 
 
