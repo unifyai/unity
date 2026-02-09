@@ -22,44 +22,16 @@ except Exception:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 
-def _wrap_primitives_method_for_trace(
-    *,
-    manager: Any,
-    method_name: str,
-    fq_tool_name: str,
-    sink: list[str],
-) -> None:
-    if not hasattr(manager, method_name):
-        return
-    orig = getattr(manager, method_name)
-    if not callable(orig):
-        return
-
-    # ``orig`` may be a bound method (on a real manager) or a plain function
-    # (returned by _AsyncPrimitiveWrapper.__getattr__).  In both cases it is
-    # already fully callable without an extra ``self`` argument, so the
-    # wrapper simply records the call and delegates.
-    is_async = asyncio.iscoroutinefunction(orig)
-
-    if is_async:
-
-        @functools.wraps(orig)
-        async def _traced(*args: Any, **kwargs: Any) -> Any:
-            sink.append(fq_tool_name)
-            return await orig(*args, **kwargs)
-
-    else:
-
-        @functools.wraps(orig)
-        def _traced(*args: Any, **kwargs: Any) -> Any:
-            sink.append(fq_tool_name)
-            return orig(*args, **kwargs)
-
-    setattr(manager, method_name, _traced)
-
-
 def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
-    """Wrap a minimal state-manager surface to record which primitives were invoked."""
+    """Wrap a minimal state-manager surface to record which primitives were invoked.
+
+    For managers that are returned directly (not wrapped by
+    ``_AsyncPrimitiveWrapper``), we must avoid mutating the singleton
+    because other code (e.g. ``TaskScheduler.__init__``) introspects
+    the manager's bound methods.  Instead, we insert a thin tracing
+    proxy into the ``Primitives._managers`` cache so tracing is
+    transparent to both the CodeActActor sandbox and the manager itself.
+    """
     calls: list[str] = []
     targets: list[tuple[str, list[str]]] = [
         ("contacts", ["ask", "update"]),
@@ -100,17 +72,65 @@ def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
     ]
     for manager_attr, methods in targets:
         try:
+            # Eagerly resolve so the manager is cached in primitives._managers.
             mgr = getattr(primitives, manager_attr)
         except Exception:
             continue
-        for m in methods:
-            _wrap_primitives_method_for_trace(
-                manager=mgr,
-                method_name=m,
-                fq_tool_name=f"primitives.{manager_attr}.{m}",
-                sink=calls,
-            )
+
+        # Build a tracing proxy that intercepts only the listed methods
+        # and forwards everything else to the real manager.
+        proxy = _TracingProxy(mgr, methods, manager_attr, calls)
+        primitives._managers[manager_attr] = proxy
     return calls
+
+
+class _TracingProxy:
+    """Lightweight proxy that records calls to specified methods.
+
+    All attribute access is forwarded to the wrapped manager, so the
+    proxy is transparent to code that inspects the manager (e.g.
+    ``methods_to_tool_dict`` checking ``__self__``).
+    """
+
+    __slots__ = ("_real", "_traced_methods")
+
+    def __init__(
+        self,
+        real_manager: Any,
+        method_names: list[str],
+        manager_alias: str,
+        sink: list[str],
+    ) -> None:
+        object.__setattr__(self, "_real", real_manager)
+        traced: dict[str, Any] = {}
+        for m in method_names:
+            orig = getattr(real_manager, m, None)
+            if orig is None or not callable(orig):
+                continue
+            fq = f"primitives.{manager_alias}.{m}"
+            if asyncio.iscoroutinefunction(orig):
+
+                @functools.wraps(orig)
+                async def _t(*a, _fq=fq, _o=orig, **kw):
+                    sink.append(_fq)
+                    return await _o(*a, **kw)
+
+                traced[m] = _t
+            else:
+
+                @functools.wraps(orig)
+                def _t(*a, _fq=fq, _o=orig, **kw):
+                    sink.append(_fq)
+                    return _o(*a, **kw)
+
+                traced[m] = _t
+        object.__setattr__(self, "_traced_methods", traced)
+
+    def __getattr__(self, name: str) -> Any:
+        traced = object.__getattribute__(self, "_traced_methods")
+        if name in traced:
+            return traced[name]
+        return getattr(object.__getattribute__(self, "_real"), name)
 
 
 async def wait_for_recorded_primitives_call(
