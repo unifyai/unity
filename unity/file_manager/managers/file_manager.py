@@ -1470,7 +1470,28 @@ class FileManager(BaseFileManager):
                 "No adapter configured for save_file_to_downloads",
             )
         display_name = self._adapter.save_file_to_downloads(file_path, contents)
-        self.ingest_files(display_name)
+        result = self.ingest_files(display_name)
+
+        # ingest_files only creates FileRecords entries for successfully parsed
+        # files.  When parsing fails (corrupt file, unknown format, etc.) the
+        # file must still be registered so it is discoverable via describe().
+        file_result = result.files.get(display_name)
+        if file_result and getattr(file_result, "status", None) == "error":
+            from .utils.ops import add_or_replace_file_row
+
+            add_or_replace_file_row(
+                self,
+                entry={
+                    "file_path": display_name,
+                    "source_uri": self._resolve_to_uri(display_name),
+                    "source_provider": getattr(self._adapter, "name", None),
+                    "status": "error",
+                    "error": getattr(file_result, "error", None)
+                    or "file could not be parsed",
+                    "storage_id": "",
+                },
+            )
+
         return display_name
 
     # File-specific Q&A
