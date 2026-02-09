@@ -449,6 +449,9 @@ class Renderer:
         in_flight_actions: dict = None,
         completed_actions: dict = None,
         last_snapshot: datetime = None,
+        max_pinned_notifications: int = 50,
+        max_contact_medium_messages: int = 25,
+        max_global_messages: int = 100,
     ) -> SnapshotState:
         """Render the full conversation state.
 
@@ -464,6 +467,7 @@ class Renderer:
         notif_render = self.render_notification_bar(
             notification_bar,
             last_snapshot=last_snapshot,
+            max_pinned=max_pinned_notifications,
             elements_out=notification_elements,
         )
         actions_render = self.render_in_flight_actions(
@@ -474,6 +478,8 @@ class Renderer:
         convs_render = self.render_active_conversations(
             contact_index,
             last_snapshot=last_snapshot,
+            max_contact_medium_messages=max_contact_medium_messages,
+            max_global_messages=max_global_messages,
             elements_out=message_elements,
         )
 
@@ -491,13 +497,17 @@ class Renderer:
         self,
         notification_bar: NotificationBar,
         last_snapshot: datetime = None,
+        max_pinned: int = 50,
         elements_out: list[NotificationElement] | None = None,
     ) -> str:
         """Render the notification bar."""
         if notification_bar is None:
             return "<notifications>\n</notifications>"
 
-        pinned_notifs = [n for n in notification_bar.notifications if n.pinned]
+        pinned_notifs = sorted(
+            (n for n in notification_bar.notifications if n.pinned),
+            key=lambda n: n.timestamp,
+        )[-max_pinned:]
         new_notifs = [
             n
             for n in notification_bar.notifications
@@ -637,7 +647,7 @@ class Renderer:
         self,
         contact_index: ContactIndex,
         last_snapshot: datetime = None,
-        max_messages: int = 25,
+        max_contact_medium_messages: int = 25,
         max_global_messages: int = 100,
         elements_out: list[MessageElement] | None = None,
     ) -> str:
@@ -651,7 +661,7 @@ class Renderer:
             rendered = self.render_contact(
                 contact_info=contact_info,
                 conv_state=conv_state,
-                max_messages=max_messages,
+                max_contact_medium_messages=max_contact_medium_messages,
                 max_global_messages=max_global_messages,
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
@@ -667,7 +677,7 @@ class Renderer:
         self,
         contact_info: dict,
         conv_state: ConversationState,
-        max_messages: int = 25,
+        max_contact_medium_messages: int = 25,
         max_global_messages: int = 100,
         last_snapshot: datetime = None,
         elements_out: list[MessageElement] | None = None,
@@ -712,7 +722,7 @@ class Renderer:
                 str(t_name),
                 t,
                 contact_id=contact_id,
-                max_messages=max_messages,
+                max_messages=max_contact_medium_messages,
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
                 contact_index=contact_index,
