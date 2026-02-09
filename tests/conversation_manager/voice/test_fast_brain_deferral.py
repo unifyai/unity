@@ -24,6 +24,7 @@ import re
 import pytest
 import websockets
 
+import unillm
 from livekit.agents import llm
 
 from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
@@ -266,6 +267,7 @@ async def get_realtime_response(
 
         # Collect response text
         response_parts = []
+        usage = None
         while True:
             resp_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
             resp_event = json.loads(resp_msg)
@@ -275,13 +277,27 @@ async def get_realtime_response(
             if event_type in ("response.text.delta", "response.output_text.delta"):
                 delta = resp_event.get("delta", "")
                 response_parts.append(delta)
-            # Response complete
+            # Response complete — extract usage from the event payload
             elif event_type == "response.done":
+                resp_obj = resp_event.get("response", {})
+                usage = resp_obj.get("usage")
                 break
             elif event_type == "error":
                 raise RuntimeError(f"Response error: {resp_event}")
 
         response_text = "".join(response_parts)
+
+    # Log via unillm so LLM I/O appears in UNILLM_LOG_DIR
+    transcript = [{"role": "system", "content": system_prompt}]
+    transcript.extend(conversation)
+    if response_text:
+        transcript.append({"role": "assistant", "content": response_text})
+    unillm.log_usage(
+        model,
+        usage or {},
+        transcript=transcript,
+        label=model,
+    )
 
     return response_text
 
