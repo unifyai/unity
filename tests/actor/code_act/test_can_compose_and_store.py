@@ -240,7 +240,7 @@ async def test_storage_check_on_return_stores_discovered_function():
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"greet": "added"})
+    fm.add_functions = MagicMock(return_value={"format_contact_card": "added"})
 
     actor = CodeActActor(
         function_manager=fm,
@@ -250,8 +250,12 @@ async def test_storage_check_on_return_stores_discovered_function():
     )
     try:
         handle = await actor.act(
-            "Write a Python function called `greet` that takes a `name` parameter "
-            "and returns f'Hello, {name}!'. Execute it with name='World' to verify it works.",
+            "Write a general-purpose Python function called `format_contact_card` "
+            "that takes `name` (str), `email` (str), and `phone` (str, optional, default None) "
+            "and returns a formatted multi-line string card like:\n"
+            "  Name: Alice\n  Email: alice@example.com\n  Phone: 555-1234\n"
+            "If phone is None, omit the Phone line. "
+            "Execute it with name='Alice', email='alice@example.com', phone='555-1234' to verify.",
             storage_check_on_return=True,
             persist=False,
             clarification_enabled=False,
@@ -273,8 +277,8 @@ async def test_storage_check_on_return_stores_discovered_function():
         call_kwargs = fm.add_functions.call_args.kwargs
         impl = str(call_kwargs.get("implementations", ""))
         assert (
-            "greet" in impl
-        ), f"Expected 'greet' in stored implementation, got: {impl}"
+            "format_contact_card" in impl
+        ), f"Expected 'format_contact_card' in stored implementation, got: {impl}"
     finally:
         try:
             await actor.close()
