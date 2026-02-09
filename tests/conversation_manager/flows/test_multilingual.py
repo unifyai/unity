@@ -186,9 +186,9 @@ async def test_spanish_sms_reply_in_spanish(initialized_cm):
     )
 
     sms = get_exactly_one(result.output_events, SMSSent)
-    assert _has_spanish(sms.content), (
-        f"Expected Spanish reply to Spanish-speaking Alice, got: {sms.content}"
-    )
+    assert _has_spanish(
+        sms.content,
+    ), f"Expected Spanish reply to Spanish-speaking Alice, got: {sms.content}"
 
 
 @pytest.mark.asyncio
@@ -213,9 +213,9 @@ async def test_french_email_reply_in_french(initialized_cm):
     )
 
     email = get_exactly_one(result.output_events, EmailSent)
-    assert _has_french(email.body), (
-        f"Expected French reply to French-speaking Alice, got: {email.body}"
-    )
+    assert _has_french(
+        email.body,
+    ), f"Expected French reply to French-speaking Alice, got: {email.body}"
 
 
 @pytest.mark.asyncio
@@ -235,9 +235,9 @@ async def test_japanese_unify_message_reply_in_japanese(initialized_cm):
     )
 
     msg = get_exactly_one(result.output_events, UnifyMessageSent)
-    assert _has_japanese(msg.content), (
-        f"Expected Japanese reply to Japanese-speaking Alice, got: {msg.content}"
-    )
+    assert _has_japanese(
+        msg.content,
+    ), f"Expected Japanese reply to Japanese-speaking Alice, got: {msg.content}"
 
 
 @pytest.mark.asyncio
@@ -257,9 +257,9 @@ async def test_arabic_sms_reply_in_arabic(initialized_cm):
     )
 
     sms = get_exactly_one(result.output_events, SMSSent)
-    assert _has_arabic(sms.content), (
-        f"Expected Arabic reply to Arabic-speaking Alice, got: {sms.content}"
-    )
+    assert _has_arabic(
+        sms.content,
+    ), f"Expected Arabic reply to Arabic-speaking Alice, got: {sms.content}"
 
 
 # =====================================================================
@@ -300,8 +300,7 @@ async def test_act_query_english_when_boss_speaks_spanish(initialized_cm):
         SMSReceived(
             contact=BOSS,
             content=(
-                "Envíale un correo electrónico a David sobre lo que "
-                "mencionó Alice"
+                "Envíale un correo electrónico a David sobre lo que " "mencionó Alice"
             ),
         ),
     )
@@ -354,9 +353,9 @@ async def test_act_query_english_when_boss_speaks_japanese(initialized_cm):
     )
 
     query = actor_events[0].query
-    assert not _has_japanese(query), (
-        f"Act query must not contain Japanese characters, got: {query}"
-    )
+    assert not _has_japanese(
+        query,
+    ), f"Act query must not contain Japanese characters, got: {query}"
     assert _is_english(query), f"Act query should be in English, got: {query}"
 
 
@@ -410,18 +409,16 @@ async def test_relay_to_bob_in_english_despite_spanish_source(initialized_cm):
     )
 
     sms_events = filter_events_by_type(result.output_events, SMSSent)
-    bob_sms = [
-        s for s in sms_events if s.contact["contact_id"] == BOB["contact_id"]
-    ]
+    bob_sms = [s for s in sms_events if s.contact["contact_id"] == BOB["contact_id"]]
     assert len(bob_sms) >= 1, (
         f"Expected SMS to Bob, got SMS to: "
         f"{[s.contact['contact_id'] for s in sms_events]}"
     )
 
     bob_msg = bob_sms[0].content
-    assert _is_english(bob_msg), (
-        f"Message to English-speaking Bob should be in English, got: {bob_msg}"
-    )
+    assert _is_english(
+        bob_msg,
+    ), f"Message to English-speaking Bob should be in English, got: {bob_msg}"
 
 
 @pytest.mark.asyncio
@@ -455,18 +452,16 @@ async def test_boss_gets_english_summary_of_spanish_message(initialized_cm):
     )
 
     sms_events = filter_events_by_type(result.output_events, SMSSent)
-    boss_sms = [
-        s for s in sms_events if s.contact["contact_id"] == BOSS["contact_id"]
-    ]
+    boss_sms = [s for s in sms_events if s.contact["contact_id"] == BOSS["contact_id"]]
     assert len(boss_sms) >= 1, (
         f"Expected SMS reply to boss, got SMS to: "
         f"{[s.contact['contact_id'] for s in sms_events]}"
     )
 
     boss_msg = boss_sms[0].content
-    assert _is_english(boss_msg), (
-        f"Summary for the boss should be in English, got: {boss_msg}"
-    )
+    assert _is_english(
+        boss_msg,
+    ), f"Summary for the boss should be in English, got: {boss_msg}"
 
 
 @pytest.mark.asyncio
@@ -510,21 +505,17 @@ async def test_relay_japanese_content_to_bob_in_english(initialized_cm):
     )
 
     sms_events = filter_events_by_type(result.output_events, SMSSent)
-    bob_sms = [
-        s for s in sms_events if s.contact["contact_id"] == BOB["contact_id"]
-    ]
+    bob_sms = [s for s in sms_events if s.contact["contact_id"] == BOB["contact_id"]]
     assert len(bob_sms) >= 1, (
         f"Expected SMS to Bob, got SMS to: "
         f"{[s.contact['contact_id'] for s in sms_events]}"
     )
 
     bob_msg = bob_sms[0].content
-    assert not _has_japanese(bob_msg), (
-        f"Message to Bob must not contain Japanese, got: {bob_msg}"
-    )
-    assert _is_english(bob_msg), (
-        f"Message to Bob should be in English, got: {bob_msg}"
-    )
+    assert not _has_japanese(
+        bob_msg,
+    ), f"Message to Bob must not contain Japanese, got: {bob_msg}"
+    assert _is_english(bob_msg), f"Message to Bob should be in English, got: {bob_msg}"
 
 
 # =====================================================================
@@ -552,9 +543,9 @@ async def test_spanish_multi_turn_stays_spanish(initialized_cm):
         ),
     )
     sms1 = get_exactly_one(result1.output_events, SMSSent)
-    assert _has_spanish(sms1.content), (
-        f"Turn-1 reply should be in Spanish, got: {sms1.content}"
-    )
+    assert _has_spanish(
+        sms1.content,
+    ), f"Turn-1 reply should be in Spanish, got: {sms1.content}"
 
     # Turn 2: follow-up thanks and well-wishing
     result2 = await cm.step_until_wait(
@@ -567,9 +558,9 @@ async def test_spanish_multi_turn_stays_spanish(initialized_cm):
         ),
     )
     sms2 = get_exactly_one(result2.output_events, SMSSent)
-    assert _has_spanish(sms2.content), (
-        f"Turn-2 reply should be in Spanish, got: {sms2.content}"
-    )
+    assert _has_spanish(
+        sms2.content,
+    ), f"Turn-2 reply should be in Spanish, got: {sms2.content}"
 
 
 # =====================================================================
@@ -596,15 +587,14 @@ async def test_two_contacts_different_languages(initialized_cm):
         SMSReceived(
             contact=ALICE,
             content=(
-                "¡Hola! Solo quería darte las gracias por tu ayuda. "
-                "¡Fue genial!"
+                "¡Hola! Solo quería darte las gracias por tu ayuda. " "¡Fue genial!"
             ),
         ),
     )
     alice_sms = get_exactly_one(result_a.output_events, SMSSent)
-    assert _has_spanish(alice_sms.content), (
-        f"Reply to Alice should be in Spanish, got: {alice_sms.content}"
-    )
+    assert _has_spanish(
+        alice_sms.content,
+    ), f"Reply to Alice should be in Spanish, got: {alice_sms.content}"
 
     # Bob messages in French (simple thanks — no action needed)
     result_b = await cm.step_until_wait(
@@ -617,6 +607,6 @@ async def test_two_contacts_different_languages(initialized_cm):
         ),
     )
     bob_sms = get_exactly_one(result_b.output_events, SMSSent)
-    assert _has_french(bob_sms.content), (
-        f"Reply to Bob should be in French, got: {bob_sms.content}"
-    )
+    assert _has_french(
+        bob_sms.content,
+    ), f"Reply to Bob should be in French, got: {bob_sms.content}"
