@@ -70,7 +70,7 @@ def configure_simulated_managers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Autouse fixture for tests under test_simulated/: force simulated managers."""
-    if not _in_tree(request, os.path.join("test_state_managers", "test_simulated")):
+    if not _in_tree(request, os.path.join("state_managers", "simulated")):
         return
     _apply_impl_overrides(monkeypatch, impl="simulated")
 
@@ -81,7 +81,7 @@ def configure_real_managers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Autouse fixture for tests under test_real/: force real managers + stub network."""
-    if not _in_tree(request, os.path.join("test_state_managers", "test_real")):
+    if not _in_tree(request, os.path.join("state_managers", "real")):
         return
 
     # Prevent network access during manager initialization.
