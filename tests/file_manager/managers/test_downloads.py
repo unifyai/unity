@@ -59,3 +59,38 @@ async def test_save_file_to_downloads_unique_names_per_downloads_dir(
     assert p1.exists() and p2.exists()
     assert p1.read_bytes() == b"one"
     assert p2.read_bytes() == b"two"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_save_file_to_downloads_unparseable_file_still_indexed(
+    file_manager,
+    fm_root,
+):
+    """Files that fail to parse should still be indexed in FileRecords.
+
+    When a downloaded attachment has an unrecognised or corrupt format (e.g.
+    an .exe, a truncated PDF, or arbitrary binary), the parse stage inside
+    ingest_files fails. The file must still appear in FileRecords with
+    status='error' so that describe() returns indexed_exists=True and the
+    CodeActActor can at least acknowledge the file's existence.
+    """
+    fm = file_manager
+
+    # Fake PDF bytes that will fail parsing.
+    display_name = fm.save_file_to_downloads(
+        "corrupt.pdf",
+        b"not-a-real-pdf-just-garbage-bytes",
+    )
+
+    # The file is on disk.
+    assert fm.exists(display_name)
+
+    # It must also be in the FileRecords index so that primitives.files.*
+    # methods can acknowledge its existence.
+    storage = fm.describe(file_path=display_name)
+    assert storage.indexed_exists, (
+        "Unparseable files must still be indexed in FileRecords so the "
+        "CodeActActor can see them via primitives.files.describe(). "
+        "Currently ingest_files silently drops files that fail to parse."
+    )
