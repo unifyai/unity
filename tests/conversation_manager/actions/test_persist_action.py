@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -30,9 +29,7 @@ from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import (
     ActorNotification,
     ActorSessionResponse,
-    ActorResult,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures

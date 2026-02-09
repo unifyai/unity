@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json as _json
 import re
 from typing import TYPE_CHECKING, Any, Optional
 

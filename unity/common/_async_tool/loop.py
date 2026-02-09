@@ -2332,7 +2332,9 @@ async def async_tool_loop_inner(
                     await _msg_dispatcher.append_msgs([sys_notice])
 
                 _persist_response_emitted = False
-                _persist_response_content = None  # captured by send_response for surfacing
+                _persist_response_content = (
+                    None  # captured by send_response for surfacing
+                )
 
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
@@ -3326,9 +3328,7 @@ async def async_tool_loop_inner(
                     if _persist_response_content is not None
                     else final_content
                 )
-                _outer = (
-                    outer_handle_container[0] if outer_handle_container else None
-                )
+                _outer = outer_handle_container[0] if outer_handle_container else None
                 if (
                     _outer is not None
                     and hasattr(_outer, "_notification_q")

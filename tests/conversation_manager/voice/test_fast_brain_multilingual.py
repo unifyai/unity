@@ -21,7 +21,6 @@ from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from tests.conversation_manager.voice.test_fast_brain_deferral import (
     get_fast_brain_response,
     FAST_BRAIN_MODELS,
-    MODEL_GPT5_NANO,
 )
 
 pytestmark = pytest.mark.eval
@@ -32,23 +31,82 @@ pytestmark = pytest.mark.eval
 # ---------------------------------------------------------------------------
 
 _SPANISH_MARKERS = [
-    "hola", "gracias", "buenos", "cómo", "número", "necesito",
-    "reunión", "confirmar", "información", "mañana", "también",
-    "entendido", "perfecto", "encantado", "disculpe", "por favor",
-    "bien", "buen", "mucho", "claro", "puedo", "puede",
-    "momento", "revisar", "novedades", "propuesta", "cuento",
-    "gusto", "hablar", "contigo", "ahora", "semana", "pasada",
-    "enviar", "enviaron", "enviamos", "vamos", "dime", "cómo",
+    "hola",
+    "gracias",
+    "buenos",
+    "cómo",
+    "número",
+    "necesito",
+    "reunión",
+    "confirmar",
+    "información",
+    "mañana",
+    "también",
+    "entendido",
+    "perfecto",
+    "encantado",
+    "disculpe",
+    "por favor",
+    "bien",
+    "buen",
+    "mucho",
+    "claro",
+    "puedo",
+    "puede",
+    "momento",
+    "revisar",
+    "novedades",
+    "propuesta",
+    "cuento",
+    "gusto",
+    "hablar",
+    "contigo",
+    "ahora",
+    "semana",
+    "pasada",
+    "enviar",
+    "enviaron",
+    "enviamos",
+    "vamos",
+    "dime",
+    "cómo",
 ]
 
 _FRENCH_MARKERS = [
-    "bonjour", "bonsoir", "merci", "réunion", "monsieur", "madame",
-    "confirmer", "demain", "également", "absolument", "certainement",
-    "exactement", "cordialement", "actuellement", "malheureusement",
-    "bien sûr", "s'il vous plaît", "de rien", "avec plaisir",
-    "bonne journée", "enchanté", "d'accord", "bienvenue", "c'est",
-    "c'était", "très", "plaisir", "heureux", "heureuse", "journée",
-    "bonne", "aider", "besoin", "aujourd'hui",
+    "bonjour",
+    "bonsoir",
+    "merci",
+    "réunion",
+    "monsieur",
+    "madame",
+    "confirmer",
+    "demain",
+    "également",
+    "absolument",
+    "certainement",
+    "exactement",
+    "cordialement",
+    "actuellement",
+    "malheureusement",
+    "bien sûr",
+    "s'il vous plaît",
+    "de rien",
+    "avec plaisir",
+    "bonne journée",
+    "enchanté",
+    "d'accord",
+    "bienvenue",
+    "c'est",
+    "c'était",
+    "très",
+    "plaisir",
+    "heureux",
+    "heureuse",
+    "journée",
+    "bonne",
+    "aider",
+    "besoin",
+    "aujourd'hui",
 ]
 
 _CJK_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
@@ -217,10 +275,7 @@ class TestFastBrainMatchesCallerLanguage:
         conversation = [
             {
                 "role": "user",
-                "content": (
-                    "مرحبا! شكراً على الرد. "
-                    "كيف تسير الأمور في المشروع؟"
-                ),
+                "content": ("مرحبا! شكراً على الرد. " "كيف تسير الأمور في المشروع؟"),
             },
         ]
 
@@ -353,10 +408,7 @@ class TestFastBrainLanguageWithEnglishGuidance:
         conversation = [
             {
                 "role": "user",
-                "content": (
-                    "Hola, ¿tienes información sobre la reunión "
-                    "de mañana?"
-                ),
+                "content": ("Hola, ¿tienes información sobre la reunión " "de mañana?"),
             },
             {
                 "role": "assistant",

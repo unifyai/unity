@@ -1579,9 +1579,9 @@ class TestCompletedActionTools:
 
         steering_tools = brain_action_tools.build_action_steering_tools()
         close_tools = [n for n in steering_tools if n.startswith("close_")]
-        assert len(close_tools) == 0, (
-            f"close_* should not appear for in-flight actions: {close_tools}"
-        )
+        assert (
+            len(close_tools) == 0
+        ), f"close_* should not appear for in-flight actions: {close_tools}"
 
     def test_no_completed_actions_yields_no_tools(
         self,

@@ -312,7 +312,7 @@ class TestSTSPerTurnUsageLogging:
     def test_metrics_handler_calls_log_usage(self, tmp_path, monkeypatch):
         """The _on_metrics handler converts RealtimeModelMetrics to a
         unillm.log_usage call with the correct usage dict and transcript."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
         from livekit.agents.metrics import RealtimeModelMetrics
 
         # Build a realistic RealtimeModelMetrics (as LiveKit would emit)
@@ -371,7 +371,9 @@ class TestSTSPerTurnUsageLogging:
         monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
         monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
         monkeypatch.setattr(
-            unillm_settings.SETTINGS, "UNILLM_LOG_DIR", str(tmp_path),
+            unillm_settings.SETTINGS,
+            "UNILLM_LOG_DIR",
+            str(tmp_path),
         )
         monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
@@ -462,7 +464,9 @@ class TestSTSPerTurnUsageLogging:
         monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
         monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
         monkeypatch.setattr(
-            unillm_settings.SETTINGS, "UNILLM_LOG_DIR", str(tmp_path),
+            unillm_settings.SETTINGS,
+            "UNILLM_LOG_DIR",
+            str(tmp_path),
         )
         monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)

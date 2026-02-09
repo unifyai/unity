@@ -844,9 +844,7 @@ async def _(event: ActorSessionResponse, cm: "ConversationManager", *args, **kwa
     """
     action_data = cm.in_flight_actions.get(event.handle_id, {})
     action_query = action_data.get("query", f"Action {event.handle_id}")
-    short_desc = (
-        action_query[:30] + "..." if len(action_query) > 30 else action_query
-    )
+    short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
 
     cm.notifications_bar.push_notif(
         "Action",

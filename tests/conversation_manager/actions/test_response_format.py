@@ -30,7 +30,6 @@ from unity.conversation_manager.domains.brain_action_tools import (
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.notifications import NotificationBar
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ─────────────────────────────────────────────────────────────────────────────
@@ -76,7 +75,12 @@ class TestSchemaDictToPydantic:
     def test_basic_string_types(self):
         """Flat schema with string type names produces a valid model."""
         Model = schema_dict_to_pydantic(
-            {"name": "string", "age": "integer", "score": "number", "active": "boolean"},
+            {
+                "name": "string",
+                "age": "integer",
+                "score": "number",
+                "active": "boolean",
+            },
         )
         instance = Model(name="Alice", age=30, score=9.5, active=True)
         assert instance.name == "Alice"
@@ -86,7 +90,9 @@ class TestSchemaDictToPydantic:
 
     def test_shorthand_types(self):
         """Shorthand aliases (str, int, float, bool) are accepted."""
-        Model = schema_dict_to_pydantic({"x": "str", "y": "int", "z": "float", "ok": "bool"})
+        Model = schema_dict_to_pydantic(
+            {"x": "str", "y": "int", "z": "float", "ok": "bool"},
+        )
         instance = Model(x="hello", y=42, z=3.14, ok=False)
         assert instance.x == "hello"
         assert instance.y == 42
@@ -116,11 +122,13 @@ class TestSchemaDictToPydantic:
 
     def test_complex_nested_schema(self):
         """Realistic schema with arrays, nesting, and mixed types."""
-        Model = schema_dict_to_pydantic({
-            "contacts": [{"name": "string", "phone": "string"}],
-            "total_count": "integer",
-            "query_used": "string",
-        })
+        Model = schema_dict_to_pydantic(
+            {
+                "contacts": [{"name": "string", "phone": "string"}],
+                "total_count": "integer",
+                "query_used": "string",
+            },
+        )
         data = {
             "contacts": [{"name": "Alice", "phone": "+1234"}],
             "total_count": 1,
@@ -299,6 +307,7 @@ class TestStructuredResultPropagation:
     ):
         """The response_format schema is preserved in the action metadata
         so it can be inspected later (e.g., for rendering or debugging)."""
+
         async def fake_act(description, **kwargs):
             handle = MagicMock()
             handle.result = AsyncMock(return_value='{"x": 1}')
