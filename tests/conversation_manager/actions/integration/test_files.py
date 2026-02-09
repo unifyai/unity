@@ -136,9 +136,9 @@ async def test_downloaded_attachment_readable_by_actor(initialized_cm_codeact):
     final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     lower = final.lower()
-    assert "sarah" in lower or "chen" in lower, (
-        f"Expected actor to find attendee 'Sarah Chen' in the file. Got: {final}"
-    )
-    assert "march" in lower or "15" in lower, (
-        f"Expected actor to find launch date 'March 15th' in the file. Got: {final}"
-    )
+    assert (
+        "sarah" in lower or "chen" in lower
+    ), f"Expected actor to find attendee 'Sarah Chen' in the file. Got: {final}"
+    assert (
+        "march" in lower or "15" in lower
+    ), f"Expected actor to find launch date 'March 15th' in the file. Got: {final}"
