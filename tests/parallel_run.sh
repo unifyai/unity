@@ -1126,6 +1126,39 @@ collect_nodes_batch() {
   echo "$result"
 }
 
+# Validate direct_nodes against pytest collection and add valid ones to $tmp.
+# Extracts unique base files, runs collection, and checks each node exists.
+# Prints warnings for nodes that don't exist (e.g., typos in test function names).
+validate_and_add_direct_nodes() {
+  if (( ${#direct_nodes[@]} == 0 )); then
+    return 0
+  fi
+
+  # Extract unique base files from direct_nodes
+  local -a base_files=()
+  local seen_files=""
+  for node in "${direct_nodes[@]}"; do
+    local base_file="${node%%::*}"
+    if [[ "$seen_files" != *"|${base_file}|"* ]]; then
+      base_files+=( "$base_file" )
+      seen_files="${seen_files}|${base_file}|"
+    fi
+  done
+
+  # Collect all valid nodes from those files (no marker filter — just checking existence)
+  local collected
+  collected=$(collect_nodes_batch "" "${base_files[@]}")
+
+  # Validate each direct_node against collected output
+  for node in "${direct_nodes[@]}"; do
+    if echo "$collected" | grep -qxF "$node"; then
+      printf '%s\0' "$node" >> "$tmp"
+    else
+      echo "Error: Test node not found (skipping): $node" >&2
+    fi
+  done
+}
+
 # Gather recursive .py files from roots (NUL-delimited, sorted)
 declare -a found_files=()
 if (( ${#roots[@]} )); then
@@ -1179,9 +1212,7 @@ if (( ! SERIAL )); then
       [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
     done < <(collect_nodes_batch "$MARKER_FILTER" "${all_targets[@]}")
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 elif [[ -n "$MARKER_FILTER" ]]; then
   # Default mode WITH marker filter: collect nodes first to find which files
   # have matching tests, then create one session per file (not per-node).
@@ -1210,9 +1241,7 @@ elif [[ -n "$MARKER_FILTER" ]]; then
     done < <(sort -u "$tmp_files")
     rm -f "$tmp_files"
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 else
   # Default mode without marker filter: one session per file
   if (( ${#direct_files[@]} )); then
@@ -1221,9 +1250,7 @@ else
   if (( ${#found_files[@]} )); then
     printf '%s\0' "${found_files[@]}" >> "$tmp"
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 fi
 
 files=()
