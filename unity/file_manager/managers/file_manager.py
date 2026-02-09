@@ -1469,7 +1469,9 @@ class FileManager(BaseFileManager):
             raise NotImplementedError(
                 "No adapter configured for save_file_to_downloads",
             )
-        return self._adapter.save_file_to_downloads(file_path, contents)
+        display_name = self._adapter.save_file_to_downloads(file_path, contents)
+        self.ingest_files(display_name)
+        return display_name
 
     # File-specific Q&A
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
