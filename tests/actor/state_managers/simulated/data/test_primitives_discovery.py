@@ -79,9 +79,10 @@ def test_data_manager_metadata_registered():
     spec = registry.get_manager_spec("data")
     assert spec is not None
     assert spec.domain == "Data Operations & Pipelines"
-    assert "filter" in spec.method_descriptions
-    assert "search" in spec.method_descriptions
-    assert "reduce" in spec.method_descriptions
+    methods = registry.primitive_methods(manager_alias="data")
+    assert "filter" in methods
+    assert "search" in methods
+    assert "reduce" in methods
 
 
 def test_data_manager_in_primitive_registry():
