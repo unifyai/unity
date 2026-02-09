@@ -26,7 +26,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
     - Job start: Bidirectional sync with --resync (start_sync → bisync)
     - File write: Push changed file to VM (notify_file_write)
     - Periodic: Bidirectional sync for remote changes (bisync every 30s)
-    - Job end: Final push to VM (stop_sync → sync_to_remote)
+    - Job end: Final bisync to VM (stop_sync → bisync)
     """
 
     def __init__(

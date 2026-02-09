@@ -97,62 +97,6 @@ key_file = {self.config.ssh_key_path}
         result = await self._run_with_retry(cmd, operation="connection test")
         return result.success
 
-    async def sync_from_remote(self, subpath: str = "") -> SyncResult:
-        """Pull files from VM to local (remote → local).
-
-        Called on job start to sync initial state.
-        """
-        async with self._op_lock:
-            remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
-            local = str(Path(self.config.local_root).expanduser())
-
-            if subpath:
-                remote = f"{remote}/{subpath}"
-                local = f"{local}/{subpath}"
-
-            print(f"[FileSync] Syncing from remote: {remote} → {local}")
-
-            cmd = self._build_cmd(
-                [
-                    "sync",
-                    remote,
-                    local,
-                    "--update",  # Skip files that are newer on destination
-                    *self._exclude_args(),
-                    "-v",
-                ],
-            )
-
-            return await self._run_with_retry(cmd, operation="sync from remote")
-
-    async def sync_to_remote(self, subpath: str = "") -> SyncResult:
-        """Push files from local to VM (local → remote).
-
-        Called on file writes and job completion.
-        """
-        async with self._op_lock:
-            remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
-            local = str(Path(self.config.local_root).expanduser())
-
-            if subpath:
-                remote = f"{remote}/{subpath}"
-                local = f"{local}/{subpath}"
-
-            print(f"[FileSync] Syncing to remote: {local} → {remote}")
-
-            cmd = self._build_cmd(
-                [
-                    "sync",
-                    local,
-                    remote,
-                    "--update",  # Skip files that are newer on destination
-                    *self._exclude_args(),
-                    "-v",
-                ],
-            )
-
-            return await self._run_with_retry(cmd, operation="sync to remote")
-
     async def bisync(self, force_resync: bool = False) -> SyncResult:
         """Bidirectional sync with 'latest wins' conflict resolution.
 
