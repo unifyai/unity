@@ -204,8 +204,8 @@ class TestOperationLock:
         # Run multiple operations concurrently
         await asyncio.gather(
             rclone_sync.bisync(),
-            rclone_sync.sync_to_remote(),
-            rclone_sync.sync_from_remote(),
+            rclone_sync.sync_single_file(str(tmp_path / "unity" / "test.txt")),
+            rclone_sync.delete_remote_file(str(tmp_path / "unity" / "old.txt")),
         )
 
         # All operations should have completed
