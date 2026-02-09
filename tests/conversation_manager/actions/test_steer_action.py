@@ -85,7 +85,7 @@ async def test_ask_task_status_after_small_talk(initialized_cm):
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Thanks! The weather is nice today.",
+            content="Thanks! Crazy week so far haha.",
         ),
     )
 
@@ -140,11 +140,11 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Unrelated question
+    # Step 2: Small talk distractor
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="By the way, what time is it there?",
+            content="Ugh, Mondays am I right?",
         ),
     )
 
@@ -163,10 +163,10 @@ async def test_ask_task_progress_mid_conversation(initialized_cm):
         result=result3,
     )
 
-    # Efficiency: Step 2 is a question that could trigger act to check time/timezone
+    # Efficiency: Step 2 is pure small talk (acknowledge + wait)
     # Step 3 uses async ask_* which may take extra turns (interim ack + result relay)
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 3, "Step 2: unrelated question (may trigger act)")
+    assert_efficient(result2, 3, "Step 2: small talk")
     assert_efficient(result3, 5, "Step 3: ask progress (async)")
 
 
@@ -204,11 +204,11 @@ async def test_stop_task_after_small_talk(initialized_cm):
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Genuine small talk (not action-related)
+    # Step 2: Small talk distractor
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="By the way, the weather is nice today.",
+            content="Man, what a long week it's been.",
         ),
     )
 
@@ -261,11 +261,11 @@ async def test_stop_task_change_of_mind(initialized_cm):
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Mentions needing to do something (could trigger proactive offer)
+    # Step 2: Small talk distractor
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Oh I just remembered, I need to buy groceries later.",
+            content="Sorry, got distracted for a sec there.",
         ),
     )
 
@@ -284,9 +284,9 @@ async def test_stop_task_change_of_mind(initialized_cm):
         result=result3,
     )
 
-    # Efficiency: Step 2 mentions a task ("buy groceries") - LLM may offer to help
+    # Efficiency: Step 2 is pure small talk (acknowledge + wait)
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 3, "Step 2: mentions task (may offer to help)")
+    assert_efficient(result2, 3, "Step 2: small talk")
     assert_efficient(result3, 3, "Step 3: cancel request")
 
 
@@ -323,11 +323,11 @@ async def test_pause_task_for_meeting(initialized_cm):
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Mention meeting (implies time constraint)
+    # Step 2: Small talk distractor
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="I have a meeting in 5 minutes.",
+            content="This coffee is terrible lol.",
         ),
     )
 
@@ -335,7 +335,7 @@ async def test_pause_task_for_meeting(initialized_cm):
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Put that on hold for now. I need to step into the meeting.",
+            content="Put that on hold for now. I need to step into a meeting.",
         ),
     )
 
@@ -346,9 +346,9 @@ async def test_pause_task_for_meeting(initialized_cm):
         result=result3,
     )
 
-    # Efficiency: Step 2 implies time constraint - LLM may interject deadline, expedite, etc.
+    # Efficiency: Step 2 is pure small talk (acknowledge + wait)
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 3, "Step 2: time constraint (may adapt task)")
+    assert_efficient(result2, 3, "Step 2: small talk")
     assert_efficient(result3, 3, "Step 3: pause request")
 
 
@@ -561,11 +561,11 @@ async def test_interject_additional_constraint(initialized_cm):
         context_data=build_cm_context(cm=cm, result=result1),
     )
 
-    # Step 2: Side comment (could be seen as context for the contact search)
+    # Step 2: Small talk distractor
     result2 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="We're planning a team event.",
+            content="Phew, finally caught a breather.",
         ),
     )
 
@@ -584,9 +584,9 @@ async def test_interject_additional_constraint(initialized_cm):
         result=result3,
     )
 
-    # Efficiency: Step 2 mentions "team event" which could be context for the contact search
+    # Efficiency: Step 2 is pure small talk (acknowledge + wait)
     assert_efficient(result1, 3, "Step 1: initial action")
-    assert_efficient(result2, 3, "Step 2: context (may interject to task)")
+    assert_efficient(result2, 3, "Step 2: small talk")
     assert_efficient(result3, 3, "Step 3: interject constraint")
 
 
@@ -814,7 +814,7 @@ async def test_multiple_distractors_then_stop(initialized_cm):
     result3 = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
-            content="Did you see the news?",
+            content="Ugh, Mondays am I right?",
         ),
     )
 
