@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
 
@@ -37,8 +38,6 @@ class ManagerSpec:
     - Identity (alias, registry key, class path)
     - Method exclusions
     - Prompt metadata (domain, description, use_when, examples, priority)
-    - Method descriptions for prompt generation
-
     For ComputerPrimitives, `is_state_manager=False` indicates it requires special
     handling (dynamically-created methods, separate instantiation pattern).
     """
@@ -53,7 +52,6 @@ class ManagerSpec:
     use_when: str = ""
     examples: str = ""
     special_note: str | None = None
-    method_descriptions: Dict[str, str] = field(default_factory=dict)
     # Distinguishes state managers from special primitives like ComputerPrimitives
     is_state_manager: bool = True
 
@@ -88,10 +86,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="People, organizations, contact records (names, emails, phones, roles, locations)",
         use_when="Questions about specific people, contact info, 'who is X?', 'find contact in Y location'",
         examples="'Who is our contact at Acme Corp?', 'Find Alice's email', 'Contacts in Berlin?'",
-        method_descriptions={
-            "ask": "Find contacts by name/email/attribute, query relationships, get contact details",
-            "update": "Create, edit, delete, or merge contact records",
-        },
     ),
     ManagerSpec(
         manager_alias="data",
@@ -104,19 +98,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         use_when="Direct data operations on any context, pipeline transformations, cross-context joins",
         examples="'Filter rows where amount > 1000', 'Join repairs with telematics', 'Sum revenue by region'",
         special_note="DataManager operates on ANY Unify context. For file-specific operations with file_path resolution, use FileManager instead.",
-        method_descriptions={
-            "filter": "Query rows with exact-match filter expressions",
-            "search": "Semantic search over embedded columns",
-            "reduce": "Aggregate metrics (count, sum, mean, min, max, etc.)",
-            "join": "Join two contexts on specified columns",
-            "insert_rows": "Insert new rows into a context",
-            "update_rows": "Update existing rows matching a filter",
-            "delete_rows": "Delete rows matching a filter",
-            "vectorize": "Create embeddings for a column",
-            "plot": "Generate visualizations from context data",
-            "create_table": "Create a new table context with schema",
-            "describe_table": "Get metadata and schema for a context",
-        },
     ),
     ManagerSpec(
         manager_alias="transcripts",
@@ -128,9 +109,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Past messages, conversation history, communication records (chat/SMS/email)",
         use_when="Questions about past communications, 'what did X say?', 'last message about Y?', 'conversation with Z?'",
         examples="'What did Bob say yesterday?', 'Last SMS with Alice?', 'Messages mentioning budget?'",
-        method_descriptions={
-            "ask": "Search messages, find what someone said, retrieve conversation context",
-        },
     ),
     ManagerSpec(
         manager_alias="knowledge",
@@ -142,11 +120,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Organizational facts, policies, procedures, reference material, documentation, stored information",
         use_when="Questions about company policies, operational procedures, reference docs, 'what is our X policy?', 'summarize Y procedure'",
         examples="'What's our return policy?', 'Summarize onboarding procedure', 'Office hours?', 'Warranty terms for X?'",
-        method_descriptions={
-            "ask": "Query stored knowledge - company policies (return/refund/warranty/HR), procedures, facts, historical records",
-            "update": "Add/change facts, ingest structured data, update policies",
-            "refactor": "Restructure knowledge schemas (advanced)",
-        },
     ),
     ManagerSpec(
         manager_alias="tasks",
@@ -158,11 +131,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Task management, work queues, assignments, deadlines, priorities",
         use_when="Questions about tasks/work items, 'what's due?', 'tasks assigned to X?', 'high-priority items?'",
         examples="'What tasks are due today?', 'Show Alice's open tasks', 'List high-priority items'",
-        method_descriptions={
-            "ask": "Query task status, what's due/scheduled, assignments, priorities",
-            "update": "Create, edit, delete, or reorder tasks (NOT for starting work)",
-            "execute": "Start durable, tracked execution (use this to run tasks, not `.update(...)`)",
-        },
     ),
     ManagerSpec(
         manager_alias="secrets",
@@ -174,10 +142,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="API keys, passwords, tokens, credentials",
         use_when="Managing credentials, API keys, secrets (rarely used in plans)",
         examples="Rarely used directly in plans",
-        method_descriptions={
-            "ask": "Get metadata/placeholders only (never returns actual secret values)",
-            "update": "Create, edit, or delete secrets",
-        },
     ),
     ManagerSpec(
         manager_alias="guidance",
@@ -189,10 +153,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Execution instructions, runbooks, how-to guides for functions/tasks",
         use_when="Questions about HOW to execute something, operational runbooks, incident response procedures",
         examples="'How do I handle DB failover?', 'Incident response for API outage?'",
-        method_descriptions={
-            "ask": "Query execution instructions, runbooks, best practices for specific operations",
-            "update": "Create, edit, or delete guidance entries linked to functions",
-        },
     ),
     ManagerSpec(
         manager_alias="web",
@@ -204,9 +164,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="External/public information and research (including general concepts/definitions), plus current events and 'today/latest/now' queries",
         use_when="Questions answered from public/external knowledge (including definitions/concepts) or requiring up-to-date info: current events, weather, news",
         examples="'What is the Eisenhower Matrix?', 'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?'",
-        method_descriptions={
-            "ask": "Web search for current information, news, weather, public data",
-        },
     ),
     ManagerSpec(
         manager_alias="files",
@@ -230,15 +187,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Received/downloaded files, document parsing, file metadata, data queries",
         use_when="Questions about specific files/documents, data operations, aggregations, visualizations",
         examples="'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
-        method_descriptions={
-            "ask": "Query about specific files, parse document contents, extract information from files",
-            "describe": "Get storage layout for a specific file (requires file_path)",
-            "list_columns": "Get column names and types for a context",
-            "reduce": "Aggregate data (count, sum, mean, min, max, etc.)",
-            "filter_files": "Query raw records with filtering",
-            "search_files": "Semantic search over table data",
-            "visualize": "Generate chart visualizations",
-        },
     ),
     # ComputerPrimitives is NOT a state manager - it has dynamically-created methods
     # and requires a separate instantiation pattern. It is included here for completeness
@@ -254,15 +202,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         use_when="Web automation, browser control, navigating websites, extracting web content",
         examples="'Navigate to example.com', 'Click the login button', 'Extract page content'",
         special_note="ComputerPrimitives has dynamically-created methods. Access via primitives.computer, not indexed in FunctionManager.",
-        method_descriptions={
-            "act": "Perform an action on the current page",
-            "observe": "Observe the current page state",
-            "query": "Query information from the page",
-            "navigate": "Navigate to a URL",
-            "get_links": "Get links from the page",
-            "get_content": "Get content from the page",
-            "reason": "General-purpose reasoning with call stack context",
-        },
         is_state_manager=False,  # <-- Key differentiator
     ),
 )
@@ -574,6 +513,19 @@ class ToolSurfaceRegistry:
         return metadata
 
     @staticmethod
+    def _resolve_base_method(cls: Optional[Type], method_name: str):
+        """Find the canonical method object from the Base* class in the MRO.
+
+        Returns the method object or None.
+        """
+        if cls is None:
+            return None
+        for base in cls.__mro__:
+            if base.__name__.startswith("Base") and method_name in vars(base):
+                return vars(base)[method_name]
+        return getattr(cls, method_name, None)
+
+    @staticmethod
     def _format_method_signature(cls: Optional[Type], method_name: str) -> str:
         """Extract a compact signature string for a method.
 
@@ -583,21 +535,10 @@ class ToolSurfaceRegistry:
         Falls back to ``...`` when the class is unavailable or introspection
         fails for any reason.
         """
-        if cls is None:
+        method = ToolSurfaceRegistry._resolve_base_method(cls, method_name)
+        if method is None:
             return "..."
         try:
-            method = None
-            # Walk the MRO to find the defining Base* class (same logic as
-            # primitive_methods) so we get the canonical abstract signature.
-            for base in cls.__mro__:
-                if base.__name__.startswith("Base") and method_name in vars(base):
-                    method = vars(base)[method_name]
-                    break
-            if method is None:
-                method = getattr(cls, method_name, None)
-            if method is None:
-                return "..."
-
             sig = inspect.signature(method)
             params = [
                 p
@@ -607,6 +548,78 @@ class ToolSurfaceRegistry:
             return str(sig.replace(parameters=params))
         except (ValueError, TypeError):
             return "..."
+
+    @staticmethod
+    def _extract_method_docstring(cls: Optional[Type], method_name: str) -> str:
+        """Extract the full docstring for a method from the Base* class.
+
+        Unwraps ``functools.wraps`` / ``__wrapped__`` to reach the original
+        docstring.  Returns an empty string when unavailable.
+        """
+        method = ToolSurfaceRegistry._resolve_base_method(cls, method_name)
+        if method is None:
+            return ""
+        fn = method
+        while hasattr(fn, "__wrapped__"):
+            fn = fn.__wrapped__
+        return inspect.getdoc(fn) or ""
+
+    @staticmethod
+    def _extract_summary_and_params(docstring: str) -> str:
+        """Extract the first paragraph and Parameters block from a docstring.
+
+        Returns a compact version containing the summary (up to the first
+        blank line) and the NumPy-style ``Parameters`` section, omitting
+        Returns, Raises, Examples, Notes, and other verbose sections.
+        """
+        if not docstring:
+            return ""
+
+        lines = docstring.splitlines()
+
+        # First paragraph (up to first blank line after content)
+        summary_lines: list[str] = []
+        i = 0
+        for i, line in enumerate(lines):
+            if not line.strip():
+                if summary_lines:
+                    break
+            else:
+                summary_lines.append(line)
+
+        # Find Parameters section
+        params_lines: list[str] = []
+        in_params = False
+        for j in range(i, len(lines)):
+            stripped = lines[j].strip()
+            if stripped == "Parameters":
+                in_params = True
+                continue
+            if in_params and stripped.startswith("---"):
+                continue
+            if in_params:
+                # Stop at next section header
+                if (
+                    stripped
+                    and not stripped[0].isspace()
+                    and not stripped.startswith("-")
+                ):
+                    if j + 1 < len(lines) and lines[j + 1].strip().startswith(
+                        "---",
+                    ):
+                        break
+                    if (
+                        re.match(r"^[A-Z][a-zA-Z\s]+$", stripped)
+                        and len(stripped) < 30
+                    ):
+                        break
+                params_lines.append(lines[j])
+
+        result = "\n".join(summary_lines)
+        params = "\n".join(params_lines).rstrip()
+        if params:
+            result += "\n\nParameters\n----------\n" + params
+        return result
 
     def prompt_context(self, primitive_scope: PrimitiveScope) -> str:
         """
@@ -636,24 +649,16 @@ class ToolSurfaceRegistry:
             # Resolve the manager class once for signature extraction.
             mgr_cls = self._load_manager_class(spec.primitive_class_path)
 
-            # Show methods with their signatures and descriptions
+            # Show methods with signatures and summary + parameters from docstrings
             method_names = self.primitive_methods(manager_alias=spec.manager_alias)
             for method_name in method_names:
                 sig_str = self._format_method_signature(mgr_cls, method_name)
-                desc = spec.method_descriptions.get(method_name, "")
-                if desc:
-                    lines.append(f"- `.{method_name}{sig_str}`: {desc}")
-                else:
-                    lines.append(f"- `.{method_name}{sig_str}`")
-
-            # Add get_tools for files (special case - not auto-discovered from base class)
-            if (
-                spec.manager_alias == "files"
-                and "get_tools" in spec.method_descriptions
-            ):
-                lines.append(
-                    f"- `.get_tools()`: {spec.method_descriptions['get_tools']}",
-                )
+                full_doc = self._extract_method_docstring(mgr_cls, method_name)
+                compact_doc = self._extract_summary_and_params(full_doc)
+                lines.append(f"\n  **`.{method_name}{sig_str}`**")
+                if compact_doc:
+                    for doc_line in compact_doc.splitlines():
+                        lines.append(f"  {doc_line}")
 
             if spec.use_when:
                 lines.append(f"- **Use when**: {spec.use_when}")
