@@ -22,7 +22,7 @@ pytestmark = pytest.mark.eval
 
 FILE_QUESTIONS: list[str] = [
     "What files are in the /reports directory?",
-    "Search for files containing 'quarterly revenue' in the documents folder.",
+    "List all files in the /documents directory.",
     "Describe the storage layout of the file at /data/Q4_2024.csv.",
     "What columns are in the spreadsheet at /reports/monthly.xlsx?",
 ]
