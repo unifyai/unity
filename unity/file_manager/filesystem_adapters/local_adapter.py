@@ -45,9 +45,10 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
             Whether to enable VM file sync. Actual sync only occurs if
             SESSION_DETAILS.desktop_url is configured.
         """
-        # Default root to ~/Unity/Local for sync compatibility
         if root is None:
-            root = str(Path.home() / "Unity" / "Local")
+            from unity.file_manager.settings import get_local_root
+
+            root = get_local_root()
 
         self._root = Path(root).expanduser().resolve()
 
