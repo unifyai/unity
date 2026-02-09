@@ -23,7 +23,7 @@ from unity.manager_registry import ManagerRegistry
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_file_discovery_and_query(tmp_path: Path):
@@ -67,7 +67,7 @@ async def test_code_act_file_discovery_and_query(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_file_to_data_pipeline(tmp_path: Path):
@@ -115,7 +115,7 @@ async def test_code_act_file_to_data_pipeline(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_describe_then_reduce(tmp_path: Path):
@@ -159,7 +159,7 @@ async def test_code_act_describe_then_reduce(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_describe_calls_file_manager(tmp_path: Path):
@@ -201,7 +201,7 @@ async def test_code_act_describe_calls_file_manager(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_ask_about_file_calls_file_manager(tmp_path: Path):

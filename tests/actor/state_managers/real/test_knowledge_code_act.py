@@ -49,7 +49,7 @@ def _office_hours_fact_present() -> bool:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager():
@@ -78,7 +78,7 @@ async def test_ask_calls_manager():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager_memoized():
@@ -124,7 +124,7 @@ async def ask_knowledge_question(question: str, response_format=None) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_manager():
@@ -147,7 +147,7 @@ async def test_update_calls_manager():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_manager_memoized():

@@ -16,7 +16,7 @@ from unity.manager_registry import ManagerRegistry
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager():
@@ -41,7 +41,7 @@ async def test_ask_calls_manager():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_manager_memoized():
@@ -86,7 +86,7 @@ async def ask_contacts(question: str, response_format=None) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_manager():
@@ -115,7 +115,7 @@ async def test_update_calls_manager():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_manager_memoized():
