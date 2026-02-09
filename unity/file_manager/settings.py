@@ -18,15 +18,15 @@ def get_local_root() -> str:
     """Return the resolved local file root directory.
 
     Uses ``SETTINGS.file.LOCAL_ROOT`` when set, otherwise defaults to
-    ``~/Unity/Local``.  All code that needs the local file root should
-    call this function instead of hard-coding the path.
+    ``~`` (the user's home directory).  All code that needs the local
+    file root should call this function instead of hard-coding the path.
     """
     from unity.settings import SETTINGS
 
     explicit = SETTINGS.file.LOCAL_ROOT.strip()
     if explicit:
         return str(Path(explicit).expanduser().resolve())
-    return str(Path.home() / "Unity" / "Local")
+    return str(Path.home())
 
 
 class FileSettings(BaseSettings):
@@ -36,7 +36,7 @@ class FileSettings(BaseSettings):
         ENABLED: Whether FileManager is enabled.
         IMPL: Implementation type - "real" or "simulated".
         LOCAL_ROOT: Root directory for local file operations and the
-            CodeActActor working directory.  Defaults to ``~/Unity/Local``.
+            CodeActActor working directory.  Defaults to ``~`` (home).
             Override via ``UNITY_FILE_LOCAL_ROOT`` env var.
         CONSOLE_BASE_URL: Base URL for Unify Console (Plot API).
         PLOT_API_ENDPOINT: Endpoint path for plot creation.

@@ -975,8 +975,8 @@ def _init_managers(
 async def _start_file_sync() -> None:
     """Start file sync with managed VM after managers are initialized.
 
-    This starts rclone-based file synchronization between ~/Unity (assistant)
-    and /Unity (managed VM) if a desktop_url is configured in SESSION_DETAILS.
+    This starts rclone-based file synchronization between ~ (assistant home)
+    and /home (managed VM) if a desktop_url is configured in SESSION_DETAILS.
 
     Runs asynchronously and logs success/failure.
     """
