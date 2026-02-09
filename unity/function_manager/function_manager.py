@@ -4984,7 +4984,7 @@ class FunctionManager(BaseFunctionManager):
         return sync_mgr
 
     async def _sync_to_remote(self) -> bool:
-        """Trigger sync to remote before execution.
+        """Trigger bisync before execution to push local changes and pull remote state.
 
         Returns True if sync succeeded or was not needed.
         """
@@ -4992,11 +4992,8 @@ class FunctionManager(BaseFunctionManager):
         if sync_manager is None:
             return True  # No sync configured, continue anyway
 
-        if sync_manager._rclone is None:
-            return True
-
         print("[windows exec] Syncing files to remote...")
-        result = await sync_manager._rclone.sync_to_remote()
+        result = await sync_manager.sync_remote_changes()
         if not result.success:
             print(f"[windows exec] Warning: sync failed: {result.errors}")
             return False

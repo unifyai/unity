@@ -153,10 +153,10 @@ class SyncManager:
                 pass
             self._poll_task = None
 
-        # Final sync to push any pending changes
+        # Final bisync to push any pending changes and pull remote state
         if self._rclone:
-            print("[FileSync] Final sync to remote...")
-            await self._rclone.sync_to_remote()
+            print("[FileSync] Final bisync...")
+            await self._rclone.bisync()
             self._rclone.cleanup()
             self._rclone = None
 
