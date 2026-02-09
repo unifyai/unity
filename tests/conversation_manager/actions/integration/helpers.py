@@ -244,7 +244,11 @@ async def wait_for_actor_completion(
 ) -> str:
     """Wait for the actor handle result (primary completion signal)."""
     handle = extract_actor_handle(cm, handle_id)
-    return await asyncio.wait_for(handle.result(), timeout=timeout)
+    result = await asyncio.wait_for(handle.result(), timeout=timeout)
+    if isinstance(result, str):
+        return result
+    # Structured response_format result -- serialize to pretty-printed JSON.
+    return result.model_dump_json(indent=4)
 
 
 def assert_no_errors(result: Any) -> None:
