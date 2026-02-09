@@ -128,7 +128,7 @@ class SingleFunctionActorHandle(BaseActorHandle):
 
             if nested_handle is not None:
                 # _extract_nested_handle returns a list of (handle, label)
-                # tuples when handles are nested inside a container.  Extract
+                # tuples when handles are nested inside a container. Extract
                 # the first handle for single-handle forwarding.
                 if isinstance(nested_handle, list):
                     nested_handle = nested_handle[0][0]
