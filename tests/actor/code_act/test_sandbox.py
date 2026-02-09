@@ -399,3 +399,25 @@ async def test_execute_code_surfaces_computer_state_when_computer_used():
             await actor.close()
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_sandbox_builtin_open_available(tmp_path):
+    """Python builtins like open() and FileNotFoundError must be available.
+
+    The sandbox restricts the global namespace, but standard builtins that
+    are essential for basic file I/O should not be stripped.
+    """
+    sandbox = PythonExecutionSession()
+
+    # Write a small file for the test to read.
+    test_file = tmp_path / "hello.txt"
+    test_file.write_text("hello world")
+
+    code = f'with open("{test_file}", "r") as f:\n    print(f.read())'
+    result = await sandbox.execute(code)
+    assert result["error"] is None, (
+        f"open() should be available in the sandbox but got: {result['error']}"
+    )
+    assert "hello world" in parts_to_text(result["stdout"])
