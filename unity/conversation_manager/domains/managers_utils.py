@@ -39,6 +39,280 @@ async def get_last_store_chat_history() -> StoreChatHistory:
     return None
 
 
+def _get_sender_name(contact: dict | None) -> str:
+    """Extract display name from a contact dict."""
+    if not contact:
+        return "Unknown"
+    first_name = contact.get("first_name", "")
+    surname = contact.get("surname", "")
+    name = f"{first_name} {surname}".strip()
+    return (
+        name
+        or contact.get("phone_number", "")
+        or contact.get("email_address", "")
+        or "Unknown"
+    )
+
+
+# Event types that produce push_message calls during hydration.
+_MESSAGE_PRODUCING_EVENTS = {
+    "SMSReceived",
+    "SMSSent",
+    "EmailReceived",
+    "EmailSent",
+    "UnifyMessageReceived",
+    "UnifyMessageSent",
+    "InboundPhoneUtterance",
+    "OutboundPhoneUtterance",
+    "InboundUnifyMeetUtterance",
+    "OutboundUnifyMeetUtterance",
+    "CallGuidance",
+    "PhoneCallReceived",
+    "PhoneCallSent",
+    "UnifyMeetReceived",
+    "PhoneCallStarted",
+    "UnifyMeetStarted",
+    "PhoneCallNotAnswered",
+}
+
+
+async def hydrate_global_thread(cm: "ConversationManager") -> None:
+    """Populate the shared global deque from persisted EventBus Comms events.
+
+    Called during initialization to restore conversation state from the previous
+    session. After hydration, the rendered state is identical to what it was
+    before shutdown — session boundaries are invisible to the brain.
+    """
+    from unity.conversation_manager.domains.contact_index import ContactIndex
+
+    deque_size = (
+        cm.contact_index.global_thread.maxlen or ContactIndex.DEFAULT_GLOBAL_THREAD_SIZE
+    )
+
+    bus_events = await EVENT_BUS.search(
+        filter='type == "Comms"',
+        limit=deque_size,
+    )
+
+    if not bus_events:
+        print("[Hydration] No Comms events found, skipping hydration")
+        return
+
+    # Bus events come in descending order (most recent first), reverse for chronological
+    bus_events.reverse()
+
+    restored = 0
+    for bus_event in bus_events:
+        payload_cls = bus_event.payload_cls
+        # Strip module prefix if present (e.g., "unity.conversation_manager.events.SMSReceived")
+        if "." in payload_cls:
+            payload_cls = payload_cls.rsplit(".", 1)[-1]
+
+        if payload_cls not in _MESSAGE_PRODUCING_EVENTS:
+            continue
+
+        try:
+            cm_event = Event.from_bus_event(bus_event)
+        except Exception:
+            continue
+
+        contact = getattr(cm_event, "contact", None) or {}
+        contact_id = contact.get("contact_id")
+        if contact_id is None:
+            continue
+        sender_name = _get_sender_name(contact)
+        ts = cm_event.timestamp
+
+        match payload_cls:
+            # --- SMS ---
+            case "SMSReceived":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.SMS_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "SMSSent":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.SMS_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+
+            # --- Unify Messages ---
+            case "UnifyMessageReceived":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.UNIFY_MESSAGE,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+            case "UnifyMessageSent":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.UNIFY_MESSAGE,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                    attachments=getattr(cm_event, "attachments", None),
+                )
+
+            # --- Email ---
+            case "EmailReceived":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.EMAIL,
+                    subject=cm_event.subject,
+                    body=cm_event.body,
+                    email_id=getattr(cm_event, "email_id", None),
+                    attachments=getattr(cm_event, "attachments", None),
+                    role="user",
+                    timestamp=ts,
+                    to=getattr(cm_event, "to", None),
+                    cc=getattr(cm_event, "cc", None),
+                    bcc=getattr(cm_event, "bcc", None),
+                    contact_role="sender",
+                )
+            case "EmailSent":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.EMAIL,
+                    subject=cm_event.subject,
+                    body=cm_event.body,
+                    attachments=getattr(cm_event, "attachments", None),
+                    role="assistant",
+                    timestamp=ts,
+                    to=getattr(cm_event, "to", None),
+                    cc=getattr(cm_event, "cc", None),
+                    bcc=getattr(cm_event, "bcc", None),
+                )
+
+            # --- Phone/Meet utterances ---
+            case "InboundPhoneUtterance":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.PHONE_CALL,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundPhoneUtterance":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.PHONE_CALL,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "InboundUnifyMeetUtterance":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.UNIFY_MEET,
+                    message_content=cm_event.content,
+                    role="user",
+                    timestamp=ts,
+                )
+            case "OutboundUnifyMeetUtterance":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.UNIFY_MEET,
+                    message_content=cm_event.content,
+                    role="assistant",
+                    timestamp=ts,
+                )
+
+            # --- Call guidance ---
+            case "CallGuidance":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.PHONE_CALL,
+                    message_content=cm_event.content,
+                    role="guidance",
+                    timestamp=ts,
+                )
+
+            # --- Call lifecycle ---
+            case "PhoneCallReceived":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.PHONE_CALL,
+                    message_content="<Receiving Call...>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "PhoneCallSent":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.PHONE_CALL,
+                    message_content="<Sending Call...>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+            case "UnifyMeetReceived":
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.UNIFY_MEET,
+                    message_content="<Receiving Call...>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "PhoneCallStarted" | "UnifyMeetStarted":
+                medium = (
+                    Medium.UNIFY_MEET
+                    if payload_cls == "UnifyMeetStarted"
+                    else Medium.PHONE_CALL
+                )
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=medium,
+                    message_content="<Call Started>",
+                    role="user",
+                    timestamp=ts,
+                )
+            case "PhoneCallNotAnswered":
+                reason = getattr(cm_event, "reason", "no-answer") or "no-answer"
+                reason_display = {
+                    "no-answer": "did not answer",
+                    "busy": "was busy",
+                    "canceled": "call was canceled",
+                    "failed": "call failed",
+                }.get(reason, f"not answered ({reason})")
+                cm.contact_index.push_message(
+                    contact_id=contact_id,
+                    sender_name=sender_name,
+                    thread_name=Medium.PHONE_CALL,
+                    message_content=f"<Call Not Answered: {reason_display}>",
+                    role="assistant",
+                    timestamp=ts,
+                )
+
+        restored += 1
+
+    print(
+        f"[Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
+    )
+
+
 async def publish_bus_events(event):
     try:
         event_name = event.__class__.__name__
@@ -585,7 +859,7 @@ def _init_managers(
     local_start_time = perf_counter()
     if api_key:
         EVENT_BUS._get_logger().session.headers["Authorization"] = f"Bearer {api_key}"
-    EVENT_BUS.set_window("Comms", 50)
+    EVENT_BUS.set_window("Comms", 100)
     print(
         "[ManagersWorker] EventBus configured in "
         f"{perf_counter() - local_start_time:.2f} seconds",
@@ -781,6 +1055,15 @@ async def init_conv_manager(
                         chat_history=store_chat_history.chat_history,
                     ).to_json(),
                 )
+
+            # Hydrate the global thread from persisted EventBus events
+            print("[ManagersWorker] Hydrating global thread...")
+            local_start_time = perf_counter()
+            await hydrate_global_thread(cm)
+            print(
+                "[ManagersWorker] Global thread hydrated in "
+                f"{perf_counter() - local_start_time:.2f} seconds",
+            )
 
             # Mark as initialized
             cm.initialized = True

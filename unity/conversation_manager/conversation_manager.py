@@ -522,8 +522,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         """Request an LLM run.
 
         The request is recorded and later scheduled by the event loop after
-        the current event is handled.
+        the current event is handled. Silently ignored before initialization
+        completes — the brain must not run until the global thread is hydrated.
         """
+        if not self.initialized:
+            return
         self._pending_llm_requests.append((delay, cancel_running))
 
     async def flush_llm_requests(self) -> None:

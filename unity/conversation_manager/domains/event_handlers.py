@@ -96,6 +96,9 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
     """
     Handle incoming/outgoing call initiation - spawn voice agent subprocess.
     """
+    # Don't answer calls before initialization (global thread not hydrated yet)
+    if not cm.initialized:
+        return
     # Don't start a new call if we're already in voice mode
     if cm.mode.is_voice:
         return
