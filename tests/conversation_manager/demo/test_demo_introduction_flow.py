@@ -28,6 +28,7 @@ from tests.conversation_manager.demo.conftest import (
 from unity.conversation_manager.events import (
     SMSReceived,
     SMSSent,
+    PhoneCallSent,
     ActorHandleStarted,
 )
 
@@ -112,16 +113,17 @@ async def test_operator_asks_to_call_prospect_with_number(initialized_cm):
         "Great! Richard's number is +447700900123. Give him a call and introduce yourself.",
     )
 
-    # The assistant should attempt to make a call (PhoneCallSent event)
-    # or at minimum acknowledge and attempt it (since comms are mocked in tests,
-    # we check for the tool call rather than the actual event)
-    tool_calls = initialized_cm.all_tool_calls
-    made_call = any("make_call" in tc for tc in tool_calls)
+    # The assistant should attempt to make a call (PhoneCallSent event).
+    # Note: all_tool_calls only tracks one tool name per LLM step, so when the
+    # LLM calls set_boss_details + make_call in parallel, make_call may not
+    # appear in all_tool_calls. Check output events instead.
+    call_events = filter_events_by_type(result.output_events, PhoneCallSent)
     sent_sms = filter_events_by_type(result.output_events, SMSSent)
 
-    # Either the assistant made the call or acknowledged the request
-    assert made_call or sent_sms, (
-        "Assistant should either make the call or acknowledge the request"
+    # Either the assistant placed the call or acknowledged the request via SMS
+    assert call_events or sent_sms, (
+        "Assistant should either place the call (PhoneCallSent) or "
+        "acknowledge the request (SMSSent)"
     )
 
 
@@ -161,15 +163,14 @@ async def test_boss_learns_name_via_set_boss_details(initialized_cm):
         ),
     )
 
-    tool_calls = initialized_cm.all_tool_calls
-    used_set_boss = any("set_boss_details" in tc for tc in tool_calls)
-
-    if used_set_boss:
-        # Verify the name was saved
-        boss = initialized_cm.contact_index.get_contact(1)
-        assert boss.get("first_name") == "Richard", (
-            f"Expected boss first_name='Richard', got {boss.get('first_name')!r}"
-        )
+    # Verify the name was saved to the boss contact.
+    # Note: we check the contact directly rather than gating on all_tool_calls,
+    # because all_tool_calls only tracks one tool per LLM step and may miss
+    # set_boss_details if it was called alongside send_sms in one step.
+    boss = initialized_cm.contact_index.get_contact(1)
+    assert boss.get("first_name") == "Richard", (
+        f"Expected boss first_name='Richard', got {boss.get('first_name')!r}"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -229,12 +230,11 @@ async def test_prospect_asks_about_email(initialized_cm):
         "By the way, my email is richard@hendricks.com — feel free to save it.",
     )
 
-    tool_calls = initialized_cm.all_tool_calls
-    used_set_boss = any("set_boss_details" in tc for tc in tool_calls)
-
-    if used_set_boss:
-        boss = initialized_cm.contact_index.get_contact(1)
-        assert boss.get("email_address") == "richard@hendricks.com", (
-            f"Expected boss email='richard@hendricks.com', "
-            f"got {boss.get('email_address')!r}"
-        )
+    # Verify the email was saved to the boss contact.
+    # Check the contact directly rather than gating on all_tool_calls
+    # (see note in test_boss_learns_name_via_set_boss_details).
+    boss = initialized_cm.contact_index.get_contact(1)
+    assert boss.get("email_address") == "richard@hendricks.com", (
+        f"Expected boss email='richard@hendricks.com', "
+        f"got {boss.get('email_address')!r}"
+    )
