@@ -31,96 +31,161 @@ pytestmark = pytest.mark.eval
 # ---------------------------------------------------------------------------
 
 _SPANISH_MARKERS = [
+    # Greetings / closings
     "hola",
     "gracias",
     "buenos",
-    "cómo",
-    "número",
-    "necesito",
-    "reunión",
-    "confirmar",
-    "información",
-    "mañana",
-    "también",
+    "por favor",
+    "disculpe",
+    "encantado",
     "entendido",
     "perfecto",
-    "encantado",
-    "disculpe",
-    "por favor",
-    "bien",
-    "buen",
+    # Common conversational words
+    "cómo",
+    "también",
     "mucho",
     "claro",
+    "ahora",
+    "aquí",
+    "muy",
+    "algo",
+    "todo",
+    "todos",
+    "después",
+    # Verbs / verb forms
+    "necesito",
     "puedo",
     "puede",
-    "momento",
-    "revisar",
-    "novedades",
-    "propuesta",
-    "cuento",
-    "gusto",
+    "tengo",
+    "quiero",
+    "estoy",
+    "creo",
+    "hacer",
     "hablar",
-    "contigo",
-    "ahora",
-    "semana",
-    "pasada",
+    "revisar",
     "enviar",
     "enviaron",
     "enviamos",
     "vamos",
+    "déjame",
     "dime",
-    "cómo",
+    # Nouns / domain words
+    "número",
+    "reunión",
+    "información",
+    "mañana",
+    "semana",
+    "momento",
+    "novedades",
+    "propuesta",
+    "proyecto",
+    "resultado",
+    "prioridades",
+    "actualización",
+    # Phrases
+    "por favor",
+    "cómo estás",
+    "vamos a ver",
+    "buen",
+    "bien",
+    "contigo",
+    "pasada",
+    "gusto",
+    "cuento",
+    "confirmar",
 ]
 
 _FRENCH_MARKERS = [
+    # Greetings / closings
     "bonjour",
     "bonsoir",
+    "salut",
     "merci",
+    "enchanté",
+    "bienvenue",
+    "bonne journée",
+    "cordialement",
+    # Common conversational words
+    "très",
+    "aussi",
+    "alors",
+    "donc",
+    "voilà",
+    "toujours",
+    "vraiment",
+    "maintenant",
+    "peut-être",
+    "quelque",
+    "beaucoup",
+    "seulement",
+    # Verbs / verb forms
+    "aider",
+    "faire",
+    "confirmer",
+    "vérifier",
+    # Contractions (matched after apostrophe normalisation)
+    "j'ai",
+    "c'est",
+    "c'était",
+    "d'accord",
+    "l'appel",
+    "n'est",
+    "qu'on",
+    "s'il vous plaît",
+    "s'il te plaît",
+    "aujourd'hui",
+    # Distinctive short phrases
+    "je suis",
+    "je vais",
+    "il y a",
+    "mise à jour",
+    "bien sûr",
+    "de rien",
+    "avec plaisir",
+    # Nouns / domain words
     "réunion",
     "monsieur",
     "madame",
-    "confirmer",
-    "demain",
+    "journée",
+    "besoin",
+    "côté",
+    # Accented words (high signal — accents rare in English)
+    "terminé",
+    "résumé",
+    "prêt",
+    "priorité",
     "également",
     "absolument",
     "certainement",
     "exactement",
-    "cordialement",
     "actuellement",
     "malheureusement",
-    "bien sûr",
-    "s'il vous plaît",
-    "de rien",
-    "avec plaisir",
-    "bonne journée",
-    "enchanté",
-    "d'accord",
-    "bienvenue",
-    "c'est",
-    "c'était",
-    "très",
-    "plaisir",
+    "rapidement",
+    # Filler / discourse markers
     "heureux",
     "heureuse",
-    "journée",
     "bonne",
-    "aider",
-    "besoin",
-    "aujourd'hui",
+    "plaisir",
+    "ça",
 ]
 
 _CJK_RE = re.compile(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]")
 _ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
 
 
+def _normalize_apostrophes(text: str) -> str:
+    """Collapse typographic quotes to ASCII apostrophe for reliable matching."""
+    return text.replace("\u2019", "'").replace("\u2018", "'")
+
+
 def _has_spanish(text: str) -> bool:
-    low = text.lower()
+    low = _normalize_apostrophes(text.lower())
     hits = sum(1 for w in _SPANISH_MARKERS if w in low)
     return hits >= 2 or "¿" in text or "¡" in text
 
 
 def _has_french(text: str) -> bool:
-    low = text.lower()
+    low = _normalize_apostrophes(text.lower())
     return sum(1 for w in _FRENCH_MARKERS if w in low) >= 2
 
 
