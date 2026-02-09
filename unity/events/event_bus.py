@@ -887,7 +887,6 @@ class EventBus:
         limit: Union[int, Dict[str, int]] = 100,
         grouped_by_type: bool = False,
     ) -> Union[List[Event], Dict[str, List[Event]]]:
-        await self.join_initialization()
         """
         Return events that satisfy *filter*, applying *offset*/**limit** rules as
         follows
@@ -920,22 +919,26 @@ class EventBus:
         # 0. Work out which semantics we're in ---------------------------------
         combined_window = isinstance(offset, int) and isinstance(limit, int)
 
+        # Use all known event types (not just those with populated deques)
+        # so search works before hydration completes.
+        all_types = set(self._deques) | set(self._specific_ctxs)
+
         # ----- per-type helpers ----------------------------------------------
         if combined_window:
             # grab *enough* from every queue (offset + limit) so the global
             # pass later has material to slice from
-            per_type_limit = {t: offset + limit for t in self._deques}
-            per_type_offset = {t: 0 for t in self._deques}  # skip globally later
+            per_type_limit = {t: offset + limit for t in all_types}
+            per_type_offset = {t: 0 for t in all_types}  # skip globally later
         else:
             if isinstance(limit, int):
-                per_type_limit = {t: limit for t in self._deques}
+                per_type_limit = {t: limit for t in all_types}
             else:
-                per_type_limit = {t: limit.get(t, 0) for t in self._deques}
+                per_type_limit = {t: limit.get(t, 0) for t in all_types}
 
             if isinstance(offset, int):
-                per_type_offset = {t: offset for t in self._deques}
+                per_type_offset = {t: offset for t in all_types}
             else:
-                per_type_offset = {t: offset.get(t, 0) for t in self._deques}
+                per_type_offset = {t: offset.get(t, 0) for t in all_types}
 
         # ----------------------------------------------------------------------
         # 1. scan the deque -----------------------------------------------------
