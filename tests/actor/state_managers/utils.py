@@ -23,7 +23,11 @@ except Exception:  # pragma: no cover
 
 
 def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
-    """Wrap a minimal state-manager surface to record which primitives were invoked.
+    """Wrap every exposed primitive method to record which primitives were invoked.
+
+    Uses the ``ToolSurfaceRegistry`` to discover all primitive methods for
+    each manager in scope, so the tracing list is always in sync with the
+    actual primitive surface -- no manual curation needed.
 
     For managers that are returned directly (not wrapped by
     ``_AsyncPrimitiveWrapper``), we must avoid mutating the singleton
@@ -32,44 +36,18 @@ def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
     proxy into the ``Primitives._managers`` cache so tracing is
     transparent to both the CodeActActor sandbox and the manager itself.
     """
+    from unity.function_manager.primitives.registry import get_registry
+
     calls: list[str] = []
-    targets: list[tuple[str, list[str]]] = [
-        ("contacts", ["ask", "update"]),
-        ("tasks", ["ask", "update", "execute"]),
-        ("knowledge", ["ask", "update", "refactor"]),
-        ("transcripts", ["ask"]),
-        ("guidance", ["ask", "update"]),
-        ("web", ["ask"]),
-        (
-            "data",
-            [
-                "filter",
-                "search",
-                "reduce",
-                "join",
-                "insert_rows",
-                "update_rows",
-                "delete_rows",
-                "vectorize",
-                "plot",
-                "create_table",
-                "describe_table",
-            ],
-        ),
-        (
-            "files",
-            [
-                "ask",
-                "ask_about_file",
-                "describe",
-                "list_columns",
-                "reduce",
-                "filter_files",
-                "search_files",
-                "visualize",
-            ],
-        ),
-    ]
+    registry = get_registry()
+    scope = primitives.primitive_scope
+
+    targets: list[tuple[str, list[str]]] = []
+    for alias in sorted(scope.scoped_managers):
+        methods = registry.primitive_methods(manager_alias=alias)
+        if methods:
+            targets.append((alias, methods))
+
     for manager_attr, methods in targets:
         try:
             # Eagerly resolve so the manager is cached in primitives._managers.

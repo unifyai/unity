@@ -127,6 +127,11 @@ class SingleFunctionActorHandle(BaseActorHandle):
             nested_handle, cleaned = _extract_nested_handle(raw_dict)
 
             if nested_handle is not None:
+                # _extract_nested_handle returns a list of (handle, label)
+                # tuples when handles are nested inside a container.  Extract
+                # the first handle for single-handle forwarding.
+                if isinstance(nested_handle, list):
+                    nested_handle = nested_handle[0][0]
                 self._inner_handle = nested_handle
                 logger.info(
                     f"Function '{self._function_name}' returned steerable handle, "
@@ -588,10 +593,12 @@ class SingleFunctionActor(BaseActor):
                 timeout=60,
                 response_format=SingleFunctionVerificationResult,
             )
-            result_json = await handle.result()
+            result = await handle.result()
+            if isinstance(result, SingleFunctionVerificationResult):
+                return result
             import json
 
-            result_dict = json.loads(result_json)
+            result_dict = json.loads(result)
             return SingleFunctionVerificationResult.model_validate(result_dict)
         except Exception as e:
             logger.error(f"Verification LLM call failed: {e}")
