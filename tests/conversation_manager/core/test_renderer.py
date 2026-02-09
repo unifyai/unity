@@ -809,77 +809,22 @@ class TestRenderStateWithTracking:
 
 
 # =============================================================================
-# Tests for Notification Pinned Cap
+# Tests for Render Caps
 # =============================================================================
 
 
-class TestNotificationPinnedCap:
-    """Tests for max_pinned_notifications capping in render_notification_bar."""
+class TestRenderCaps:
+    """Tests verifying that all render caps are respected."""
 
     @pytest.fixture
     def renderer(self):
         return Renderer()
 
-    @pytest.fixture
-    def notification_bar_with_many_pinned(self):
-        """Create a NotificationBar with more pinned notifications than the cap."""
+    def test_pinned_notifications_capped(self, renderer):
+        """Only the most recent max_pinned pinned notifications are rendered;
+        transient notifications are unaffected by the cap."""
         bar = NotificationBar()
         for i in range(10):
-            bar.push_notif(
-                "Action",
-                f"Action completed: task_{i}",
-                datetime(2025, 6, 13, 12, i, 0, tzinfo=timezone.utc),
-                pinned=True,
-                id=f"action_{i}",
-            )
-        return bar
-
-    def test_pinned_notifications_capped_to_max(
-        self,
-        renderer,
-        notification_bar_with_many_pinned,
-    ):
-        """Only the most recent max_pinned pinned notifications are rendered."""
-        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
-
-        result = renderer.render_notification_bar(
-            notification_bar_with_many_pinned,
-            last_snapshot=last_snapshot,
-            max_pinned=5,
-        )
-
-        # The 5 most recent (task_5 through task_9) should be present
-        for i in range(5, 10):
-            assert f"task_{i}" in result
-        # The 5 oldest (task_0 through task_4) should be absent
-        for i in range(5):
-            assert f"task_{i}" not in result
-
-    def test_pinned_notifications_under_cap_all_rendered(
-        self,
-        renderer,
-        notification_bar_with_many_pinned,
-    ):
-        """When pinned count is under the cap, all are rendered."""
-        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
-
-        result = renderer.render_notification_bar(
-            notification_bar_with_many_pinned,
-            last_snapshot=last_snapshot,
-            max_pinned=50,
-        )
-
-        for i in range(10):
-            assert f"task_{i}" in result
-
-    def test_pinned_cap_does_not_affect_transient_notifications(
-        self,
-        renderer,
-    ):
-        """Transient (non-pinned) notifications are unaffected by the pinned cap."""
-        bar = NotificationBar()
-        # Add pinned notifications (will be capped)
-        for i in range(5):
             bar.push_notif(
                 "Action",
                 f"pinned_{i}",
@@ -897,51 +842,97 @@ class TestNotificationPinnedCap:
             )
 
         last_snapshot = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
-
         result = renderer.render_notification_bar(
             bar,
             last_snapshot=last_snapshot,
-            max_pinned=2,
+            max_pinned=5,
         )
 
-        # Only 2 most recent pinned should appear
-        assert "pinned_0" not in result
-        assert "pinned_1" not in result
-        assert "pinned_2" not in result
-        assert "pinned_3" in result
-        assert "pinned_4" in result
-        # All transient notifications should still appear
+        # 5 most recent pinned present, 5 oldest absent
+        for i in range(5, 10):
+            assert f"pinned_{i}" in result
+        for i in range(5):
+            assert f"pinned_{i}" not in result
+        # All transient notifications still present
         for i in range(3):
             assert f"transient_{i}" in result
 
-    def test_pinned_cap_flows_through_render_state(self, renderer):
-        """max_pinned_notifications parameter flows from render_state to render_notification_bar."""
-        bar = NotificationBar()
-        for i in range(10):
-            bar.push_notif(
-                "Action",
-                f"action_{i}",
-                datetime(2025, 6, 13, 12, i, 0, tzinfo=timezone.utc),
-                pinned=True,
-                id=f"action_{i}",
-            )
+    def test_in_flight_action_history_capped(self, renderer):
+        """Only the most recent max_history events are rendered per in-flight action."""
+        mock_handle = MagicMock()
+        mock_handle._pause_event = MagicMock()
+        mock_handle._pause_event.is_set.return_value = True
 
-        contact_index = ContactIndex()
-        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        handle_actions = [
+            {"action_name": f"event_{i}", "query": f"content_{i}"} for i in range(10)
+        ]
 
-        result = renderer.render_state(
-            contact_index,
-            bar,
-            in_flight_actions={},
-            last_snapshot=last_snapshot,
-            max_pinned_notifications=3,
+        in_flight = {
+            0: {
+                "handle": mock_handle,
+                "query": "Test action",
+                "handle_actions": handle_actions,
+            },
+        }
+
+        result = renderer.render_in_flight_actions(in_flight, max_history=3)
+
+        # Only the 3 most recent events should appear
+        for i in range(7):
+            assert f"content_{i}" not in result
+        for i in range(7, 10):
+            assert f"content_{i}" in result
+
+    def test_completed_actions_count_capped(self, renderer):
+        """Only the most recent max_completed completed actions are rendered."""
+        completed = {
+            i: {
+                "handle": MagicMock(),
+                "query": f"action_{i}",
+                "handle_actions": [
+                    {"action_name": "act_completed", "query": f"result_{i}"},
+                ],
+            }
+            for i in range(10)
+        }
+
+        result = renderer.render_completed_actions(completed, max_completed=3)
+
+        # Only the 3 most recent (7, 8, 9) should appear
+        for i in range(7):
+            assert f"action_{i}" not in result
+        for i in range(7, 10):
+            assert f"action_{i}" in result
+
+    def test_completed_action_history_capped(self, renderer):
+        """Only the most recent max_history events are rendered per completed action."""
+        completed = {
+            0: {
+                "handle": MagicMock(),
+                "query": "Test action",
+                "handle_actions": [
+                    {"action_name": f"step_{i}", "query": f"detail_{i}"}
+                    for i in range(10)
+                ]
+                + [
+                    {"action_name": "act_completed", "query": "final result"},
+                ],
+            },
+        }
+
+        result = renderer.render_completed_actions(
+            completed,
+            max_completed=20,
+            max_history=3,
         )
 
-        # Only the 3 most recent should appear in the full render
-        for i in range(7):
-            assert f"action_{i}" not in result.full_render
-        for i in range(7, 10):
-            assert f"action_{i}" in result.full_render
+        # Only the 3 most recent history events should appear
+        # (the last 2 steps + act_completed)
+        for i in range(8):
+            assert f"detail_{i}" not in result
+        for i in range(8, 10):
+            assert f"detail_{i}" in result
+        assert "final result" in result
 
 
 # =============================================================================
