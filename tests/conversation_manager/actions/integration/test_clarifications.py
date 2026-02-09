@@ -101,15 +101,18 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
     await handle.answer_clarification(resp_call_id, "John Smith")
 
     # User asks to stop the action so the flow completes deterministically.
+    # stop_* with close=True (the default) erases the handle from both
+    # in_flight_actions and completed_actions, so we cannot call
+    # wait_for_actor_completion afterwards.
     result_stop = await cm.step_until_wait(
         SMSReceived(
             contact=BOSS,
             content="That's enough, cancel that contact search.",
         ),
     )
-    _final = await wait_for_actor_completion(cm, handle_id, timeout=300)
 
     assert_no_errors(result)
+    assert_no_errors(result_stop)
 
 
 @pytest.mark.asyncio
