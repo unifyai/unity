@@ -130,6 +130,7 @@ class ProductionSettings(BaseSettings):
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
     FIRST_MUTATION_TOOL_IS_ASK: bool = True
     STAGING: bool = False
+    DEMO_MODE: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Manager Configuration
@@ -166,6 +167,7 @@ class ProductionSettings(BaseSettings):
     @field_validator(
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",
+        "DEMO_MODE",
         "EVENTBUS_PUBLISHING_ENABLED",
         "PYTEST_LOG_TO_FILE",
         "UNITY_READONLY_ASK_GUARD",

@@ -78,12 +78,23 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     When SESSION_DETAILS has not been initialized (e.g., during tests),
     returns default user info to avoid calling real APIs.
 
+    In DEMO_MODE, returns empty details because the boss (contact_id==1)
+    is the prospect being demoed to — their details are unknown at startup
+    and will be learned organically during the demo conversation.
+
     Returns
     -------
     dict
         User info dict with first_name, last_name, email, and optionally phone_number.
     """
     from ..session_details import SESSION_DETAILS
+    from ..settings import SETTINGS
+
+    # In demo mode, there is no real user account backing contact_id==1.
+    # The prospect's details will be populated during the demo via
+    # set_boss_details / inline communication tools.
+    if SETTINGS.DEMO_MODE:
+        return {}
 
     # If SESSION_DETAILS hasn't been initialized, use defaults.
     # This ensures tests don't call real APIs for user info.
@@ -233,7 +244,44 @@ def provision_user_contact(self, user_log) -> None:
 
     Creates or updates the user (boss) contact using details resolved from
     SESSION_DETAILS, the Unify API, or default values.
+
+    In DEMO_MODE, the boss contact is the prospect being demoed to. If the
+    contact already exists (from a previous session), we preserve whatever
+    details were set during the demo (name, phone, email) and only warm
+    the local cache. If it doesn't exist yet, we create a minimal placeholder
+    with should_respond=True so communication tools work immediately.
     """
+    from ..settings import SETTINGS
+
+    if SETTINGS.DEMO_MODE:
+        if user_log is not None:
+            # Contact already exists — preserve all details set during the demo.
+            # Only ensure is_system is True (warm cache either way).
+            try:
+                entries = user_log.entries
+                if entries.get("is_system") is not True:
+                    self.update_contact(
+                        contact_id=1,
+                        _log_id=user_log.id,
+                        is_system=True,
+                    )
+                else:
+                    self._data_store.put(entries)
+            except Exception:
+                pass
+            return
+        # No existing contact — create a minimal placeholder.
+        try:
+            self._create_contact(
+                should_respond=True,
+                is_system=True,
+                response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+                timezone="UTC",
+            )
+        except (ValueError, RequestError):
+            pass
+        return
+
     user_info = _resolve_user_details(self)
 
     base_fields: Dict[str, Any] = {

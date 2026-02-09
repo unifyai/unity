@@ -166,6 +166,8 @@ async def entrypoint(ctx: agents.JobContext):
     llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="minimal")
 
     # Build Voice Agent prompt (used by both TTS and STS modes)
+    from unity.settings import SETTINGS
+
     assistant_name = SESSION_DETAILS.assistant.name
     system_prompt = build_voice_agent_prompt(
         bio=assistant_bio,
@@ -182,6 +184,7 @@ async def entrypoint(ctx: agents.JobContext):
         contact_bio=contact.get("bio") or None,
         is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
+        demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
     print("PRINTING SYSTEM PROMPT")
     print(system_prompt)

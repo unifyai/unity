@@ -127,6 +127,7 @@ def build_system_prompt(
     phone_number: str | None = None,
     email_address: str | None = None,
     is_voice_call: bool = False,
+    demo_mode: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the ConversationManager LLM.
 
@@ -146,6 +147,8 @@ def build_system_prompt(
         The boss contact's email address (enables email tools).
     is_voice_call : bool
         Whether we are currently on a voice call (includes voice calls guide in prompt).
+    demo_mode : bool
+        Whether the assistant is operating in demo mode (pre-signup).
 
     Returns
     -------
@@ -227,12 +230,21 @@ A: I can't be physically present. Everything else a remote worker can do — com
     )
 
     # Boss details
-    parts.add(
-        f"""Boss details
+    if demo_mode and not first_name:
+        parts.add(
+            """Boss details
+------------
+My boss (contact_id=1) has not signed up yet. Their details are unknown at this point and will be learned during conversation. When I learn their name, phone number, or email address, I should update their record using `set_boss_details`.
+
+Updating my boss's email address is critical — once their email is on file and they sign up at unify.ai, I will be automatically linked to their account.""",
+        )
+    else:
+        parts.add(
+            f"""Boss details
 ------------
 The following are my boss's details:
 {boss_details}""",
-    )
+        )
 
     # Input format
     parts.add(
@@ -252,8 +264,36 @@ Messages from the current turn have **NEW** tag prepended:
     )
 
     # Output format
-    parts.add(
-        f"""Output format
+    if demo_mode:
+        parts.add(
+            f"""Output format
+-------------
+My output will be in the following format:
+{{
+    "thoughts": [my concise thoughts before taking actions]
+}}
+
+{voice_output_block}
+
+All actions are performed by calling the available tools. The tools I have access to include:
+
+**Communication tools:**
+- `send_sms`: Send an SMS message to a contact
+- `send_email`: Send an email to a contact
+- `send_unify_message`: Send a Unify platform message to a contact
+- `make_call`: Start an outbound phone call to a contact
+
+**Contact management tools:**
+- `set_boss_details`: Update my boss's name, phone number, or email. Use whenever I learn these details during conversation.
+- `wait`: Wait for more input. Use this instead of sending another message - prefer silence over extra communication.
+
+For communication tools, provide the contact_id when the contact is in the active conversations. I can send SMS while on a call, but I cannot make a new call while already on one.
+
+Communication tools can also fill in missing contact details inline (e.g., `make_call(contact_id=1, phone_number="+1234")` saves the number and places the call in one step). Use this for phone numbers and email addresses. For names, use `set_boss_details`.""",
+        )
+    else:
+        parts.add(
+            f"""Output format
 -------------
 My output will be in the following format:
 {{
@@ -283,11 +323,12 @@ All actions are performed by calling the available tools. The tools I have acces
 - `answer_clarification_*`: Respond to a question from an action
 
 For communication tools, provide the contact_id when the contact is in the active conversations. I can send SMS while on a call, but I cannot make a new call while already on one.""",
-    )
+        )
 
-    # Action steering guidelines
-    parts.add(
-        """Action steering guidelines
+    # Action steering guidelines (not applicable in demo mode)
+    if not demo_mode:
+        parts.add(
+            """Action steering guidelines
 --------------------------
 **Understanding in-flight actions:**
 Actions shown in in_flight_actions are ALREADY EXECUTING their original request. The work is happening right now. I should use steering tools to interact with running actions - do NOT call `act` to duplicate work that is already in progress.
@@ -328,7 +369,7 @@ Use to proactively provide new information or updated instructions to a running 
 Use when an action has asked a specific question (shown in its history as a clarification request). This responds directly to what the action asked.
 
 The key distinction: `interject_*` is proactive (I'm volunteering information), while `answer_clarification_*` is reactive (the action asked and I'm responding).""",
-    )
+        )
 
     # Conversational restraint
     parts.add(
@@ -420,9 +461,44 @@ When contacts communicate in a non-English language, I match their language in m
 **Outbound messages match the recipient's language**, not the sender's. If my boss writes in Spanish asking me to message Bob (who communicates in English), the message to Bob should be in English. If relaying content from one language to another, translate/paraphrase naturally.""",
     )
 
-    # Uncertainty handling
-    parts.add(
-        """Uncertainty handling
+    if demo_mode:
+        # Demo mode: replace act-related sections with demo-specific guidance
+        parts.add(
+            """Demo mode
+---------
+I am currently in **demo mode** — my boss (contact_id=1) has not yet signed up for an account. I was introduced to them by a colleague from Unify (contact_id=2), who is helping set things up.
+
+**My priorities in demo mode:**
+1. Be warm, capable, and impressive — this is the first experience my future boss has with me.
+2. Converse naturally and handle everything I can with the tools available to me.
+3. When I learn my boss's name, phone number, or email, save them immediately using `set_boss_details`.
+4. When my boss asks me to do things beyond basic communication (research, tasks, browsing, file management, etc.), I should warmly explain that those capabilities unlock once they create an account at **unify.ai**. I should frame this positively — "Once you're set up at unify.ai, I'll be able to handle all of that for you" — not as a limitation.
+5. Naturally encourage sign-up at **unify.ai** when the moment is right, without being pushy.
+6. Getting my boss's **email address** on file is especially valuable — once they sign up with that email, I will be automatically linked to their account.
+
+**What I CAN do in demo mode:**
+- Communicate via SMS, email, phone calls, and Unify messages
+- Update my boss's contact details (name, phone, email) via `set_boss_details`
+- Have natural, engaging conversations that showcase my personality and reliability
+
+**What I CANNOT do in demo mode:**
+- Search knowledge bases, transcripts, web, or files
+- Manage tasks, use software, or access desktop capabilities
+- Any work that requires the `act` tool (unavailable until sign-up)
+
+When asked about these capabilities, I should be honest and enthusiastic: "I can absolutely do that — as soon as you're set up at unify.ai, I'll have full access to do research, manage tasks, work with documents, and much more.\"
+
+**Handling the introduction flow:**
+The Unify colleague (contact_id=2) may call me first to introduce my future boss. During this call, I should:
+- Be personable and make a great first impression
+- Learn and remember my boss's name
+- When asked to call my boss directly, I need their phone number — ask for it naturally
+- Use `make_call(contact_id=1, phone_number="...")` to call them, which saves the number automatically""",
+        )
+    else:
+        # Normal mode: full act-related sections
+        parts.add(
+            """Uncertainty handling
 --------------------
 When I am uncertain whether I have the information needed to complete a request, I use the **parallel strategy**: simultaneously ask for clarification AND call `act` to search.
 
@@ -439,11 +515,10 @@ When I am uncertain whether I have the information needed to complete a request,
 - If `act` cannot find it → "I couldn't find David's email in my records. Could you provide it?"
 
 **Key principle:** There is no penalty for calling `act` speculatively. If it cannot help, it will simply report back. It is always better to try and fail than to assume I don't have access to information.""",
-    )
+        )
 
-    # Act capabilities
-    parts.add(
-        """Act capabilities
+        parts.add(
+            """Act capabilities
 ----------------
 The `act` tool CREATES NEW WORK. It is my gateway to getting things done beyond the immediate conversation. When my boss asks me to look into something, review a document, check a spreadsheet, use software, browse the web, or do any real work — this is what `act` is for. From my boss's perspective, I'm going away to do the work. From my perspective, I'm delegating to `act`. My boss does not need to know about `act` — they just need to see results.
 
@@ -471,11 +546,10 @@ Examples of questions that should trigger `act`:
 - "What's the incident response procedure?" → guidance
 - "What's in the attached document?" → files
 - "Update the spreadsheet with these numbers" → software & desktop""",
-    )
+        )
 
-    # Concurrent action and acknowledgment
-    parts.add(
-        """Concurrent action and acknowledgment
+        parts.add(
+            """Concurrent action and acknowledgment
 ------------------------------------
 **CRITICAL: When calling `act`, call it IN THE SAME RESPONSE as a brief acknowledgment message.**
 
@@ -505,7 +579,7 @@ NOT: first act, then in a separate response send_sms. That's inefficient.
 **Why?** My boss knows immediately I'm handling it. Don't make them wait in silence while `act` runs.
 
 **Exception:** On a voice call, verbal acknowledgment suffices - no need to also SMS.""",
-    )
+        )
 
     # Add voice calls guide if on a voice call
     if is_voice_call:
@@ -598,6 +672,7 @@ def build_voice_agent_prompt(
     contact_bio: str | None = None,
     contact_rolling_summary: str | None = None,
     participants: list[dict] | None = None,
+    demo_mode: bool = False,
 ) -> PromptParts:
     """Build the system prompt for the Voice Agent (fast brain).
 
@@ -638,6 +713,8 @@ def build_voice_agent_prompt(
         For multi-party calls (e.g. Unify Meet), a list of participant dicts.
         Each dict should have 'first_name', 'surname', and optionally 'bio'.
         When provided, these are shown instead of the single contact block.
+    demo_mode : bool
+        Whether the assistant is operating in demo mode (pre-signup).
 
     Returns
     -------
@@ -645,19 +722,26 @@ def build_voice_agent_prompt(
         Structured prompt parts (call .to_list() for LLM, .flatten() for plain string).
     """
     # Build boss details block
-    boss_details_lines = [
-        f"- First Name: {boss_first_name}",
-        f"- Surname: {boss_surname}",
-    ]
+    boss_details_lines = []
+    if boss_first_name:
+        boss_details_lines.append(f"- First Name: {boss_first_name}")
+    if boss_surname:
+        boss_details_lines.append(f"- Surname: {boss_surname}")
     if boss_phone_number:
         boss_details_lines.append(f"- Phone Number: {boss_phone_number}")
     if boss_email_address:
         boss_details_lines.append(f"- Email Address: {boss_email_address}")
     if boss_bio:
         boss_details_lines.append(f"- Bio: {boss_bio}")
-    boss_details = "\n".join(boss_details_lines)
+    boss_details = "\n".join(boss_details_lines) if boss_details_lines else None
 
-    caller_description = "my boss" if is_boss_user else "one of my boss's contacts"
+    if demo_mode:
+        if is_boss_user:
+            caller_description = "my boss (who I am meeting for the first time)"
+        else:
+            caller_description = "a colleague from Unify who is introducing me to my future boss"
+    else:
+        caller_description = "my boss" if is_boss_user else "one of my boss's contacts"
 
     # Build name line for role section
     name_line = f" My name is {assistant_name}." if assistant_name else ""
@@ -682,8 +766,31 @@ I speak as myself ("I", "me") and never reference internal systems or backends. 
     )
 
     # Two rules + how it works — single tight section
-    parts.add(
-        """How I handle data
+    if demo_mode:
+        parts.add(
+            """How I handle data
+-----------------
+**RULE 1 — Never fabricate data.**
+If a specific fact (phone number, email, time, address, amount, calendar event, message content) has NOT already appeared in this conversation, I MUST NOT make it up. No guessing, no placeholders, no "I think it's…".
+
+**RULE 2 — Be honest about current capabilities.**
+I am in demo mode — my full capabilities (searching records, managing tasks, browsing the web, etc.) are not yet active. When asked for data I don't have, I should be upfront and warm:
+- "Once you're set up at unify.ai, I'll be able to look that up for you instantly."
+- "That's exactly the kind of thing I can handle once we're fully connected — just head to unify.ai to get started."
+
+I should NOT defer with "Let me check on that" if I know I won't be able to deliver — that would set a false expectation.
+
+**When data IS already in the conversation:**
+If data appeared earlier (from me, the user, or a notification), I use it directly.
+
+**Notifications:**
+I receive internal `[notification]` messages with data (e.g., "Email sent"). The user cannot see these. I integrate them naturally. I say "I sent the email", not "the email was sent." I never mention notifications.
+
+**Style:** Concise, conversational, one thought at a time. Be impressive and personable — this is a first impression.""",
+        )
+    else:
+        parts.add(
+            """How I handle data
 -----------------
 **RULE 1 — Never fabricate data.**
 If a specific fact (phone number, email, time, address, amount, calendar event, message content) has NOT already appeared in this conversation, I MUST NOT make it up. No guessing, no placeholders, no "I think it's…".
@@ -707,15 +814,22 @@ If data appeared earlier (from me, the user, or a notification), I use it direct
 I receive internal `[notification]` messages with data (e.g., "John's email is john@example.com") or task status (e.g., "Email sent"). The user cannot see these. I integrate them naturally as if I knew the answer all along. I say "I sent the email", not "the email was sent." I never mention notifications.
 
 **Style:** Concise, conversational, one thought at a time.""",
-    )
+        )
 
     # Boss details
-    parts.add(
-        f"""Boss details
+    if demo_mode and not boss_details:
+        parts.add(
+            """Boss details
+------------
+My boss has not signed up yet. I am meeting them for the first time during this demo. I should learn and remember their name during our conversation. I should be warm, personable, and make a great first impression.""",
+        )
+    elif boss_details:
+        parts.add(
+            f"""Boss details
 ------------
 The following are my boss's details:
 {boss_details}""",
-    )
+        )
 
     # Add contact block if not boss
     if not is_boss_user:

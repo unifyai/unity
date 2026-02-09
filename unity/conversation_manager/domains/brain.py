@@ -116,6 +116,8 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
     The returned spec is *pure* (no side effects) and can be used by either the
     legacy single-shot generate path or the async tool loop path.
     """
+    from unity.settings import SETTINGS
+
     prompt = cm.prompt_renderer.render_state(
         cm.contact_index,
         cm.notifications_bar,
@@ -134,6 +136,7 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
         phone_number=boss_contact.get("phone_number"),
         email_address=boss_contact.get("email_address"),
         is_voice_call=cm.call_manager.uses_realtime_api,
+        demo_mode=SETTINGS.DEMO_MODE,
     )
 
     response_model = _RESPONSE_MODELS[cm.mode]

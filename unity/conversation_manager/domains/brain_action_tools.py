@@ -1124,6 +1124,52 @@ class ConversationManagerBrainActionTools:
 
         return {"status": "acting", "query": query}
 
+    async def set_boss_details(
+        self,
+        *,
+        first_name: str | None = None,
+        surname: str | None = None,
+        phone_number: str | None = None,
+        email_address: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update the boss contact's details (contact_id=1).
+
+        Use this when you learn the boss's name, phone number, or email
+        address during conversation. Only provided fields are updated;
+        omitted fields are left unchanged.
+
+        Updating the boss's email address is especially important — once
+        their email is on file and they create an account at unify.ai,
+        the assistant will be automatically linked to their account.
+
+        Args:
+            first_name: The boss's first name.
+            surname: The boss's surname / last name.
+            phone_number: The boss's phone number.
+            email_address: The boss's email address.
+        """
+        await managers_utils.wait_for_initialization(self._cm)
+
+        updates = {
+            k: v
+            for k, v in {
+                "first_name": first_name,
+                "surname": surname,
+                "phone_number": phone_number,
+                "email_address": email_address,
+            }.items()
+            if v is not None
+        }
+        if not updates:
+            return {"status": "error", "error": "No fields provided to update."}
+
+        self._cm.contact_index.contact_manager.update_contact(
+            contact_id=1,
+            **updates,
+        )
+        return {"status": "updated", "updates": updates}
+
     async def wait(self) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
@@ -1142,14 +1188,20 @@ class ConversationManagerBrainActionTools:
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the static tools dict for start_async_tool_loop."""
-        return {
+        from unity.settings import SETTINGS
+
+        tools = {
             "send_sms": self.send_sms,
             "send_unify_message": self.send_unify_message,
             "send_email": self.send_email,
             "make_call": self.make_call,
-            "act": self.act,
             "wait": self.wait,
         }
+        if SETTINGS.DEMO_MODE:
+            tools["set_boss_details"] = self.set_boss_details
+        else:
+            tools["act"] = self.act
+        return tools
 
     def build_action_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Build dynamic tools for steering in-flight actions.
