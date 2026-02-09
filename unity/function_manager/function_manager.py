@@ -5262,8 +5262,8 @@ class FunctionManager(BaseFunctionManager):
         Execute a Python function on a remote Windows VM.
 
         Prerequisites:
-        - All file paths in call_kwargs must be under ~/Unity/
-        - FileSync makes these paths available at C:\\Unity\\...
+        - All file paths in call_kwargs must be under ~/
+        - FileSync makes these paths available on the remote VM
 
         Flow:
         1. Wait for VM to be ready

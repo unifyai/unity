@@ -129,7 +129,7 @@ def custom_function(
         windows_os_required: If True, function executes on remote Windows VM
                              when assistant has desktop_mode='windows'. Use for
                              Windows-only libraries like xlwings or COM automation.
-                             Files must be placed under ~/Unity/ for FileSync.
+                             Files must be placed under ~/ for FileSync.
 
     Example:
         @custom_function(venv_name="ml_env")
@@ -143,7 +143,7 @@ def custom_function(
             windows_os_required=True,
         )
         async def process_excel(input_path: str, output_path: str) -> dict:
-            '''Run on Windows VM. Paths must be under ~/Unity/.'''
+            '''Run on Windows VM. Paths must be under ~/.'''
             import xlwings as xw
             return {"sheets": 1}
     """

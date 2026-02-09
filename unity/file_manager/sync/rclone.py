@@ -25,7 +25,7 @@ class SyncResult:
 class RcloneSync:
     """Wrapper for rclone SFTP operations with retry and debugging.
 
-    Uses rclone to sync files between local ~/Unity and remote /Unity via SFTP.
+    Uses rclone to sync files between local ~ and remote /home via SFTP.
     Conflict resolution: latest wins (by modification time).
     """
 

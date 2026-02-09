@@ -536,6 +536,19 @@ def pytest_sessionfinish(session, exitstatus):
         unify.delete_project(unify.active_project())
 
 
+def pytest_unconfigure(config):
+    """Restore HOME and clean up the temporary test home directory."""
+    import shutil
+
+    test_home = os.environ.get("HOME", "")
+    if _original_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = _original_home
+    if test_home.startswith("/tmp/") and "unity_test_home_" in test_home:
+        shutil.rmtree(test_home, ignore_errors=True)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if SETTINGS.UNITY_CACHE_STATS:
         import unillm
@@ -551,7 +564,23 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 # --------------------------------------------------------------------------- #
 
 
+_original_home: str | None = None
+
+
 def pytest_configure(config):
+    # ------------------------------------------------------------------
+    # Isolate HOME so that tests never touch the real home directory.
+    # get_local_root() defaults to Path.home(), and the process cwd is
+    # set to the same path at startup.  By pointing HOME at a temp dir
+    # we keep Downloads/, .env, snapshots, etc. sandboxed.
+    # ------------------------------------------------------------------
+    import tempfile
+
+    global _original_home
+    _original_home = os.environ.get("HOME")
+    test_home = tempfile.mkdtemp(prefix="unity_test_home_")
+    os.environ["HOME"] = test_home
+
     config.addinivalue_line(
         "markers",
         "requires_real_unify: mark test as requiring the real unify implementation",
