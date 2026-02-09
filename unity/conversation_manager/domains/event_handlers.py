@@ -386,15 +386,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                     "timestamp": prompt_now(),
                 },
             )
-            action_query = cm.in_flight_actions[event.handle_id].get("query", "")
-            short_desc = (
-                action_query[:30] + "..." if len(action_query) > 30 else action_query
-            )
-            cm.notifications_bar.push_notif(
-                "Action",
-                f"Action '{short_desc}' needs clarification: {event.query}",
-                event.timestamp,
-            )
             await cm.request_llm_run()
     elif isinstance(event, ActorHandleResponse):
         # Handle response from an ask operation
@@ -758,11 +749,6 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(ActorHandleStarted)
 async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
-    cm.notifications_bar.push_notif(
-        "Action",
-        f"Action started: {event.query[:50]}{'...' if len(event.query) > 50 else ''}",
-        event.timestamp,
-    )
     await cm.request_llm_run()
 
 
@@ -808,19 +794,7 @@ async def _(
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
     action_data = cm.in_flight_actions.get(event.handle_id, {})
-    action_query = action_data.get("query", f"Action {event.handle_id}")
-    short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
 
-    # Pin action completion notifications so they persist across LLM runs.
-    # Action completions are FACTS about work done (not transient requests),
-    # and the CM should remember them until it communicates the result to the user.
-    cm.notifications_bar.push_notif(
-        "Action",
-        f"Action completed: {short_desc}\nResult: {event.result}",
-        event.timestamp,
-        pinned=True,
-        id=f"action_completion_{event.handle_id}",
-    )
     # Log completion in handle_actions before moving to completed_actions.
     from unity.common.prompt_helpers import now as prompt_now
 
@@ -849,16 +823,6 @@ async def _(event: ActorSessionResponse, cm: "ConversationManager", *args, **kwa
     until the brain interjects with the next instruction.
     """
     action_data = cm.in_flight_actions.get(event.handle_id, {})
-    action_query = action_data.get("query", f"Action {event.handle_id}")
-    short_desc = action_query[:30] + "..." if len(action_query) > 30 else action_query
-
-    cm.notifications_bar.push_notif(
-        "Action",
-        f"Response from session: {short_desc}\n{event.content}",
-        event.timestamp,
-        pinned=True,
-        id=f"action_response_{event.handle_id}",
-    )
 
     from unity.common.prompt_helpers import now as prompt_now
 
@@ -879,13 +843,18 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     """A progress notification from an in-flight action.
 
     Unlike ``ActorResponse``, notifications arrive while the actor is still
-    working.  They are unpinned (transient) and informational.
+    working.  Progress is recorded in the action's history.
     """
-    cm.notifications_bar.push_notif(
-        "Action",
-        f"Progress: {event.response}",
-        event.timestamp,
-    )
+    if event.handle_id in cm.in_flight_actions:
+        from unity.common.prompt_helpers import now as prompt_now
+
+        cm.in_flight_actions[event.handle_id]["handle_actions"].append(
+            {
+                "action_name": "progress",
+                "query": event.response,
+                "timestamp": prompt_now(),
+            },
+        )
     await cm.request_llm_run()
 
 

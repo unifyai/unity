@@ -892,8 +892,8 @@ class TestActorEventHandlers:
     """Tests for Actor-related event handlers."""
 
     @pytest.mark.asyncio
-    async def test_actor_handle_started_pushes_notification(self, mock_cm):
-        """ActorHandleStarted pushes a notification."""
+    async def test_actor_handle_started_does_not_push_notification(self, mock_cm):
+        """ActorHandleStarted does not push a notification (action state is shown in in_flight_actions)."""
         event = ActorHandleStarted(
             action_name="search_task",
             handle_id=1,
@@ -902,8 +902,7 @@ class TestActorEventHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert len(mock_cm.notifications_bar.notifications) == 1
-        assert "Action started" in mock_cm.notifications_bar.notifications[0].content
+        assert len(mock_cm.notifications_bar.notifications) == 0
 
     @pytest.mark.asyncio
     async def test_actor_handle_started_requests_llm_run(self, mock_cm):
@@ -919,8 +918,8 @@ class TestActorEventHandlers:
         mock_cm.request_llm_run.assert_called()
 
     @pytest.mark.asyncio
-    async def test_actor_result_moves_action_to_completed_and_notifies(self, mock_cm):
-        """ActorResult moves action from in_flight_actions to completed_actions and notifies."""
+    async def test_actor_result_moves_action_to_completed(self, mock_cm):
+        """ActorResult moves action from in_flight_actions to completed_actions."""
         mock_cm.in_flight_actions = {
             1: {"query": "Test action", "handle_actions": []},
         }
@@ -935,11 +934,11 @@ class TestActorEventHandlers:
         assert 1 not in mock_cm.in_flight_actions
         assert 1 in mock_cm.completed_actions
         assert mock_cm.completed_actions[1]["query"] == "Test action"
-        assert len(mock_cm.notifications_bar.notifications) == 1
-        notif = mock_cm.notifications_bar.notifications[0]
-        assert "Action completed" in notif.content
-        assert notif.pinned is True
-        assert notif.interjection_id == "action_completion_1"
+        # Result is recorded in handle_actions as act_completed event
+        handle_actions = mock_cm.completed_actions[1]["handle_actions"]
+        assert any(a["action_name"] == "act_completed" for a in handle_actions)
+        # No notification pushed (result is shown in completed_actions section)
+        assert len(mock_cm.notifications_bar.notifications) == 0
 
     @pytest.mark.asyncio
     async def test_actor_clarification_request_updates_handle_actions(self, mock_cm):

@@ -452,6 +452,9 @@ class Renderer:
         max_pinned_notifications: int = 50,
         max_contact_medium_messages: int = 25,
         max_global_messages: int = 100,
+        max_action_history_events: int = 20,
+        max_completed_actions: int = 20,
+        max_completed_action_history_events: int = 5,
     ) -> SnapshotState:
         """Render the full conversation state.
 
@@ -472,9 +475,14 @@ class Renderer:
         )
         actions_render = self.render_in_flight_actions(
             in_flight_actions,
+            max_history=max_action_history_events,
             elements_out=action_elements,
         )
-        completed_render = self.render_completed_actions(completed_actions)
+        completed_render = self.render_completed_actions(
+            completed_actions,
+            max_completed=max_completed_actions,
+            max_history=max_completed_action_history_events,
+        )
         convs_render = self.render_active_conversations(
             contact_index,
             last_snapshot=last_snapshot,
@@ -533,9 +541,60 @@ class Renderer:
 
         return f"<notifications>\n" + "\n".join(rendered_lines) + "\n</notifications>"
 
+    @staticmethod
+    def _render_action_history(
+        handle_actions: list[dict],
+        short_name: str,
+        handle_id: int,
+        max_history: int,
+    ) -> str:
+        """Render the event history for an action, capped to the most recent events."""
+        displayed = handle_actions[-max_history:]
+        if not displayed:
+            return ""
+        out = "<history>\n"
+        for a in displayed:
+            action_type = a.get("action_name", "")
+            action_query = a.get("query", "")
+            action_status = a.get("status", "")
+            action_ts = a.get("timestamp", "")
+
+            attrs = f"type='{action_type}'"
+            if action_ts:
+                attrs += f" timestamp='{action_ts}'"
+            if action_status:
+                attrs += f" status='{action_status}'"
+            out += f"<event {attrs}>\n"
+
+            if action_query:
+                out += f"  <content>{action_query}</content>\n"
+            if a_res := a.get("response"):
+                out += f"  <response>{a_res}</response>\n"
+
+            if action_status == "pending" and action_type.startswith("ask_"):
+                out += (
+                    "  <note>Result pending - you will receive another "
+                    "turn when the answer is ready.</note>\n"
+                )
+
+            if action_type == "clarification_request" and not a.get("response"):
+                call_id = a.get("call_id", "")
+                suffix = safe_call_id_suffix(call_id)
+                action = build_action_name(
+                    "answer_clarification",
+                    short_name,
+                    handle_id,
+                    suffix,
+                )
+                out += f"  <pending>Use {action} to respond</pending>\n"
+            out += "</event>\n"
+        out += "</history>\n"
+        return out
+
     def render_in_flight_actions(
         self,
         in_flight_actions: dict,
+        max_history: int = 20,
         elements_out: list[ActionElement] | None = None,
     ) -> str:
         """Render in-flight actions with their status and history."""
@@ -581,50 +640,12 @@ class Renderer:
                     action_render += f"  - {action_name}: {description}\n"
                 action_render += "</steering_tools>\n"
 
-                if handle_actions:
-                    action_render += "<history>\n"
-                    for a in handle_actions:
-                        action_type = a.get("action_name", "")
-                        action_query = a.get("query", "")
-                        action_status = a.get("status", "")
-                        action_ts = a.get("timestamp", "")
-
-                        attrs = f"type='{action_type}'"
-                        if action_ts:
-                            attrs += f" timestamp='{action_ts}'"
-                        if action_status:
-                            attrs += f" status='{action_status}'"
-                        action_render += f"<event {attrs}>\n"
-
-                        if action_query:
-                            action_render += f"  <content>{action_query}</content>\n"
-                        if a_res := a.get("response"):
-                            action_render += f"  <response>{a_res}</response>\n"
-
-                        if action_status == "pending" and action_type.startswith(
-                            "ask_",
-                        ):
-                            action_render += (
-                                "  <note>Result pending - you will receive another "
-                                "turn when the answer is ready.</note>\n"
-                            )
-
-                        if action_type == "clarification_request" and not a.get(
-                            "response",
-                        ):
-                            call_id = a.get("call_id", "")
-                            suffix = safe_call_id_suffix(call_id)
-                            action = build_action_name(
-                                "answer_clarification",
-                                short_name,
-                                handle_id,
-                                suffix,
-                            )
-                            action_render += (
-                                f"  <pending>Use {action} to respond</pending>\n"
-                            )
-                        action_render += "</event>\n"
-                    action_render += "</history>\n"
+                action_render += self._render_action_history(
+                    handle_actions,
+                    short_name,
+                    handle_id,
+                    max_history,
+                )
 
                 action_render += "</action>\n"
                 out += action_render
@@ -923,22 +944,48 @@ class Renderer:
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
 
-    def render_completed_actions(self, completed_actions: dict):
-        """Render completed actions that are available for querying.
+    def render_completed_actions(
+        self,
+        completed_actions: dict,
+        max_completed: int = 20,
+        max_history: int = 5,
+    ):
+        """Render completed actions with their result and a brief history.
 
-        These actions have finished execution but remain available for
-        `ask` queries about their trajectory/results.
+        Each entry is self-contained: original query, result, capped history,
+        and steering tools for post-completion queries.
         """
         out = "<completed_actions>\n"
         if not completed_actions:
             out += "No completed actions.\n"
         else:
-            for handle_id, handle_data in completed_actions.items():
+            # Cap to the most recent completed actions by handle_id (monotonic)
+            items = list(completed_actions.items())[-max_completed:]
+
+            for handle_id, handle_data in items:
                 query = handle_data.get("query", "")
                 short_name = derive_short_name(query)
+                handle_actions = handle_data.get("handle_actions", [])
+
+                # Extract result from the act_completed event
+                result = None
+                for a in reversed(handle_actions):
+                    if a.get("action_name") == "act_completed":
+                        result = a.get("query", "")
+                        break
 
                 out += f"<action id='{handle_id}' short_name='{short_name}' status='completed'>\n"
                 out += f"<original_request>{query}</original_request>\n"
+
+                if result is not None:
+                    out += f"<result>{result}</result>\n"
+
+                out += self._render_action_history(
+                    handle_actions,
+                    short_name,
+                    handle_id,
+                    max_history,
+                )
 
                 out += "<steering_tools>\n"
                 for (
