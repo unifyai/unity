@@ -307,13 +307,11 @@ class FileManager(BaseFileManager):
     @read_only
     def describe(
         self,
-        *,
-        file_path: Optional[str] = None,
-        file_id: Optional[int] = None,
+        file_path: str,
     ) -> "FileStorageMap":
         from .utils.storage import describe_file as _storage_describe_file
 
-        return _storage_describe_file(self, file_path=file_path, file_id=file_id)
+        return _storage_describe_file(self, file_path=file_path)
 
     # ------------------------- Sync helper ---------------------------------- #
     def _sync(self, *, file_path: str) -> Dict[str, Any]:
