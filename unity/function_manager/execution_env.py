@@ -37,7 +37,7 @@ def create_base_globals() -> Dict[str, Any]:
     Creates a dictionary of safe global functions for code execution.
 
     This provides a controlled environment with:
-    - Safe built-in functions (excluding dangerous ones like eval, exec, open)
+    - Safe built-in functions (excluding dangerous ones like eval, exec)
     - Common standard library modules (asyncio, re, json, datetime, collections)
     - Typing module and common type hints
     - Pydantic support (if available)
@@ -106,6 +106,13 @@ def create_base_globals() -> Dict[str, Any]:
             "AssertionError",
             "NameError",
             "OSError",
+            "IOError",
+            "FileNotFoundError",
+            "FileExistsError",
+            "PermissionError",
+            "IsADirectoryError",
+            # File I/O
+            "open",
             # Class-related
             "super",
             "property",
