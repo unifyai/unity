@@ -98,7 +98,7 @@ class ConversationState:
 
     contact_id: int
     on_call: bool = False
-    global_thread: deque = field(default_factory=lambda: deque(maxlen=50))
+    global_thread: deque = field(default_factory=lambda: deque(maxlen=100))
     threads: dict[Medium, deque] = field(
         default_factory=lambda: {
             Medium.SMS_MESSAGE: deque(maxlen=25),

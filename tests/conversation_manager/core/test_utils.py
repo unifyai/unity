@@ -355,9 +355,9 @@ class TestIterSteeringToolsForAction:
         """close_* should never appear in in-flight action steering tools."""
         actions = iter_steering_tools_for_action(0, "Test action")
         action_names = [a[0] for a in actions]
-        assert not any("close_" in n for n in action_names), (
-            f"close_* should not appear for in-flight actions: {action_names}"
-        )
+        assert not any(
+            "close_" in n for n in action_names
+        ), f"close_* should not appear for in-flight actions: {action_names}"
 
     def test_actions_have_descriptions(self):
         """All steering tools have non-empty descriptions."""
@@ -749,7 +749,7 @@ class TestRenderer:
         renderer,
         static_now,
     ):
-        """Global thread renders up to 50 messages while per-medium shows 5."""
+        """Global thread renders up to 100 messages while per-medium shows 25."""
         contact_info = {
             "contact_id": 1,
             "first_name": "John",
@@ -759,13 +759,13 @@ class TestRenderer:
             "response_policy": "Be polite",
         }
         conv_state = ConversationState(contact_id=1)
-        # Add 10 messages to both threads
+        # Add 30 messages to both threads (exceeds per-medium render cap of 25)
         base_time = static_now
-        for i in range(10):
+        for i in range(30):
             ts = base_time + timedelta(minutes=i)
             msg = Message(
                 name="John",
-                content=f"Message {i}",
+                content=f"msg_idx_{i:03d}",
                 timestamp=ts,
                 role="user",
             )
@@ -779,9 +779,9 @@ class TestRenderer:
             last_snapshot=last_snapshot,
         )
 
-        # Global thread should have all 10 messages
-        for i in range(10):
-            assert f"Message {i}" in result, f"Message {i} should be in output"
+        # Global thread should have all 30 messages
+        for i in range(30):
+            assert f"msg_idx_{i:03d}" in result, f"msg_idx_{i:03d} should be in output"
 
         # Count occurrences in global vs sms sections
         global_section = result[result.find("<global>") : result.find("</global>")]
@@ -789,19 +789,22 @@ class TestRenderer:
             result.find("<sms_message>") : result.find("</sms_message>")
         ]
 
-        # Global should have all 10
-        for i in range(10):
-            assert f"Message {i}" in global_section, f"Message {i} should be in global"
+        # Global should have all 30
+        for i in range(30):
+            assert (
+                f"msg_idx_{i:03d}" in global_section
+            ), f"msg_idx_{i:03d} should be in global"
 
-        # SMS should only have last 5 (default max_messages=5)
+        # SMS deque (maxlen=25) drops the first 5, and the render cap (25)
+        # shows all remaining — so only messages 5-29 appear in SMS
         for i in range(5):
             assert (
-                f"Message {i}" not in sms_section
-            ), f"Message {i} should NOT be in sms_message (too old)"
-        for i in range(5, 10):
+                f"msg_idx_{i:03d}" not in sms_section
+            ), f"msg_idx_{i:03d} should NOT be in sms_message (dropped by deque)"
+        for i in range(5, 30):
             assert (
-                f"Message {i}" in sms_section
-            ), f"Message {i} should be in sms_message"
+                f"msg_idx_{i:03d}" in sms_section
+            ), f"msg_idx_{i:03d} should be in sms_message"
 
     def test_empty_global_thread_not_rendered(
         self,
@@ -905,7 +908,7 @@ class TestContactIndex:
         contact_index,
         sample_contact_dict,
     ):
-        """Global thread (maxlen=50) retains messages after per-medium (maxlen=25) drops them."""
+        """Global thread (maxlen=100) retains messages after per-medium (maxlen=25) drops them."""
         # Push 30 messages to SMS - exceeds per-medium maxlen of 25
         for i in range(30):
             contact_index.push_message(
@@ -927,10 +930,10 @@ class TestContactIndex:
         # First message still present in global
         assert contact.global_thread[0].content == "Message 0"
 
-    def test_global_thread_maxlen_is_50(self, contact_index, sample_contact_dict):
-        """Global thread has maxlen of 50."""
-        # Push 60 messages
-        for i in range(60):
+    def test_global_thread_maxlen_is_100(self, contact_index, sample_contact_dict):
+        """Global thread has maxlen of 100."""
+        # Push 120 messages
+        for i in range(120):
             contact_index.push_message(
                 contact_id=sample_contact_dict["contact_id"],
                 sender_name="Test",
@@ -940,10 +943,10 @@ class TestContactIndex:
 
         contact = contact_index.active_conversations[1]
 
-        # Global thread capped at 50
-        assert len(contact.global_thread) == 50
-        # First 10 messages dropped
-        assert contact.global_thread[0].content == "Message 10"
+        # Global thread capped at 100
+        assert len(contact.global_thread) == 100
+        # First 20 messages dropped
+        assert contact.global_thread[0].content == "Message 20"
 
     def test_global_thread_preserves_chronological_order(
         self,
