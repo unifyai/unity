@@ -25,7 +25,6 @@ import pytest_asyncio
 from tests.helpers import scenario_file_lock, get_or_create_contact
 from tests.conversation_manager.cm_test_driver import CMStepDriver
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Contact definitions for demo tests
 # ─────────────────────────────────────────────────────────────────────────────
@@ -105,9 +104,9 @@ async def conversation_manager(request) -> CMStepDriver:
     from unity.conversation_manager.domains import managers_utils
     from unity.settings import SETTINGS
 
-    assert SETTINGS.DEMO_MODE, (
-        "DEMO_MODE should be True — check pytest_configure in demo/conftest.py"
-    )
+    assert (
+        SETTINGS.DEMO_MODE
+    ), "DEMO_MODE should be True — check pytest_configure in demo/conftest.py"
 
     reset_event_broker()
 
@@ -192,12 +191,14 @@ def initialized_cm(conversation_manager: CMStepDriver):
     conversation_manager.contact_index.clear_conversations()
 
     import unity.conversation_manager.domains.brain_action_tools as bat
+
     bat._next_handle_id = 0
 
     conversation_manager.cm.chat_history.clear()
     conversation_manager.all_tool_calls.clear()
 
     from unity.common.prompt_helpers import now as prompt_now
+
     conversation_manager.cm.last_snapshot = prompt_now(as_string=False)
 
     # Re-inject contact_id=1 into active_conversations (cleared above).

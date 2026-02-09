@@ -36,18 +36,15 @@ from __future__ import annotations
 
 import pytest
 
-from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.conversation_manager.events import (
     PhoneCallStarted,
     InboundPhoneUtterance,
-    OutboundPhoneUtterance,
     ActorResult,
-    ActorHandleStarted,
 )
 from unity.conversation_manager.types import Mode, Medium
 
-from tests.conversation_manager.conftest import BOSS, TEST_CONTACTS
+from tests.conversation_manager.conftest import BOSS
 
 pytestmark = pytest.mark.eval
 
@@ -322,9 +319,8 @@ class TestFastBrainMultiSpeakerTracking:
         # b) Not confidently attribute this to Richard
         # The model should NOT say "Sure Richard, let me check on that contract"
         response_lower = response.lower()
-        incorrectly_attributes_to_richard = (
-            "richard" in response_lower
-            and ("contract" in response_lower or "vendor" in response_lower)
+        incorrectly_attributes_to_richard = "richard" in response_lower and (
+            "contract" in response_lower or "vendor" in response_lower
         )
         assert not incorrectly_attributes_to_richard, (
             f"Fast brain incorrectly attributed the boss's question to Richard!\n"
@@ -657,7 +653,10 @@ class TestSlowBrainMultiSpeakerAwareness:
         )
 
         # If the slow brain called act, complete the action and check guidance
-        if "act" in initialized_cm.all_tool_calls and initialized_cm.cm.in_flight_actions:
+        if (
+            "act" in initialized_cm.all_tool_calls
+            and initialized_cm.cm.in_flight_actions
+        ):
             handle_id = next(iter(initialized_cm.cm.in_flight_actions))
 
             def _get_guidance_messages(cm, contact_id: int) -> list:
@@ -672,7 +671,8 @@ class TestSlowBrainMultiSpeakerAwareness:
                 ]
 
             guidance_before = _get_guidance_messages(
-                initialized_cm.cm, boss["contact_id"]
+                initialized_cm.cm,
+                boss["contact_id"],
             )
 
             result = await initialized_cm.step_until_wait(
@@ -688,9 +688,10 @@ class TestSlowBrainMultiSpeakerAwareness:
             )
 
             guidance_after = _get_guidance_messages(
-                initialized_cm.cm, boss["contact_id"]
+                initialized_cm.cm,
+                boss["contact_id"],
             )
-            new_guidance = guidance_after[len(guidance_before):]
+            new_guidance = guidance_after[len(guidance_before) :]
 
             all_guidance_text = " ".join(
                 getattr(g, "content", "") for g in guidance_after

@@ -45,10 +45,7 @@ async def _sms_and_get_replies(cm, contact: dict, message: str) -> list[str]:
     result = await cm.step_until_wait(
         SMSReceived(contact=contact, content=message),
     )
-    return [
-        sms.content
-        for sms in filter_events_by_type(result.output_events, SMSSent)
-    ]
+    return [sms.content for sms in filter_events_by_type(result.output_events, SMSSent)]
 
 
 async def _sms_and_get_all_events(cm, contact: dict, message: str):
@@ -157,10 +154,7 @@ async def test_boss_learns_name_via_set_boss_details(initialized_cm):
     await _sms_and_get_replies(
         initialized_cm,
         DEMO_OPERATOR,
-        (
-            "Your new boss is called Richard Hendricks. "
-            "Please save his details."
-        ),
+        ("Your new boss is called Richard Hendricks. " "Please save his details."),
     )
 
     # Verify the name was saved to the boss contact.
@@ -168,9 +162,9 @@ async def test_boss_learns_name_via_set_boss_details(initialized_cm):
     # because all_tool_calls only tracks one tool per LLM step and may miss
     # set_boss_details if it was called alongside send_sms in one step.
     boss = initialized_cm.contact_index.get_contact(1)
-    assert boss.get("first_name") == "Richard", (
-        f"Expected boss first_name='Richard', got {boss.get('first_name')!r}"
-    )
+    assert (
+        boss.get("first_name") == "Richard"
+    ), f"Expected boss first_name='Richard', got {boss.get('first_name')!r}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

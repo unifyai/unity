@@ -18,7 +18,6 @@ These tests verify the tool implementations directly, testing:
 from __future__ import annotations
 
 import asyncio
-import inspect
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1501,9 +1500,9 @@ class TestCompletedActionTools:
 
         ask_tools = [n for n in tool_names if n.startswith("ask_")]
         assert len(ask_tools) == 1, f"Expected 1 ask tool, got {ask_tools}"
-        assert not any(n.startswith("close_") for n in tool_names), (
-            f"close_* should not appear for completed actions: {tool_names}"
-        )
+        assert not any(
+            n.startswith("close_") for n in tool_names
+        ), f"close_* should not appear for completed actions: {tool_names}"
 
     def test_no_completed_actions_yields_no_tools(
         self,

@@ -13,19 +13,9 @@ Symbolic tests verifying the demo mode infrastructure:
 import pytest
 
 from tests.helpers import _handle_project
-from tests.conversation_manager.cm_helpers import (
-    filter_events_by_type,
-    make_contacts_visible,
-)
 from tests.conversation_manager.demo.conftest import (
     DEMO_OPERATOR,
 )
-from unity.conversation_manager.events import (
-    SMSReceived,
-    SMSSent,
-    ActorHandleStarted,
-)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool surface tests
@@ -44,7 +34,9 @@ async def test_act_is_masked_in_demo_mode(initialized_cm):
     tools = action_tools.as_tools()
 
     assert "act" not in tools, "act should be masked in demo mode"
-    assert "set_boss_details" in tools, "set_boss_details should be exposed in demo mode"
+    assert (
+        "set_boss_details" in tools
+    ), "set_boss_details should be exposed in demo mode"
 
 
 @pytest.mark.asyncio
@@ -58,7 +50,13 @@ async def test_communication_tools_still_available(initialized_cm):
     action_tools = ConversationManagerBrainActionTools(initialized_cm.cm)
     tools = action_tools.as_tools()
 
-    for tool_name in ("send_sms", "send_email", "make_call", "send_unify_message", "wait"):
+    for tool_name in (
+        "send_sms",
+        "send_email",
+        "make_call",
+        "send_unify_message",
+        "wait",
+    ):
         assert tool_name in tools, f"{tool_name} should be available in demo mode"
 
 
@@ -76,21 +74,21 @@ async def test_boss_contact_starts_sparse(initialized_cm):
 
     # In demo mode, boss details should be empty/None
     # (they get populated during the demo conversation)
-    assert not boss.get("first_name"), (
-        f"Boss first_name should be empty, got: {boss.get('first_name')!r}"
-    )
-    assert not boss.get("email_address"), (
-        f"Boss email should be empty, got: {boss.get('email_address')!r}"
-    )
+    assert not boss.get(
+        "first_name",
+    ), f"Boss first_name should be empty, got: {boss.get('first_name')!r}"
+    assert not boss.get(
+        "email_address",
+    ), f"Boss email should be empty, got: {boss.get('email_address')!r}"
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_boss_always_in_active_conversations(initialized_cm):
     """contact_id=1 should be in active_conversations even before any messages."""
-    assert 1 in initialized_cm.contact_index.active_conversations, (
-        "Boss (contact_id=1) should be in active_conversations in demo mode"
-    )
+    assert (
+        1 in initialized_cm.contact_index.active_conversations
+    ), "Boss (contact_id=1) should be in active_conversations in demo mode"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -225,19 +223,19 @@ async def test_slow_brain_prompt_contains_demo_guidance(initialized_cm):
     spec = build_brain_spec(initialized_cm.cm)
     prompt_text = spec.system_prompt.flatten()
 
-    assert "demo mode" in prompt_text.lower(), (
-        "Slow brain prompt should mention demo mode"
-    )
-    assert "set_boss_details" in prompt_text, (
-        "Slow brain prompt should mention set_boss_details tool"
-    )
-    assert "unify.ai" in prompt_text.lower(), (
-        "Slow brain prompt should mention unify.ai for sign-up"
-    )
+    assert (
+        "demo mode" in prompt_text.lower()
+    ), "Slow brain prompt should mention demo mode"
+    assert (
+        "set_boss_details" in prompt_text
+    ), "Slow brain prompt should mention set_boss_details tool"
+    assert (
+        "unify.ai" in prompt_text.lower()
+    ), "Slow brain prompt should mention unify.ai for sign-up"
     # act should NOT be mentioned in the tool list
-    assert "act` freely" not in prompt_text, (
-        "Slow brain prompt should not encourage using act in demo mode"
-    )
+    assert (
+        "act` freely" not in prompt_text
+    ), "Slow brain prompt should not encourage using act in demo mode"
 
 
 @pytest.mark.asyncio
@@ -257,6 +255,6 @@ async def test_voice_prompt_contains_demo_guidance(initialized_cm):
 
     assert "demo" in text.lower(), "Voice prompt should reference demo context"
     assert "unify.ai" in text.lower(), "Voice prompt should mention unify.ai"
-    assert "first time" in text.lower() or "not signed up" in text.lower(), (
-        "Voice prompt should indicate boss hasn't signed up"
-    )
+    assert (
+        "first time" in text.lower() or "not signed up" in text.lower()
+    ), "Voice prompt should indicate boss hasn't signed up"
