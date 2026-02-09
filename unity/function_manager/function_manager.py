@@ -1688,32 +1688,14 @@ class FunctionManager(BaseFunctionManager):
         self._custom_functions_synced = False
 
         # ------------------------------------------------------------------ #
-        #  File system mirroring (functions folder under FileManager root)    #
+        #  LocalFileManager reference (for VM sync manager access)           #
         # ------------------------------------------------------------------ #
         try:
-            # Resolve a LocalFileManager instance (DI preferred, else via registry)
             self._fm: Optional[LocalFileManager] = (
                 file_manager if file_manager is not None else LocalFileManager()
             )
         except Exception:
             self._fm = None
-
-        self._functions_dir: Optional[Path] = None
-        if self._fm is not None:
-            try:
-                # Access adapter root directly (LocalFileSystemAdapter._root)
-                adapter = getattr(self._fm, "_adapter", None)
-                root_dir = getattr(adapter, "_root", None) if adapter else None
-
-                if root_dir is not None and isinstance(root_dir, Path):
-                    functions_dir = root_dir / "functions"
-                    functions_dir.mkdir(parents=True, exist_ok=True)
-                    self._functions_dir = functions_dir
-                    # Bootstrap: mirror existing functions from context to disk (idempotent)
-                    self._bootstrap_functions_to_disk()
-            except Exception:
-                # Non-fatal – tests without FileManager still pass
-                self._functions_dir = None
 
         # ------------------------------------------------------------------ #
         #  In-process session state (for stateful/read_only modes)           #
@@ -1895,78 +1877,6 @@ class FunctionManager(BaseFunctionManager):
             return None
         assert len(logs) == 1, f"Multiple functions found with id {function_id!r}."
         return logs[0]
-
-    # ------------------------------------------------------------------ #
-    #  Filesystem helpers                                                #
-    # ------------------------------------------------------------------ #
-
-    def _function_filename(self, name: str) -> str:
-        """Return canonical filename for a function (no extensions in name)."""
-        safe = name.strip().replace(os.sep, "_")
-        return f"{safe}.py"
-
-    def _function_path(self, name: str) -> Optional[Path]:
-        if self._functions_dir is None:
-            return None
-        return self._functions_dir / self._function_filename(name)
-
-    def _write_function_file(self, name: str, source: str) -> Optional[Path]:
-        """Atomically write the function source into the functions folder."""
-        p = self._function_path(name)
-        if p is None:
-            return None
-        try:
-            tmp = p.with_suffix(p.suffix + ".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(source)
-            os.replace(tmp, p)
-            return p
-        except Exception:
-            return None
-
-    def _register_function_file(self, name: str, path: Path) -> None:
-        """Register function file with FileManager as protected and visible."""
-        if self._fm is None:
-            return
-        display = f"functions/{path.name}"
-        try:
-            # Idempotent: if already registered under same display, keep it
-            if not self._fm.exists(display):
-                self._fm.register_existing_file(
-                    path,
-                    display_name=display,
-                    protected=True,
-                )
-        except Exception:
-            # Best-effort registration only
-            pass
-
-    def _bootstrap_functions_to_disk(self) -> None:
-        """Ensure all existing functions have a file on disk and are registered."""
-        if self._functions_dir is None:
-            return
-        try:
-            logs = unify.get_logs(
-                context=self._compositional_ctx,
-                exclude_fields=list_private_fields(self._compositional_ctx),
-            )
-            for lg in logs:
-                name = lg.entries.get("name")
-                impl = lg.entries.get("implementation") or ""
-                if not isinstance(name, str) or not impl:
-                    continue
-                p = self._function_path(name)
-                if p is None:
-                    continue
-                if not p.exists():
-                    wrote = self._write_function_file(name, impl)
-                    if wrote is not None:
-                        self._register_function_file(name, wrote)
-                else:
-                    # Ensure it's registered as protected even if file already exists
-                    self._register_function_file(name, p)
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
@@ -2796,7 +2706,6 @@ class FunctionManager(BaseFunctionManager):
         entries_to_update: List[Dict[str, Any]] = []
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
-        functions_to_write: List[Tuple[str, str]] = []
 
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
@@ -2847,8 +2756,6 @@ class FunctionManager(BaseFunctionManager):
                     entry_data["guidance_ids"] = []
                     entries_to_create.append(entry_data)
                     results[name] = "added"
-
-                functions_to_write.append((name, source))
             except ValueError as e:
                 results[name] = f"error: {e}"
             except Exception as e:
@@ -2876,9 +2783,6 @@ class FunctionManager(BaseFunctionManager):
                     name = entry["name"]
                     if results.get(name) == "added":
                         results[name] = f"error: Failed to create log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
 
         # Batch update existing functions
         if log_ids_to_update and entries_to_update:
@@ -2898,15 +2802,6 @@ class FunctionManager(BaseFunctionManager):
                     name = log_id_to_name.get(log_id)
                     if name and results.get(name) == "updated":
                         results[name] = f"error: Failed to update log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
-
-        # Write function files to disk
-        for name, source in functions_to_write:
-            p = self._write_function_file(name, source)
-            if p is not None:
-                self._register_function_file(name, p)
 
         # Check for errors and raise if requested
         if raise_on_error:
@@ -2992,7 +2887,6 @@ class FunctionManager(BaseFunctionManager):
         entries_to_update: List[Dict[str, Any]] = []
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
-        functions_to_write: List[Tuple[str, str]] = []
 
         for name, argspec, docstring, source, lang in parsed:
             if name in duplicates_to_skip:
@@ -3031,8 +2925,6 @@ class FunctionManager(BaseFunctionManager):
                     entries_to_create.append(entry_data)
                     results[name] = "added"
 
-                functions_to_write.append((name, source))
-
             except Exception as e:
                 results[name] = f"error: {e}"
                 logger.error(
@@ -3058,9 +2950,6 @@ class FunctionManager(BaseFunctionManager):
                     name = entry["name"]
                     if results.get(name) == "added":
                         results[name] = f"error: Failed to create log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
 
         # Batch update existing functions
         if log_ids_to_update and entries_to_update:
@@ -3080,23 +2969,12 @@ class FunctionManager(BaseFunctionManager):
                     name = log_id_to_name.get(log_id)
                     if name and results.get(name) == "updated":
                         results[name] = f"error: Failed to update log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
-
-        # Write function files to disk (with appropriate extension)
-        for name, source in functions_to_write:
-            ext = ".sh" if language in ("bash", "zsh", "sh") else ".ps1"
-            p = self._write_function_file(f"{name}{ext}", source)
-            if p is not None:
-                self._register_function_file(name, p)
 
         # Check for errors and raise if requested
         if raise_on_error:
             errors = {k: v for k, v in results.items() if v.startswith("error")}
             if errors:
                 error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
-                raise ValueError(f"Failed to add function(s): {error_details}")
 
         return results
 
@@ -3771,102 +3649,6 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return {"callables": callables_list, "metadata": metadata_rows}  # type: ignore[return-value]
         return callables_list  # type: ignore[return-value]
-
-    # ------------------------------------------------------------------ #
-    #  Accessors and disk → context sync                                 #
-    # ------------------------------------------------------------------ #
-
-    def get_function_file_path(self, name: str) -> Optional[str]:
-        p = self._function_path(name)
-        return str(p) if p is not None else None
-
-    def list_function_files(self) -> Dict[str, str]:
-        out: Dict[str, str] = {}
-        try:
-            logs = unify.get_logs(
-                context=self._compositional_ctx,
-                exclude_fields=list_private_fields(self._compositional_ctx),
-            )
-            for lg in logs:
-                nm = lg.entries.get("name")
-                if not isinstance(nm, str):
-                    continue
-                p = self._function_path(nm)
-                if p is not None:
-                    out[nm] = str(p)
-        except Exception:
-            pass
-        return out
-
-    def sync_from_disk(self, *, prefer_file_when_newer: bool = True) -> List[str]:
-        """
-        Reconcile function files under functions/ with the context rows.
-
-        Policy: if the on-disk file differs from the stored implementation, update
-        the context to the file contents. Returns the list of function names updated.
-        """
-        updated: List[str] = []
-        if self._functions_dir is None:
-            return updated
-        try:
-            # Build a map of name→(log_id, impl)
-            rows = unify.get_logs(
-                context=self._compositional_ctx,
-                exclude_fields=list_private_fields(self._compositional_ctx),
-            )
-            name_to_log: Dict[str, Tuple[int, str]] = {}
-            for lg in rows:
-                nm = lg.entries.get("name")
-                if isinstance(nm, str):
-                    name_to_log[nm] = (lg.id, lg.entries.get("implementation") or "")
-
-            for name, (log_id, stored_impl) in name_to_log.items():
-                p = self._function_path(name)
-                if p is None or not p.exists():
-                    continue
-                try:
-                    file_text = p.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                if file_text.strip() == (stored_impl or "").strip():
-                    # Ensure it's registered as protected
-                    self._register_function_file(name, p)
-                    continue
-
-                # Parse and validate file to rebuild signature/docstring/depends_on
-                try:
-                    nm2, tree, node, _src = self._parse_implementation(file_text)
-                    if nm2 != name:
-                        # Skip mismatched names; keep 1:1 name↔file mapping
-                        continue
-                    namespace = create_base_globals()
-                    exec(file_text, namespace)
-                    fn_obj = namespace[name]
-                    signature = str(inspect.signature(fn_obj))
-                    docstring = inspect.getdoc(fn_obj) or ""
-                    depends_on = list(self._collect_function_calls(node))
-                    embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
-                    # Update unify row
-                    unify.update_logs(
-                        logs=[log_id],
-                        context=self._compositional_ctx,
-                        entries={
-                            "argspec": signature,
-                            "docstring": docstring,
-                            "implementation": file_text,
-                            "depends_on": depends_on,
-                            "embedding_text": embedding_text,
-                        },
-                        overwrite=True,
-                    )
-                    # Ensure it's registered as protected
-                    self._register_function_file(name, p)
-                    updated.append(name)
-                except Exception:
-                    continue
-        except Exception:
-            return updated
-        return updated
 
     # 5. Semantic Search ------------------------------------------------ #
     @functools.wraps(BaseFunctionManager.search_functions, updated=())
