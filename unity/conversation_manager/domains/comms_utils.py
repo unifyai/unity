@@ -307,11 +307,9 @@ async def add_email_attachments(
                 async with session.get(url, headers=headers, params=params) as resp:
                     data = await resp.read()
 
-                from unity.file_manager.managers.local import (
-                    LocalFileManager as FileManager,
-                )
+                from unity.manager_registry import ManagerRegistry
 
-                file_manager = FileManager()
+                file_manager = ManagerRegistry.get_file_manager()
                 await asyncio.to_thread(
                     file_manager.save_file_to_downloads,
                     safe_filename,
@@ -401,11 +399,9 @@ async def add_unify_message_attachments(
                     # No URL available - use empty placeholder
                     data = b""
 
-                from unity.file_manager.managers.local import (
-                    LocalFileManager as FileManager,
-                )
+                from unity.manager_registry import ManagerRegistry
 
-                file_manager = FileManager()
+                file_manager = ManagerRegistry.get_file_manager()
                 await asyncio.to_thread(
                     file_manager.save_file_to_downloads,
                     safe_filename,
