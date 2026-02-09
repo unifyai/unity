@@ -164,8 +164,11 @@ async def test_parallel_action_completion_preserves_first_result(
         except TimeoutError:
             # If an action times out, it may have already been processed
             pass
-        except KeyError:
-            # Handle may have been removed from in_flight_actions
+        except (KeyError, AssertionError):
+            # Handle may have been removed from in_flight_actions.
+            # With stop_* close=True (default), the handle is erased from
+            # both in_flight_actions and completed_actions, causing
+            # extract_actor_handle to raise AssertionError.
             pass
 
     # Step 4: Verify contact was created exactly ONCE
