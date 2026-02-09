@@ -191,9 +191,11 @@ class SecretManager(BaseSecretManager):
         """
         import os as _os
 
-        return SETTINGS.secret.DOTENV_PATH or _os.path.join(
-            str(_os.path.expanduser("~/Unity/Local")), ".env",
-        )
+        if SETTINGS.secret.DOTENV_PATH:
+            return SETTINGS.secret.DOTENV_PATH
+        from unity.file_manager.settings import get_local_root
+
+        return _os.path.join(get_local_root(), ".env")
 
     def _ensure_dotenv_synced_on_init(self) -> None:
         """Create .env if missing and merge existing Unify secrets into it."""

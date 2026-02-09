@@ -9,7 +9,24 @@ file_parsers/settings.py as FileParserSettings, which is intentionally
 separate to keep parsing concerns modular.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def get_local_root() -> str:
+    """Return the resolved local file root directory.
+
+    Uses ``SETTINGS.file.LOCAL_ROOT`` when set, otherwise defaults to
+    ``~/Unity/Local``.  All code that needs the local file root should
+    call this function instead of hard-coding the path.
+    """
+    from unity.settings import SETTINGS
+
+    explicit = SETTINGS.file.LOCAL_ROOT.strip()
+    if explicit:
+        return str(Path(explicit).expanduser().resolve())
+    return str(Path.home() / "Unity" / "Local")
 
 
 class FileSettings(BaseSettings):
@@ -18,6 +35,9 @@ class FileSettings(BaseSettings):
     Attributes:
         ENABLED: Whether FileManager is enabled.
         IMPL: Implementation type - "real" or "simulated".
+        LOCAL_ROOT: Root directory for local file operations and the
+            CodeActActor working directory.  Defaults to ``~/Unity/Local``.
+            Override via ``UNITY_FILE_LOCAL_ROOT`` env var.
         CONSOLE_BASE_URL: Base URL for Unify Console (Plot API).
         PLOT_API_ENDPOINT: Endpoint path for plot creation.
         PLOT_API_TIMEOUT: Timeout in seconds for plot API requests.
@@ -27,6 +47,7 @@ class FileSettings(BaseSettings):
 
     ENABLED: bool = False
     IMPL: str = "real"
+    LOCAL_ROOT: str = ""
 
     # Plot API settings
     CONSOLE_BASE_URL: str = "https://console.unify.ai"

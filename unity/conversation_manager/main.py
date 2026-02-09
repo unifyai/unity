@@ -173,14 +173,15 @@ async def run_conversation_manager(
     # Populate session details from environment
     _populate_session_details_from_env()
 
-    # Set the process working directory to ~/Unity/Local so that relative file
-    # paths in CodeActActor-generated code (e.g. "Downloads/report.pdf") resolve
-    # against the same root used by LocalFileSystemAdapter.  This must happen
-    # after settings/env are loaded but before any concurrent tasks are created,
-    # since os.chdir() is process-global.
+    # Set the process working directory to the local file root so that relative
+    # file paths in CodeActActor-generated code (e.g. "Downloads/report.pdf")
+    # resolve against the same root used by LocalFileSystemAdapter.  This must
+    # happen after settings/env are loaded but before any concurrent tasks are
+    # created, since os.chdir() is process-global.
     from pathlib import Path as _P
+    from unity.file_manager.settings import get_local_root
 
-    _local_root = _P.home() / "Unity" / "Local"
+    _local_root = _P(get_local_root())
     _local_root.mkdir(parents=True, exist_ok=True)
     os.chdir(_local_root)
 

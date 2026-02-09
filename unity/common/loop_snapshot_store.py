@@ -65,7 +65,12 @@ def default_store(
     """
 
     # Resolve base directory
-    root = Path(base_dir) if base_dir is not None else Path.home() / "Unity" / "Local" / "snapshots"
+    if base_dir is not None:
+        root = Path(base_dir)
+    else:
+        from unity.file_manager.settings import get_local_root
+
+        root = Path(get_local_root()) / "snapshots"
     try:
         root.mkdir(parents=True, exist_ok=True)
     except Exception:
