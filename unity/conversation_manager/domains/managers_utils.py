@@ -415,7 +415,7 @@ async def update_rolling_summaries(cm: "ConversationManager") -> None:
         rendered = cm.prompt_renderer.render_contact(
             contact_info=contact_info,
             conv_state=conv_state,
-            max_messages=25,
+            max_contact_medium_messages=25,
             last_snapshot=cm.last_snapshot,
         )
         render_data.append((contact_id, rendered))

@@ -809,6 +809,142 @@ class TestRenderStateWithTracking:
 
 
 # =============================================================================
+# Tests for Notification Pinned Cap
+# =============================================================================
+
+
+class TestNotificationPinnedCap:
+    """Tests for max_pinned_notifications capping in render_notification_bar."""
+
+    @pytest.fixture
+    def renderer(self):
+        return Renderer()
+
+    @pytest.fixture
+    def notification_bar_with_many_pinned(self):
+        """Create a NotificationBar with more pinned notifications than the cap."""
+        bar = NotificationBar()
+        for i in range(10):
+            bar.push_notif(
+                "Action",
+                f"Action completed: task_{i}",
+                datetime(2025, 6, 13, 12, i, 0, tzinfo=timezone.utc),
+                pinned=True,
+                id=f"action_{i}",
+            )
+        return bar
+
+    def test_pinned_notifications_capped_to_max(
+        self,
+        renderer,
+        notification_bar_with_many_pinned,
+    ):
+        """Only the most recent max_pinned pinned notifications are rendered."""
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_notification_bar(
+            notification_bar_with_many_pinned,
+            last_snapshot=last_snapshot,
+            max_pinned=5,
+        )
+
+        # The 5 most recent (task_5 through task_9) should be present
+        for i in range(5, 10):
+            assert f"task_{i}" in result
+        # The 5 oldest (task_0 through task_4) should be absent
+        for i in range(5):
+            assert f"task_{i}" not in result
+
+    def test_pinned_notifications_under_cap_all_rendered(
+        self,
+        renderer,
+        notification_bar_with_many_pinned,
+    ):
+        """When pinned count is under the cap, all are rendered."""
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_notification_bar(
+            notification_bar_with_many_pinned,
+            last_snapshot=last_snapshot,
+            max_pinned=50,
+        )
+
+        for i in range(10):
+            assert f"task_{i}" in result
+
+    def test_pinned_cap_does_not_affect_transient_notifications(
+        self,
+        renderer,
+    ):
+        """Transient (non-pinned) notifications are unaffected by the pinned cap."""
+        bar = NotificationBar()
+        # Add pinned notifications (will be capped)
+        for i in range(5):
+            bar.push_notif(
+                "Action",
+                f"pinned_{i}",
+                datetime(2025, 6, 13, 12, i, 0, tzinfo=timezone.utc),
+                pinned=True,
+                id=f"pinned_{i}",
+            )
+        # Add transient notifications (newer than last_snapshot)
+        for i in range(3):
+            bar.push_notif(
+                "Comms",
+                f"transient_{i}",
+                datetime(2025, 6, 13, 12, 30, i, tzinfo=timezone.utc),
+                pinned=False,
+            )
+
+        last_snapshot = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_notification_bar(
+            bar,
+            last_snapshot=last_snapshot,
+            max_pinned=2,
+        )
+
+        # Only 2 most recent pinned should appear
+        assert "pinned_0" not in result
+        assert "pinned_1" not in result
+        assert "pinned_2" not in result
+        assert "pinned_3" in result
+        assert "pinned_4" in result
+        # All transient notifications should still appear
+        for i in range(3):
+            assert f"transient_{i}" in result
+
+    def test_pinned_cap_flows_through_render_state(self, renderer):
+        """max_pinned_notifications parameter flows from render_state to render_notification_bar."""
+        bar = NotificationBar()
+        for i in range(10):
+            bar.push_notif(
+                "Action",
+                f"action_{i}",
+                datetime(2025, 6, 13, 12, i, 0, tzinfo=timezone.utc),
+                pinned=True,
+                id=f"action_{i}",
+            )
+
+        contact_index = ContactIndex()
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+
+        result = renderer.render_state(
+            contact_index,
+            bar,
+            in_flight_actions={},
+            last_snapshot=last_snapshot,
+            max_pinned_notifications=3,
+        )
+
+        # Only the 3 most recent should appear in the full render
+        for i in range(7):
+            assert f"action_{i}" not in result.full_render
+        for i in range(7, 10):
+            assert f"action_{i}" in result.full_render
+
+
+# =============================================================================
 # Tests for Completed Actions Rendering
 # =============================================================================
 
