@@ -17,6 +17,7 @@ import asyncio
 import functools
 import inspect
 import logging
+import threading
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -50,6 +51,11 @@ logger = logging.getLogger(__name__)
 
 # Default agent-service URL for local development
 DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
+
+# Gate that blocks lazy MagnitudeBackend initialization until the managed VM is
+# confirmed ready.  Set immediately for localhost / mock (no VM to wait for),
+# or by _startup_sequence after log_job_startup confirms VM readiness.
+_vm_ready = threading.Event()
 
 
 class ComputerPrimitives:
@@ -127,6 +133,11 @@ class ComputerPrimitives:
         self._computer = None
         self._computer_mode = computer_mode
         self._computer_kwargs_map = computer_kwargs
+
+        # No VM to wait for when using mock backend or co-located agent-service
+        if computer_mode == "mock" or resolved_url == DEFAULT_AGENT_SERVER_URL:
+            _vm_ready.set()
+
         # Lazily create the Computer (and thus avoid connecting to agent-service) unless requested
         if connect_now:
             from unity.function_manager.computer import Computer
@@ -170,6 +181,14 @@ class ComputerPrimitives:
                 # MagnitudeBackend) do not accept these, so strip them here.
                 kwargs.pop("_clarification_up_q", None)
                 kwargs.pop("_clarification_down_q", None)
+                # Block until the managed VM is confirmed ready (instant for
+                # localhost / mock since the event is pre-set).
+                if not _vm_ready.is_set():
+                    ready = await asyncio.to_thread(_vm_ready.wait, 300)
+                    if not ready:
+                        raise RuntimeError(
+                            "Managed VM did not become ready within 5 minutes",
+                        )
                 backend_method = getattr(self.computer.backend, method_name)
                 return await backend_method(*args, **kwargs)
 

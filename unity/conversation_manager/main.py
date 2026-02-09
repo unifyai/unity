@@ -202,6 +202,11 @@ async def run_conversation_manager(
     # But for local dev, the assistant ID is already set from .env, so no StartupEvent arrives.
     # Skip this in test mode - tests initialize managers explicitly with custom actors.
     if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID and not should_apply_mocks:
+        # No _startup_sequence in local dev, so unblock the VM readiness gate
+        # directly (the VM is assumed reachable if configured via .env).
+        from unity.function_manager.primitives.runtime import _vm_ready
+
+        _vm_ready.set()
         asyncio.create_task(managers_utils.init_conv_manager(cm))
         asyncio.create_task(managers_utils.listen_to_operations(cm))
 

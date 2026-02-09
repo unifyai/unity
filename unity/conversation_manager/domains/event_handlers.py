@@ -688,10 +688,12 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
 
 
 async def _startup_sequence(cm: "ConversationManager"):
-    """Run job startup logging then file sync in sequence.
+    """Run job startup logging, signal VM readiness, then file sync.
 
     File sync depends on VM connectivity details that log_job_startup resolves,
     so we must wait for job startup to complete before starting file sync.
+    log_job_startup includes _resolve_vm_liveview polling for managed VMs,
+    so once it returns the VM is confirmed reachable (or retries exhausted).
     """
     await asyncio.to_thread(
         debug_logger.log_job_startup,
@@ -699,6 +701,10 @@ async def _startup_sequence(cm: "ConversationManager"):
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,
     )
+    # Unblock any pending MagnitudeBackend lazy initialization.
+    from unity.function_manager.primitives.runtime import _vm_ready
+
+    _vm_ready.set()
     await managers_utils._start_file_sync()
 
 
