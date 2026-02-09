@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-import types
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Literal, Optional
 
@@ -36,26 +35,27 @@ def _wrap_primitives_method_for_trace(
     if not callable(orig):
         return
 
-    # Preserve method identity/name for prompt builders that introspect tool names.
-    # Also ensure the wrapper is *bound* to the instance so `__self__` is present.
-    orig_func = getattr(orig, "__func__", orig)
-    is_async = asyncio.iscoroutinefunction(orig_func)
+    # ``orig`` may be a bound method (on a real manager) or a plain function
+    # (returned by _AsyncPrimitiveWrapper.__getattr__).  In both cases it is
+    # already fully callable without an extra ``self`` argument, so the
+    # wrapper simply records the call and delegates.
+    is_async = asyncio.iscoroutinefunction(orig)
 
     if is_async:
 
-        @functools.wraps(orig_func)
-        async def _wrapped(self, *args: Any, **kwargs: Any) -> Any:
+        @functools.wraps(orig)
+        async def _traced(*args: Any, **kwargs: Any) -> Any:
             sink.append(fq_tool_name)
-            return await orig_func(self, *args, **kwargs)
+            return await orig(*args, **kwargs)
 
     else:
 
-        @functools.wraps(orig_func)
-        def _wrapped(self, *args: Any, **kwargs: Any) -> Any:
+        @functools.wraps(orig)
+        def _traced(*args: Any, **kwargs: Any) -> Any:
             sink.append(fq_tool_name)
-            return orig_func(self, *args, **kwargs)
+            return orig(*args, **kwargs)
 
-    setattr(manager, method_name, types.MethodType(_wrapped, manager))
+    setattr(manager, method_name, _traced)
 
 
 def instrument_basic_primitives_calls(primitives: Primitives) -> list[str]:
@@ -148,10 +148,7 @@ def _iter_tool_calls_from_chat_history(chat_history: list[dict[str, Any]]):
 
 def get_code_act_tool_calls(handle: Any) -> list[str]:
     """Extract tool call names from a CodeActActor handle's chat history."""
-    try:
-        chat_history = list(getattr(handle, "chat_history", []) or [])
-    except Exception:
-        chat_history = []
+    chat_history = list(handle.get_history() or [])
 
     names: list[str] = []
     for tc in _iter_tool_calls_from_chat_history(chat_history):
@@ -167,10 +164,7 @@ def get_code_act_tool_calls(handle: Any) -> list[str]:
 
 def extract_code_act_execute_code_snippets(handle: Any) -> list[str]:
     """Extract the `code` field from execute_code tool calls (best-effort)."""
-    try:
-        chat_history = list(getattr(handle, "chat_history", []) or [])
-    except Exception:
-        chat_history = []
+    chat_history = list(handle.get_history() or [])
 
     snippets: list[str] = []
     for tc in _iter_tool_calls_from_chat_history(chat_history):
