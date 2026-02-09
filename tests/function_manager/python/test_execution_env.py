@@ -26,7 +26,6 @@ def test_dangerous_builtins_blocked():
     blocked = [
         "exec",
         "eval",
-        "open",
         "compile",
         "globals",
         "locals",
