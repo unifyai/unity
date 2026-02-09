@@ -18,6 +18,7 @@ These tests verify the tool implementations directly, testing:
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1229,7 +1230,7 @@ class TestMakeSteeringTool:
 
     @pytest.mark.asyncio
     async def test_stop_operation_calls_handle_stop(self, brain_action_tools, mock_cm):
-        """Stop operation calls handle.stop and moves action to completed_actions."""
+        """Stop with default close=True erases the action entirely."""
         mock_handle = MagicMock()
         mock_handle.stop = AsyncMock()
 
@@ -1252,10 +1253,57 @@ class TestMakeSteeringTool:
         result = await tool(reason="No longer needed")
         mock_handle.stop.assert_called_once_with(reason="No longer needed")
         assert result["operation"] == "stop"
-        assert (
-            0 not in mock_cm.in_flight_actions
-        )  # Action should be removed from in_flight
-        assert 0 in mock_cm.completed_actions  # Action should be in completed_actions
+        assert 0 not in mock_cm.in_flight_actions
+        assert 0 not in mock_cm.completed_actions  # close=True erases entirely
+
+    @pytest.mark.asyncio
+    async def test_stop_close_false_preserves_in_completed(
+        self, brain_action_tools, mock_cm,
+    ):
+        """Stop with close=False moves the action to completed_actions."""
+        mock_handle = MagicMock()
+        mock_handle.stop = AsyncMock()
+
+        mock_cm.in_flight_actions = {
+            0: {
+                "query": "Test",
+                "handle": mock_handle,
+                "handle_actions": [],
+            },
+        }
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="stop",
+            param_name="reason",
+            docstring="Stop the action",
+            query="Test",
+        )
+        result = await tool(reason="No longer needed", close=False)
+        mock_handle.stop.assert_called_once_with(reason="No longer needed")
+        assert result["operation"] == "stop"
+        assert 0 not in mock_cm.in_flight_actions
+        assert 0 in mock_cm.completed_actions  # close=False preserves for queries
+
+    def test_stop_tool_signature_includes_close(self, brain_action_tools, mock_cm):
+        """The stop_* tool exposes a ``close`` bool param so the LLM can see it."""
+        mock_handle = MagicMock()
+        mock_handle.stop = AsyncMock()
+
+        tool = brain_action_tools._make_steering_tool(
+            handle_id=0,
+            handle=mock_handle,
+            operation="stop",
+            param_name="reason",
+            docstring="Stop the action",
+            query="Test",
+        )
+        sig = inspect.signature(tool)
+        assert "close" in sig.parameters
+        p = sig.parameters["close"]
+        assert p.default is True
+        assert p.annotation is bool
 
     @pytest.mark.asyncio
     async def test_interject_operation_calls_handle_interject(

@@ -1518,11 +1518,22 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
                         await handle.stop(reason=param_value or None)
-                        result = "Action stopped"
-                        # Move to completed_actions (preserves handle for post-completion ask queries)
-                        stopped = cm.in_flight_actions.pop(handle_id, None)
-                        if stopped:
-                            cm.completed_actions[handle_id] = stopped
+                        should_close = kwargs.get("close", True)
+                        if should_close:
+                            # Erase the action entirely — no retrospective
+                            # ask_* queries will be possible.
+                            cm.in_flight_actions.pop(handle_id, None)
+                            cm.notifications_bar.remove_notif(
+                                f"action_completion_{handle_id}",
+                            )
+                            result = "Action stopped and closed"
+                        else:
+                            # Preserve handle in completed_actions so
+                            # ask_* can still query the trajectory.
+                            stopped = cm.in_flight_actions.pop(handle_id, None)
+                            if stopped:
+                                cm.completed_actions[handle_id] = stopped
+                            result = "Action stopped (kept for queries)"
                     case "pause":
                         if handle_data:
                             handle_data["handle_actions"].append(
@@ -1583,10 +1594,41 @@ class ConversationManagerBrainActionTools:
                 steering_tool,
             )
 
+        # For stop operations, insert a `close` parameter so the LLM can
+        # choose whether to erase the action immediately or keep it for
+        # retrospective ask_* queries.
+        if operation == "stop":
+            existing_sig = getattr(steering_tool, "__signature__", None)
+            existing_params = (
+                list(existing_sig.parameters.values()) if existing_sig else []
+            )
+            close_param = inspect.Parameter(
+                "close",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=True,
+                annotation=bool,
+            )
+            # Insert before any VAR_KEYWORD (**kwargs) parameter.
+            insert_idx = len(existing_params)
+            for i, p in enumerate(existing_params):
+                if p.kind == inspect.Parameter.VAR_KEYWORD:
+                    insert_idx = i
+                    break
+            existing_params.insert(insert_idx, close_param)
+            steering_tool.__signature__ = inspect.Signature(existing_params)
+
         # Always set a custom docstring that describes this specific action
         # (overrides any docstring copied from handle, e.g. from MagicMock in tests)
         steering_tool.__doc__ = f"{docstring}\n\nFor action: {query}"
         if param_name:
             steering_tool.__doc__ += f"\n\nArgs:\n    {param_name}: {docstring}"
+        if operation == "stop":
+            steering_tool.__doc__ += (
+                "\n    close: If True (default), the action is erased entirely "
+                "after stopping — it will disappear from state and no "
+                "retrospective ask_* queries will be possible. "
+                "Set to False to keep the stopped action in completed state "
+                "so its trajectory can still be queried via ask_*."
+            )
 
         return steering_tool
