@@ -293,12 +293,6 @@ function getDefaultBrowserPaths() {
   const base = path.join(UNITY_WORKSPACE_DIR, 'Local');
   const downloadsPath = path.join(base, 'Downloads');
   const tracesDir = path.join(base, 'Traces');
-  try {
-    fs.mkdirSync(downloadsPath, { recursive: true });
-    fs.mkdirSync(tracesDir, { recursive: true });
-  } catch (_e) {
-    // ignore directory creation errors; downstream may still handle
-  }
   return { downloadsPath, tracesDir };
 }
 
