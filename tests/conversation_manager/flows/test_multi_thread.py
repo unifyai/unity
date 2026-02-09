@@ -683,9 +683,10 @@ async def test_received_email_appears_in_all_cc_recipient_threads(initialized_cm
     )
 
     # Verify the email appears in Alice's thread (sender)
-    alice_conv = cm.cm.contact_index.get_conversation_state(alice["contact_id"])
-    assert alice_conv is not None, "Alice should have an active conversation"
-    alice_emails = list(alice_conv.threads[Medium.EMAIL])
+    alice_emails = cm.cm.contact_index.get_messages_for_contact(
+        alice["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(alice_emails) == 1
     ), f"Expected 1 email in Alice's thread, got {len(alice_emails)}"
@@ -696,9 +697,10 @@ async def test_received_email_appears_in_all_cc_recipient_threads(initialized_cm
     ), f"Expected 'sender' role, got '{alice_email.contact_role}'"
 
     # Verify the email appears in Bob's thread (CC'd)
-    bob_conv = cm.cm.contact_index.get_conversation_state(bob["contact_id"])
-    assert bob_conv is not None, "Bob should have an active conversation (was CC'd)"
-    bob_emails = list(bob_conv.threads[Medium.EMAIL])
+    bob_emails = cm.cm.contact_index.get_messages_for_contact(
+        bob["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(bob_emails) == 1
     ), f"Expected 1 email in Bob's thread, got {len(bob_emails)}"
@@ -709,11 +711,10 @@ async def test_received_email_appears_in_all_cc_recipient_threads(initialized_cm
     ), f"Expected 'cc' role for Bob, got '{bob_email.contact_role}'"
 
     # Verify the email appears in Charlie's thread (CC'd)
-    charlie_conv = cm.cm.contact_index.get_conversation_state(charlie["contact_id"])
-    assert (
-        charlie_conv is not None
-    ), "Charlie should have an active conversation (was CC'd)"
-    charlie_emails = list(charlie_conv.threads[Medium.EMAIL])
+    charlie_emails = cm.cm.contact_index.get_messages_for_contact(
+        charlie["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(charlie_emails) == 1
     ), f"Expected 1 email in Charlie's thread, got {len(charlie_emails)}"
@@ -762,9 +763,10 @@ async def test_sent_email_appears_in_all_recipient_threads(initialized_cm):
     )
 
     # Verify the email appears in Alice's thread (TO recipient)
-    alice_conv = cm.cm.contact_index.get_conversation_state(alice["contact_id"])
-    assert alice_conv is not None, "Alice should have an active conversation"
-    alice_emails = list(alice_conv.threads[Medium.EMAIL])
+    alice_emails = cm.cm.contact_index.get_messages_for_contact(
+        alice["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(alice_emails) == 1
     ), f"Expected 1 email in Alice's thread, got {len(alice_emails)}"
@@ -776,9 +778,10 @@ async def test_sent_email_appears_in_all_recipient_threads(initialized_cm):
     assert alice_email.name == "You", "Sent emails should show 'You' as sender"
 
     # Verify the email appears in Bob's thread (CC recipient)
-    bob_conv = cm.cm.contact_index.get_conversation_state(bob["contact_id"])
-    assert bob_conv is not None, "Bob should have an active conversation (was CC'd)"
-    bob_emails = list(bob_conv.threads[Medium.EMAIL])
+    bob_emails = cm.cm.contact_index.get_messages_for_contact(
+        bob["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(bob_emails) == 1
     ), f"Expected 1 email in Bob's thread, got {len(bob_emails)}"
@@ -789,11 +792,10 @@ async def test_sent_email_appears_in_all_recipient_threads(initialized_cm):
     ), f"Expected 'cc' role for Bob, got '{bob_email.contact_role}'"
 
     # Verify the email appears in Charlie's thread (BCC recipient)
-    charlie_conv = cm.cm.contact_index.get_conversation_state(charlie["contact_id"])
-    assert (
-        charlie_conv is not None
-    ), "Charlie should have an active conversation (was BCC'd)"
-    charlie_emails = list(charlie_conv.threads[Medium.EMAIL])
+    charlie_emails = cm.cm.contact_index.get_messages_for_contact(
+        charlie["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(charlie_emails) == 1
     ), f"Expected 1 email in Charlie's thread, got {len(charlie_emails)}"
@@ -831,37 +833,35 @@ async def test_email_appears_in_global_thread_for_all_contacts(initialized_cm):
         ),
     )
 
-    # Verify the original email is in Alice's global thread
+    # Verify the original email is in Alice's messages
     # Filter by role='user' to find the received email (not any replies the LLM may have sent)
-    alice_conv = cm.cm.contact_index.get_conversation_state(alice["contact_id"])
-    alice_global = list(alice_conv.global_thread)
+    alice_all = cm.cm.contact_index.get_messages_for_contact(alice["contact_id"])
     alice_received_emails = [
         m
-        for m in alice_global
+        for m in alice_all
         if isinstance(m, EmailMessage)
         and m.email_id == email_id
         and m.contact_role == "sender"
         and m.role == "user"
     ]
     assert len(alice_received_emails) == 1, (
-        f"Expected 1 received email in Alice's global thread, "
+        f"Expected 1 received email in Alice's messages, "
         f"found {len(alice_received_emails)}: {alice_received_emails}"
     )
 
-    # Verify the original email is also in Bob's global thread
+    # Verify the original email is also in Bob's messages
     # Filter by role='user' to find the received email (not any replies the LLM may have sent)
-    bob_conv = cm.cm.contact_index.get_conversation_state(bob["contact_id"])
-    bob_global = list(bob_conv.global_thread)
+    bob_all = cm.cm.contact_index.get_messages_for_contact(bob["contact_id"])
     bob_received_emails = [
         m
-        for m in bob_global
+        for m in bob_all
         if isinstance(m, EmailMessage)
         and m.email_id == email_id
         and m.contact_role == "cc"
         and m.role == "user"
     ]
     assert len(bob_received_emails) == 1, (
-        f"Expected 1 received email in Bob's global thread (CC'd), "
+        f"Expected 1 received email in Bob's messages (CC'd), "
         f"found {len(bob_received_emails)}: {bob_received_emails}"
     )
 
@@ -899,23 +899,29 @@ async def test_email_with_to_and_cc_shows_correct_roles(initialized_cm):
     )
 
     # Check Alice (sender)
-    alice_conv = cm.cm.contact_index.get_conversation_state(alice["contact_id"])
-    alice_email = list(alice_conv.threads[Medium.EMAIL])[0]
-    assert alice_email.contact_role == "sender"
+    alice_emails = cm.cm.contact_index.get_messages_for_contact(
+        alice["contact_id"],
+        Medium.EMAIL,
+    )
+    assert alice_emails[0].contact_role == "sender"
 
     # Check Bob (TO)
-    bob_conv = cm.cm.contact_index.get_conversation_state(bob["contact_id"])
-    bob_email = list(bob_conv.threads[Medium.EMAIL])[0]
+    bob_emails = cm.cm.contact_index.get_messages_for_contact(
+        bob["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
-        bob_email.contact_role == "to"
-    ), f"Bob should have 'to' role, got '{bob_email.contact_role}'"
+        bob_emails[0].contact_role == "to"
+    ), f"Bob should have 'to' role, got '{bob_emails[0].contact_role}'"
 
     # Check Charlie (CC)
-    charlie_conv = cm.cm.contact_index.get_conversation_state(charlie["contact_id"])
-    charlie_email = list(charlie_conv.threads[Medium.EMAIL])[0]
+    charlie_emails = cm.cm.contact_index.get_messages_for_contact(
+        charlie["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
-        charlie_email.contact_role == "cc"
-    ), f"Charlie should have 'cc' role, got '{charlie_email.contact_role}'"
+        charlie_emails[0].contact_role == "cc"
+    ), f"Charlie should have 'cc' role, got '{charlie_emails[0].contact_role}'"
 
 
 @pytest.mark.asyncio
@@ -948,8 +954,10 @@ async def test_no_duplicate_email_when_contact_in_multiple_fields(initialized_cm
     )
 
     # Alice should only have ONE email in her thread (not duplicated)
-    alice_conv = cm.cm.contact_index.get_conversation_state(alice["contact_id"])
-    alice_emails = list(alice_conv.threads[Medium.EMAIL])
+    alice_emails = cm.cm.contact_index.get_messages_for_contact(
+        alice["contact_id"],
+        Medium.EMAIL,
+    )
     assert (
         len(alice_emails) == 1
     ), f"Expected 1 email (no duplicate), got {len(alice_emails)}"

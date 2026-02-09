@@ -325,15 +325,13 @@ return get_cm_state(cm)
             await EventHandler.handle_event(event, cm2)
 
         # Verify the message was processed
-        conv_state = cm2.contact_index.get_conversation_state(
-            alice_contact["contact_id"],
-        )
-        assert conv_state is not None, "Conversation should be created"
-
-        # Find the SMS thread
         from unity.conversation_manager.types import Medium
 
-        sms_thread = conv_state.threads.get(Medium.SMS_MESSAGE, [])
+        sms_thread = cm2.contact_index.get_messages_for_contact(
+            alice_contact["contact_id"],
+            Medium.SMS_MESSAGE,
+        )
+        assert len(sms_thread) > 0, "Conversation should be created"
         messages = [msg.content for msg in sms_thread]
         assert "Hello, are you there?" in messages, "New message should be recorded"
 

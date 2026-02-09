@@ -181,9 +181,7 @@ class TestEventHandlerEdgeCases:
 
         # Verify the message was added to conversations using event.contact data
         assert 9999 in cm.contact_index.active_conversations
-        sms_thread = list(
-            cm.contact_index.active_conversations[9999].threads[Medium.SMS_MESSAGE],
-        )
+        sms_thread = cm.contact_index.get_messages_for_contact(9999, Medium.SMS_MESSAGE)
         assert len(sms_thread) >= 1
         assert sms_thread[0].content == "Hello from unknown contact"
 
@@ -247,10 +245,9 @@ class TestStateRecovery:
         await cm.step(event)
 
         # Both messages should be in the thread (no deduplication at this level)
-        sms_thread = list(
-            cm.contact_index.active_conversations[contact["contact_id"]].threads[
-                Medium.SMS_MESSAGE
-            ],
+        sms_thread = cm.contact_index.get_messages_for_contact(
+            contact["contact_id"],
+            Medium.SMS_MESSAGE,
         )
         matching = [
             m for m in sms_thread if getattr(m, "content", None) == "Duplicate message"
@@ -332,10 +329,9 @@ class TestContactIndexEdgeCases:
 
         # Now contact 888 should have an active conversation
         assert new_contact_id in cm.contact_index.active_conversations
-        sms_thread = list(
-            cm.contact_index.active_conversations[new_contact_id].threads[
-                Medium.SMS_MESSAGE
-            ],
+        sms_thread = cm.contact_index.get_messages_for_contact(
+            new_contact_id,
+            Medium.SMS_MESSAGE,
         )
         assert len(sms_thread) == 1
 

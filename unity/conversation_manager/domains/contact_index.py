@@ -1,9 +1,10 @@
 """
 ContactIndex: Conversation state management for ConversationManager.
 
-This module stores ONLY conversation state (threads, on_call status).
-All contact information (name, email, phone, response_policy, etc.) is
-fetched from ContactManager, which is the single source of truth.
+All messages are stored in a single shared global deque. Per-contact and
+per-medium views are derived on demand. Contact information (name, email,
+phone, response_policy, etc.) is fetched from ContactManager, which is the
+single source of truth.
 """
 
 from collections import deque
@@ -87,36 +88,50 @@ class GuidanceMessage:
     timestamp: datetime
 
 
+# Message type -> Medium mapping for deriving per-medium views from the global deque.
+_MESSAGE_TYPE_TO_MEDIUM: dict[type, Medium] = {
+    EmailMessage: Medium.EMAIL,
+    UnifyMessage: Medium.UNIFY_MESSAGE,
+}
+
+
+@dataclass
+class GlobalThreadEntry:
+    """An entry in the shared global thread.
+
+    Wraps a message with its contact associations and medium, enabling
+    per-contact and per-medium views to be derived from the single deque.
+    """
+
+    message: Message | EmailMessage | UnifyMessage | GuidanceMessage
+    medium: Medium
+    # For most messages, a single contact. For emails, all involved contacts
+    # with their roles (sender, to, cc, bcc). role is None for non-email.
+    contact_roles: dict[int, str | None]
+
+
 @dataclass
 class ConversationState:
-    """
-    Conversation state for a single contact.
+    """Per-contact conversation metadata (not message storage).
 
-    This class stores ONLY conversation-related data (threads, call status).
-    Contact information (name, email, etc.) is fetched from ContactManager.
+    Messages live in the shared global deque on ContactIndex. This class
+    stores only non-message state like call status.
     """
 
     contact_id: int
     on_call: bool = False
-    global_thread: deque = field(default_factory=lambda: deque(maxlen=100))
-    threads: dict[Medium, deque] = field(
-        default_factory=lambda: {
-            Medium.SMS_MESSAGE: deque(maxlen=25),
-            Medium.EMAIL: deque(maxlen=25),
-            Medium.PHONE_CALL: deque(maxlen=25),
-            Medium.UNIFY_MEET: deque(maxlen=25),
-            Medium.UNIFY_MESSAGE: deque(maxlen=25),
-        },
-    )
 
 
 class ContactIndex:
     """
     Manages conversation state for active contacts.
 
+    All messages are stored in a single shared global deque. Per-contact and
+    per-medium views are derived on demand via helper methods.
+
     Contact information (name, email, phone, response_policy, etc.) is ALWAYS
     fetched from ContactManager - the single source of truth with DataStore-backed
-    caching. This class only stores conversation state (message threads, call status).
+    caching.
 
     Fallback Mechanism:
     -------------------
@@ -126,8 +141,13 @@ class ContactIndex:
     lookups go through ContactManager.
     """
 
-    def __init__(self):
+    DEFAULT_GLOBAL_THREAD_SIZE = 100
+
+    def __init__(self, global_thread_size: int = DEFAULT_GLOBAL_THREAD_SIZE):
         self.active_conversations: dict[int, ConversationState] = {}
+        self.global_thread: deque[GlobalThreadEntry] = deque(
+            maxlen=global_thread_size,
+        )
         self._contact_manager: "BaseContactManager | None" = None
         # Fallback cache for contacts before ContactManager is initialized
         self._fallback_contacts: dict[int, dict] = {}
@@ -173,6 +193,7 @@ class ContactIndex:
     def clear_conversations(self):
         """Clear all active conversations for test isolation."""
         self.active_conversations.clear()
+        self.global_thread.clear()
 
     def get_conversation_state(self, contact_id: int) -> ConversationState | None:
         """Get conversation state for a contact, or None if no active conversation."""
@@ -246,6 +267,61 @@ class ContactIndex:
                 return None
         return None
 
+    # =========================================================================
+    # Message query helpers — derive views from the shared global deque
+    # =========================================================================
+
+    def get_messages_for_contact(
+        self,
+        contact_id: int,
+        medium: Medium | None = None,
+    ) -> list:
+        """Get messages for a contact, optionally filtered by medium.
+
+        Args:
+            contact_id: The contact to filter for.
+            medium: If provided, only return messages of this medium.
+
+        Returns:
+            List of messages (in chronological order) for this contact.
+        """
+        results = []
+        for entry in self.global_thread:
+            if contact_id not in entry.contact_roles:
+                continue
+            if medium is not None and entry.medium != medium:
+                continue
+            results.append(entry.message)
+        return results
+
+    def get_active_contact_ids(self) -> set[int]:
+        """Return the set of contact_ids present in the global thread."""
+        ids: set[int] = set()
+        for entry in self.global_thread:
+            ids.update(entry.contact_roles.keys())
+        return ids
+
+    def get_messages_grouped_by_contact(
+        self,
+    ) -> dict[int, list[GlobalThreadEntry]]:
+        """Group all global thread entries by contact_id.
+
+        Returns a dict mapping contact_id to a list of GlobalThreadEntry
+        in chronological order. An entry appears under every contact_id
+        in its contact_roles.
+        """
+        groups: dict[int, list[GlobalThreadEntry]] = {}
+        for entry in self.global_thread:
+            for cid in entry.contact_roles:
+                if cid not in groups:
+                    groups[cid] = []
+                groups[cid].append(entry)
+        return groups
+
+    # =========================================================================
+    # Message push
+    # =========================================================================
+
     def push_message(
         self,
         contact_id: int,
@@ -264,12 +340,12 @@ class ContactIndex:
         contact_role: str | None = None,
     ):
         """
-        Push a message to a contact's conversation thread.
+        Push a message to the shared global thread.
 
         Args:
             contact_id: The contact's ID.
             sender_name: Display name for the message sender.
-            thread_name: Which thread to push to (Medium.SMS_MESSAGE, Medium.EMAIL, etc.).
+            thread_name: Which medium (Medium.SMS_MESSAGE, Medium.EMAIL, etc.).
             message_content: Message text (for SMS, voice).
             subject: Email subject (for email).
             body: Email body (for email).
@@ -285,7 +361,8 @@ class ContactIndex:
         if not timestamp:
             timestamp = prompt_now(as_string=False)
 
-        conversation = self.get_or_create_conversation(contact_id)
+        # Ensure conversation state exists for this contact
+        self.get_or_create_conversation(contact_id)
 
         # Determine display name (for rendering to brain)
         name = sender_name if role == "user" else "You" if role == "assistant" else role
@@ -328,5 +405,10 @@ class ContactIndex:
                 role=role,
             )
 
-        conversation.threads[thread_name].append(message)
-        conversation.global_thread.append(message)
+        self.global_thread.append(
+            GlobalThreadEntry(
+                message=message,
+                medium=thread_name,
+                contact_roles={contact_id: contact_role},
+            ),
+        )

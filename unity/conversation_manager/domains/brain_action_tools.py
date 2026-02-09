@@ -628,41 +628,33 @@ class ConversationManagerBrainActionTools:
         if reply_all:
             # Find the email to reply to
             original_email = None
-            # Search all conversations for the email with this ID
+            # Search the global thread for the email with this ID
+            all_emails = [
+                e.message
+                for e in self._cm.contact_index.global_thread
+                if e.medium == Medium.EMAIL
+            ]
             if reply_email_id:
-                for conv_state in self._cm.contact_index.active_conversations.values():
-                    thread = conv_state.threads.get(Medium.EMAIL)
-                    if thread:
-                        for m in thread:
-                            if getattr(m, "email_id", None) == reply_email_id:
-                                original_email = m
-                                break
-                    if original_email:
+                for m in all_emails:
+                    if getattr(m, "email_id", None) == reply_email_id:
+                        original_email = m
                         break
             else:
                 # Auto-infer: find the most recent inbound email with matching subject
-                for conv_state in self._cm.contact_index.active_conversations.values():
-                    thread = conv_state.threads.get(Medium.EMAIL)
-                    if thread:
-                        for m in reversed(list(thread)):
-                            if getattr(m, "name", None) != "You" and getattr(
-                                m,
-                                "email_id",
-                                None,
-                            ):
-                                # Check subject match (strip "Re: " prefix for comparison)
-                                m_subject = getattr(m, "subject", "") or ""
-                                clean_subject = subject.removeprefix("Re: ").strip()
-                                clean_m_subject = m_subject.removeprefix("Re: ").strip()
-                                if (
-                                    clean_subject == clean_m_subject
-                                    or not clean_subject
-                                ):
-                                    original_email = m
-                                    reply_email_id = m.email_id
-                                    break
-                    if original_email:
-                        break
+                for m in reversed(all_emails):
+                    if getattr(m, "name", None) != "You" and getattr(
+                        m,
+                        "email_id",
+                        None,
+                    ):
+                        # Check subject match (strip "Re: " prefix for comparison)
+                        m_subject = getattr(m, "subject", "") or ""
+                        clean_subject = subject.removeprefix("Re: ").strip()
+                        clean_m_subject = m_subject.removeprefix("Re: ").strip()
+                        if clean_subject == clean_m_subject or not clean_subject:
+                            original_email = m
+                            reply_email_id = m.email_id
+                            break
 
             if not original_email:
                 error_msg = (
@@ -688,13 +680,16 @@ class ConversationManagerBrainActionTools:
             # For inbound emails, the sender is in the contact associated with the email
             # We can find it from the conversation state's contact
             sender_email = None
-            for cid, conv_state in self._cm.contact_index.active_conversations.items():
-                thread = conv_state.threads.get(Medium.EMAIL)
-                if thread and original_email in thread:
-                    contact = self._cm.contact_index.get_contact(cid)
-                    if contact:
-                        sender_email = contact.get("email_address")
-                        primary_contact = contact
+            for entry in self._cm.contact_index.global_thread:
+                if entry.message is original_email:
+                    # Find the contact who was the sender
+                    for cid, role in entry.contact_roles.items():
+                        if role == "sender":
+                            contact = self._cm.contact_index.get_contact(cid)
+                            if contact:
+                                sender_email = contact.get("email_address")
+                                primary_contact = contact
+                            break
                     break
 
             if sender_email:
@@ -767,21 +762,18 @@ class ConversationManagerBrainActionTools:
             # --- Infer reply ID from email thread if not provided ---
             if not reply_email_id:
                 try:
-                    # Look for a matching inbound email in any conversation
-                    for (
-                        conv_state
-                    ) in self._cm.contact_index.active_conversations.values():
-                        thread = conv_state.threads.get(Medium.EMAIL)
-                        if thread:
-                            for m in reversed(list(thread)):
-                                if (
-                                    getattr(m, "name", None) != "You"
-                                    and getattr(m, "subject", None) == subject
-                                    and getattr(m, "email_id", None)
-                                ):
-                                    reply_email_id = m.email_id
-                                    break
-                        if reply_email_id:
+                    all_emails = [
+                        e.message
+                        for e in self._cm.contact_index.global_thread
+                        if e.medium == Medium.EMAIL
+                    ]
+                    for m in reversed(all_emails):
+                        if (
+                            getattr(m, "name", None) != "You"
+                            and getattr(m, "subject", None) == subject
+                            and getattr(m, "email_id", None)
+                        ):
+                            reply_email_id = m.email_id
                             break
                 except Exception:
                     pass

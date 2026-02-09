@@ -568,10 +568,9 @@ async def test_phone_call(initialized_cm):
     await cm.step(PhoneCallStarted(contact=contact))
     await cm.step(InboundPhoneUtterance(contact=contact, content="Tell me a joke"))
 
-    phone_thread = list(
-        cm.contact_index.active_conversations[contact["contact_id"]].threads[
-            Medium.PHONE_CALL
-        ],
+    phone_thread = cm.contact_index.get_messages_for_contact(
+        contact["contact_id"],
+        Medium.PHONE_CALL,
     )
     assert any(getattr(m, "content", None) == "Tell me a joke" for m in phone_thread)
 
@@ -678,10 +677,9 @@ async def test_unify_meet(initialized_cm):
     await cm.step(UnifyMeetStarted(contact=contact))
     await cm.step(InboundUnifyMeetUtterance(contact=contact, content="Tell me a joke"))
 
-    meet_thread = list(
-        cm.contact_index.active_conversations[contact["contact_id"]].threads[
-            Medium.UNIFY_MEET
-        ],
+    meet_thread = cm.contact_index.get_messages_for_contact(
+        contact["contact_id"],
+        Medium.UNIFY_MEET,
     )
     assert any(getattr(m, "content", None) == "Tell me a joke" for m in meet_thread)
 

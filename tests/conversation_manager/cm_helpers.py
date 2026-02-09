@@ -29,14 +29,26 @@ T = TypeVar("T")
 
 
 def make_contacts_visible(cm: "CMStepDriver", *contact_ids: int) -> None:
-    """Add contacts to active_conversations so the LLM can see their contact_ids.
+    """Make contacts visible in the rendered state by pushing a synthetic message.
+
+    With the shared global deque model, contacts only appear in the render if
+    they have messages in the deque. This pushes a lightweight marker message
+    for each contact so the LLM can see their contact_ids and metadata.
 
     Use this in tests that are about email routing mechanics (to/cc/bcc),
     not about contact resolution.  The contacts must already exist in the
     ContactManager (e.g., via TEST_CONTACTS in conftest).
     """
+    from unity.conversation_manager.types import Medium
+
     for cid in contact_ids:
-        cm.contact_index.get_or_create_conversation(cid)
+        cm.contact_index.push_message(
+            contact_id=cid,
+            sender_name="System",
+            thread_name=Medium.UNIFY_MESSAGE,
+            message_content="<Contact added to conversation>",
+            role="user",
+        )
 
 
 # =============================================================================

@@ -22,6 +22,7 @@ from unity.conversation_manager.domains.contact_index import (
     GuidanceMessage,
     ConversationState,
     ContactIndex,
+    GlobalThreadEntry,
 )
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.task_actions import (
@@ -451,7 +452,6 @@ class Renderer:
         last_snapshot: datetime = None,
         max_pinned_notifications: int = 50,
         max_contact_medium_messages: int = 25,
-        max_global_messages: int = 100,
         max_action_history_events: int = 20,
         max_completed_actions: int = 20,
         max_completed_action_history_events: int = 5,
@@ -487,7 +487,6 @@ class Renderer:
             contact_index,
             last_snapshot=last_snapshot,
             max_contact_medium_messages=max_contact_medium_messages,
-            max_global_messages=max_global_messages,
             elements_out=message_elements,
         )
 
@@ -669,21 +668,28 @@ class Renderer:
         contact_index: ContactIndex,
         last_snapshot: datetime = None,
         max_contact_medium_messages: int = 25,
-        max_global_messages: int = 100,
         elements_out: list[MessageElement] | None = None,
     ) -> str:
-        """Render all active conversations."""
+        """Render active conversations derived from the shared global thread.
+
+        Only contacts with messages in the global thread are rendered. Per-contact
+        and per-medium views are derived from the shared deque at render time.
+        """
         # Fetch assistant's timezone once for all contacts
         assistant_timezone = _get_assistant_timezone()
 
+        # Group global thread entries by contact_id
+        grouped = contact_index.get_messages_grouped_by_contact()
+
         contacts = []
-        for contact_id, conv_state in contact_index.active_conversations.items():
+        for contact_id, entries in grouped.items():
             contact_info = contact_index.get_contact(contact_id) or {}
+            conv_state = contact_index.get_or_create_conversation(contact_id)
             rendered = self.render_contact(
                 contact_info=contact_info,
                 conv_state=conv_state,
+                entries=entries,
                 max_contact_medium_messages=max_contact_medium_messages,
-                max_global_messages=max_global_messages,
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
                 contact_index=contact_index,
@@ -698,14 +704,18 @@ class Renderer:
         self,
         contact_info: dict,
         conv_state: ConversationState,
+        entries: list[GlobalThreadEntry] | None = None,
         max_contact_medium_messages: int = 25,
-        max_global_messages: int = 100,
         last_snapshot: datetime = None,
         elements_out: list[MessageElement] | None = None,
         contact_index: ContactIndex | None = None,
         assistant_timezone: str | None = None,
     ) -> str:
-        """Render a single contact's conversation."""
+        """Render a single contact's conversation.
+
+        The global thread view is the full list of entries. Per-medium views
+        are derived by grouping entries by medium and capping each.
+        """
         contact_id = conv_state.contact_id
         first_name = contact_info.get("first_name") or ""
         surname = contact_info.get("surname") or ""
@@ -722,14 +732,18 @@ class Renderer:
         contact_name = f"{first_name} {surname}".strip() or f"Contact #{contact_id}"
         contact_timezone = contact_info.get("timezone")
 
-        # Render threads with tracking
+        if entries is None:
+            entries = []
+
+        # Global thread: all messages for this contact (already capped by deque size)
+        all_messages = [e.message for e in entries]
         global_thread = ""
-        if conv_state.global_thread:
+        if all_messages:
             global_thread = self.render_thread(
                 "global",
-                conv_state.global_thread,
+                all_messages,
                 contact_id=contact_id,
-                max_messages=max_global_messages,
+                max_messages=len(all_messages),
                 last_snapshot=last_snapshot,
                 elements_out=elements_out,
                 contact_index=contact_index,
@@ -738,10 +752,18 @@ class Renderer:
                 assistant_timezone=assistant_timezone,
             )
 
+        # Per-medium threads: group entries by medium, cap each
+        medium_messages: dict[str, list] = {}
+        for entry in entries:
+            medium_key = str(entry.medium)
+            if medium_key not in medium_messages:
+                medium_messages[medium_key] = []
+            medium_messages[medium_key].append(entry.message)
+
         per_medium_threads = "\n\n".join(
             self.render_thread(
-                str(t_name),
-                t,
+                medium_name,
+                msgs,
                 contact_id=contact_id,
                 max_messages=max_contact_medium_messages,
                 last_snapshot=last_snapshot,
@@ -751,8 +773,8 @@ class Renderer:
                 contact_timezone=contact_timezone,
                 assistant_timezone=assistant_timezone,
             )
-            for t_name, t in conv_state.threads.items()
-            if t
+            for medium_name, msgs in medium_messages.items()
+            if msgs
         )
         threads_content = (
             f"{global_thread}\n\n{per_medium_threads}"

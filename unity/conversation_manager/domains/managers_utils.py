@@ -409,12 +409,15 @@ async def update_rolling_summaries(cm: "ConversationManager") -> None:
         return
 
     # Build render data for each active conversation
+    grouped = cm.contact_index.get_messages_grouped_by_contact()
     render_data = []
-    for contact_id, conv_state in cm.contact_index.active_conversations.items():
+    for contact_id, entries in grouped.items():
         contact_info = cm.contact_index.get_contact(contact_id) or {}
+        conv_state = cm.contact_index.get_or_create_conversation(contact_id)
         rendered = cm.prompt_renderer.render_contact(
             contact_info=contact_info,
             conv_state=conv_state,
+            entries=entries,
             max_contact_medium_messages=25,
             last_snapshot=cm.last_snapshot,
         )

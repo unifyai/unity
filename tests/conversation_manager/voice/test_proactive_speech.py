@@ -390,12 +390,12 @@ class TestProactiveSpeechLoop:
         # Should have recorded the message
         # Check the active contact has a voice thread with the message
         contact = mock_cm.get_active_contact()
-        active_contact = mock_cm.contact_index.active_conversations.get(
-            contact["contact_id"],
-        )
-        assert active_contact is not None
+        contact_id = contact["contact_id"]
 
-        voice_thread = active_contact.threads.get(Medium.PHONE_CALL, [])
+        voice_thread = mock_cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
         # Find the proactive message
         proactive_msg = None
         for msg in voice_thread:
@@ -763,14 +763,17 @@ class TestProactiveSpeechBlindSpots:
 
         # Verify the message was recorded with UNIFY_MEET medium
         contact = mock_cm.get_active_contact()
-        active_contact = mock_cm.contact_index.active_conversations.get(
-            contact["contact_id"],
-        )
-        assert active_contact is not None
+        contact_id = contact["contact_id"]
 
         # Should use UNIFY_MEET, not PHONE_CALL
-        meet_thread = active_contact.threads.get(Medium.UNIFY_MEET, [])
-        phone_thread = active_contact.threads.get(Medium.PHONE_CALL, [])
+        meet_thread = mock_cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.UNIFY_MEET,
+        )
+        phone_thread = mock_cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
         # Find the proactive message in the meet thread
         proactive_msg = None

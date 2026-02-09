@@ -817,12 +817,11 @@ class TestVoiceUtteranceHandlers:
 
         # Check message was added to contact's voice thread
         contact_id = alice_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        assert conv is not None
-
-        voice_thread = conv.threads.get(Medium.PHONE_CALL)
-        assert voice_thread is not None
-        # Voice thread is a deque of Message objects with .content attribute
+        voice_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
+        assert len(voice_thread) > 0
         messages = [msg.content for msg in voice_thread]
         assert "Hello, can you help me?" in messages
 
@@ -845,9 +844,10 @@ class TestVoiceUtteranceHandlers:
 
         # Check message was added with assistant role (name="You" for assistant)
         contact_id = alice_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get(Medium.PHONE_CALL)
-        # Voice thread is a deque of Message objects with .content attribute
+        voice_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
         messages = [msg.content for msg in voice_thread]
         assert "Of course, I'd be happy to help!" in messages
 
@@ -969,10 +969,11 @@ class TestCallGuidanceFlow:
 
         # Check message was added to voice thread
         contact_id = alice_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get(Medium.PHONE_CALL)
+        voice_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
 
-        # Voice thread is a deque of Message objects
         # Guidance messages have name="guidance" (the role becomes the name)
         guidance_msgs = [msg for msg in voice_thread if msg.name == "guidance"]
         assert len(guidance_msgs) >= 1
@@ -1159,10 +1160,10 @@ class TestFullCallLifecycle:
 
         # Verify guidance was recorded
         contact_id = alice_contact["contact_id"]
-        conv = initialized_cm.cm.contact_index.active_conversations.get(contact_id)
-        voice_thread = conv.threads.get(Medium.PHONE_CALL)
-
-        # Voice thread is a deque of Message objects with .content attribute
+        voice_thread = initialized_cm.cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
         messages = [msg.content for msg in voice_thread]
         assert "10am meeting" in " ".join(messages)
 

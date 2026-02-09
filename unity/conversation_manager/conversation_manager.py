@@ -248,11 +248,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
         voice_medium = (
             Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
         )
-        voice_thread = conv_state.threads.get(voice_medium, [])
+        voice_thread = self.contact_index.get_messages_for_contact(
+            contact_id,
+            voice_medium,
+        )
 
         # Optionally limit to last N messages
         if max_messages is not None:
-            voice_thread = list(voice_thread)[-max_messages:]
+            voice_thread = voice_thread[-max_messages:]
 
         for msg in voice_thread:
             role = "assistant" if msg.name == "You" else "user"
@@ -303,7 +306,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if not conv_state:
             return conversation_turns, last_message_timestamp
 
-        global_thread = list(conv_state.global_thread)
+        global_thread = self.contact_index.get_messages_for_contact(contact_id)
 
         # Optionally limit to last N messages
         if max_messages is not None:
@@ -413,7 +416,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             voice_medium = (
                 Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
             )
-            voice_thread = list(conv_state.threads.get(voice_medium, []))
+            voice_thread = self.contact_index.get_messages_for_contact(
+                contact_id,
+                voice_medium,
+            )
 
             if not voice_thread:
                 return True  # No messages to compare, send guidance
