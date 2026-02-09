@@ -172,8 +172,8 @@ class TestActorSessionResponseHandler:
     """Tests for the ActorSessionResponse event handler."""
 
     @pytest.mark.asyncio
-    async def test_response_creates_pinned_notification(self, mock_cm):
-        """ActorSessionResponse creates a pinned notification with the response content."""
+    async def test_response_does_not_create_notification(self, mock_cm):
+        """ActorSessionResponse records in handle_actions, no notification pushed."""
         mock_cm.in_flight_actions = {
             1: {"query": "Onboarding session", "handle_actions": []},
         }
@@ -181,11 +181,7 @@ class TestActorSessionResponseHandler:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert len(mock_cm.notifications_bar.notifications) == 1
-        notif = mock_cm.notifications_bar.notifications[0]
-        assert "Screen is ready" in notif.content
-        assert notif.pinned is True
-        assert notif.interjection_id == "action_response_1"
+        assert len(mock_cm.notifications_bar.notifications) == 0
 
     @pytest.mark.asyncio
     async def test_response_recorded_in_handle_actions(self, mock_cm):
@@ -220,16 +216,20 @@ class TestActorNotificationHandler:
     """Tests for the ActorNotification event handler."""
 
     @pytest.mark.asyncio
-    async def test_notification_creates_unpinned_notification(self, mock_cm):
-        """ActorNotification creates an unpinned (transient) notification."""
+    async def test_notification_records_progress_in_handle_actions(self, mock_cm):
+        """ActorNotification records progress in handle_actions, no notification pushed."""
+        mock_cm.in_flight_actions = {
+            1: {"query": "Long task", "handle_actions": []},
+        }
         event = ActorNotification(handle_id=1, response="Processing 50%...")
 
         await EventHandler.handle_event(event, mock_cm)
 
-        assert len(mock_cm.notifications_bar.notifications) == 1
-        notif = mock_cm.notifications_bar.notifications[0]
-        assert "Processing 50%" in notif.content
-        assert notif.pinned is False
+        assert len(mock_cm.notifications_bar.notifications) == 0
+        actions = mock_cm.in_flight_actions[1]["handle_actions"]
+        assert len(actions) == 1
+        assert actions[0]["action_name"] == "progress"
+        assert "Processing 50%" in actions[0]["query"]
 
     @pytest.mark.asyncio
     async def test_notification_wakes_brain(self, mock_cm):
