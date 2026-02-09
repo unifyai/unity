@@ -393,3 +393,87 @@ def test_all_state_managers_have_is_state_manager_true():
         assert (
             spec.is_state_manager is True
         ), f"{spec.manager_alias} should be a state manager"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Docstring quality tests (prompt context derives from these)
+# ────────────────────────────────────────────────────────────────────────────
+
+MIN_SUMMARY_CHARS = 20
+MIN_PARAMS_CHARS = 10
+
+
+def _first_paragraph(docstring: str) -> str:
+    """Extract text up to the first blank line."""
+    lines = []
+    for line in docstring.splitlines():
+        if not line.strip():
+            if lines:
+                break
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _parameters_block(docstring: str) -> str:
+    """Extract the NumPy-style Parameters section."""
+    import re
+
+    lines = docstring.splitlines()
+    params_lines = []
+    in_params = False
+    for j, raw in enumerate(lines):
+        stripped = raw.strip()
+        if stripped == "Parameters":
+            in_params = True
+            continue
+        if in_params and stripped.startswith("---"):
+            continue
+        if in_params:
+            if stripped and not stripped[0].isspace() and not stripped.startswith("-"):
+                if j + 1 < len(lines) and lines[j + 1].strip().startswith("---"):
+                    break
+                if re.match(r"^[A-Z][a-zA-Z\s]+$", stripped) and len(stripped) < 30:
+                    break
+            params_lines.append(raw)
+    return "\n".join(params_lines).rstrip()
+
+
+def test_all_primitive_methods_have_summary_and_parameters():
+    """Every public primitive method must have a non-empty first-paragraph
+    summary and a non-empty NumPy-style Parameters block in its docstring.
+
+    The prompt context rendered for the CodeActActor is derived directly
+    from these docstrings.  Missing or empty sections mean the LLM gets
+    no guidance on what a method does or how to call it.
+    """
+    registry = get_registry()
+
+    missing_summary = []
+    missing_params = []
+
+    for spec in _STATE_MANAGER_SPECS:
+        cls = registry._load_manager_class(spec.primitive_class_path)
+        if cls is None:
+            continue
+        methods = registry.primitive_methods(manager_alias=spec.manager_alias)
+        for method_name in methods:
+            fq = f"primitives.{spec.manager_alias}.{method_name}"
+            doc = registry._extract_method_docstring(cls, method_name)
+
+            summary = _first_paragraph(doc)
+            if len(summary) < MIN_SUMMARY_CHARS:
+                missing_summary.append(f"{fq} (got {len(summary)} chars)")
+
+            params = _parameters_block(doc)
+            if len(params) < MIN_PARAMS_CHARS:
+                missing_params.append(f"{fq} (got {len(params)} chars)")
+
+    assert not missing_summary, (
+        f"Methods with missing/short first-paragraph summary "
+        f"(min {MIN_SUMMARY_CHARS} chars):\n  " + "\n  ".join(missing_summary)
+    )
+    assert not missing_params, (
+        f"Methods with missing/short Parameters block "
+        f"(min {MIN_PARAMS_CHARS} chars):\n  " + "\n  ".join(missing_params)
+    )
