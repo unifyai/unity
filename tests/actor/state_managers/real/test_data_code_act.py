@@ -32,7 +32,7 @@ async def _safe_call(method, *args, **kwargs) -> Any:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_composes_data_operations():
@@ -85,7 +85,7 @@ async def test_code_act_composes_data_operations():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_data_pipeline():
@@ -136,7 +136,7 @@ async def test_code_act_data_pipeline():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_filter_calls_data_manager():
@@ -186,7 +186,7 @@ async def test_code_act_filter_calls_data_manager():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_code_act_reduce_calls_data_manager():

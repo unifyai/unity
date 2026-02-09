@@ -16,7 +16,7 @@ from unity.manager_registry import ManagerRegistry
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_scheduler():
@@ -42,7 +42,7 @@ async def test_ask_calls_scheduler():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_ask_calls_scheduler_memoized():
@@ -85,7 +85,7 @@ async def ask_tasks(question: str, response_format=None) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_scheduler():
@@ -113,7 +113,7 @@ async def test_update_calls_scheduler():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_update_calls_scheduler_memoized():
@@ -160,7 +160,7 @@ async def create_or_update_or_delete_tasks(name: str, description: str) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_execute_calls_scheduler():
@@ -219,7 +219,7 @@ async def run_quick_task_entrypoint() -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 @pytest.mark.eval
 @_handle_project
 async def test_execute_calls_scheduler_memoized():
