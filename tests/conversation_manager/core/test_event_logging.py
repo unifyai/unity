@@ -512,17 +512,17 @@ async def test_inbound_email_transcript_includes_all_recipients(cm_with_eventbus
             target_log = dict(lg.entries or {})
             break
 
-    assert target_log is not None, (
-        f"Did not find transcript message containing {unique_subject!r}"
-    )
+    assert (
+        target_log is not None
+    ), f"Did not find transcript message containing {unique_subject!r}"
 
     receiver_ids = target_log.get("receiver_ids", [])
     receiver_ids_int = [int(x) for x in receiver_ids]
 
     # sender_id should be Alice
-    assert int(target_log["sender_id"]) == alice_id, (
-        f"Expected sender_id={alice_id}, got {target_log['sender_id']}"
-    )
+    assert (
+        int(target_log["sender_id"]) == alice_id
+    ), f"Expected sender_id={alice_id}, got {target_log['sender_id']}"
 
     # receiver_ids should include Bob (to) and Charlie (cc), not just [0]
     assert bob_id in receiver_ids_int, (
@@ -603,17 +603,17 @@ async def test_outbound_email_transcript_includes_all_recipients(cm_with_eventbu
             target_log = dict(lg.entries or {})
             break
 
-    assert target_log is not None, (
-        f"Did not find transcript message containing {unique_subject!r}"
-    )
+    assert (
+        target_log is not None
+    ), f"Did not find transcript message containing {unique_subject!r}"
 
     receiver_ids = target_log.get("receiver_ids", [])
     receiver_ids_int = [int(x) for x in receiver_ids]
 
     # sender_id should be 0 (the assistant)
-    assert int(target_log["sender_id"]) == 0, (
-        f"Expected sender_id=0 (assistant), got {target_log['sender_id']}"
-    )
+    assert (
+        int(target_log["sender_id"]) == 0
+    ), f"Expected sender_id=0 (assistant), got {target_log['sender_id']}"
 
     # receiver_ids should include both Alice (to) and Bob (cc)
     assert alice_id in receiver_ids_int, (

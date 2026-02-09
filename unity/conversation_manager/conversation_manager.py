@@ -24,7 +24,6 @@ from unity.conversation_manager.domains.brain_tools import ConversationManagerBr
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.events import *
-from unity.conversation_manager.events import _SessionConfigBase
 from unity.common.prompt_helpers import now as prompt_now
 
 from unity.common.llm_client import new_llm_client

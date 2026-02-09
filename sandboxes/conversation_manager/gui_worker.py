@@ -45,6 +45,9 @@ from sandboxes.conversation_manager.config_manager import (
 )
 from sandboxes.conversation_manager.event_publisher import EventPublisher
 from sandboxes.conversation_manager.event_subscriber import subscribe_to_responses
+from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
+from sandboxes.conversation_manager.log_aggregator import LogAggregator
+from sandboxes.conversation_manager.trace_display import TraceDisplay
 from sandboxes.conversation_manager.ipc_protocol import (
     MessageType,
     create_message,
@@ -894,8 +897,19 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         sender.send_worker_exit(restart=False, config=None)
         return
 
+    # Build command plumbing.
+    state = WorkerSandboxState()
+    publisher = EventPublisher(cm=cm, state=state)
+
+    # Create display components for logs/traces/event-tree.
+    # These are populated by subscribe_to_responses and used by save_state.
+    trace_display = TraceDisplay()
+    event_tree_display = EventTreeDisplay()
+    log_aggregator = LogAggregator()
+
     # Sandbox-only: wrap CodeActActor's `execute_code` tool to stream a readable
-    # trace entry over IPC (code + simplified stdout/stderr/error).
+    # trace entry over IPC (code + simplified stdout/stderr/error), and also
+    # populate the local trace_display for save_state.
     try:
         actor = getattr(cm, "actor", None)
         if actor is not None and not bool(
@@ -934,6 +948,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                         )
                         has_err = bool(str(simp.get("error") or "").strip())
                         if has_code or has_out or has_err:
+                            # Send to UI via IPC.
                             sender.send_event(
                                 channel="trace:entry",
                                 event={
@@ -942,6 +957,11 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                                 },
                                 critical=False,
                             )
+                            # Also populate local trace_display for save_state.
+                            try:
+                                trace_display.capture_execution(code=code, result=simp)
+                            except Exception:
+                                pass
                     except Exception:
                         pass
                     return res
@@ -955,9 +975,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
     except Exception:
         pass
 
-    # Build command plumbing.
-    state = WorkerSandboxState()
-    publisher = EventPublisher(cm=cm, state=state)
     router = CommandRouter(
         cm=cm,
         args=args,
@@ -967,9 +984,9 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         allow_voice=False,
         allow_save_project=False,
         config_manager=None,
-        trace_display=None,
-        event_tree_display=None,
-        log_aggregator=None,
+        trace_display=trace_display,
+        event_tree_display=event_tree_display,
+        log_aggregator=log_aggregator,
     )
 
     stop_event = asyncio.Event()
@@ -991,6 +1008,9 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             include_call_guidance=True,
             voice_enabled=False,
             stop_event=stop_event,
+            trace_display=trace_display,
+            event_tree_display=event_tree_display,
+            log_aggregator=log_aggregator,
         ),
     )
 
