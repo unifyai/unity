@@ -353,11 +353,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self._actor_steps: Optional[int] = actor_steps
         self._actor_duration: Optional[float] = actor_duration
 
+        super().__init__()
+
         # One shared, *stateful* LLM for *everything*
         self._llm = new_llm_client(stateful=True)
         # Build tool lists programmatically so prompts match the exposed surface.
+        # Register them via add_tools so that the inherited update()/ask() methods
+        # can retrieve them at runtime via self.get_tools("update"/"ask").
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
+        self.add_tools("ask", ask_tools)
+        self.add_tools("update", update_tools)
 
         # Provide placeholder counts/columns for the simulated environment
         from .types.task import Task as _Task
