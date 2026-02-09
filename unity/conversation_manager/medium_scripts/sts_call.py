@@ -182,22 +182,25 @@ async def entrypoint(ctx: JobContext) -> None:
     rio = RoomInputOptions()
 
     # high-level behavior for the assistant.
+    from unity.settings import SETTINGS
+
     assistant_name = SESSION_DETAILS.assistant.name
     system = build_voice_agent_prompt(
         bio=assistant_bio,
         assistant_name=assistant_name or None,
-        boss_first_name=boss["first_name"],
-        boss_surname=boss["surname"],
-        boss_email_address=boss["email_address"],
-        boss_phone_number=boss["phone_number"],
+        boss_first_name=boss.get("first_name", ""),
+        boss_surname=boss.get("surname", ""),
+        boss_email_address=boss.get("email_address", ""),
+        boss_phone_number=boss.get("phone_number", ""),
         boss_bio=boss.get("bio") or None,
-        contact_first_name=contact["first_name"],
-        contact_surname=contact["surname"],
-        contact_phone_number=contact["phone_number"],
-        contact_email=contact["email_address"],
+        contact_first_name=contact.get("first_name", ""),
+        contact_surname=contact.get("surname", ""),
+        contact_phone_number=contact.get("phone_number", ""),
+        contact_email=contact.get("email_address", ""),
         contact_bio=contact.get("bio") or None,
-        is_boss_user=contact["contact_id"] == 1,
+        is_boss_user=contact.get("contact_id") == 1,
         contact_rolling_summary=contact.get("rolling_summary", ""),
+        demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
     print("PRINTING SYSTEM PROMPT")
     print(system)

@@ -596,6 +596,12 @@ def _init_managers(
     )
     # Wire up ContactManager to ContactIndex for always-fresh contact data
     cm.contact_index.set_contact_manager(cm.contact_manager)
+    # In demo mode, ensure the boss contact (contact_id==1) is always visible
+    # in active_conversations so the slow brain can use inline details on
+    # communication tools (e.g., make_call(contact_id=1, phone_number=...))
+    # and set_boss_details to update their record.
+    if SETTINGS.DEMO_MODE:
+        cm.contact_index.get_or_create_conversation(1)
     print(
         f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",
