@@ -447,9 +447,8 @@ class MagnitudeBackend(ComputerBackend):
 
         # Prepare authentication headers
         auth_key = SESSION_DETAILS.unify_key
-        assistant_email = SESSION_DETAILS.assistant.email
         headers = {
-            "Authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+            "Authorization": f"Bearer {auth_key}",
         }
 
         while True:
@@ -603,11 +602,9 @@ class MagnitudeBackend(ComputerBackend):
         retries = 3
         for attempt in range(retries):
             try:
-                # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>"
                 auth_key = SESSION_DETAILS.unify_key
-                assistant_email = SESSION_DETAILS.assistant.email
                 headers = {
-                    "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+                    "authorization": f"Bearer {auth_key}",
                 }
                 async with aiohttp.ClientSession() as session:
                     async with session.request(
@@ -647,9 +644,8 @@ class MagnitudeBackend(ComputerBackend):
         try:
             url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
             auth_key = SESSION_DETAILS.unify_key
-            assistant_email = SESSION_DETAILS.assistant.email
             headers = {
-                "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+                "authorization": f"Bearer {auth_key}",
             }
 
             if payload is None:
