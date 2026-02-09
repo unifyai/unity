@@ -345,10 +345,7 @@ async function auth(req: Request, res: Response, next: Function) {
   if (!match) {
     return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid API key' });
   }
-  // Allow optional trailing metadata (e.g., assistant email) after the token.
-  // Clients may send: "Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>".
-  const apiKeyRaw = match[1].trim();
-  const apiKey = apiKeyRaw.split(/\s+/)[0];
+  const apiKey = match[1].trim();
 
   // Check 1: Bearer token must match UNIFY_KEY
   if (apiKey !== process.env.UNIFY_KEY) {
