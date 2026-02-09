@@ -22,9 +22,6 @@ from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     filter_events_by_type,
 )
-from tests.conversation_manager.demo.conftest import (
-    DEMO_OPERATOR,
-)
 from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.events import (
     SMSReceived,

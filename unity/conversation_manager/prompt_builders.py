@@ -739,7 +739,9 @@ def build_voice_agent_prompt(
         if is_boss_user:
             caller_description = "my boss (who I am meeting for the first time)"
         else:
-            caller_description = "a colleague from Unify who is introducing me to my future boss"
+            caller_description = (
+                "a colleague from Unify who is introducing me to my future boss"
+            )
     else:
         caller_description = "my boss" if is_boss_user else "one of my boss's contacts"
 
