@@ -835,7 +835,7 @@ class TestRenderCompletedActions:
         assert "</completed_actions>" in result
 
     def test_single_completed_action(self, renderer):
-        """Single completed action renders with ask and close steering tools."""
+        """Single completed action renders with ask steering tool only."""
         completed_actions = {
             0: {
                 "handle": MagicMock(),
@@ -851,9 +851,9 @@ class TestRenderCompletedActions:
         assert "id='0'" in result
         assert "status='completed'" in result
         assert "Find all contacts in Berlin" in result
-        # Should have ask and close steering tools (not stop, pause, resume, interject)
+        # Should have ask steering tool (not close, stop, pause, resume, interject)
         assert "ask_" in result
-        assert "close_" in result
+        assert "close_" not in result
         assert "stop_" not in result
         assert "pause_" not in result
         assert "resume_" not in result

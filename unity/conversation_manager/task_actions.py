@@ -66,7 +66,6 @@ STEERING_OPERATIONS: tuple[SteeringOperation, ...] = (
         "answer",
         requires_clarification=True,
     ),
-    SteeringOperation("close", "", ""),
 )
 
 # Operation name -> SteeringOperation mapping
@@ -270,8 +269,6 @@ def iter_steering_tools_for_action(
     actions = []
 
     for op in STEERING_OPERATIONS:
-        if op.name == "close":
-            continue  # close is for completed actions only
         # Conditionally skip pause/resume based on current state
         if is_paused is not None:
             if op.name == "pause" and is_paused:
@@ -306,8 +303,7 @@ def iter_steering_tools_for_completed_action(
 ) -> list[tuple[str, str]]:
     """Generate (action_name, description) pairs for a completed action.
 
-    Completed actions expose `ask` for querying the preserved trajectory
-    and `close` for dismissing the action from state entirely.
+    Completed actions expose `ask` for querying the preserved trajectory.
 
     Args:
         handle_id: The action handle ID
@@ -323,12 +319,5 @@ def iter_steering_tools_for_completed_action(
     ask_name = build_action_name(ask_op.name, short_name, handle_id)
     ask_desc = ask_op.get_docstring() or "Ask about this completed action"
     actions.append((ask_name, ask_desc))
-
-    close_op = OPERATION_MAP["close"]
-    close_name = build_action_name(close_op.name, short_name, handle_id)
-    close_desc = (
-        "Dismiss this completed action, removing it and its tools from future turns."
-    )
-    actions.append((close_name, close_desc))
 
     return actions

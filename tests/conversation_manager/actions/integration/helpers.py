@@ -145,12 +145,8 @@ def extract_actor_handle(cm: Any, handle_id: int) -> Any:
     """Extract the SteerableToolHandle for a given handle_id.
 
     Checks both ``in_flight_actions`` and ``completed_actions`` so callers
-    can await the result of a handle that completed naturally or was stopped
-    with ``close=False``.
-
-    NOTE: ``stop_*`` with ``close=True`` (the default) erases the handle
-    from both dictionaries entirely.  Do not call this after a stop unless
-    you know ``close=False`` was used.
+    can await the result of a handle that was stopped via the CM steering
+    tool path (which moves the handle to ``completed_actions``).
     """
     handle_data = cm.cm.in_flight_actions.get(handle_id) or cm.cm.completed_actions.get(
         handle_id,
@@ -246,12 +242,7 @@ async def wait_for_actor_completion(
     *,
     timeout: float = 300.0,
 ) -> str:
-    """Wait for the actor handle result (primary completion signal).
-
-    Requires the handle to still be present in ``in_flight_actions`` or
-    ``completed_actions``.  Do not call after ``stop_*`` with the default
-    ``close=True``, which erases the handle entirely.
-    """
+    """Wait for the actor handle result (primary completion signal)."""
     handle = extract_actor_handle(cm, handle_id)
     result = await asyncio.wait_for(handle.result(), timeout=timeout)
     if isinstance(result, str):

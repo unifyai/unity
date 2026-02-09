@@ -264,7 +264,6 @@ class TestIsDynamicAction:
             "pause_this__0",
             "resume_that__1",
             "answer_clarification_query__0__suffix",
-            "close_find_contacts__0",
         ]
         for name in dynamic_names:
             assert is_dynamic_action(name), f"{name} should be dynamic"
@@ -351,14 +350,6 @@ class TestIterSteeringToolsForAction:
 
         assert any("answer_clarification" in n for n in action_names)
 
-    def test_close_excluded_from_in_flight_actions(self):
-        """close_* should never appear in in-flight action steering tools."""
-        actions = iter_steering_tools_for_action(0, "Test action")
-        action_names = [a[0] for a in actions]
-        assert not any(
-            "close_" in n for n in action_names
-        ), f"close_* should not appear for in-flight actions: {action_names}"
-
     def test_actions_have_descriptions(self):
         """All steering tools have non-empty descriptions."""
         actions = iter_steering_tools_for_action(0, "Test action")
@@ -369,13 +360,13 @@ class TestIterSteeringToolsForAction:
 class TestIterSteeringToolsForCompletedAction:
     """Tests for iter_steering_tools_for_completed_action function."""
 
-    def test_includes_ask_and_close(self):
-        """Completed action tools include both ask and close."""
+    def test_includes_ask_only(self):
+        """Completed action tools include ask but not close."""
         actions = iter_steering_tools_for_completed_action(0, "Find contacts")
         action_names = [a[0] for a in actions]
 
         assert any("ask_" in n for n in action_names)
-        assert any("close_" in n for n in action_names)
+        assert not any("close_" in n for n in action_names)
 
     def test_excludes_in_flight_only_tools(self):
         """Completed action tools exclude stop, pause, resume, interject."""
@@ -392,14 +383,6 @@ class TestIterSteeringToolsForCompletedAction:
         actions = iter_steering_tools_for_completed_action(0, "Test action")
         for name, description in actions:
             assert len(description) > 0, f"{name} should have a description"
-
-    def test_close_description_mentions_dismiss(self):
-        """close tool description explains the dismissal behavior."""
-        actions = iter_steering_tools_for_completed_action(0, "Test action")
-        close_actions = [(n, d) for n, d in actions if "close_" in n]
-        assert len(close_actions) == 1
-        _, desc = close_actions[0]
-        assert "dismiss" in desc.lower() or "remov" in desc.lower()
 
 
 class TestGetSteeringOperation:
