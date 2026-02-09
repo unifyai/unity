@@ -573,6 +573,41 @@ class ToolSurfaceRegistry:
             }
         return metadata
 
+    @staticmethod
+    def _format_method_signature(cls: Optional[Type], method_name: str) -> str:
+        """Extract a compact signature string for a method.
+
+        Strips ``self`` and any private ``_``-prefixed parameters (internal
+        wiring like ``_parent_chat_context`` or ``_clarification_up_q``).
+
+        Falls back to ``...`` when the class is unavailable or introspection
+        fails for any reason.
+        """
+        if cls is None:
+            return "..."
+        try:
+            method = None
+            # Walk the MRO to find the defining Base* class (same logic as
+            # primitive_methods) so we get the canonical abstract signature.
+            for base in cls.__mro__:
+                if base.__name__.startswith("Base") and method_name in vars(base):
+                    method = vars(base)[method_name]
+                    break
+            if method is None:
+                method = getattr(cls, method_name, None)
+            if method is None:
+                return "..."
+
+            sig = inspect.signature(method)
+            params = [
+                p
+                for name, p in sig.parameters.items()
+                if name != "self" and not name.startswith("_")
+            ]
+            return str(sig.replace(parameters=params))
+        except (ValueError, TypeError):
+            return "..."
+
     def prompt_context(self, primitive_scope: PrimitiveScope) -> str:
         """
         Generate prompt context for exposed managers.
@@ -598,16 +633,18 @@ class ToolSurfaceRegistry:
             lines.append(f"\n**{spec.domain}** → `primitives.{spec.manager_alias}`")
             lines.append(f"- **Domain**: {spec.description}")
 
-            # Show methods with their descriptions
+            # Resolve the manager class once for signature extraction.
+            mgr_cls = self._load_manager_class(spec.primitive_class_path)
+
+            # Show methods with their signatures and descriptions
             method_names = self.primitive_methods(manager_alias=spec.manager_alias)
             for method_name in method_names:
-                if method_name in spec.method_descriptions:
-                    lines.append(
-                        f"- `.{method_name}(...)`: {spec.method_descriptions[method_name]}",
-                    )
+                sig_str = self._format_method_signature(mgr_cls, method_name)
+                desc = spec.method_descriptions.get(method_name, "")
+                if desc:
+                    lines.append(f"- `.{method_name}{sig_str}`: {desc}")
                 else:
-                    # Method exists but no description in metadata
-                    lines.append(f"- `.{method_name}(...)`")
+                    lines.append(f"- `.{method_name}{sig_str}`")
 
             # Add get_tools for files (special case - not auto-discovered from base class)
             if (
