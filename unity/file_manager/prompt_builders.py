@@ -51,7 +51,7 @@ def build_cross_tool_orchestration(tools: Dict[str, Callable]) -> str:
             "------------------------",
             "",
             "Discovery phase (ALWAYS start here):",
-            f"• `{describe_fname}` → get file_id, context paths, schemas (REQUIRED before filter/search/reduce)",
+            f"• `{describe_fname}` → get context paths and schemas (REQUIRED before filter/search/reduce)",
             f"• `{list_columns_fname}` → detailed column inspection for a specific context",
             "",
             "Retrieval phase (use context paths from describe):",

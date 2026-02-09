@@ -232,7 +232,7 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         examples="'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
         method_descriptions={
             "ask": "Query about specific files, parse document contents, extract information from files",
-            "describe": "Discover file storage layout, contexts, and schemas",
+            "describe": "Get storage layout for a specific file (requires file_path)",
             "list_columns": "Get column names and types for a context",
             "reduce": "Aggregate data (count, sum, mean, min, max, etc.)",
             "filter_files": "Query raw records with filtering",

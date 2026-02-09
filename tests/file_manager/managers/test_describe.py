@@ -112,41 +112,6 @@ def test_describe_by_file_path(file_manager, tmp_path: Path) -> None:
     assert storage.file_id is not None
 
 
-def test_describe_by_file_id(file_manager, tmp_path: Path) -> None:
-    """describe() by file_id resolves correctly."""
-    test_file = tmp_path / "by_id.txt"
-    test_file.write_text("Access by file_id test.")
-
-    file_manager.ingest_files(str(test_file))
-
-    # Get file_id from filter
-    rows = file_manager.filter_files(filter=f"file_path == {str(test_file)!r}")
-    assert rows
-    file_id = rows[0].get("file_id")
-    assert file_id is not None
-
-    # Describe by file_id
-    storage = file_manager.describe(file_id=file_id)
-
-    assert storage.indexed_exists is True
-    assert storage.file_id == file_id
-    assert storage.file_path == str(test_file)
-
-
-def test_describe_requires_file_path_or_file_id(file_manager) -> None:
-    """describe() raises if neither file_path nor file_id provided."""
-    with pytest.raises(ValueError, match="Either file_path or file_id"):
-        file_manager.describe()
-
-
-def test_describe_by_invalid_file_id(file_manager) -> None:
-    """describe() for a non-existent file_id returns not indexed."""
-    storage = file_manager.describe(file_id=999999)
-
-    assert storage.indexed_exists is False
-    assert storage.file_id is None
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # Document Context Tests
 # ────────────────────────────────────────────────────────────────────────────

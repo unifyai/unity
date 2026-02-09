@@ -948,9 +948,7 @@ class SimulatedFileManager(BaseFileManager):
     @functools.wraps(BaseFileManager.describe, updated=())
     def describe(
         self,
-        *,
-        file_path: Optional[str] = None,
-        file_id: Optional[int] = None,
+        file_path: str,
     ) -> Any:
         """Simulated counterpart of describe().
 
@@ -958,16 +956,7 @@ class SimulatedFileManager(BaseFileManager):
         """
         from unity.file_manager.types.describe import FileStorageMap
 
-        if file_path is None and file_id is None:
-            raise ValueError("Either file_path or file_id must be provided")
-
-        # Find in simulated storage
         target_path = file_path
-        if file_id is not None:
-            for fp, meta in self._files.items():
-                if meta.get("file_id") == file_id:
-                    target_path = fp
-                    break
 
         if target_path and target_path in self._files:
             meta = self._files[target_path]

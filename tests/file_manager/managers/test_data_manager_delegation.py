@@ -103,23 +103,6 @@ def test_describe_by_file_path(file_manager, tmp_path: Path):
     assert storage.file_path == str(p)
 
 
-def test_describe_by_file_id(file_manager, tmp_path: Path):
-    """describe() should work with file_id parameter."""
-    p = tmp_path / "desc_id.txt"
-    p.write_text("test")
-    file_manager.ingest_files(str(p))
-
-    # First get the file_id
-    rows = file_manager.filter_files(filter=f"file_path == '{str(p)}'")
-    assert rows
-    file_id = rows[0]["file_id"]
-
-    # Now describe by file_id
-    storage = file_manager.describe(file_id=file_id)
-    assert storage.file_id == file_id
-    assert storage.file_path == str(p)
-
-
 def test_describe_includes_document_context(file_manager, tmp_path: Path):
     """describe() should include document context for text files."""
     p = tmp_path / "desc_doc.txt"
@@ -154,12 +137,6 @@ def test_describe_returns_not_indexed_for_missing_file(file_manager):
     assert storage.indexed_exists is False
     assert storage.filesystem_exists is False
     assert storage.file_path == "/nonexistent/file.txt"
-
-
-def test_describe_raises_without_identifier(file_manager):
-    """describe() should raise ValueError if neither file_path nor file_id provided."""
-    with pytest.raises(ValueError, match="Either file_path or file_id"):
-        file_manager.describe()
 
 
 # ────────────────────────────────────────────────────────────────────────────
