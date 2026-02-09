@@ -188,6 +188,14 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         describe the desired end-state in natural language and allow the
         `update` method to determine the best method to apply it.
 
+        Parameters
+        ----------
+        text : str
+            The mutation request in plain English
+            (e.g. "Create a task to review the Q4 report by Friday").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured outcome.
+
         Task schema (reference)
         -----------------------
         {task_schema}
