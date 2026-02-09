@@ -65,13 +65,24 @@ DEMO_OPERATOR = {
 
 
 def pytest_configure(config):
-    """Enable demo mode before any tests in this folder run."""
+    """Enable demo mode before any tests in this folder run.
+
+    Sets the env var for any future SETTINGS re-creation AND directly mutates
+    the existing unity.settings.SETTINGS singleton (which was already created
+    eagerly during root conftest imports, before this hook ran).
+    """
     os.environ["DEMO_MODE"] = "true"
+    from unity.settings import SETTINGS
+
+    SETTINGS.DEMO_MODE = True
 
 
 def pytest_unconfigure(config):
-    """Clean up demo mode env var."""
+    """Clean up demo mode env var and restore SETTINGS."""
     os.environ.pop("DEMO_MODE", None)
+    from unity.settings import SETTINGS
+
+    SETTINGS.DEMO_MODE = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
