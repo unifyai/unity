@@ -696,7 +696,7 @@ async def _startup_sequence(cm: "ConversationManager"):
     from unity.function_manager.primitives.runtime import _vm_ready
 
     _vm_ready.set()
-    await managers_utils._start_file_sync()
+    # await managers_utils._start_file_sync()
 
 
 @EventHandler.register((StartupEvent))
