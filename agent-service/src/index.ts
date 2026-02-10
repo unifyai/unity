@@ -20,7 +20,24 @@ import { jsonSchemaToZod } from './jsonSchemaToZod';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- File System and Command Execution Utilities ---
-const UNITY_WORKSPACE_DIR = path.join(path.parse(process.cwd()).root, 'root');
+//
+// On cloud VMs the service runs as root and `/root` is the natural workspace.
+// Locally (macOS, Windows, non-root Linux) that path is either non-existent or
+// requires elevated privileges, so we fall back to `~/.unity-workspace`.
+// An explicit `UNITY_WORKSPACE_DIR` env var always takes precedence.
+function _resolveWorkspaceDir(): string {
+  if (process.env.UNITY_WORKSPACE_DIR) {
+    return process.env.UNITY_WORKSPACE_DIR;
+  }
+  const candidate = path.join(path.parse(process.cwd()).root, 'root');
+  try {
+    fs.accessSync(candidate, fs.constants.W_OK);
+    return candidate;
+  } catch {
+    return path.join(os.homedir(), '.unity-workspace');
+  }
+}
+const UNITY_WORKSPACE_DIR = _resolveWorkspaceDir();
 const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
 
 
