@@ -1067,35 +1067,50 @@ class ConversationManagerBrainActionTools:
         if response_format is not None:
             pydantic_response_format = schema_dict_to_pydantic(response_format)
 
-        handle = await self._cm.actor.act(
-            query,
-            _parent_chat_context=parent_context,
-            response_format=pydantic_response_format,
-            persist=persist,
-        )
+        # Queue the actor invocation. listen_to_operations() ensures
+        # this runs only after managers are initialized.  Queueing is
+        # instant (just a queue.put), so the registration and event
+        # publish below happen before the queued work executes.
+        cm = self._cm
 
+        async def _invoke_actor():
+            handle = await cm.actor.act(
+                query,
+                _parent_chat_context=parent_context,
+                response_format=pydantic_response_format,
+                persist=persist,
+            )
+
+            # Capture the snapshot state for incremental diff computation.
+            # This is used when interjecting to send only changed state, avoiding duplication.
+            initial_snapshot_state: SnapshotState | None = None
+            if hasattr(self._cm, "_current_snapshot_state"):
+                initial_snapshot_state = self._cm._current_snapshot_state
+
+            self._cm.in_flight_actions[handle_id] = {
+                "handle": handle,
+                "query": query,
+                "persist": persist,
+                "handle_actions": [
+                    {
+                        "action_name": "act_started",
+                        "query": query,
+                        "timestamp": prompt_now(),
+                    },
+                ],
+                "initial_snapshot_state": initial_snapshot_state,
+            }
+            asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
+            asyncio.create_task(
+                managers_utils.actor_watch_notifications(handle_id, handle),
+            )
+            asyncio.create_task(
+                managers_utils.actor_watch_clarifications(handle_id, handle),
+            )
+
+        await managers_utils.queue_operation(_invoke_actor)
         handle_id = _next_handle_id
         _next_handle_id += 1
-
-        # Capture the snapshot state for incremental diff computation.
-        # This is used when interjecting to send only changed state, avoiding duplication.
-        initial_snapshot_state: SnapshotState | None = None
-        if hasattr(self._cm, "_current_snapshot_state"):
-            initial_snapshot_state = self._cm._current_snapshot_state
-
-        self._cm.in_flight_actions[handle_id] = {
-            "handle": handle,
-            "query": query,
-            "persist": persist,
-            "handle_actions": [
-                {
-                    "action_name": "act_started",
-                    "query": query,
-                    "timestamp": prompt_now(),
-                },
-            ],
-            "initial_snapshot_state": initial_snapshot_state,
-        }
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
@@ -1104,12 +1119,6 @@ class ConversationManagerBrainActionTools:
                 action_name="act",
                 query=query,
             ).to_json(),
-        )
-
-        asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
-        asyncio.create_task(managers_utils.actor_watch_notifications(handle_id, handle))
-        asyncio.create_task(
-            managers_utils.actor_watch_clarifications(handle_id, handle),
         )
 
         return {"status": "acting", "query": query}
