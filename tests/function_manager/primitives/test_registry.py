@@ -273,14 +273,18 @@ def test_collect_primitives_matches_get_primitive_sources():
     scope = PrimitiveScope.all_managers()
     primitives = registry.collect_primitives(scope)
 
-    # Verify primitives match what get_primitive_sources returns
+    # Verify primitives match what get_primitive_sources returns.
+    # Build a reverse lookup: (primitive_class_suffix, method) -> name
+    method_to_name = {
+        (row["primitive_class"].rsplit(".", 1)[-1], row["primitive_method"]): name
+        for name, row in primitives.items()
+    }
     for cls, method_names in get_primitive_sources():
         class_name = cls.__name__
         for method_name in method_names:
-            qualified_name = f"{class_name}.{method_name}"
             assert (
-                qualified_name in primitives
-            ), f"Expected auto-discovered primitive '{qualified_name}' not found"
+                (class_name, method_name) in method_to_name
+            ), f"Expected auto-discovered primitive for {class_name}.{method_name} not found"
 
 
 def test_collect_primitives_respects_scope():

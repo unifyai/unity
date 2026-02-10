@@ -67,7 +67,7 @@ async def test_execute_function_primitive_async(function_manager_factory):
     mock_primitives.contacts.ask = AsyncMock(return_value="Alice is a contact")
 
     result = await fm.execute_function(
-        function_name="ContactManager.ask",
+        function_name="primitives.contacts.ask",
         call_kwargs={"text": "Who is Alice?"},
         primitives=mock_primitives,
     )
@@ -89,7 +89,7 @@ async def test_execute_function_primitive_sync(function_manager_factory):
     mock_primitives.knowledge.ask = MagicMock(return_value="The sky is blue")
 
     result = await fm.execute_function(
-        function_name="KnowledgeManager.ask",
+        function_name="primitives.knowledge.ask",
         call_kwargs={"text": "What colour is the sky?"},
         primitives=mock_primitives,
     )
@@ -151,7 +151,7 @@ async def test_execute_function_primitive_returns_handle(function_manager_factor
     mock_primitives.contacts.ask = AsyncMock(return_value=fake_handle)
 
     result = await fm.execute_function(
-        function_name="ContactManager.ask",
+        function_name="primitives.contacts.ask",
         call_kwargs={"text": "Find Bob"},
         primitives=mock_primitives,
     )
@@ -172,7 +172,7 @@ async def test_execute_function_primitive_no_kwargs(function_manager_factory):
     mock_primitives.knowledge.ask = AsyncMock(return_value="All knowledge tables")
 
     result = await fm.execute_function(
-        function_name="KnowledgeManager.ask",
+        function_name="primitives.knowledge.ask",
         # No call_kwargs provided
         primitives=mock_primitives,
     )
@@ -212,7 +212,7 @@ async def test_execute_function_primitive_callable_resolution_failure(
     ):
         with pytest.raises(ValueError, match="Could not resolve primitive callable"):
             await fm.execute_function(
-                function_name="ContactManager.ask",
+                function_name="primitives.contacts.ask",
                 call_kwargs={"text": "Hello"},
             )
 

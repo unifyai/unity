@@ -244,12 +244,12 @@ async def test_semantic_search_finds_primitive():
     primitive_found = any(r.get("is_primitive", False) for r in results)
     assert primitive_found, "Expected to find at least one primitive in search results"
 
-    # Verify ContactManager.ask is findable
+    # Verify primitives.contacts.ask is findable
     contact_primitive = next(
-        (r for r in results if "Contact" in r.get("name", "")),
+        (r for r in results if "primitives.contacts" in r.get("name", "")),
         None,
     )
-    assert contact_primitive is not None, "Expected to find ContactManager primitive"
+    assert contact_primitive is not None, "Expected to find contacts primitive"
 
 
 @pytest.mark.asyncio
@@ -959,9 +959,9 @@ async def test_get_primitive_by_name():
         function_manager=fm,
     )
 
-    primitive_data = actor._get_primitive_by_name("ContactManager.ask")
+    primitive_data = actor._get_primitive_by_name("primitives.contacts.ask")
 
-    assert primitive_data["name"] == "ContactManager.ask"
+    assert primitive_data["name"] == "primitives.contacts.ask"
     assert primitive_data.get("is_primitive") is True
     assert "argspec" in primitive_data
 
