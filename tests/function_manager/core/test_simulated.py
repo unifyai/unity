@@ -190,3 +190,32 @@ def test_clear_sync():
     # Post-clear, read-only operations should still work
     post = fm.list_functions()
     assert isinstance(post, dict) and post is not None
+
+
+# --------------------------------------------------------------------------- #
+#  filter_scope                                                                #
+# --------------------------------------------------------------------------- #
+
+
+pytestmark_eval = pytest.mark.eval
+
+
+@pytestmark_eval
+@_handle_project
+def test_filter_scope_respected_in_list_functions():
+    """
+    A SimulatedFunctionManager with filter_scope="language == 'python'" should
+    only return Python functions from list_functions.
+    """
+    fm = SimulatedFunctionManager(
+        description="A mixed catalogue of Python and bash utility functions",
+        filter_scope="language == 'python'",
+    )
+    listing = fm.list_functions()
+    assert isinstance(listing, dict) and listing
+    # Every entry should report language as 'python' (or omit it, defaulting to python)
+    for name, meta in listing.items():
+        lang = meta.get("language", "python")
+        assert lang == "python", (
+            f"filter_scope='language == \"python\"' but {name!r} has language={lang!r}"
+        )
