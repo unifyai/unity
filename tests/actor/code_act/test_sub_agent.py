@@ -184,3 +184,46 @@ async def test_run_sub_agent_completes_simple_task():
             await actor.close()
         except Exception:
             pass
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(180)
+async def test_run_sub_agent_receives_parent_chat_context():
+    """
+    The sub-agent should receive the parent agent's conversation history
+    via _parent_chat_context, enabling it to answer questions that depend
+    on information only present in the outer conversation.
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=120,
+        can_spawn_sub_agents=True,
+    )
+    try:
+        # First turn: establish a fact in the outer conversation.
+        handle = await actor.act(
+            [
+                {
+                    "role": "user",
+                    "content": (
+                        "Remember this secret code: ZEBRA-42. "
+                        "Now use run_sub_agent to delegate the following task: "
+                        "'The parent conversation contains a secret code. "
+                        "Find it from the conversation context and report it back.' "
+                        "Report whatever the sub-agent returns."
+                    ),
+                },
+            ],
+            persist=False,
+            clarification_enabled=False,
+        )
+        result = await asyncio.wait_for(handle.result(), timeout=120)
+
+        assert "ZEBRA-42" in str(result)
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
