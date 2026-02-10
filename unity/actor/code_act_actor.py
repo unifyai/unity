@@ -2379,7 +2379,10 @@ class CodeActActor(BaseCodeActActor):
                 for name in _code_and_session_tools:
                     out.pop(name, None)
                 out.pop("FunctionManager_add_functions", None)
-            if not effective_can_store:
+            if not effective_can_store or effective_storage_check:
+                # Mask storage tools when storage is disabled outright, or
+                # when storage_check_on_return defers storage to the
+                # dedicated post-completion pass.
                 out.pop("FunctionManager_add_functions", None)
             if not effective_can_spawn_sub_agents:
                 out.pop("run_sub_agent", None)
@@ -2428,11 +2431,13 @@ class CodeActActor(BaseCodeActActor):
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
+            storage_check_on_return=effective_storage_check,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
         # tool call is required. Concerns:
-        # 1) Static filters (can_compose, can_store) -- applied via _filter_tools.
+        # 1) Static filters (can_compose, can_store, storage_check_on_return) --
+        #    applied via _filter_tools.
         # 2) Function-first: on the first model turn, require a FunctionManager
         #    discovery call (search/filter/list) when those tools exist.
         _has_fm_tools = any(
