@@ -2069,6 +2069,8 @@ class CodeActActor(BaseCodeActActor):
             can_spawn_sub_agents: bool = False,
             storage_check_on_return: bool = False,
             _parent_chat_context: list[dict] | None = None,
+            _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+            _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         ) -> str:
             """
             Spawn a sub-agent to work on a focused sub-task.
@@ -2131,12 +2133,14 @@ class CodeActActor(BaseCodeActActor):
 
             handle = await self.act(
                 task,
-                clarification_enabled=False,
+                clarification_enabled=True,
                 can_compose=bool(can_compose),
                 can_store=bool(can_store),
                 can_spawn_sub_agents=bool(can_spawn_sub_agents),
                 storage_check_on_return=bool(storage_check_on_return),
                 _parent_chat_context=_parent_chat_context,
+                _clarification_up_q=_clarification_up_q,
+                _clarification_down_q=_clarification_down_q,
             )
 
             try:
