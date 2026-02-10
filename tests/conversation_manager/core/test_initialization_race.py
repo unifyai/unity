@@ -755,9 +755,9 @@ class TestActQueuedBeforeInit:
         mock_cm.actor.act.assert_not_called()
 
         # The operation should be sitting in the queue
-        assert not managers_utils._operations_queue.empty(), (
-            "The actor invocation should be queued via queue_operation."
-        )
+        assert (
+            not managers_utils._operations_queue.empty()
+        ), "The actor invocation should be queued via queue_operation."
 
     @pytest.mark.asyncio
     async def test_queued_act_executes_after_init(self, event_broker):
@@ -804,15 +804,19 @@ class TestActQueuedBeforeInit:
         assert len(mock_cm.in_flight_actions) == 0
 
         # Simulate processing the queued operation (as listen_to_operations would)
-        with patch(
-            "unity.conversation_manager.domains.managers_utils.actor_watch_result",
-            new_callable=AsyncMock,
-        ), patch(
-            "unity.conversation_manager.domains.managers_utils.actor_watch_notifications",
-            new_callable=AsyncMock,
-        ), patch(
-            "unity.conversation_manager.domains.managers_utils.actor_watch_clarifications",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "unity.conversation_manager.domains.managers_utils.actor_watch_result",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "unity.conversation_manager.domains.managers_utils.actor_watch_notifications",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "unity.conversation_manager.domains.managers_utils.actor_watch_clarifications",
+                new_callable=AsyncMock,
+            ),
         ):
             async_func, args, kwargs = await asyncio.wait_for(
                 managers_utils._operations_queue.get(),
