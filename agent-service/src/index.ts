@@ -20,7 +20,7 @@ import { jsonSchemaToZod } from './jsonSchemaToZod';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- File System and Command Execution Utilities ---
-const UNITY_WORKSPACE_DIR = path.join(path.parse(process.cwd()).root, 'Unity');
+const UNITY_WORKSPACE_DIR = path.join(path.parse(process.cwd()).root, 'root');
 const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
 
 
@@ -290,9 +290,8 @@ Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Silent
 }
 
 function getDefaultBrowserPaths() {
-  const base = path.join(UNITY_WORKSPACE_DIR, 'Local');
-  const downloadsPath = path.join(base, 'Downloads');
-  const tracesDir = path.join(base, 'Traces');
+  const downloadsPath = path.join(UNITY_WORKSPACE_DIR, 'Downloads');
+  const tracesDir = path.join(UNITY_WORKSPACE_DIR, 'Traces');
   return { downloadsPath, tracesDir };
 }
 
