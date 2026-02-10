@@ -35,27 +35,147 @@ class ComputerBackend(ABC):
 
     @abstractmethod
     async def act(self, instruction: str) -> str:
-        """Perform an action on the screen (web UI or desktop)."""
+        """
+        Perform an autonomous action on the current page or screen.
+
+        Executes a natural language instruction by interpreting the current
+        visual state and performing the necessary UI interactions (clicks,
+        typing, scrolling, navigation, form filling, etc.). The agent uses
+        vision to understand the page/screen and determines the appropriate
+        sequence of low-level actions to fulfill the instruction.
+
+        Parameters
+        ----------
+        instruction : str
+            Natural language description of the action to perform.
+            Examples: "Click the login button", "Type 'hello' in the search box",
+            "Scroll down to the footer", "Fill out the contact form with my details"
+
+        Returns
+        -------
+        str
+            Confirmation message describing what action was performed, or an
+            error message if the action could not be completed.
+        """
 
     @abstractmethod
     async def observe(self, query: str, response_format: Any = str) -> Any:
-        """Observe the state of the current page/screen."""
+        """
+        Observe and extract information from the current page or screen state.
+
+        Uses vision-based analysis to answer questions about what is currently
+        visible on the page/screen. This is a read-only operation that does not
+        modify the page state. The agent examines the visual content and extracts
+        the requested information.
+
+        Parameters
+        ----------
+        query : str
+            Natural language question about the current page/screen state.
+            Examples: "What is the page title?", "List all visible product names",
+            "What error message is displayed?", "Is the login button visible?"
+        response_format : type, default str
+            Expected return type. Can be `str` for plain text responses, or a
+            Pydantic model class for structured data extraction. When a Pydantic
+            model is provided, the response will be parsed and validated against
+            that schema.
+
+        Returns
+        -------
+        str | BaseModel
+            The extracted information. Returns a string when `response_format=str`,
+            or an instance of the specified Pydantic model when a model class is
+            provided.
+        """
 
     @abstractmethod
     async def query(self, query: str, response_format: Any = str) -> Any:
-        """Query the agent's memory and action history."""
+        """
+        Query the agent's memory and action history.
+
+        Retrieves information from the agent's internal memory about past actions,
+        observations, and page states encountered during the current session. This
+        enables the agent to recall what it has done and seen, supporting multi-step
+        workflows that require context from earlier interactions.
+
+        Parameters
+        ----------
+        query : str
+            Natural language question about the agent's history or memory.
+            Examples: "What was the last URL I visited?", "Did I already click
+            the submit button?", "What products did I see on the previous page?",
+            "Summarize what I've done so far"
+        response_format : type, default str
+            Expected return type. Can be `str` for plain text responses, or a
+            Pydantic model class for structured data extraction.
+
+        Returns
+        -------
+        str | BaseModel
+            Information from the agent's memory. Returns a string when
+            `response_format=str`, or an instance of the specified Pydantic model
+            when a model class is provided.
+        """
 
     @abstractmethod
     async def get_screenshot(self) -> str:
-        """Get a base64 encoded screenshot of the current page."""
+        """
+        Capture a screenshot of the current page or screen.
+
+        Takes a visual snapshot of the current browser viewport (web mode) or
+        entire screen (desktop mode) and returns it as a base64-encoded PNG image.
+        This provides a visual record of the current state for debugging, logging,
+        or further analysis.
+
+        Returns
+        -------
+        str
+            Base64-encoded PNG image data representing the current screen state.
+            Can be decoded and saved as a .png file or embedded in HTML/markdown.
+        """
 
     @abstractmethod
     async def get_current_url(self) -> str:
-        """Get the current URL (web mode) or active window info (desktop mode)."""
+        """
+        Get the current URL or active window information.
+
+        In web mode, returns the current browser URL. In desktop mode, returns
+        information about the currently active window (title, application name,
+        or other identifying details). This helps track navigation state and
+        context across multi-step workflows.
+
+        Returns
+        -------
+        str
+            In web mode: the current page URL (e.g., "https://example.com/page").
+            In desktop mode: active window information (e.g., window title or
+            application identifier).
+        """
 
     @abstractmethod
     async def navigate(self, url: str) -> str:
-        """Navigate to a specific URL."""
+        """
+        Navigate to a specific URL in the browser.
+
+        Directs the browser to load the specified URL. This is the primary method
+        for moving between pages in web mode. The method waits for the page to
+        load before returning. In desktop mode, this method may not be applicable
+        depending on the backend implementation.
+
+        Parameters
+        ----------
+        url : str
+            The target URL to navigate to. Should be a fully-qualified URL
+            including protocol (e.g., "https://example.com/page"). Relative URLs
+            may be supported depending on the backend implementation.
+
+        Returns
+        -------
+        str
+            Confirmation message indicating successful navigation, or an error
+            message if navigation failed (e.g., invalid URL, network error,
+            timeout).
+        """
 
     @abstractmethod
     async def get_links(
@@ -64,11 +184,64 @@ class ComputerBackend(ABC):
         selector: str = None,
         **kwargs,
     ) -> dict:
-        """Extract all links from the current page."""
+        """
+        Extract all links from the current page.
+
+        Scans the current page for hyperlinks and returns them in a structured
+        format. Supports filtering by domain and CSS selector to narrow results.
+        This is useful for discovering navigation options, scraping link
+        collections, or building site maps.
+
+        Parameters
+        ----------
+        same_domain : bool, default True
+            When True, only return links that point to the same domain as the
+            current page. When False, include all links regardless of domain
+            (including external links).
+        selector : str, optional
+            CSS selector to filter which elements are scanned for links. When
+            provided, only links within elements matching this selector are
+            returned. When None, all links on the page are considered.
+        **kwargs
+            Additional backend-specific filtering or formatting options.
+
+        Returns
+        -------
+        dict
+            Dictionary containing extracted links. Structure depends on backend
+            implementation but typically includes link URLs, anchor text, and
+            metadata about each link.
+        """
 
     @abstractmethod
     async def get_content(self, format: str = "markdown", **kwargs) -> dict:
-        """Get raw page content without LLM processing."""
+        """
+        Get raw page content without LLM processing.
+
+        Extracts the current page's content in a specified format without using
+        vision or LLM interpretation. This provides direct access to the page's
+        text, structure, or markup for parsing, analysis, or storage. Faster and
+        more deterministic than vision-based observation.
+
+        Parameters
+        ----------
+        format : str, default "markdown"
+            Desired output format for the page content. Common values include:
+            - "markdown": Convert page to markdown representation
+            - "html": Return raw HTML source
+            - "text": Extract plain text only
+            Backend implementations may support additional formats.
+        **kwargs
+            Additional backend-specific options for content extraction or
+            formatting.
+
+        Returns
+        -------
+        dict
+            Dictionary containing the extracted content. Structure depends on
+            backend implementation but typically includes the formatted content
+            string and metadata about the extraction.
+        """
 
     @abstractmethod
     def stop(self):
