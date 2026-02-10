@@ -253,7 +253,10 @@ class BaseActor(ABC):
             description: Natural language description of what to do. Can be a question
                 ("What is David's email?"), a command ("Send an email to David"), or
                 a combination ("Find David's email and send him a reminder").
-            clarification_enabled: Whether the actor can ask clarifying questions.
+            clarification_enabled: Whether the actor can request clarification from
+                its **caller** (i.e. whichever process holds the returned handle).
+                This does NOT surface questions to the end user directly — the
+                caller decides how (or whether) to resolve them.
             response_format: Optional Pydantic model for structured output.
             _parent_chat_context: Optional conversation context for continuity.
             _clarification_up_q: Queue for clarification requests (internal).

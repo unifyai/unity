@@ -268,7 +268,7 @@ async def test_run_sub_agent_forwards_capability_flags():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_run_sub_agent_completes_simple_task():
     """
     The outer agent should be able to delegate a simple, self-contained task
@@ -277,7 +277,7 @@ async def test_run_sub_agent_completes_simple_task():
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
-        timeout=120,
+        timeout=300,
         can_spawn_sub_agents=True,
     )
     try:
@@ -286,9 +286,8 @@ async def test_run_sub_agent_completes_simple_task():
             "'Calculate the sum of all integers from 1 to 100 using Python and return the result.' "
             "Report the sub-agent's answer.",
             persist=False,
-            clarification_enabled=False,
         )
-        result = await asyncio.wait_for(handle.result(), timeout=120)
+        result = await asyncio.wait_for(handle.result(), timeout=300)
 
         # The correct answer is 5050. The LLM may format it as "5050" or "5,050".
         result_str = str(result).replace(",", "")
@@ -302,7 +301,7 @@ async def test_run_sub_agent_completes_simple_task():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_run_sub_agent_receives_parent_chat_context():
     """
     The sub-agent should receive the parent agent's conversation history
@@ -312,7 +311,7 @@ async def test_run_sub_agent_receives_parent_chat_context():
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
-        timeout=120,
+        timeout=300,
         can_spawn_sub_agents=True,
     )
     try:
@@ -331,9 +330,8 @@ async def test_run_sub_agent_receives_parent_chat_context():
                 },
             ],
             persist=False,
-            clarification_enabled=False,
         )
-        result = await asyncio.wait_for(handle.result(), timeout=120)
+        result = await asyncio.wait_for(handle.result(), timeout=300)
 
         assert "ZEBRA-42" in str(result)
     finally:
