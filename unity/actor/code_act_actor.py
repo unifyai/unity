@@ -2064,6 +2064,10 @@ class CodeActActor(BaseCodeActActor):
             task: str,
             *,
             timeout: float | None = None,
+            can_compose: bool = True,
+            can_store: bool = False,
+            can_spawn_sub_agents: bool = False,
+            storage_check_on_return: bool = False,
             _parent_chat_context: list[dict] | None = None,
         ) -> str:
             """
@@ -2100,6 +2104,19 @@ class CodeActActor(BaseCodeActActor):
             timeout : float, optional
                 Maximum seconds for the sub-agent to complete. Defaults to half
                 the parent agent's timeout, capped at 300 seconds.
+            can_compose : bool, default True
+                Whether the sub-agent can write and execute arbitrary code via
+                ``execute_code``. Set to False to restrict the sub-agent to
+                only discovering and executing stored functions.
+            can_store : bool, default False
+                Whether the sub-agent can persist new functions to the
+                FunctionManager via ``FunctionManager_add_functions``.
+            can_spawn_sub_agents : bool, default False
+                Whether the sub-agent can itself spawn deeper sub-agents.
+                Use with caution to avoid excessive nesting.
+            storage_check_on_return : bool, default False
+                Whether a post-completion review loop should run to identify
+                and store reusable functions from the sub-agent's trajectory.
 
             Returns
             -------
@@ -2115,10 +2132,10 @@ class CodeActActor(BaseCodeActActor):
             handle = await self.act(
                 task,
                 clarification_enabled=False,
-                can_compose=True,
-                can_store=False,
-                can_spawn_sub_agents=False,
-                storage_check_on_return=False,
+                can_compose=bool(can_compose),
+                can_store=bool(can_store),
+                can_spawn_sub_agents=bool(can_spawn_sub_agents),
+                storage_check_on_return=bool(storage_check_on_return),
                 _parent_chat_context=_parent_chat_context,
             )
 
