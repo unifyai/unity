@@ -196,8 +196,8 @@ def seed_simulated_file_manager(request: pytest.FixtureRequest) -> None:
     - /data/ directory with CSV files
     - /docs/ directory with documents
     """
-    # Only seed for test_files tests
-    if "test_files" not in str(getattr(request.node, "fspath", "")):
+    # Only seed for file-related tests (under the simulated/files/ directory).
+    if "/files/" not in str(getattr(request.node, "fspath", "")):
         return
 
     fm = ManagerRegistry.get_file_manager()

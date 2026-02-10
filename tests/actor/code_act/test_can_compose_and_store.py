@@ -105,7 +105,7 @@ async def test_code_act_can_compose_false_no_functions_match():
     actor = CodeActActor(
         function_manager=fm,
         headless=True,
-        computer_mode="mock",
+        environments=[],
         timeout=60,
     )
     try:
@@ -377,7 +377,7 @@ async def test_storage_check_on_return_merges_redundant_functions():
     fm.search_functions = MagicMock(return_value=_existing_functions)
     fm.filter_functions = MagicMock(return_value=_existing_functions)
     fm.list_functions = MagicMock(
-        return_value={f["name"]: f for f in _existing_functions},
+        return_value={"metadata": _existing_functions},
     )
     fm.add_functions = MagicMock(return_value={"greet": "added"})
     fm.delete_function = MagicMock(
