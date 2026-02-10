@@ -40,16 +40,33 @@ class ComputerBackend(ABC):
 
         Executes a natural language instruction by interpreting the current
         visual state and performing the necessary UI interactions (clicks,
-        typing, scrolling, navigation, form filling, etc.). The agent uses
-        vision to understand the page/screen and determines the appropriate
-        sequence of low-level actions to fulfill the instruction.
+        typing, scrolling, navigation, form filling, etc.). The agent is
+        **autonomous and can perform multiple steps** to achieve the goal
+        described in the instruction. It operates based on a visual
+        understanding of the current page/screen.
+
+        Guidance
+        --------
+        Write instructions at the **goal level**, not the action level. The
+        agent figures out the individual steps (find fields, type, click, etc.)
+        on its own.
+
+        **Good instructions (goal-level):**
+        - "Log into the account using username 'testuser' and password 'password123'."
+          (Agent finds the fields, types, and clicks the login button.)
+        - "Find the cheapest blue t-shirt on the page and add it to the cart."
+          (Agent visually scans, finds the item, clicks 'Add to Cart'.)
+        - "Click the 'Promotions' link in the navigation bar."
+
+        **Bad instructions (too low-level):**
+        - "Move the mouse to coordinate 250, 400, then click."
+          (Avoid pixel-level commands — let the agent handle element targeting.)
 
         Parameters
         ----------
         instruction : str
-            Natural language description of the action to perform.
-            Examples: "Click the login button", "Type 'hello' in the search box",
-            "Scroll down to the footer", "Fill out the contact form with my details"
+            High-level, natural language description of the desired outcome.
+            The agent autonomously determines the steps needed.
 
         Returns
         -------
@@ -66,24 +83,66 @@ class ComputerBackend(ABC):
         Uses vision-based analysis to answer questions about what is currently
         visible on the page/screen. This is a read-only operation that does not
         modify the page state. The agent examines the visual content and extracts
-        the requested information.
+        the requested information. This is the primary tool for **perception**.
+
+        Guidance
+        --------
+        The agent uses a vision-language model, so its success depends on the
+        quality and clarity of the query.
+
+        **Key Principles for an Effective Query:**
+
+        1. **Be Specific and Descriptive**: Don't ask "what's on the page."
+           Instead of "get the product details," prefer "Extract the product
+           name from the top, the price listed in bold, and the author's name
+           below the title."
+
+        2. **Provide a Strategy for Non-Textual Elements**: For visual elements
+           like star ratings, progress bars, or icons, provide a method for
+           interpretation.
+           - Good: "For the star_rating, visually count the number of filled
+             yellow stars and provide it as a number (e.g., 4.0)."
+           - Bad: "Get the star rating." (Fails if the rating is not plain text.)
+
+        3. **Request Specific Data Types**: Guide the model to return the
+           correct data type (e.g., "Extract the number of reviews as an
+           integer", "Get the price as a float, without the currency symbol").
+
+        4. **Leverage Pydantic for Structure**: For any non-trivial extraction,
+           use a Pydantic model via ``response_format``. This forces the agent
+           to return clean, structured, and validated data.
+
+        5. **Embrace Optional Fields for Robustness**: Web pages are
+           unpredictable. Define fields that might not always be present as
+           ``Optional`` in Pydantic models to prevent failures.
+
+        6. **Resolve Visual Ambiguity**: If the page presents conflicting
+           information, instruct the model on how to resolve the conflict.
+           Prioritize the element that reflects the true state of the page.
+           - Bad: "Get the number of servings."
+           - Good: "Determine the active serving size multiplier. Identify
+             which button ('1/2X', '1X', '2X') is visually selected. IGNORE
+             any nearby static text like 'Original recipe yields...'."
+
+        **Bad Queries (HTML/DOM Specific):**
+        - "Get the href attribute of the 'About Us' link."
+          Instead, ask: "What is the destination URL of the 'About Us' link?"
 
         Parameters
         ----------
         query : str
-            Natural language question about the current page/screen state.
-            Examples: "What is the page title?", "List all visible product names",
-            "What error message is displayed?", "Is the login button visible?"
+            Natural language question about what to extract, and if necessary,
+            a strategy for visual interpretation.
         response_format : type, default str
-            Expected return type. Can be `str` for plain text responses, or a
+            Expected return type. Can be ``str`` for plain text responses, or a
             Pydantic model class for structured data extraction. When a Pydantic
             model is provided, the response will be parsed and validated against
-            that schema.
+            that schema. **Highly recommended for reliable extraction.**
 
         Returns
         -------
         str | BaseModel
-            The extracted information. Returns a string when `response_format=str`,
+            The extracted information. Returns a string when ``response_format=str``,
             or an instance of the specified Pydantic model when a model class is
             provided.
         """
@@ -98,22 +157,37 @@ class ComputerBackend(ABC):
         enables the agent to recall what it has done and seen, supporting multi-step
         workflows that require context from earlier interactions.
 
+        **Key characteristics:**
+        - **Memory-focused**: Uses the agent's accumulated memory and context from
+          past actions.
+        - **Historical analysis**: Analyzes what happened during previous ``act()``
+          calls.
+        - **Context-aware**: Includes full agent memory context in the query.
+        - **No fresh content**: Does not capture new page content; works with
+          existing observations.
+
+        **Good queries (what the agent has done):**
+        - "Did the login attempt succeed?"
+        - "What were the steps you took to add the item to the cart?"
+        - "Summarize the actions you have performed so far."
+
+        **Bad queries (require live page content):**
+        - "What is the current price of the item on the page?" (Use ``observe``.)
+        - "Click the 'Submit' button." (Use ``act``.)
+
         Parameters
         ----------
         query : str
             Natural language question about the agent's history or memory.
-            Examples: "What was the last URL I visited?", "Did I already click
-            the submit button?", "What products did I see on the previous page?",
-            "Summarize what I've done so far"
         response_format : type, default str
-            Expected return type. Can be `str` for plain text responses, or a
+            Expected return type. Can be ``str`` for plain text responses, or a
             Pydantic model class for structured data extraction.
 
         Returns
         -------
         str | BaseModel
             Information from the agent's memory. Returns a string when
-            `response_format=str`, or an instance of the specified Pydantic model
+            ``response_format=str``, or an instance of the specified Pydantic model
             when a model class is provided.
         """
 

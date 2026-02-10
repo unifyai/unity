@@ -37,10 +37,6 @@ class ComputerEnvironment(BaseEnvironment):
     def get_instance(self) -> ComputerPrimitives:
         return self._computer_primitives
 
-    def get_prompt_context(self) -> str:
-        """Return Markdown-formatted rules/examples for using web/desktop control."""
-        return ""
-
     def get_tools(self) -> Dict[str, ToolMetadata]:
         # Explicit categorization avoids brittle substring heuristics.
         # (This list should track the actual public methods exposed on ComputerPrimitives.)
@@ -83,14 +79,10 @@ class ComputerEnvironment(BaseEnvironment):
         return tools
 
     def get_prompt_context(self) -> str:
-        """Return concise guidance for using computer/web primitives in plan code."""
-        return (
-            "### Computer Tools (`computer_primitives`)\n"
-            "- Use `await computer_primitives.navigate(url)` to open pages.\n"
-            "- Use `await computer_primitives.act(instruction)` to click/type/scroll.\n"
-            "- Use `await computer_primitives.observe(question, response_format=...)` to extract info.\n"
-            "- Prefer `observe` for reading and `act` for interacting.\n"
-        )
+        """Generate prompt context from registry for computer methods."""
+        from unity.function_manager.primitives import get_registry
+
+        return get_registry().computer_prompt_context()
 
     async def capture_state(self) -> Dict[str, Any]:
         """Captures visual computer state (screenshot + URL)."""

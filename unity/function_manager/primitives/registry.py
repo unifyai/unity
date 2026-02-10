@@ -749,6 +749,73 @@ class ToolSurfaceRegistry:
 
         return "\n\n".join(examples)
 
+    def computer_prompt_context(self) -> str:
+        """
+        Generate prompt context for ComputerPrimitives methods.
+
+        Introspects the ComputerBackend abstract class to extract method
+        signatures and docstrings, then formats them into markdown documentation
+        similar to state manager prompt context.
+
+        Returns:
+            Markdown-formatted documentation for computer methods, or empty string
+            if ComputerBackend cannot be loaded.
+        """
+        try:
+            from unity.function_manager.computer_backends import ComputerBackend
+            from unity.function_manager.primitives.runtime import ComputerPrimitives
+        except ImportError:
+            logger.warning("Could not import ComputerBackend or ComputerPrimitives")
+            return ""
+
+        method_names = ComputerPrimitives._PRIMITIVE_METHODS
+
+        lines = ["### Computer Primitives (`computer_primitives`)\n"]
+        lines.append(
+            "Web and desktop control capabilities for browser automation "
+            "and UI interaction.\n",
+        )
+
+        for method_name in method_names:
+            # Dynamic methods live on ComputerBackend; static methods on
+            # ComputerPrimitives itself.
+            if hasattr(ComputerBackend, method_name):
+                source_cls = ComputerBackend
+            else:
+                source_cls = ComputerPrimitives
+
+            sig_str = self._format_method_signature(source_cls, method_name)
+            full_doc = self._extract_method_docstring(source_cls, method_name)
+            lines.append(f"\n**`.{method_name}{sig_str}`**")
+            if full_doc:
+                for doc_line in full_doc.splitlines():
+                    lines.append(f"  {doc_line}")
+
+        return "\n".join(lines)
+
+    def computer_prompt_examples(self) -> str:
+        """
+        Get concatenated examples for computer methods.
+
+        Delegates to the get_computer_examples() function in prompt_examples.py,
+        which returns pre-defined examples for computer primitives usage.
+
+        Returns:
+            Formatted examples string from prompt_examples.py, or empty string
+            if the module cannot be imported or the function fails.
+        """
+        try:
+            from unity.actor.prompt_examples import get_computer_examples
+        except ImportError:
+            logger.warning("Could not import prompt_examples module")
+            return ""
+
+        try:
+            return get_computer_examples()
+        except Exception as e:
+            logger.warning(f"Error generating computer examples: {e}")
+            return ""
+
     def _get_method_metadata(
         self,
         cls: Type,
