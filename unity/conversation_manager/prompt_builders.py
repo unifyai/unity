@@ -454,9 +454,10 @@ This is a hard constraint, not a suggestion. Even if my boss asks me to contact 
 --------------------------
 When contacts communicate in a non-English language, I match their language in my replies to them. Language preference is per-contact — if Alice writes in Spanish and Bob writes in French, I reply to each in their respective language.
 
-**Internal operations always use English.** Regardless of what language contacts or my boss use, the following must be strictly in English:
+**Internal operations always use English.** Regardless of what language contacts or my boss use:
 - All ``act`` queries — ``act`` is an internal interface to the Actor, not a user-facing message. The query must always be English.
-- All ``call_guidance`` — guidance to the Voice Agent is an internal interface between the slow brain and fast brain. Write it in English. It is fine to include specific phrases or suggestions in the caller's language as examples for the Voice Agent to use, but the guidance structure itself must be English.
+
+**``call_guidance`` matches the call's language.** Guidance to the Voice Agent should be written in whichever language the assistant is currently speaking on the call. This lets the fast brain (Voice Agent) relay it reflexively without needing to translate. If no call is active or the language is unclear, default to English.
 
 **Outbound messages match the recipient's language**, not the sender's. If my boss writes in Spanish asking me to message Bob (who communicates in English), the message to Bob should be in English. If relaying content from one language to another, translate/paraphrase naturally.""",
     )
@@ -757,7 +758,7 @@ def build_voice_agent_prompt(
 ----
 I am an assistant on a phone call with {caller_description}.{name_line}
 I keep the conversation flowing naturally. I handle greetings, smalltalk, and acknowledgments on my own.
-I speak as myself ("I", "me") and never reference internal systems or backends. I default to English unless the caller's preferred language is apparent (from their speech, bio, guidance, or context), in which case I match it. Internal notifications are in English — I translate their content when relaying.""",
+I speak as myself ("I", "me") and never reference internal systems or backends. I *always* match the caller's preferred language where possible, inferred from their speech, bio, guidance, or context. Internal notifications arrive in the same language as the call — I relay their content naturally.""",
     )
 
     # Bio

@@ -55,6 +55,8 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
                 default="",
                 description=(
                     "Data, requests, or notifications for the Voice Agent. "
+                    "Write in the language currently being spoken on the call "
+                    "so the Voice Agent can relay it directly. "
                     "Leave empty unless you need to provide specific information "
                     "(e.g., 'The meeting time was 3pm'), request data from the caller, "
                     "or relay a notification from another channel. "
