@@ -2119,6 +2119,7 @@ class CodeActActor(BaseCodeActActor):
                 can_store=False,
                 can_spawn_sub_agents=False,
                 storage_check_on_return=False,
+                _parent_chat_context=_parent_chat_context,
             )
 
             try:
