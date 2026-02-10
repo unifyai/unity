@@ -523,10 +523,12 @@ class _StorageCheckHandle(SteerableToolHandle):
                     "type": "task_completed",
                     "result": self._original_result,
                     "message": (
-                        "Task completed. The agent is now reviewing its "
-                        "execution trajectory to identify and store reusable "
-                        "skills. Keep this handle alive to allow skill "
-                        "consolidation to finish."
+                        f"Task completed with result:\n\n"
+                        f"{self._original_result}\n\n"
+                        f"The agent is now reviewing its execution "
+                        f"trajectory to store reusable skills. This "
+                        f"handle will remain active until skill "
+                        f"consolidation finishes."
                     ),
                 },
             )
