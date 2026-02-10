@@ -106,13 +106,40 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert '"language": "python"' in prompt
     assert '"name": "list_sessions"' in prompt or "list_sessions" in prompt
 
-    # Computer guidance (legacy CodeAct computer rules/examples block)
+    # Computer execution rules (registry-based prompt structure)
+    assert "Computer Execution Rules" in prompt
     assert "Computer State Feedback" in prompt
-    assert (
-        "Within your code execution, you have access to a global `computer_primitives` object"
-        in prompt
-    )
+    # Computer method documentation (from environment's get_prompt_context)
+    assert "computer_primitives" in prompt.lower()
+    assert "navigate" in prompt
+    assert "act" in prompt
+    assert "observe" in prompt
 
     # State-manager guidance + examples (primitives)
     assert "### 🧩 State Manager Rules" in prompt
     assert "### Implementation Examples" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_computer_environment_prompt_context_from_registry():
+    """ComputerEnvironment should derive prompt context from registry."""
+    from unity.function_manager.primitives import ComputerPrimitives
+    from unity.actor.environments.computer import ComputerEnvironment
+
+    cp = ComputerPrimitives(computer_mode="mock")
+    env = ComputerEnvironment(cp)
+    context = env.get_prompt_context()
+
+    assert context  # Non-empty
+    assert "computer_primitives" in context.lower()
+    # All dynamic methods should be documented
+    assert "navigate" in context
+    assert "act" in context
+    assert "observe" in context
+    assert "query" in context
+    assert "get_links" in context
+    assert "get_content" in context
+    # Static methods too
+    assert "reason" in context
+    # Docstrings should include parameter documentation
+    assert "Parameters" in context
