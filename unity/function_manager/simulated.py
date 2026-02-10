@@ -33,6 +33,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        filter_scope: Optional[str] = None,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
@@ -40,6 +41,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        self._filter_scope = filter_scope
 
         # One shared, *stateful* LLM for the simulation
         self._llm = new_llm_client(stateful=True)
@@ -52,10 +54,20 @@ class SimulatedFunctionManager(BaseFunctionManager):
             else ""
         )
 
+        scope_hint = (
+            f"\n\nIMPORTANT – This instance has a filter_scope applied: {self._filter_scope!r}. "
+            "Every query (list, filter, search) MUST only return functions whose metadata "
+            "satisfies this boolean expression. For example, if the scope is "
+            "\"language == 'python'\", never include shell/bash functions in results. "
+            "Treat the scope as an implicit 'AND' condition on every read query."
+            if self._filter_scope
+            else ""
+        )
+
         sys_msg = (
             "You are a simulated function-catalogue assistant. There is no real "
             "storage; invent plausible functions and keep answers self-consistent.\n\n"
-            f"Back-story: {self._description}{guidance}\n\n"
+            f"Back-story: {self._description}{guidance}{scope_hint}\n\n"
             "Function columns available (simulated):\n" + json.dumps(columns)
         )
         self._llm.set_system_message(sys_msg)
@@ -203,13 +215,18 @@ class SimulatedFunctionManager(BaseFunctionManager):
             "list_functions",
             {"include_implementations": include_implementations},
         )
+        scope_clause = (
+            f"\nScope constraint (MUST be satisfied by every returned function): {self._filter_scope!r}"
+            if self._filter_scope
+            else ""
+        )
         prompt = (
             "Simulate FunctionManager.list_functions. Return ONLY a JSON object mapping "
             "function name -> {function_id, argspec, docstring"
             + (", implementation" if include_implementations else "")
             + "}. "
             "Ensure the catalogue reflects the following high-level domain guidance if provided.\n\n"
-            f"Guidance: {guidance!r}"
+            f"Guidance: {guidance!r}{scope_clause}"
         )
 
         def _call() -> str:
@@ -348,13 +365,18 @@ class SimulatedFunctionManager(BaseFunctionManager):
             "filter_functions",
             {"filter": filter, "offset": offset, "limit": limit},
         )
+        scope_clause = (
+            f"\nScope constraint (MUST be satisfied by every returned function): {self._filter_scope!r}"
+            if self._filter_scope
+            else ""
+        )
         prompt = (
             "Simulate FunctionManager.filter_functions. Return ONLY a JSON array of objects "
             "with fields name, function_id, argspec, docstring. "
             f"Limit to {limit} starting at {offset}. "
             f"Filter expression: {filter!r}. "
             "Ensure results reflect the high-level guidance when relevant.\n\n"
-            f"Guidance: {guidance!r}"
+            f"Guidance: {guidance!r}{scope_clause}"
         )
 
         def _call() -> str:
@@ -455,12 +477,17 @@ class SimulatedFunctionManager(BaseFunctionManager):
             "search_functions",
             {"query": query, "n": n},
         )
+        scope_clause = (
+            f"\nScope constraint (MUST be satisfied by every returned function): {self._filter_scope!r}"
+            if self._filter_scope
+            else ""
+        )
         prompt = (
             "Simulate FunctionManager.search_functions. Given the natural-language query, "
             "invent up to n plausible functions that would exist in the current catalogue. "
             "Return ONLY a JSON array of objects with keys name, function_id, argspec, score. "
             "Bias the inventions to align with the high-level guidance if present.\n\n"
-            f"query={query!r}, n={n}, guidance={guidance!r}"
+            f"query={query!r}, n={n}, guidance={guidance!r}{scope_clause}"
         )
 
         def _call() -> str:
@@ -604,6 +631,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            filter_scope=getattr(self, "_filter_scope", None),
         )
         if sched:
             label, cid, t0 = sched

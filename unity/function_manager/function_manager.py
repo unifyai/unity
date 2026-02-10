@@ -1639,12 +1639,14 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         primitive_scope: Optional[PrimitiveScope] = None,
+        filter_scope: Optional[str] = None,
         daemon: bool = True,
         file_manager: Optional[LocalFileManager] = None,
     ) -> None:
         # Store the scope - this FunctionManager instance is permanently scoped
         # Default to all managers if not specified
         self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
+        self._filter_scope = filter_scope
         self._registry = get_registry()
         self._daemon = daemon
         # ToDo: expose tools to LLM once needed
@@ -1707,6 +1709,24 @@ class FunctionManager(BaseFunctionManager):
     def primitive_scope(self) -> PrimitiveScope:
         """The scope controlling which managers' primitives are accessible."""
         return self._primitive_scope
+
+    @property
+    def filter_scope(self) -> Optional[str]:
+        """A boolean expression permanently applied to all read queries."""
+        return self._filter_scope
+
+    def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
+        """Compose *caller_filter* with the instance-level ``_filter_scope``.
+
+        Returns ``None`` when both are absent, meaning "no filter".
+        """
+        if not self._filter_scope and not caller_filter:
+            return None
+        if not self._filter_scope:
+            return caller_filter
+        if not caller_filter:
+            return self._filter_scope
+        return f"({caller_filter}) and ({self._filter_scope})"
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -3393,6 +3413,7 @@ class FunctionManager(BaseFunctionManager):
         metadata: Dict[str, Dict[str, Any]] = {}
         logs = unify.get_logs(
             context=self._compositional_ctx,
+            filter=self._scoped_filter(None),
             exclude_fields=list_private_fields(self._compositional_ctx),
         )
 
@@ -3443,7 +3464,7 @@ class FunctionManager(BaseFunctionManager):
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
         logs = unify.get_logs(
             context=self._compositional_ctx,
-            filter=f"name == '{function_name}'",
+            filter=self._scoped_filter(f"name == '{function_name}'"),
             limit=1,
             exclude_fields=list_private_fields(self._compositional_ctx),
         )
@@ -3587,7 +3608,7 @@ class FunctionManager(BaseFunctionManager):
         if return_callable and namespace is None:
             raise ValueError("namespace required when return_callable=True")
 
-        normalized = normalize_filter_expr(filter)
+        normalized = self._scoped_filter(normalize_filter_expr(filter))
         # The underlying Unify backend returns 404 when a context hasn't been created yet.
         # In tests and fresh projects, contexts are created lazily, so we retry briefly and
         # then treat missing context as "no functions" rather than crashing the Actor.
@@ -3692,6 +3713,7 @@ class FunctionManager(BaseFunctionManager):
             k=n,
             allowed_fields=allowed_fields,
             unique_id_field="function_id",
+            row_filter=self._filter_scope,
         )
 
         if not include_primitives:
