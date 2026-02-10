@@ -232,195 +232,196 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
 
 
 # ---------------------------------------------------------------------------
-# Fire-and-forget storage check loop
+# Storage check: start a review loop and return its handle
 # ---------------------------------------------------------------------------
 
 
-async def _run_storage_check(
+def _start_storage_check_loop(
     *,
     trajectory: list[dict],
     ask_tools: dict,
     actor: "CodeActActor",
     original_result: str,
-) -> None:
-    """Review a completed CodeActActor trajectory for reusable functions.
+) -> "AsyncToolLoopHandle | None":
+    """Start a loop that reviews a completed trajectory for reusable functions.
 
-    Runs a standalone async tool loop with FunctionManager discovery and
-    storage tools (no execution) plus ``ask_about_completed_tool`` for
-    drilling into inner tool results.  Errors are swallowed — this is a
-    best-effort, fire-and-forget operation.
+    Returns the loop handle so the caller can steer and await it, or
+    ``None`` when there is no ``FunctionManager`` configured.
     """
-    try:
-        fm = actor.function_manager
-        if fm is None:
-            return
+    fm = actor.function_manager
+    if fm is None:
+        return None
 
-        # ── Build sandbox-free FunctionManager tools ──────────────────────
+    # ── Build sandbox-free FunctionManager tools ──────────────────────
 
-        async def FunctionManager_search_functions(
-            query: str,
-            n: int = 5,
-        ) -> Any:
-            """Search for existing stored functions by semantic similarity."""
-            return fm.search_functions(
-                query=query,
-                n=n,
-                include_implementations=True,
-            )
+    async def FunctionManager_search_functions(
+        query: str,
+        n: int = 5,
+    ) -> Any:
+        """Search for existing stored functions by semantic similarity."""
+        return fm.search_functions(
+            query=query,
+            n=n,
+            include_implementations=True,
+        )
 
-        async def FunctionManager_filter_functions(
-            filter: Optional[str] = None,
-            offset: int = 0,
-            limit: int = 100,
-        ) -> Any:
-            """Filter existing stored functions using a filter expression."""
-            return fm.filter_functions(
-                filter=filter,
-                offset=offset,
-                limit=limit,
-                include_implementations=True,
-            )
+    async def FunctionManager_filter_functions(
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> Any:
+        """Filter existing stored functions using a filter expression."""
+        return fm.filter_functions(
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            include_implementations=True,
+        )
 
-        async def FunctionManager_list_functions(
-            include_implementations: bool = False,
-        ) -> Any:
-            """List all stored functions."""
-            return fm.list_functions(
-                include_implementations=include_implementations,
-            )
+    async def FunctionManager_list_functions(
+        include_implementations: bool = False,
+    ) -> Any:
+        """List all stored functions."""
+        return fm.list_functions(
+            include_implementations=include_implementations,
+        )
 
-        async def FunctionManager_add_functions(
-            implementations: str | list[str],
-            *,
-            language: str = "python",
-            overwrite: bool = False,
-        ) -> Any:
-            """Store new reusable functions, or update existing ones by name.
+    async def FunctionManager_add_functions(
+        implementations: str | list[str],
+        *,
+        language: str = "python",
+        overwrite: bool = False,
+    ) -> Any:
+        """Store new reusable functions, or update existing ones by name.
 
-            When ``overwrite=True`` and a function with the same name already
-            exists, its implementation is replaced with the new one.
+        When ``overwrite=True`` and a function with the same name already
+        exists, its implementation is replaced with the new one.
+        """
+        return fm.add_functions(
+            implementations=implementations,
+            language=language,
+            overwrite=bool(overwrite),
+        )
+
+    async def FunctionManager_delete_functions(
+        function_ids: list[int],
+    ) -> Any:
+        """Delete functions by their IDs.
+
+        Use this to remove obsolete, redundant, or superseded functions
+        from the store. Obtain ``function_id`` values from the results
+        of search, filter, or list calls.
+        """
+        return fm.delete_function(function_id=function_ids)
+
+    tools: Dict[str, Callable] = {
+        "FunctionManager_search_functions": FunctionManager_search_functions,
+        "FunctionManager_filter_functions": FunctionManager_filter_functions,
+        "FunctionManager_list_functions": FunctionManager_list_functions,
+        "FunctionManager_add_functions": FunctionManager_add_functions,
+        "FunctionManager_delete_functions": FunctionManager_delete_functions,
+    }
+
+    # ── Wire ask_about_completed_tool from snapshot ───────────────────
+
+    if ask_tools:
+        completed_info: list[str] = []
+        for name, fn in ask_tools.items():
+            completed_info.append(f"- `{name}`")
+
+        async def ask_about_completed_tool(
+            tool_name: str,
+            question: str,
+        ) -> str:
+            """Ask a follow-up question about a completed tool from the trajectory.
+
+            Use this to inspect the internal reasoning or detailed results of
+            any tool that ran during the completed execution.
             """
-            return fm.add_functions(
-                implementations=implementations,
-                language=language,
-                overwrite=bool(overwrite),
-            )
+            fn = ask_tools.get(tool_name)
+            if fn is None:
+                return f"Tool '{tool_name}' not found. Available: {list(ask_tools.keys())}"
+            handle = await fn(question=question)
+            if hasattr(handle, "result"):
+                result = handle.result
+                if callable(result):
+                    result = result()
+                if inspect.isawaitable(result):
+                    result = await result
+                return str(result)
+            return str(handle)
 
-        async def FunctionManager_delete_functions(
-            function_ids: list[int],
-        ) -> Any:
-            """Delete functions by their IDs.
+        tools["ask_about_completed_tool"] = ask_about_completed_tool
 
-            Use this to remove obsolete, redundant, or superseded functions
-            from the store. Obtain ``function_id`` values from the results
-            of search, filter, or list calls.
-            """
-            return fm.delete_function(function_id=function_ids)
+    # ── Build prompt ──────────────────────────────────────────────────
 
-        tools: Dict[str, Callable] = {
-            "FunctionManager_search_functions": FunctionManager_search_functions,
-            "FunctionManager_filter_functions": FunctionManager_filter_functions,
-            "FunctionManager_list_functions": FunctionManager_list_functions,
-            "FunctionManager_add_functions": FunctionManager_add_functions,
-            "FunctionManager_delete_functions": FunctionManager_delete_functions,
-        }
+    trajectory_json = json.dumps(trajectory, indent=2, default=str)
 
-        # ── Wire ask_about_completed_tool from snapshot ───────────────────
+    system_prompt = (
+        "You are a function librarian. A CodeActActor has just completed a task. "
+        "Your job is to review the execution trajectory and maintain the function "
+        "library: store valuable new functions, improve existing ones, merge "
+        "redundant entries, and remove obsolete ones.\n\n"
+        "## Completed Trajectory\n\n"
+        f"{trajectory_json}\n\n"
+        "## Final Result\n\n"
+        f"{original_result}\n\n"
+        "## Instructions\n\n"
+        "1. Review the trajectory for any Python functions that were composed "
+        "and executed during the task.\n"
+        "2. Search the existing function store "
+        "(via `FunctionManager_search_functions`) to understand what already "
+        "exists.\n"
+        "3. Decide what actions (if any) would improve the library. You can:\n"
+        "   - **Add** a genuinely new, reusable function "
+        "(`FunctionManager_add_functions`).\n"
+        "   - **Update** an existing function with a better implementation "
+        "(`FunctionManager_add_functions` with `overwrite=True`).\n"
+        "   - **Merge** two or more overlapping functions into a single, "
+        "more general one: add the merged version, then delete the old "
+        "entries (`FunctionManager_delete_functions`).\n"
+        "   - **Delete** functions that are now redundant or superseded "
+        "(`FunctionManager_delete_functions`).\n"
+        "4. Prefer a clean, non-redundant library over a large one. Merging "
+        "two similar functions into one general-purpose function is better "
+        "than keeping both.\n"
+        "5. Do NOT store trivial one-liners, test scaffolding, or functions "
+        "that are too specific to this particular task to be reusable.\n"
+        "6. When done (or if there is nothing worth changing), respond with a "
+        "brief summary of what you did (or that nothing was needed)."
+    )
 
-        if ask_tools:
-            completed_info: list[str] = []
-            for name, fn in ask_tools.items():
-                completed_info.append(f"- `{name}`")
+    client = new_llm_client(
+        actor._model,
+        reasoning_effort=None,
+        service_tier=None,
+    )
+    client.set_system_message(system_prompt)
 
-            async def ask_about_completed_tool(
-                tool_name: str,
-                question: str,
-            ) -> str:
-                """Ask a follow-up question about a completed tool from the trajectory.
-
-                Use this to inspect the internal reasoning or detailed results of
-                any tool that ran during the completed execution.
-                """
-                fn = ask_tools.get(tool_name)
-                if fn is None:
-                    return f"Tool '{tool_name}' not found. Available: {list(ask_tools.keys())}"
-                handle = await fn(question=question)
-                if hasattr(handle, "result"):
-                    result = handle.result
-                    if callable(result):
-                        result = result()
-                    if inspect.isawaitable(result):
-                        result = await result
-                    return str(result)
-                return str(handle)
-
-            tools["ask_about_completed_tool"] = ask_about_completed_tool
-
-        # ── Build prompt ──────────────────────────────────────────────────
-
-        trajectory_json = json.dumps(trajectory, indent=2, default=str)
-
-        system_prompt = (
-            "You are a function librarian. A CodeActActor has just completed a task. "
-            "Your job is to review the execution trajectory and maintain the function "
-            "library: store valuable new functions, improve existing ones, merge "
-            "redundant entries, and remove obsolete ones.\n\n"
-            "## Completed Trajectory\n\n"
-            f"{trajectory_json}\n\n"
-            "## Final Result\n\n"
-            f"{original_result}\n\n"
-            "## Instructions\n\n"
-            "1. Review the trajectory for any Python functions that were composed "
-            "and executed during the task.\n"
-            "2. Search the existing function store "
-            "(via `FunctionManager_search_functions`) to understand what already "
-            "exists.\n"
-            "3. Decide what actions (if any) would improve the library. You can:\n"
-            "   - **Add** a genuinely new, reusable function "
-            "(`FunctionManager_add_functions`).\n"
-            "   - **Update** an existing function with a better implementation "
-            "(`FunctionManager_add_functions` with `overwrite=True`).\n"
-            "   - **Merge** two or more overlapping functions into a single, "
-            "more general one: add the merged version, then delete the old "
-            "entries (`FunctionManager_delete_functions`).\n"
-            "   - **Delete** functions that are now redundant or superseded "
-            "(`FunctionManager_delete_functions`).\n"
-            "4. Prefer a clean, non-redundant library over a large one. Merging "
-            "two similar functions into one general-purpose function is better "
-            "than keeping both.\n"
-            "5. Do NOT store trivial one-liners, test scaffolding, or functions "
-            "that are too specific to this particular task to be reusable.\n"
-            "6. When done (or if there is nothing worth changing), respond with a "
-            "brief summary of what you did (or that nothing was needed)."
-        )
-
-        client = new_llm_client(
-            actor._model,
-            reasoning_effort=None,
-            service_tier=None,
-        )
-        client.set_system_message(system_prompt)
-
-        storage_handle = start_async_tool_loop(
-            client=client,
-            message="Review the trajectory and store any reusable functions.",
-            tools=tools,
-            loop_id="StorageCheck(CodeActActor.act)",
-            max_steps=30,
-            timeout=120,
-        )
-        await storage_handle.result()
-    except Exception:
-        # Fire-and-forget: swallow all errors.
-        pass
+    return start_async_tool_loop(
+        client=client,
+        message="Review the trajectory and store any reusable functions.",
+        tools=tools,
+        loop_id="StorageCheck(CodeActActor.act)",
+        max_steps=30,
+        timeout=120,
+    )
 
 
 class _StorageCheckHandle(SteerableToolHandle):
-    """Wraps an inner handle and runs a fire-and-forget storage check after completion.
+    """Wraps an inner handle and runs a storage check after task completion.
 
-    Steering methods forward transparently to the inner handle during execution.
-    ``result()`` returns the original result immediately after kicking off a
-    background loop that reviews the trajectory for reusable functions.
+    Lifecycle phases:
+
+    * **task** -- the inner tool loop is running.  All steering methods
+      forward to the inner handle.  Notifications from the inner handle
+      are relayed to consumers.
+    * **storage** -- the task has completed.  A notification carrying the
+      original result has been emitted.  A second loop reviews the
+      trajectory for reusable skills.  Steering operates on the storage
+      loop.
+    * **done** -- both phases have completed (or were stopped/skipped).
+      ``result()`` resolves with the original task result.
     """
 
     def __init__(
@@ -431,8 +432,137 @@ class _StorageCheckHandle(SteerableToolHandle):
     ) -> None:
         self._inner = inner
         self._actor = actor
+        self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
+        self._completion_event = asyncio.Event()
+        self._original_result: Optional[str] = None
+        self._storage_handle: Optional["AsyncToolLoopHandle"] = None
+        self._phase: str = "task"  # "task" | "storage" | "done"
+        self._stopped: bool = False
+        self._active_relay: Optional[asyncio.Task] = None
 
-    # ── Steering: forward to inner handle ──────────────────────────────────
+        # Start the two-phase lifecycle manager.
+        self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
+
+    # ── Internal helpers ──────────────────────────────────────────────
+
+    @property
+    def _active_handle(self) -> Optional["SteerableToolHandle"]:
+        """The currently active inner handle for steering delegation."""
+        if self._phase == "task":
+            return self._inner
+        if self._phase == "storage":
+            return self._storage_handle
+        return None
+
+    async def _relay_notifications_from(
+        self,
+        source: "SteerableToolHandle",
+    ) -> None:
+        """Forward notifications from *source* into our queue until cancelled."""
+        try:
+            while True:
+                notif = await source.next_notification()
+                await self._notification_q.put(notif)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def _cancel_relay(self) -> None:
+        """Cancel the active notification relay task, if any."""
+        relay = self._active_relay
+        if relay is not None and not relay.done():
+            relay.cancel()
+            try:
+                await relay
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._active_relay = None
+
+    # ── Lifecycle ─────────────────────────────────────────────────────
+
+    async def _run_lifecycle(self) -> None:
+        """Manage the two-phase lifecycle: task -> storage check -> done."""
+        try:
+            # ── Phase 1: task execution ───────────────────────────────
+            self._active_relay = asyncio.create_task(
+                self._relay_notifications_from(self._inner),
+            )
+
+            self._original_result = await self._inner.result()
+            await self._cancel_relay()
+
+            if self._stopped:
+                return
+
+            # Snapshot trajectory and ask tools (client/messages are still
+            # valid after result() returns -- cleanup only resets context
+            # vars and releases the semaphore).
+            trajectory: list[dict] = []
+            ask_tools: dict = {}
+            try:
+                client = getattr(self._inner, "_client", None)
+                if client is not None:
+                    trajectory = list(getattr(client, "messages", []) or [])
+            except Exception:
+                pass
+            try:
+                _get_ask = getattr(
+                    self._inner._task,
+                    "get_ask_tools",
+                    lambda: {},
+                )
+                ask_tools = _get_ask()
+            except Exception:
+                pass
+
+            # ── Transition: notify consumers ──────────────────────────
+            self._phase = "storage"
+            await self._notification_q.put(
+                {
+                    "type": "task_completed",
+                    "result": self._original_result,
+                    "message": (
+                        "Task completed. The agent is now reviewing its "
+                        "execution trajectory to identify and store reusable "
+                        "skills. Keep this handle alive to allow skill "
+                        "consolidation to finish."
+                    ),
+                },
+            )
+
+            # ── Phase 2: storage check ────────────────────────────────
+            storage_handle = _start_storage_check_loop(
+                trajectory=trajectory,
+                ask_tools=ask_tools,
+                actor=self._actor,
+                original_result=str(self._original_result),
+            )
+
+            if storage_handle is None:
+                return
+
+            self._storage_handle = storage_handle
+            self._active_relay = asyncio.create_task(
+                self._relay_notifications_from(self._storage_handle),
+            )
+
+            try:
+                await self._storage_handle.result()
+            except Exception:
+                pass
+
+            await self._cancel_relay()
+
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            self._phase = "done"
+            self._completion_event.set()
+
+    # ── Steering: phase-aware forwarding ──────────────────────────────
 
     async def ask(
         self,
@@ -441,10 +571,78 @@ class _StorageCheckHandle(SteerableToolHandle):
         _parent_chat_context: list[dict] | None = None,
         **kwargs,
     ) -> "SteerableToolHandle":
-        return await self._inner.ask(
-            question,
-            _parent_chat_context=_parent_chat_context,
-            **kwargs,
+        # Task and done phases: ask about the completed/running task.
+        if self._phase != "storage":
+            return await self._inner.ask(
+                question,
+                _parent_chat_context=_parent_chat_context,
+                **kwargs,
+            )
+
+        # ── Storage phase: thin routing loop ──────────────────────────
+        inner_ref = self._inner
+        storage_ref = self._storage_handle
+        pcc = _parent_chat_context
+
+        async def ask_about_task(question: str) -> str:
+            """Ask a question about the **completed task** itself.
+
+            Use this for anything related to:
+            - What the task was and what the agent did to accomplish it
+            - The reasoning, tool calls, or intermediate steps taken
+            - The final result or output of the task
+            - Errors or issues encountered during execution
+
+            This queries the full execution trajectory of the finished
+            task, NOT the skill-storage process that is running now.
+            """
+            h = await inner_ref.ask(question, _parent_chat_context=pcc)
+            return await h.result()
+
+        async def ask_about_skill_storage(question: str) -> str:
+            """Ask a question about the **ongoing skill storage** process.
+
+            Use this for anything related to:
+            - Which functions are being considered for storage
+            - What the skill librarian has stored, merged, or deleted so far
+            - Progress or status of the skill consolidation review
+            - Decisions about whether a function is worth keeping
+
+            This queries the live storage-check loop that is reviewing
+            the completed trajectory for reusable patterns, NOT the
+            original task itself.
+            """
+            if storage_ref is not None:
+                h = await storage_ref.ask(question, _parent_chat_context=pcc)
+                return await h.result()
+            return "Skill storage has not started yet."
+
+        routing_tools: Dict[str, Callable] = {
+            "ask_about_task": ask_about_task,
+            "ask_about_skill_storage": ask_about_skill_storage,
+        }
+
+        routing_client = new_llm_client()
+        routing_client.set_system_message(
+            "You are answering a question about an agent that has completed "
+            "its primary task and is now reviewing its execution trajectory "
+            "to store reusable skills.\n\n"
+            "You have two tools:\n"
+            "- ask_about_task: for questions about the completed task, its "
+            "approach, reasoning, or result\n"
+            "- ask_about_skill_storage: for questions about the ongoing "
+            "skill consolidation process\n\n"
+            "Route the question to the appropriate tool. If the question "
+            "spans both topics, call both tools and synthesize the answers.",
+        )
+
+        return start_async_tool_loop(
+            client=routing_client,
+            message=question,
+            tools=routing_tools,
+            loop_id="Question(StorageCheck.routing)",
+            max_steps=5,
+            timeout=60,
         )
 
     async def interject(
@@ -454,75 +652,58 @@ class _StorageCheckHandle(SteerableToolHandle):
         _parent_chat_context_cont: list[dict] | None = None,
         **kwargs,
     ) -> None:
-        return await self._inner.interject(
-            message,
-            _parent_chat_context_cont=_parent_chat_context_cont,
-            **kwargs,
-        )
+        handle = self._active_handle
+        if handle is not None:
+            return await handle.interject(
+                message,
+                _parent_chat_context_cont=_parent_chat_context_cont,
+                **kwargs,
+            )
 
     async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
-        return await self._inner.stop(reason=reason, **kwargs)
+        self._stopped = True
+        handle = self._active_handle
+        if handle is not None:
+            await handle.stop(reason=reason, **kwargs)
 
     async def pause(self, **kwargs) -> Optional[str]:
-        return await self._inner.pause(**kwargs)
+        handle = self._active_handle
+        if handle is not None:
+            return await handle.pause(**kwargs)
+        return None
 
     async def resume(self, **kwargs) -> Optional[str]:
-        return await self._inner.resume(**kwargs)
+        handle = self._active_handle
+        if handle is not None:
+            return await handle.resume(**kwargs)
+        return None
+
+    # ── Completion ────────────────────────────────────────────────────
 
     def done(self) -> bool:
-        return self._inner.done()
+        return self._completion_event.is_set()
 
     async def result(self) -> str:
-        # Snapshot trajectory and ask tools BEFORE calling inner result()
-        # (which triggers cleanup that may destroy the client/task state).
-        trajectory: list[dict] = []
-        ask_tools: dict = {}
-        try:
-            client = getattr(self._inner, "_client", None)
-            if client is not None:
-                trajectory = list(getattr(client, "messages", []) or [])
-        except Exception:
-            pass
-        try:
-            _get_ask = getattr(self._inner._task, "get_ask_tools", lambda: {})
-            ask_tools = _get_ask()
-        except Exception:
-            pass
+        await self._completion_event.wait()
+        return self._original_result or ""
 
-        original_result = await self._inner.result()
-
-        # Fire-and-forget: kick off the storage check in the background.
-        try:
-            task = asyncio.create_task(
-                _run_storage_check(
-                    trajectory=trajectory,
-                    ask_tools=ask_tools,
-                    actor=self._actor,
-                    original_result=original_result,
-                ),
-            )
-            self._actor._storage_check_tasks.append(task)
-            # Auto-remove from tracking list when done.
-            task.add_done_callback(
-                lambda t: (
-                    self._actor._storage_check_tasks.remove(t)
-                    if t in self._actor._storage_check_tasks
-                    else None
-                ),
-            )
-        except Exception:
-            pass
-
-        return original_result
+    # ── Events ────────────────────────────────────────────────────────
 
     async def next_clarification(self) -> dict:
-        return await self._inner.next_clarification()
+        handle = self._active_handle
+        if handle is not None:
+            return await handle.next_clarification()
+        # Done: block forever (no more clarifications expected).
+        await asyncio.Event().wait()
+        return {}
 
     async def next_notification(self) -> dict:
-        return await self._inner.next_notification()
+        return await self._notification_q.get()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
-        return await self._inner.answer_clarification(call_id, answer)
+        handle = self._active_handle
+        if handle is not None:
+            return await handle.answer_clarification(call_id, answer)
 
     def get_history(self) -> list[dict]:
         return self._inner.get_history()
@@ -616,7 +797,6 @@ class CodeActActor(BaseCodeActActor):
         self.can_store: bool = bool(can_store)
         self.can_spawn_sub_agents: bool = bool(can_spawn_sub_agents)
         self.storage_check_on_return: bool = bool(storage_check_on_return)
-        self._storage_check_tasks: list[asyncio.Task] = []
         self._model = model
         self._preprocess_msgs = preprocess_msgs
         self._prompt_caching = prompt_caching
@@ -1882,6 +2062,7 @@ class CodeActActor(BaseCodeActActor):
             task: str,
             *,
             timeout: float | None = None,
+            _parent_chat_context: list[dict] | None = None,
         ) -> str:
             """
             Spawn a sub-agent to work on a focused sub-task.
@@ -2338,12 +2519,6 @@ class CodeActActor(BaseCodeActActor):
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        # Cancel any fire-and-forget storage check tasks.
-        for t in self._storage_check_tasks:
-            if not t.done():
-                t.cancel()
-        self._storage_check_tasks.clear()
-
         # Close any in-process session sandboxes owned by the session executor.
         try:
             await self._session_executor.close()

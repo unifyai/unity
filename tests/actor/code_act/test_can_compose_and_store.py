@@ -232,9 +232,9 @@ async def test_code_act_can_store_true_stores_function():
 async def test_storage_check_on_return_stores_discovered_function():
     """
     When storage_check_on_return=True, the CodeActActor should compose and
-    execute code, return the result immediately, and then a fire-and-forget
-    background loop should review the trajectory and store any reusable
-    functions via FunctionManager_add_functions.
+    execute code, then run a storage-check loop that reviews the trajectory
+    and stores reusable functions via FunctionManager_add_functions.
+    result() blocks until both phases complete.
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
@@ -260,18 +260,10 @@ async def test_storage_check_on_return_stores_discovered_function():
             persist=False,
             clarification_enabled=False,
         )
-        result = await asyncio.wait_for(handle.result(), timeout=90)
+        result = await asyncio.wait_for(handle.result(), timeout=120)
 
-        # result() returns immediately (the original result, not the storage check).
+        # result() blocks until both the task and the storage check complete.
         assert result is not None
-
-        # The storage check runs in the background. Poll briefly for
-        # add_functions to be called (fire-and-forget, so we give it time).
-        deadline = asyncio.get_event_loop().time() + 60
-        while asyncio.get_event_loop().time() < deadline:
-            if fm.add_functions.called:
-                break
-            await asyncio.sleep(0.5)
 
         fm.add_functions.assert_called()
         call_kwargs = fm.add_functions.call_args.kwargs
@@ -295,8 +287,9 @@ async def test_storage_check_on_return_stores_discovered_function():
 @pytest.mark.timeout(120)
 async def test_storage_check_on_return_skipped_when_can_store_false():
     """
-    storage_check_on_return=True with can_store=False should NOT start a
-    background storage check loop. The result returns normally.
+    storage_check_on_return=True with can_store=False should NOT wrap
+    the handle in a _StorageCheckHandle. The result returns normally
+    without any storage-check phase.
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
@@ -321,13 +314,7 @@ async def test_storage_check_on_return_skipped_when_can_store_false():
         result = await asyncio.wait_for(handle.result(), timeout=60)
         assert result is not None
 
-        # Give a small window to confirm no background task was started.
-        await asyncio.sleep(2)
-
         # No storage check should have run.
-        assert (
-            not actor._storage_check_tasks
-        ), "Expected no storage check tasks when can_store=False"
         fm.add_functions.assert_not_called()
     finally:
         try:
@@ -354,6 +341,8 @@ async def test_storage_check_on_return_merges_redundant_functions():
     executes a general-purpose `greet` function that subsumes both.
     The storage check should detect the overlap, store the merged
     version, and delete the now-redundant entries.
+
+    result() blocks until both the task and storage-check phases complete.
     """
     _existing_functions = [
         {
@@ -401,16 +390,8 @@ async def test_storage_check_on_return_merges_redundant_functions():
             persist=False,
             clarification_enabled=False,
         )
-        result = await asyncio.wait_for(handle.result(), timeout=90)
+        result = await asyncio.wait_for(handle.result(), timeout=120)
         assert result is not None
-
-        # Poll for the storage check to complete (fire-and-forget).
-        deadline = asyncio.get_event_loop().time() + 60
-        while asyncio.get_event_loop().time() < deadline:
-            # The LLM should both add the merged function AND delete the old ones.
-            if fm.add_functions.called and fm.delete_function.called:
-                break
-            await asyncio.sleep(0.5)
 
         # The merged function should have been stored.
         fm.add_functions.assert_called()
