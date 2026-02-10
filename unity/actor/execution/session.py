@@ -47,12 +47,17 @@ SessionKey = Tuple[str, Optional[int], int]  # (language, venv_id, session_id)
 
 
 # ---------------------------------------------------------------------------
-# ContextVar: currently-bound sandbox
+# ContextVars
 # ---------------------------------------------------------------------------
 _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
     contextvars.ContextVar(
         "code_act_current_sandbox",
     )
+)
+
+_PARENT_CHAT_CONTEXT: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "code_act_parent_chat_context",
+    default=None,
 )
 
 
@@ -623,8 +628,26 @@ class PythonExecutionSession:
 
                     self.global_state["__builtins__"]["print"] = _sandbox_print
 
-                exec(async_code, self.global_state)
-                result = await self.global_state["__exec_wrapper"]()
+                # Wrap primitives with ContextForwardingProxy if parent
+                # chat context is available, so inner tool loops receive it.
+                _pcc = _PARENT_CHAT_CONTEXT.get()
+                _orig_prims = self.global_state.get("primitives")
+                if _pcc is not None and _orig_prims is not None:
+                    from unity.function_manager.primitives.context_proxy import (
+                        ContextForwardingProxy,
+                    )
+
+                    self.global_state["primitives"] = ContextForwardingProxy(
+                        _orig_prims,
+                        _parent_chat_context=_pcc,
+                    )
+
+                try:
+                    exec(async_code, self.global_state)
+                    result = await self.global_state["__exec_wrapper"]()
+                finally:
+                    if _orig_prims is not None:
+                        self.global_state["primitives"] = _orig_prims
 
             except Exception:
                 error = traceback.format_exc()
