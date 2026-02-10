@@ -61,14 +61,17 @@ class SyncManager:
             print("[FileSync] Rclone setup failed")
             return False
 
-        # 3. Initial bisync with --resync to establish bidirectional baseline
+        # 3. Ensure assistant.txt sentinel exists so bisync has a file to diff
+        self._ensure_sentinel()
+
+        # 4. Initial bisync with --resync to establish bidirectional baseline
         print("[FileSync] Performing initial bisync with --resync...")
         result = await self._rclone.bisync(force_resync=True)
         if not result.success:
             print(f"[FileSync] Initial bisync failed: {result.errors}")
             # Continue anyway - remote might be empty on first run
 
-        # 4. Start background polling for remote changes
+        # 5. Start background polling for remote changes
         self._poll_task = asyncio.create_task(
             self._poll_remote_changes(),
             name="filesync-poll",
@@ -162,6 +165,18 @@ class SyncManager:
 
         self._started = False
         print("[FileSync] Sync manager stopped")
+
+    SENTINEL_NAME = "assistant.txt"
+
+    def _ensure_sentinel(self) -> None:
+        """Ensure assistant.txt exists in local root so bisync has a file to diff."""
+        local_root = Path(self.config.local_root).expanduser()
+        sentinel = local_root / self.SENTINEL_NAME
+        if sentinel.exists():
+            return
+        local_root.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("unity assistant\n")
+        print(f"[FileSync] Created sentinel: {sentinel}")
 
     async def _get_ssh_private_key(self) -> Optional[str]:
         """Retrieve SSH private key from Orchestra assistant secrets."""
