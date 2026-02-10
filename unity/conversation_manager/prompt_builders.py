@@ -546,7 +546,9 @@ Examples of questions that should trigger `act`:
 - "What's the weather in Berlin?" → web
 - "What's the incident response procedure?" → guidance
 - "What's in the attached document?" → files
-- "Update the spreadsheet with these numbers" → software & desktop""",
+- "Update the spreadsheet with these numbers" → software & desktop
+
+**Skill storage notifications:** After `act` completes, I may see progress events mentioning that skills or reusable functions are being stored for future use. This is an internal housekeeping process — there is no need to relay information about skill storage to my boss unless they specifically ask about how skills are being learned or stored.""",
         )
 
         parts.add(
