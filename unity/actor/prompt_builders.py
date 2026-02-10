@@ -84,6 +84,23 @@ _EXECUTION_RULES = textwrap.dedent("""
        - Do not call a tool to print the final answer.
 """).strip()
 
+_STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
+    ### Skill Storage Is Handled Separately
+
+    A dedicated skill-consolidation process will run automatically after you
+    return your result. It will review your full execution trajectory and
+    decide which functions, patterns, or workflows are worth storing for
+    future reuse.
+
+    This means:
+    - **Ignore** any language in the request about "remembering",
+      "storing", or "saving" skills, workflows, or functions. That concern
+      is fully covered by the follow-up process.
+    - **Focus entirely on producing the best possible result.** Do not
+      spend any effort on persistence, storage, or skill management.
+    - You do not have storage tools available, and you do not need them.
+""").strip()
+
 _SUB_AGENT_GUIDANCE = textwrap.dedent("""
     ### Sub-Agent Delegation
 
@@ -268,6 +285,7 @@ def build_code_act_prompt(
     *,
     environments: Mapping[str, "BaseEnvironment"],
     tools: Optional[Dict[str, Callable]] = None,
+    storage_check_on_return: bool = False,
 ) -> str:
     """
     Build the rich system prompt for the CodeActActor.
@@ -326,6 +344,8 @@ def build_code_act_prompt(
 
         sub_agent_block = _SUB_AGENT_GUIDANCE if has_sub_agent else ""
 
+        storage_deferred_block = _STORAGE_DEFERRED_NOTICE if storage_check_on_return else ""
+
         prompt = f"""
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
@@ -343,6 +363,8 @@ They are the only supported way to run Python/shell code and manage sessions.
 {additional_tools_block}
 
 {sub_agent_block}
+
+{storage_deferred_block}
 
 {rules_and_examples}
 """
