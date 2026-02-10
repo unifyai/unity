@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 
@@ -14,7 +13,7 @@ FunctionLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
 StateMode = Literal["stateful", "read_only", "stateless"]
 
 
-class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
+class BaseFunctionManager(BaseStateManager):
     """
     Public contract for a function catalogue that stores and retrieves
     user‑supplied functions and their metadata.
