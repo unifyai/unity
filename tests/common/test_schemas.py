@@ -653,3 +653,29 @@ def test_nested_pydantic_schema_enforcement() -> None:
     }
     with pytest.raises(Exception):
         unify.log(context=ctx, **invalid_bad_list, new=True, mutable=True)
+
+
+# --------------------------------------------------------------------------- #
+#  make_request_clarification_tool — docstring & schema                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_request_clarification_tool_has_docstring_and_schema_description():
+    """The programmatically generated request_clarification tool must expose a
+    non-empty docstring so that method_to_schema produces a non-empty
+    description for the LLM."""
+    import asyncio
+
+    fn = llmh.make_request_clarification_tool(asyncio.Queue(), asyncio.Queue())
+
+    # The inner function should have a docstring.
+    assert fn.__doc__ and fn.__doc__.strip(), (
+        "make_request_clarification_tool returned a function without a docstring"
+    )
+
+    # The schema sent to the LLM should have a non-empty description.
+    schema = llmh.method_to_schema(fn, "request_clarification")
+    desc = schema["function"]["description"]
+    assert isinstance(desc, str) and desc.strip(), (
+        f"method_to_schema produced an empty description: {desc!r}"
+    )
