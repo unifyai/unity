@@ -119,6 +119,8 @@ key_file = {self.config.ssh_key_path}
                 remote,
                 "--conflict-resolve",
                 "newer",  # Latest wins
+                "--max-delete",
+                str(self.config.max_delete_percent),
                 *self._exclude_args(),
                 "-v",
             ]
