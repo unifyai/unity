@@ -2,8 +2,9 @@
 tests/conversation_manager/voice/test_fast_brain_multilingual.py
 ================================================================
 
-Tests that the fast brain (Voice Agent) matches the caller's language
-even though its system prompt and any guidance are in English.
+Tests that the fast brain (Voice Agent) matches the caller's language.
+The slow brain emits guidance in the call's language, so the fast brain
+relays it naturally without needing to translate.
 
 Uses the same ``get_fast_brain_response`` pattern as
 ``test_fast_brain_deferral.py`` — real LLM calls with cached responses.
@@ -452,23 +453,22 @@ class TestFastBrainLanguageConsistencyAcrossTurns:
 
 
 @pytest.mark.asyncio
-class TestFastBrainLanguageWithEnglishGuidance:
+class TestFastBrainRelaysTranslatedGuidance:
     """
-    The fast brain receives guidance (notifications) in English from the
-    slow brain.  It should integrate the information but continue
-    speaking the caller's language.
+    The slow brain emits guidance pre-translated into the call's language.
+    The fast brain should relay it naturally without switching to English.
     """
 
-    async def test_spanish_caller_english_guidance_stays_spanish(
+    async def test_spanish_caller_receives_spanish_guidance(
         self,
         voice_agent_prompt_boss,
         fast_brain_model,
     ):
         """
-        Caller speaks Spanish, English guidance arrives -> reply in Spanish.
+        Caller speaks Spanish, guidance arrives in Spanish -> reply in Spanish.
 
-        The notification contains English data. The fast brain should
-        translate/paraphrase it into Spanish when relaying to the caller.
+        The slow brain pre-translates guidance into the call's language.
+        The fast brain relays it naturally.
         """
         conversation = [
             {
@@ -480,11 +480,11 @@ class TestFastBrainLanguageWithEnglishGuidance:
                 "content": "Déjame verificar eso por ti.",
             },
             {
-                # English guidance from slow brain (notification)
+                # Guidance from slow brain, pre-translated into Spanish
                 "role": "user",
                 "content": (
-                    "[notification] The meeting tomorrow is confirmed "
-                    "for 3pm in Conference Room B."
+                    "[notification] La reunión de mañana está confirmada "
+                    "a las 3pm en la Sala de Conferencias B."
                 ),
             },
         ]
@@ -496,17 +496,17 @@ class TestFastBrainLanguageWithEnglishGuidance:
         )
 
         assert _has_spanish(response), (
-            f"Fast brain ({fast_brain_model}) should relay English guidance "
+            f"Fast brain ({fast_brain_model}) should relay Spanish guidance "
             f"in Spanish to the caller, got: {response}"
         )
 
-    async def test_japanese_caller_english_guidance_stays_japanese(
+    async def test_japanese_caller_receives_japanese_guidance(
         self,
         voice_agent_prompt_boss,
         fast_brain_model,
     ):
         """
-        Caller speaks Japanese, English guidance arrives -> reply in Japanese.
+        Caller speaks Japanese, guidance arrives in Japanese -> reply in Japanese.
         """
         conversation = [
             {
@@ -518,11 +518,10 @@ class TestFastBrainLanguageWithEnglishGuidance:
                 "content": "確認しますので少々お待ちください。",
             },
             {
-                # English guidance from slow brain (notification)
+                # Guidance from slow brain, pre-translated into Japanese
                 "role": "user",
                 "content": (
-                    "[notification] The meeting tomorrow is confirmed "
-                    "for 3pm in Conference Room B."
+                    "[notification] 明日の会議は午後3時、会議室Bで確定しています。"
                 ),
             },
         ]
@@ -534,6 +533,6 @@ class TestFastBrainLanguageWithEnglishGuidance:
         )
 
         assert _has_japanese(response), (
-            f"Fast brain ({fast_brain_model}) should relay English guidance "
+            f"Fast brain ({fast_brain_model}) should relay Japanese guidance "
             f"in Japanese to the caller, got: {response}"
         )
