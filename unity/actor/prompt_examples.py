@@ -319,8 +319,7 @@ def get_computer_session_execution_example() -> str:
           "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev.",
           "code": "await computer_primitives.navigate(\'https://playwright.dev/\')",
           "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
+          "state_mode": "stateful"
         }
       }]
     }
@@ -342,8 +341,7 @@ def get_computer_session_execution_example() -> str:
           "thought": "Great, I\'m on the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
           "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await computer_primitives.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\n\\nprint(page_info.model_dump_json(indent=2))",
           "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
+          "state_mode": "stateful"
         }
       }]
     }
@@ -367,112 +365,6 @@ def get_computer_session_execution_example() -> str:
 """
 
 
-def get_computer_pydantic_example() -> str:
-    """Example: using Pydantic models for structured observation in computer automation."""
-
-    return """
-**Example: Pydantic for Structured Observation (Computer)**
-
-When using `computer_primitives.observe` to extract structured data, define a Pydantic model
-inside the code, call `model_rebuild()`, and pass `response_format`:
-
-```json
-{
-  "tool_calls": [{
-    "name": "execute_code",
-    "arguments": {
-      "thought": "Extract structured page info using a Pydantic model.",
-      "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await computer_primitives.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\n\\nprint(page_info.model_dump_json(indent=2))",
-      "language": "python",
-      "state_mode": "stateful",
-      "session_id": 0
-    }
-  }]
-}
-```
-
-**Key points:**
-- Define the model inside the code block (imports must be inline)
-- **CRITICAL**: Call `model_rebuild()` after defining nested models
-- Pass `response_format=YourModel` to `observe()` for structured extraction
-"""
-
-
-def get_computer_error_correction_example() -> str:
-    """Example: error handling and correction workflow in computer automation."""
-
-    return """
-**Example: Error Handling and Correction**
-
-*User Request*: "Get the title from example.com."
-
-*Turn 1: Navigate*
-* **Tool Call**:
-    ```json
-    {
-      "tool_calls": [{
-        "name": "execute_code",
-        "arguments": {
-          "thought": "I need to navigate to example.com to get the title.",
-          "code": "await computer_primitives.navigate(\'https://example.com/\')",
-          "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
-        }
-      }]
-    }
-    ```
-* **Observation**: Success, the computer environment is on example.com.
-
-*Turn 2: Attempt to extract data with a mistake*
-* **Tool Call**:
-    ```json
-    {
-      "tool_calls": [{
-        "name": "execute_code",
-        "arguments": {
-          "thought": "I need to get the title. I will use Pydantic, but I\'ll deliberately forget to call `model_rebuild()` to demonstrate error handling.",
-          "code": "from pydantic import BaseModel\\n\\nclass PageTitle(BaseModel):\\n    title: str\\n\\n# MISTAKE: I forgot to call PageTitle.model_rebuild()\\n\\ntitle_info = await computer_primitives.observe(\\n    \\"Extract the page title\\",\\n    response_format=PageTitle\\n)\\nprint(title_info)",
-          "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
-        }
-      }]
-    }
-    ```
-* **Observation**:
-    ```text
-    --- ERROR ---
-    Traceback (most recent call last):
-      ...
-    ValidationError: The response from the model did not conform to the expected Pydantic schema. [Reason: Could not find a registered Pydantic model named \'PageTitle\'. Did you forget to call `PageTitle.model_rebuild()`?]
-    ```
-
-*Turn 3: Correct the code based on the error*
-* **Tool Call**:
-    ```json
-    {
-      "tool_calls": [{
-        "name": "execute_code",
-        "arguments": {
-          "thought": "The error message is very clear. I forgot to call `model_rebuild()` on my Pydantic class. I will add that line and retry.",
-          "code": "from pydantic import BaseModel\\n\\nclass PageTitle(BaseModel):\\n    title: str\\n\\n# CORRECTED: I\'ve added the required model_rebuild() call.\\nPageTitle.model_rebuild()\\n\\ntitle_info = await computer_primitives.observe(\\n    \\"Extract the page title\\",\\n    response_format=PageTitle\\n)\\nprint(title_info.title)",
-          "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
-        }
-      }]
-    }
-    ```
-* **Observation**:
-    ```text
-    --- STDOUT ---
-    Example Domain
-    ```
-* **Final Answer (tool-less)**: The title of the page is "Example Domain".
-"""
-
-
 def get_computer_stateful_workflow_example() -> str:
     """Example: stateful computation with helper functions persisting across turns."""
 
@@ -489,10 +381,9 @@ def get_computer_stateful_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "This is a multi-step task. First, I\'ll extract all products. I know I\'ll need to parse prices that might be strings (e.g., \'$25.99\'), so I\'ll define a helper function to clean them. This function will persist in the sandbox for later.",
-          "code": "import re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nglobal all_products_data\\nall_products_data = await computer_primitives.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")",
+          "code": "import re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nall_products_data = await computer_primitives.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")",
           "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
+          "state_mode": "stateful"
         }
       }]
     }
@@ -513,8 +404,7 @@ def get_computer_stateful_workflow_example() -> str:
           "thought": "I have the product data in the `all_products_data` variable and my `parse_price` function is defined. Now I can perform the calculation in pure Python.",
           "code": "prices_under_100 = []\\nfor product in all_products_data.products:\\n    price = parse_price(product.price_text)\\n    if price < 100.0:\\n        prices_under_100.append(price)\\n\\nif prices_under_100:\\n    average = sum(prices_under_100) / len(prices_under_100)\\n    result_text = f\\"The average price of products under $100 is ${average:.2f}.\\"\\nelse:\\n    result_text = \\"No products found under $100.\\"\\n\\nprint(result_text)",
           "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
+          "state_mode": "stateful"
         }
       }]
     }
@@ -529,25 +419,46 @@ def get_computer_stateful_workflow_example() -> str:
 
 
 def get_computer_interactive_workflow_example() -> str:
-    """Example: interactive communication workflow with handle-based interaction."""
+    """Example: multi-step web form workflow with handle-based state manager interaction."""
 
     return """
-**Example: Interactive Communication Workflow**
+**Example: Web Research and State Manager Persistence**
 
-*User Request*: "Text Jane Doe to confirm her appointment for tomorrow at 3 PM. Then, call her to ask if she has any dietary restrictions for the pre-appointment lunch."
+*User Request*: "Find the support email on example.com and save it to our knowledge base."
 
-*Turn 1: Send the confirmation SMS*
+*Turn 1: Navigate to the website*
 * **Tool Call**:
     ```json
     {
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "I\'ll start by sending the SMS. The `send_sms_message` tool returns a handle, which I\'ll await to ensure the message is sent and get a result.",
-          "code": "sms_handle = await computer_primitives.send_sms_message(\\n    description=\\"Text Jane Doe to confirm her appointment for tomorrow at 3 PM.\\"\\n)\\n\\nsms_result = await sms_handle.result()\\nprint(sms_result)",
+          "thought": "I\'ll navigate to the website to find the support email.",
+          "code": "await computer_primitives.navigate(\'https://example.com/contact\')",
           "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- COMPUTER STATE ---
+    URL: https://example.com/contact
+    [A screenshot is available to you as an image block.]
+    ```
+
+*Turn 2: Extract the support email using structured observation*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "I can see the contact page. I\'ll extract the support email using a Pydantic model for reliable structured extraction.",
+          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\ninfo = await computer_primitives.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nprint(f\\"Support email: {info.support_email}\\")",
+          "language": "python",
+          "state_mode": "stateful"
         }
       }]
     }
@@ -555,21 +466,20 @@ def get_computer_interactive_workflow_example() -> str:
 * **Observation**:
     ```text
     --- STDOUT ---
-    Message successfully sent to Jane Doe (+1-555-123-4567): \'Hi Jane, this is a confirmation for your appointment tomorrow at 3 PM. Please reply to confirm.\'
+    Support email: help@example.com
     ```
 
-*Turn 2: Initiate the interactive phone call*
+*Turn 3: Persist the extracted info to the knowledge base*
 * **Tool Call**:
     ```json
     {
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "The SMS is sent. Now I need to make the phone call. The `start_call` tool also returns a handle. I will store this handle in a global variable so I can interact with it in the next turn.",
-          "code": "global active_call_handle\\nactive_call_handle = computer_primitives.start_call(\\n    phone_number=\\"Jane Doe\\",\\n    purpose=\\"Ask about dietary restrictions for a lunch meeting.\\"\\n)\\nprint(f\\"Initiated call to Jane Doe. Handle ID: {active_call_handle._loop_id}\\")",
+          "thought": "I have the support email. Now I\'ll save it to the knowledge base using the state manager.",
+          "code": "handle = await primitives.knowledge.update(\\n    f\\"Store that Example Corp\'s support email is {info.support_email}\\"\\n)\\nresult = await handle.result()\\nprint(result)",
           "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
+          "state_mode": "stateful"
         }
       }]
     }
@@ -577,34 +487,9 @@ def get_computer_interactive_workflow_example() -> str:
 * **Observation**:
     ```text
     --- STDOUT ---
-    Initiated call to Jane Doe. Handle ID: a4b1
-    --- RESULT ---
-    <AsyncToolLoopHandle object ...>
+    Successfully stored: Example Corp support email is help@example.com
     ```
-
-*Turn 3: Interact with the live call using the handle*
-* **Tool Call**:
-    ```json
-    {
-      "tool_calls": [{
-        "name": "execute_code",
-        "arguments": {
-          "thought": "The call is now active and the handle is stored in `active_call_handle`. I will use the handle\'s `.ask()` method to pose the question and get the answer.",
-          "code": "ask_handle = await active_call_handle.ask(\\"Do you have any dietary restrictions for the lunch tomorrow?\\")\\n\\ndietary_info = await ask_handle.result()\\nprint(f\\"Received dietary info: {dietary_info}\\")\\n\\nawait active_call_handle.stop()\\nprint(\\"Call ended.\\")",
-          "language": "python",
-          "state_mode": "stateful",
-          "session_id": 0
-        }
-      }]
-    }
-    ```
-* **Observation**:
-    ```text
-    --- STDOUT ---
-    Received dietary info: "Thanks for asking! I\'m vegetarian."
-    Call ended.
-    ```
-* **Final Answer (tool-less)**: I\'ve confirmed Jane Doe\'s appointment via SMS. I also called her and she mentioned her dietary restriction is vegetarian.
+* **Final Answer (tool-less)**: I found the support email on example.com — it\'s help@example.com — and saved it to the knowledge base.
 """
 
 
@@ -711,46 +596,11 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 
     # Stop early if needed
     if "error" in status.lower():
-        handle.stop(reason="Detected error in status")
+        await handle.stop(reason="Detected error in status")
 
     # Wait for completion
     result = await handle.result()
     return result
-'''
-
-
-def get_primitives_task_lookup_and_execute_example() -> str:
-    """Example: Task lookup via ask(response_format=...) then execute(task_id=...).
-
-    TaskScheduler.execute requires task_id: int.
-    """
-
-    return '''
-# Example: Task lookup and execution pattern
-from pydantic import BaseModel
-
-class TaskIdResult(BaseModel):
-    task_id: int
-    task_name: str
-    task_description: str
-
-TaskIdResult.model_rebuild()
-
-async def find_and_execute_task(search_query: str) -> str:
-    """Locate a task by description and execute it."""
-    # Step 1: Use ask with response_format to get structured task info
-    lookup_handle = await primitives.tasks.ask(
-        f"Find the task matching: {search_query}",
-        response_format=TaskIdResult,
-    )
-    task = await lookup_handle.result()
-
-    # Step 2: Execute the task using its task_id
-    exec_handle = await primitives.tasks.execute(task_id=task.task_id)
-
-    # Wait for completion
-    result = await exec_handle.result()
-    return f"Executed task '{task.task_name}': {result}"
 '''
 
 
@@ -849,8 +699,7 @@ async def search_for_topic(table_context: str, query: str) -> list:
     """Search for records semantically matching a query."""
     hits = await primitives.files.search_files(
         context=table_context,
-        query=query,
-        columns=["description"],  # embedded column(s) to search
+        references={"description": query},  # column → reference text for semantic matching
         limit=10,
     )
     return hits
@@ -965,7 +814,7 @@ import asyncio
 async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
     """Gather contact info from multiple sources concurrently."""
     # Start both operations concurrently
-    contact_handle = primitives.contacts.ask(f"Find {name}'s email and phone")
+    contact_handle = await primitives.contacts.ask(f"Find {name}'s email and phone")
 
     # Navigate and extract company info in parallel
     async def fetch_company_info():
@@ -992,8 +841,8 @@ def get_mixed_interjection_routing_example() -> str:
 # Example: Interjection routing to in-flight handles
 async def search_multiple_sources_with_correction(query: str) -> dict:
     # Start multiple concurrent searches
-    contact_handle = primitives.contacts.ask(query)
-    transcript_handle = primitives.transcripts.ask(query)
+    contact_handle = await primitives.contacts.ask(query)
+    transcript_handle = await primitives.transcripts.ask(query)
 
     # If user interjects with clarification (e.g., "I meant David Smith"),
     # the Actor's pane can broadcast the interjection to all in-flight handles
@@ -1345,7 +1194,6 @@ def get_example_function_map() -> dict[str, callable]:
         "get_primitives_contact_update_example": get_primitives_contact_update_example,
         # Tasks
         "get_primitives_task_execute_example": get_primitives_task_execute_example,
-        "get_primitives_task_lookup_and_execute_example": get_primitives_task_lookup_and_execute_example,
         "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
         # Knowledge
         "get_primitives_knowledge_ask_example": get_primitives_cross_manager_example,
@@ -1464,74 +1312,9 @@ def get_function_parameter_exploration_example() -> str:
 """
 
 
-def get_function_manager_stateful_requirement_example() -> str:
-    """Example: FunctionManager functions require stateful sessions (CRITICAL)."""
-
-    return r"""
-# 🚨 CRITICAL PATTERN: FunctionManager + Stateful Sessions
-#
-# Functions from FunctionManager are injected into Session 0's namespace.
-# You MUST use state_mode="stateful" in execute_code to access them.
-#
-# WHY: stateless mode creates a FRESH session each time, so injected functions
-# are NOT available in that new session → NameError.
-#
-# ✅ CORRECT WORKFLOW:
-#
-# Step 1 (JSON TOOL CALL): Search for function (injects into Session 0)
-# {
-#   "name": "FunctionManager_search_functions",
-#   "arguments": {"query": "store knowledge", "n": 5}
-# }
-# Returns: [{"name": "store_knowledge", "argspec": "(fact: str) -> str", ...}]
-#
-# Step 2 (JSON TOOL CALL): Execute with state_mode="stateful" (REQUIRED!)
-# {
-#   "name": "execute_code",
-#   "arguments": {
-#     "language": "python",
-#     "state_mode": "stateful",
-#     "code": "result = await store_knowledge('Office hours are 9-5 PT')\nprint(result)"
-#   }
-# }
-# ✅ Works! Function is available in Session 0.
-#
-# ❌ ANTI-PATTERN (causes NameError):
-#
-# {
-#   "name": "execute_code",
-#   "arguments": {
-#     "language": "python",
-#     "state_mode": "stateless",
-#     "code": "result = await store_knowledge('Office hours are 9-5 PT')"
-#   }
-# }
-# ❌ ERROR: NameError: name 'store_knowledge' is not defined
-# WHY: stateless creates fresh session where function was NOT injected!
-#
-# Mental Model:
-#
-#   FunctionManager_search_functions(...)
-#            ↓
-#      Injects into Session 0 namespace
-#            ↓
-#   execute_code(state_mode="stateful", ...)
-#            ↓
-#      ✅ Function available!
-#
-#   execute_code(state_mode="stateless", ...)
-#            ↓
-#      Creates NEW session (not Session 0)
-#            ↓
-#      ❌ Function NOT available! (NameError)
-"""
-
-
 def get_code_act_function_first_examples() -> str:
     """Get function-first examples for CodeActActor."""
     examples = [
-        # Put the critical stateful requirement example FIRST for maximum visibility
-        get_function_manager_stateful_requirement_example().strip(),
         get_function_first_pattern_example().strip(),
         get_function_first_anti_pattern_example().strip(),
         get_function_parameter_exploration_example().strip(),
@@ -1557,20 +1340,7 @@ def get_code_act_session_examples() -> str:
 **Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
 to preserve state across multiple tool calls.
 
-**⚠️ CRITICAL: FunctionManager Functions Require Stateful Sessions**
-
-When using FunctionManager tools, functions are injected into Session 0. You MUST use
-`state_mode="stateful"` to access them:
-
-```
-FunctionManager_search_functions(...)
-         ↓
-   Injects into Session 0 namespace
-         ↓
-execute_code(state_mode="stateful", ...)   ←── ✅ Uses Session 0, function available!
-
-execute_code(state_mode="stateless", ...)  ←── ❌ Creates NEW session, NameError!
-```
+> **Reminder**: FunctionManager functions are injected into Session 0 — always use `state_mode="stateful"` to access them (see Critical Rules).
 
 #### Example A — Stateful shell session for repo navigation
 ```json
@@ -1697,8 +1467,6 @@ def get_computer_examples() -> str:
         get_computer_multistep_example().strip(),
         get_computer_screenshot_driven_example().strip(),
         get_computer_session_execution_example().strip(),
-        get_computer_pydantic_example().strip(),
-        get_computer_error_correction_example().strip(),
         get_computer_stateful_workflow_example().strip(),
         get_computer_interactive_workflow_example().strip(),
     ]

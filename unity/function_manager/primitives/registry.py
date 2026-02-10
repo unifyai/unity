@@ -281,7 +281,6 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
     ],
     "tasks": [
         "get_primitives_task_execute_example",
-        "get_primitives_task_lookup_and_execute_example",
         "get_primitives_dynamic_methods_example",
     ],
     "knowledge": [
@@ -342,6 +341,60 @@ def _get_stable_id(class_name: str, method_name: str) -> int:
     # to avoid PostgreSQL integer overflow when sorting by function_id
     digest = hashlib.sha256(key.encode()).digest()
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+# =============================================================================
+# NumPy-style docstring helpers
+# =============================================================================
+
+
+def _get_line_indent(line: str) -> int:
+    """Count the number of leading spaces in a line."""
+    return len(line) - len(line.lstrip())
+
+
+def _is_param_declaration_at_level(line: str, base_indent: int) -> bool:
+    """Detect whether a line is a parameter declaration at the given indent level.
+
+    A declaration is at ``base_indent`` and matches one of:
+    - ``name : type``  (standard single-param)
+    - ``name1, name2``  (grouped params sharing a description)
+    - ``name1 / name2 : type``  (slash-separated grouped params)
+    - ``name``  (bare name, no type annotation)
+    """
+    stripped = line.strip()
+    if not stripped:
+        return False
+    indent = _get_line_indent(line)
+    if indent != base_indent:
+        return False
+    # Standard "name : type" format
+    if " : " in stripped:
+        return True
+    # Grouped comma-separated names: "a, b, c"
+    if "," in stripped:
+        parts = [p.strip().rstrip(",") for p in stripped.split(",") if p.strip()]
+        if all(re.match(r"^[a-zA-Z_]\w*$", p) for p in parts):
+            return True
+    # Bare single name
+    if re.match(r"^[a-zA-Z_]\w*$", stripped):
+        return True
+    return False
+
+
+def _extract_param_names(declaration_line: str) -> list[str]:
+    """Extract parameter names from a NumPy-style declaration line.
+
+    Handles: ``name : type``, ``name1, name2``, ``name1 / name2 : type``.
+    """
+    stripped = declaration_line.strip()
+    name_part = stripped.split(" : ")[0] if " : " in stripped else stripped
+    # Handle "/" separator (e.g., "_clarification_up_q / _clarification_down_q")
+    if " / " in name_part:
+        names = [n.strip() for n in name_part.split("/") if n.strip()]
+    else:
+        names = [n.strip().rstrip(",") for n in name_part.split(",") if n.strip()]
+    return names
 
 
 # =============================================================================
@@ -570,7 +623,8 @@ class ToolSurfaceRegistry:
 
         Returns a compact version containing the summary (up to the first
         blank line) and the NumPy-style ``Parameters`` section, omitting
-        Returns, Raises, Examples, Notes, and other verbose sections.
+        Returns, Raises, Examples, Notes, other verbose sections, and any
+        internal ``_``-prefixed parameters.
         """
         if not docstring:
             return ""
@@ -612,15 +666,109 @@ class ToolSurfaceRegistry:
                         break
                 params_lines.append(lines[j])
 
+        # Filter out internal _-prefixed parameter entries.
+        # Detect the base indentation level from the first non-empty line.
+        base_indent = 0
+        for line in params_lines:
+            if line.strip():
+                base_indent = _get_line_indent(line)
+                break
+
+        filtered_params: list[str] = []
+        skip_entry = False
+        for line in params_lines:
+            if _is_param_declaration_at_level(line, base_indent):
+                names = _extract_param_names(line)
+                skip_entry = bool(names) and all(n.startswith("_") for n in names)
+            if not skip_entry:
+                filtered_params.append(line)
+
         result = "\n".join(summary_lines)
-        params = "\n".join(params_lines).rstrip()
+        params = "\n".join(filtered_params).rstrip()
         if params:
             result += "\n\nParameters\n----------\n" + params
         return result
 
+    @staticmethod
+    def _filter_internal_params_from_docstring(docstring: str) -> str:
+        """Remove ``_``-prefixed parameter entries from a full docstring.
+
+        Scans the Parameters section and drops any entry whose parameter
+        name starts with ``_`` (including its indented description lines).
+        All other docstring content is preserved unchanged.
+        """
+        if not docstring or "Parameters" not in docstring:
+            return docstring
+
+        lines = docstring.splitlines()
+        result_lines: list[str] = []
+        in_params = False
+        skip_entry = False
+        param_base_indent: int = 0
+
+        i = 0
+        while i < len(lines):
+            stripped = lines[i].strip()
+
+            # Detect start of Parameters section
+            if not in_params and stripped == "Parameters":
+                # Check for the dashes line that follows
+                if i + 1 < len(lines) and lines[i + 1].strip().startswith("---"):
+                    in_params = True
+                    result_lines.append(lines[i])
+                    result_lines.append(lines[i + 1])
+                    # Detect base indent from the first param declaration
+                    for k in range(i + 2, len(lines)):
+                        if lines[k].strip():
+                            param_base_indent = _get_line_indent(lines[k])
+                            break
+                    i += 2
+                    continue
+                else:
+                    result_lines.append(lines[i])
+                    i += 1
+                    continue
+
+            if in_params:
+                # Detect next section header (end of Parameters)
+                if (
+                    stripped
+                    and _get_line_indent(lines[i]) <= param_base_indent
+                    and not stripped.startswith("-")
+                ):
+                    is_section = False
+                    if i + 1 < len(lines) and lines[i + 1].strip().startswith("---"):
+                        is_section = True
+                    if re.match(r"^[A-Z][a-zA-Z\s]+$", stripped) and len(stripped) < 30:
+                        is_section = True
+
+                    if is_section:
+                        in_params = False
+                        skip_entry = False
+                        result_lines.append(lines[i])
+                        i += 1
+                        continue
+
+                if _is_param_declaration_at_level(lines[i], param_base_indent):
+                    names = _extract_param_names(lines[i])
+                    skip_entry = bool(names) and all(n.startswith("_") for n in names)
+
+                if not skip_entry:
+                    result_lines.append(lines[i])
+            else:
+                result_lines.append(lines[i])
+
+            i += 1
+
+        return "\n".join(result_lines)
+
     def prompt_context(self, primitive_scope: PrimitiveScope) -> str:
         """
         Generate prompt context for exposed managers.
+
+        Structure: routing guidance first (which manager to pick), then
+        detailed method documentation. This ensures the LLM reads selection
+        criteria before wading through method signatures.
 
         Args:
             primitive_scope: The scope defining which managers are exposed.
@@ -638,50 +786,18 @@ class ToolSurfaceRegistry:
             "Choose the right manager for your task:\n",
         )
 
+        # ── Section 1: Brief manager overview (routing-focused) ──
         for spec in specs:
-            # Format: **Domain** → `primitives.manager`
             lines.append(f"\n**{spec.domain}** → `primitives.{spec.manager_alias}`")
-            lines.append(f"- **Domain**: {spec.description}")
-
-            # Resolve the manager class once for signature extraction.
-            mgr_cls = self._load_manager_class(spec.primitive_class_path)
-
-            # Show methods with signatures and summary + parameters from docstrings
-            method_names = self.primitive_methods(manager_alias=spec.manager_alias)
-            for method_name in method_names:
-                sig_str = self._format_method_signature(mgr_cls, method_name)
-                full_doc = self._extract_method_docstring(mgr_cls, method_name)
-                compact_doc = self._extract_summary_and_params(full_doc)
-                lines.append(f"\n  **`.{method_name}{sig_str}`**")
-                if compact_doc:
-                    for doc_line in compact_doc.splitlines():
-                        lines.append(f"  {doc_line}")
-
+            lines.append(f"- {spec.description}")
             if spec.use_when:
                 lines.append(f"- **Use when**: {spec.use_when}")
-
             if spec.examples:
                 lines.append(f"- **Examples**: {spec.examples}")
-
             if spec.special_note:
                 lines.append(f"- **Note**: {spec.special_note}")
 
-        # Add routing guidance for confused pairs
-        exposed_aliases = primitive_scope.scoped_managers
-        for guidance in _ROUTING_GUIDANCE:
-            if guidance["managers"].issubset(exposed_aliases):
-                lines.append(f"\n**CRITICAL: {guidance['title']} Routing**:")
-                lines.append(
-                    "These managers serve DIFFERENT purposes - do not confuse them:",
-                )
-                for alias, desc in guidance["guidance"]:
-                    lines.append(f"- **`primitives.{alias}.*`**: {desc}")
-                if guidance.get("examples"):
-                    lines.append("\n**Examples**:")
-                    for question, mgr, call in guidance["examples"]:
-                        lines.append(f'  - "{question}" → `{call}` ({mgr})')
-
-        # Add general rules only if multiple managers exposed
+        # ── Section 2: Manager selection priorities ──
         if len(specs) > 1:
             lines.append("\n**Manager Selection Priorities**:")
             lines.append(
@@ -700,6 +816,23 @@ class ToolSurfaceRegistry:
                 "7. **files** when dealing with specific documents or file-level operations",
             )
 
+        # ── Section 3: Routing guidance for commonly confused pairs ──
+        exposed_aliases = primitive_scope.scoped_managers
+        for guidance in _ROUTING_GUIDANCE:
+            if guidance["managers"].issubset(exposed_aliases):
+                lines.append(f"\n**CRITICAL: {guidance['title']} Routing**:")
+                lines.append(
+                    "These managers serve DIFFERENT purposes - do not confuse them:",
+                )
+                for alias, desc in guidance["guidance"]:
+                    lines.append(f"- **`primitives.{alias}.*`**: {desc}")
+                if guidance.get("examples"):
+                    lines.append("\n**Examples**:")
+                    for question, mgr, call in guidance["examples"]:
+                        lines.append(f'  - "{question}" → `{call}` ({mgr})')
+
+        # ── Section 4: General rules ──
+        if len(specs) > 1:
             lines.append("\n**General Rules**:")
             lines.append(
                 "- All manager calls return a steerable handle; await `.result()` to get the final answer",
@@ -713,6 +846,27 @@ class ToolSurfaceRegistry:
             lines.append(
                 "- When in doubt between managers, prefer the most specific domain match",
             )
+
+        # ── Section 5: Detailed method documentation ──
+        lines.append("\n---\n")
+        lines.append("### Method Reference\n")
+
+        for spec in specs:
+            mgr_cls = self._load_manager_class(spec.primitive_class_path)
+            method_names = self.primitive_methods(manager_alias=spec.manager_alias)
+            if not method_names:
+                continue
+
+            lines.append(f"\n#### `primitives.{spec.manager_alias}`")
+
+            for method_name in method_names:
+                sig_str = self._format_method_signature(mgr_cls, method_name)
+                full_doc = self._extract_method_docstring(mgr_cls, method_name)
+                compact_doc = self._extract_summary_and_params(full_doc)
+                lines.append(f"\n**`.{method_name}{sig_str}`**")
+                if compact_doc:
+                    for doc_line in compact_doc.splitlines():
+                        lines.append(f"  {doc_line}")
 
         return "\n".join(lines)
 
@@ -786,6 +940,7 @@ class ToolSurfaceRegistry:
 
             sig_str = self._format_method_signature(source_cls, method_name)
             full_doc = self._extract_method_docstring(source_cls, method_name)
+            full_doc = self._filter_internal_params_from_docstring(full_doc)
             lines.append(f"\n**`.{method_name}{sig_str}`**")
             if full_doc:
                 for doc_line in full_doc.splitlines():

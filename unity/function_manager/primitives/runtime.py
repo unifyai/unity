@@ -227,17 +227,16 @@ class ComputerPrimitives:
         response_format: Any = str,
     ) -> Any:
         """
-        Performs general-purpose reasoning with automatic access to the live call stack.
+        Performs general-purpose reasoning with optional access to execution context.
 
-        This powerful tool is designed for complex, stateless tasks like analysis,
-        classification, strategic decision-making, and data transformation. It is
-        automatically provided with a "scoped context" of the running plan, including the
-        source code of the parent, current, and potential child functions, enabling it
-        to make highly informed decisions.
+        This tool is designed for complex, stateless tasks like analysis,
+        classification, strategic decision-making, and data transformation.
+        When running inside an Actor execution context, it may automatically
+        receive additional scoped context (e.g. source code of the calling
+        function) to make more informed decisions.
 
-        ### Example 1: Strategic Decision-Making (Look-Ahead)
-        Use `reason` to analyze an ambiguous situation and decide which function to call next.
-        It can "look ahead" by inspecting the code of potential child functions.
+        ### Example 1: Classification with Structured Output
+        Use `reason` to analyze an ambiguous input and produce a structured decision.
 
         ```python
         from pydantic import BaseModel, Field
@@ -251,23 +250,13 @@ class ComputerPrimitives:
 
         user_message = "I can't access my dashboard and my last payment didn't go through."
 
-        # The proxy automatically provides the source for `handle_technical_support`, etc.
         decision = await computer_primitives.reason(
-            request=(
-                "Based on the user's message, I need to choose the correct support category. "
-                "Analyze the available child functions in the provided call stack context "
-                "to determine the most appropriate category."
-            ),
+            request="Classify the user's support request into the most appropriate category.",
             context=f"User's message: '{user_message}'",
             response_format=SupportCategory
         )
 
-        if decision.category == "technical":
-            await handle_technical_support()
-        elif decision.category == "billing":
-            await handle_billing_inquiry()
-        else:
-            await handle_account_management()
+        print(f"Category: {decision.category} — {decision.justification}")
         ```
 
         ### Example 2: Data Transformation and Structuring
@@ -295,36 +284,9 @@ class ComputerPrimitives:
         # Expected Output: Welcome, Jane! Your ID is 4815162342.
         ```
 
-        ### Example 3: Intelligent Question Formulation (Composition)
-        Use `reason` to formulate a high-quality, disambiguating question for a user,
-        then pass that question to `request_clarification` (injected by the Actor at runtime).
-
-        ```python
-        user_request = "I need help with my account."
-
-        # Use `reason` to generate the best question based on its look-ahead context.
-        clarifying_question = await computer_primitives.reason(
-            request=(
-                "The user's request is ambiguous. Based on the child functions available "
-                "in my context (e.g., `reset_password`, `update_billing`, `close_account`), "
-                "formulate a single, clear question to ask the user to determine "
-                "which path to take."
-            ),
-            context=f"User's request: '{user_request}'"
-        )
-
-        # clarifying_question might be:
-        # "I can help with that! Are you looking to reset your password, update your billing "
-        # "information, or close your account?"
-
-        # Now, use the generated question to get the required information.
-        user_answer = await request_clarification(clarifying_question)
-        ```
-
         Args:
             request: The core instruction for the LLM (e.g., "Analyze the user's intent.").
-            context: The primary text content to be analyzed. The call stack context is
-                     automatically prepended to this by the actor.
+            context: The primary text content to be analyzed.
             response_format: Optional. A Pydantic model to structure the output. Highly recommended.
 
         Returns:

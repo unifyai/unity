@@ -106,8 +106,6 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert '"language": "python"' in prompt
     assert '"name": "list_sessions"' in prompt or "list_sessions" in prompt
 
-    # Computer execution rules (registry-based prompt structure)
-    assert "Computer Execution Rules" in prompt
     assert "Computer State Feedback" in prompt
     # Computer method documentation (from environment's get_prompt_context)
     assert "computer_primitives" in prompt.lower()
