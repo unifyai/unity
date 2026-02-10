@@ -27,6 +27,7 @@ from unity.actor.execution import (
     SessionExecutor,
     SessionKey,
     _CURRENT_SANDBOX,
+    _PARENT_CHAT_CONTEXT,
     _validate_execution_params,
 )
 from unity.common.async_tool_loop import (
@@ -785,6 +786,7 @@ class CodeActActor(BaseCodeActActor):
             session_name: str | None = None,
             venv_id: int | None = None,
             _notification_up_q: asyncio.Queue[dict] | None = None,
+            _parent_chat_context: list[dict] | None = None,
         ) -> Any:
             """
             Execute code in a specified language and state mode, optionally within a session.
@@ -1028,48 +1030,52 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
 
+                _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
                 try:
-                    out = await self._session_executor.execute(
-                        code=code,
-                        language=str(language),  # type: ignore[arg-type]
-                        state_mode=state_mode,  # type: ignore[arg-type]
-                        session_id=session_id,
-                        venv_id=venv_id,
-                        primitives=primitives,
-                        computer_primitives=computer_primitives,
-                    )
-                except Exception as e:
-                    exec_exc = e
-                    tb = traceback.format_exc()
-                    tb_str = tb
-                    if notification_q is not None and str(language) == "python":
-                        try:
-                            await notification_q.put(
-                                {
-                                    "type": "execution_error",
-                                    "message": "execution_error",
-                                    "sandbox_id": sandbox_id,
-                                    "error_kind": "exception",
-                                    "traceback_preview": tb[:2000],
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                },
-                            )
-                        except Exception:
-                            pass
-                    out = {
-                        "stdout": "",
-                        "stderr": "",
-                        "result": None,
-                        "error": tb,
-                        "language": language,
-                        "state_mode": state_mode,
-                        "session_id": session_id,
-                        "session_name": session_name,
-                        "venv_id": venv_id,
-                        "session_created": False,
-                        "duration_ms": 0,
-                        "computer_used": False,
-                    }
+                    try:
+                        out = await self._session_executor.execute(
+                            code=code,
+                            language=str(language),  # type: ignore[arg-type]
+                            state_mode=state_mode,  # type: ignore[arg-type]
+                            session_id=session_id,
+                            venv_id=venv_id,
+                            primitives=primitives,
+                            computer_primitives=computer_primitives,
+                        )
+                    except Exception as e:
+                        exec_exc = e
+                        tb = traceback.format_exc()
+                        tb_str = tb
+                        if notification_q is not None and str(language) == "python":
+                            try:
+                                await notification_q.put(
+                                    {
+                                        "type": "execution_error",
+                                        "message": "execution_error",
+                                        "sandbox_id": sandbox_id,
+                                        "error_kind": "exception",
+                                        "traceback_preview": tb[:2000],
+                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    },
+                                )
+                            except Exception:
+                                pass
+                        out = {
+                            "stdout": "",
+                            "stderr": "",
+                            "result": None,
+                            "error": tb,
+                            "language": language,
+                            "state_mode": state_mode,
+                            "session_id": session_id,
+                            "session_name": session_name,
+                            "venv_id": venv_id,
+                            "session_created": False,
+                            "duration_ms": 0,
+                            "computer_used": False,
+                        }
+                finally:
+                    _PARENT_CHAT_CONTEXT.reset(_pcc_token)
 
                 # Enrich with session name.
                 if out.get("session_id") is not None:
