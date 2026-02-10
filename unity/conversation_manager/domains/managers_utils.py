@@ -497,6 +497,22 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     else:
         sender_id, receiver_ids = contact_id, [0]
 
+    # For emails, resolve to/cc/bcc addresses to contact IDs so that
+    # receiver_ids reflects all known recipients.
+    if isinstance(event, (EmailSent, EmailReceived)):
+        resolved_ids: set[int] = set()
+        for addr in (event.to or []) + (event.cc or []) + (event.bcc or []):
+            resolved = cm.contact_index.get_contact(email=addr)
+            if resolved and resolved.get("contact_id") is not None:
+                resolved_ids.add(resolved["contact_id"])
+        if resolved_ids:
+            if role == "Assistant":
+                receiver_ids = sorted(resolved_ids)
+            else:
+                # Keep assistant (0) plus all resolved recipients
+                resolved_ids.add(0)
+                receiver_ids = sorted(resolved_ids)
+
     exchange_id = getattr(event, "exchange_id", UNASSIGNED)
 
     # For pre-hire messages, reuse the cached exchange_id if available
