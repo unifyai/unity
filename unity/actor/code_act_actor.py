@@ -547,6 +547,7 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
+        can_spawn_sub_agents: bool = True,
         storage_check_on_return: bool = False,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
@@ -565,6 +566,8 @@ class CodeActActor(BaseCodeActActor):
                 The LLM can call these tools to discover and retrieve reusable function implementations.
             agent_server_url: URL for the agent server. For desktop mode, pass the
                 external VM's URL.
+            can_spawn_sub_agents: When True, exposes a ``run_sub_agent`` tool that
+                lets the LLM spawn inner CodeActActors to work on focused sub-tasks.
             model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
                 If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
             preprocess_msgs: Optional callback to modify messages before each LLM call.
@@ -611,6 +614,7 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
+        self.can_spawn_sub_agents: bool = bool(can_spawn_sub_agents)
         self.storage_check_on_return: bool = bool(storage_check_on_return)
         self._storage_check_tasks: list[asyncio.Task] = []
         self._model = model
@@ -1872,6 +1876,84 @@ class CodeActActor(BaseCodeActActor):
         tools["close_session"] = close_session
         tools["close_all_sessions"] = close_all_sessions
 
+        # ───────────────────────── Sub-agent delegation tool ─────────────── #
+
+        async def run_sub_agent(
+            task: str,
+            *,
+            timeout: float | None = None,
+        ) -> str:
+            """
+            Spawn a sub-agent to work on a focused sub-task.
+
+            The sub-agent is an independent CodeActActor with the same tools and
+            environment access as the current agent. It runs the given task to
+            completion and returns the final result as a string.
+
+            When to use
+            -----------
+            - The overall task decomposes naturally into independent sub-problems
+              that benefit from focused, isolated reasoning.
+            - A sub-task requires multi-step work that would clutter or distract
+              the main agent's context window.
+            - You want to isolate a sub-task's execution state (sessions,
+              variables) from the main agent's sandbox.
+
+            When NOT to use
+            ---------------
+            - The task is simple enough to handle directly with ``execute_code``.
+            - You need intermediate results from the sub-task to inform logic in
+              the same code block (use ``execute_code`` with stateful sessions).
+            - The sub-task is trivial (single tool call) — the overhead of a
+              sub-agent is not worth it.
+
+            Parameters
+            ----------
+            task : str
+                A clear, self-contained description of what the sub-agent should
+                accomplish. Be specific and include all necessary context, because
+                the sub-agent does **not** share the parent agent's conversation
+                history or session state.
+            timeout : float, optional
+                Maximum seconds for the sub-agent to complete. Defaults to half
+                the parent agent's timeout, capped at 300 seconds.
+
+            Returns
+            -------
+            str
+                The sub-agent's final answer / result.
+            """
+            effective_timeout = (
+                timeout
+                if timeout is not None
+                else min(self._timeout / 2, 300)
+            )
+
+            handle = await self.act(
+                task,
+                clarification_enabled=False,
+                can_compose=True,
+                can_store=False,
+                can_spawn_sub_agents=False,
+                storage_check_on_return=False,
+            )
+
+            try:
+                result = await asyncio.wait_for(
+                    handle.result(),
+                    timeout=effective_timeout,
+                )
+            except asyncio.TimeoutError:
+                await handle.stop("Sub-agent timed out")
+                result = (
+                    f"Sub-agent timed out after {effective_timeout}s. "
+                    f"The sub-task may have been too broad or complex."
+                )
+
+            return result
+
+        tools["run_sub_agent"] = run_sub_agent
+
         return tools
 
     @functools.wraps(BaseCodeActActor.act, updated=())
@@ -1893,6 +1975,7 @@ class CodeActActor(BaseCodeActActor):
         persist: Optional[bool] = None,
         can_compose: Optional[bool] = None,
         can_store: Optional[bool] = None,
+        can_spawn_sub_agents: Optional[bool] = None,
         storage_check_on_return: Optional[bool] = None,
         **kwargs,
     ) -> SteerableToolHandle:
@@ -1903,6 +1986,11 @@ class CodeActActor(BaseCodeActActor):
             self.can_compose if can_compose is None else bool(can_compose)
         )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
+        effective_can_spawn_sub_agents = (
+            self.can_spawn_sub_agents
+            if can_spawn_sub_agents is None
+            else bool(can_spawn_sub_agents)
+        )
         effective_storage_check = (
             self.storage_check_on_return
             if storage_check_on_return is None
@@ -2101,7 +2189,7 @@ class CodeActActor(BaseCodeActActor):
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply static per-call filters (can_compose, can_store)."""
+            """Apply static per-call filters (can_compose, can_store, can_spawn_sub_agents)."""
             out = dict(tool_dict)
             if not effective_can_compose:
                 for name in _code_and_session_tools:
@@ -2109,6 +2197,8 @@ class CodeActActor(BaseCodeActActor):
                 out.pop("FunctionManager_add_functions", None)
             if not effective_can_store:
                 out.pop("FunctionManager_add_functions", None)
+            if not effective_can_spawn_sub_agents:
+                out.pop("run_sub_agent", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))
