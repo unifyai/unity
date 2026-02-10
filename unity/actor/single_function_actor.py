@@ -12,6 +12,11 @@ or action primitives (like ContactManager.ask, TaskScheduler.execute, etc.).
 
 Supports optional verification via LLM to check if the function achieved its goal.
 
+When no explicit ``call_kwargs`` are provided but a ``description`` is given,
+the actor uses a lightweight LLM step to inspect the matched function's
+signature and docstring and generate the appropriate keyword arguments from
+the natural-language description.
+
 Execution results are packaged as ``ExecutionResult`` objects (the same structured
 format used by ``CodeActActor``), capturing stdout, stderr, the return value, and
 any errors.  If the executed function returns a steerable handle, it is detected
@@ -23,6 +28,7 @@ captured before the handle was returned) is published as a notification.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 
@@ -61,6 +67,15 @@ class SingleFunctionVerificationResult(BaseModel):
     )
 
 
+class GeneratedCallKwargs(BaseModel):
+    """Structured output for LLM-generated function arguments."""
+
+    call_kwargs: Dict[str, Any] = Field(
+        ...,
+        description="The keyword arguments to pass to the function, matching its parameter names and types.",
+    )
+
+
 class SingleFunctionActorHandle(BaseActorHandle):
     """
     A handle for a single function execution.
@@ -86,6 +101,8 @@ class SingleFunctionActorHandle(BaseActorHandle):
         goal: Optional[str] = None,
         docstring: Optional[str] = None,
         actor: Optional["SingleFunctionActor"] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
         self._function_name = function_name
         self._function_id = function_id
@@ -100,6 +117,11 @@ class SingleFunctionActorHandle(BaseActorHandle):
         self._actor = actor
         self._verification_passed: Optional[bool] = None
         self._verification_reason: Optional[str] = None
+
+        # Clarification queues stored locally; forwarded to inner handle when
+        # a steerable function is detected.
+        self._clarification_up_q_local = _clarification_up_q
+        self._clarification_down_q_local = _clarification_down_q
 
         # Nested handle support
         self._inner_handle: Optional[SteerableToolHandle] = None
@@ -288,6 +310,11 @@ class SingleFunctionActorHandle(BaseActorHandle):
         )
 
     async def next_clarification(self) -> dict:
+        # Wait for the inner handle to be resolved first.
+        await self._handle_ready.wait()
+        if self._inner_handle is not None:
+            return await self._inner_handle.next_clarification()
+        # Non-steerable functions don't produce clarifications; block forever.
         await asyncio.Event().wait()
         return {}
 
@@ -295,6 +322,8 @@ class SingleFunctionActorHandle(BaseActorHandle):
         return await self._notification_q.get()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
+        if self._inner_handle is not None:
+            return await self._inner_handle.answer_clarification(call_id, answer)
         return None
 
     def get_history(self) -> list[dict]:
@@ -312,7 +341,7 @@ class SingleFunctionActorHandle(BaseActorHandle):
             "clarification_up_q",
         ):
             return self._inner_handle.clarification_up_q
-        return None
+        return self._clarification_up_q_local
 
     @property
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
@@ -321,7 +350,7 @@ class SingleFunctionActorHandle(BaseActorHandle):
             "clarification_down_q",
         ):
             return self._inner_handle.clarification_down_q
-        return None
+        return self._clarification_down_q_local
 
     @property
     def is_steerable(self) -> bool:
@@ -344,6 +373,11 @@ class SingleFunctionActor(BaseActor):
 
     The actor finds and executes a single function or primitive, either by
     explicit ID/name or by semantic search matching the description.
+
+    When no explicit ``call_kwargs`` are provided and the matched function
+    has parameters, the actor uses a lightweight LLM step to inspect the
+    function's signature and docstring alongside the user's ``description``
+    and generates appropriate keyword arguments automatically.
     """
 
     def __init__(
@@ -596,7 +630,6 @@ class SingleFunctionActor(BaseActor):
             result = await handle.result()
             if isinstance(result, SingleFunctionVerificationResult):
                 return result
-            import json
 
             result_dict = json.loads(result)
             return SingleFunctionVerificationResult.model_validate(result_dict)
@@ -606,6 +639,104 @@ class SingleFunctionActor(BaseActor):
                 success=True,
                 reason=f"Verification skipped due to error: {e}",
             )
+
+    async def _generate_call_kwargs(
+        self,
+        function_name: str,
+        argspec: Optional[str],
+        docstring: Optional[str],
+        description: str,
+        parent_chat_context: list[dict] | None = None,
+    ) -> Dict[str, Any]:
+        """Use an LLM to generate keyword arguments for a function call.
+
+        When the caller provides a natural-language ``description`` but no
+        explicit ``call_kwargs``, this method inspects the function's signature
+        (``argspec``) and ``docstring`` and asks an LLM to produce the correct
+        keyword arguments.
+
+        Args:
+            function_name: Name of the matched function.
+            argspec: The function's parameter signature string (e.g. ``(query: str, limit: int = 10)``).
+            docstring: The function's docstring.
+            description: The user's natural-language description / query.
+            parent_chat_context: Optional conversation history for additional context.
+
+        Returns:
+            A dictionary of keyword arguments to pass to the function.
+        """
+        client = new_llm_client()
+        client.set_system_message(
+            "You are an argument-generation assistant. Given a function's signature, "
+            "docstring, and the user's natural-language request, produce the keyword "
+            "arguments that should be passed to the function.\n\n"
+            "Rules:\n"
+            "- Only include parameters that are present in the function's signature.\n"
+            "- Omit parameters that have suitable defaults and don't need overriding.\n"
+            "- Use the user's description as the primary source for argument values.\n"
+            "- If the function takes a single string parameter (e.g. `query`, `goal`, "
+            "`description`, `message`, `prompt`, `question`, `text`, `input`), "
+            "pass the user's full description as that parameter.\n"
+            "- Return an empty dict {} if the function takes no arguments.",
+        )
+
+        prompt_parts = [f"## Function: `{function_name}`"]
+
+        if argspec:
+            prompt_parts.append(f"\n## Signature\n```\n{function_name}{argspec}\n```")
+
+        if docstring:
+            prompt_parts.append(f"\n## Docstring\n{docstring}")
+
+        prompt_parts.append(f"\n## User Request\n{description}")
+
+        if parent_chat_context:
+            # Include a brief summary of recent conversation for context
+            recent = parent_chat_context[-5:]  # last 5 messages at most
+            context_lines = []
+            for msg in recent:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if content:
+                    # Truncate long messages
+                    truncated = content[:200] + "..." if len(content) > 200 else content
+                    context_lines.append(f"  {role}: {truncated}")
+            if context_lines:
+                prompt_parts.append(
+                    "\n## Recent Conversation Context\n" + "\n".join(context_lines),
+                )
+
+        prompt_parts.append(
+            "\n## Task\n"
+            "Generate the keyword arguments to pass to this function. "
+            "Return them as a JSON object in the `call_kwargs` field.",
+        )
+
+        generation_prompt = "\n".join(prompt_parts)
+
+        try:
+            handle = start_async_tool_loop(
+                client=client,
+                message=generation_prompt,
+                tools={},
+                loop_id=f"SingleFunctionGenerateArgs({function_name})",
+                max_consecutive_failures=1,
+                timeout=30,
+                response_format=GeneratedCallKwargs,
+            )
+            result = await handle.result()
+            if isinstance(result, GeneratedCallKwargs):
+                return result.call_kwargs
+
+            result_dict = json.loads(result)
+            parsed = GeneratedCallKwargs.model_validate(result_dict)
+            return parsed.call_kwargs
+        except Exception as e:
+            logger.error(
+                f"Argument generation LLM call failed for '{function_name}': {e}. "
+                f"Falling back to empty kwargs.",
+            )
+            return {}
 
     async def act(
         self,
@@ -629,6 +760,8 @@ class SingleFunctionActor(BaseActor):
         Args:
             description: Natural language description of what to do.
                         Used for semantic search if function_id/primitive_name not provided.
+                        Also used for LLM-based argument generation when ``call_kwargs``
+                        is not explicitly provided.
                         Required when neither function_id nor primitive_name is specified.
             function_id: Optional explicit function ID to execute.
                         If provided, skips the search step.
@@ -636,11 +769,23 @@ class SingleFunctionActor(BaseActor):
                            If provided, skips the search step.
             include_primitives: If True (default), include primitives in semantic search.
             call_kwargs: Optional keyword arguments to pass to the function/primitive.
+                        If not provided and the matched function has parameters, an LLM
+                        step generates appropriate arguments from ``description``.
             verify: Optional verification flag. If None, uses the function's own verify flag.
                    If True, forces verification. If False, skips verification.
-            _parent_chat_context: Ignored (no conversation context needed).
-            _clarification_up_q: Ignored (no clarifications).
-            _clarification_down_q: Ignored (no clarifications).
+            _parent_chat_context: Optional conversation context from the caller (e.g.
+                ConversationManager state snapshot). Always injected into the
+                execution globals as ``__parent_chat_context__`` (``None`` when
+                not provided) so compositional functions can forward it to
+                inner actors via bare name access.
+            _clarification_up_q: Optional queue for clarification requests flowing
+                upward from inner tool loops. Injected into execution globals as
+                ``__clarification_up_q__`` (``None`` when ``clarification_enabled``
+                is False or not provided) and also wired to the returned handle.
+            _clarification_down_q: Optional queue for clarification answers flowing
+                downward to inner tool loops.  Injected into execution globals as
+                ``__clarification_down_q__`` (``None`` when ``clarification_enabled``
+                is False or not provided) and also wired to the returned handle.
 
         Returns:
             A SingleFunctionActorHandle for monitoring the execution.
@@ -649,6 +794,8 @@ class SingleFunctionActor(BaseActor):
             ValueError: If no matching function or primitive is found, or if no
                        selection method (description, function_id, primitive_name) is provided.
         """
+        # Determine whether the caller explicitly provided call_kwargs.
+        caller_provided_kwargs = call_kwargs is not None
         call_kwargs = call_kwargs or {}
 
         if function_id is None and primitive_name is None and description is None:
@@ -658,6 +805,27 @@ class SingleFunctionActor(BaseActor):
 
         globals_dict = self._create_execution_globals()
 
+        # ── Inject parent chat context ─────────────────────────────────────
+        # Always inject (even as None) so bare name access inside the
+        # executed function never raises NameError. The function's
+        # __globals__ *is* this namespace (set by exec()), so a plain
+        # ``__parent_chat_context__`` reference resolves here directly —
+        # no need for globals() which is deliberately excluded from the
+        # safe builtins to preserve sandbox integrity.
+        globals_dict["__parent_chat_context__"] = _parent_chat_context
+
+        # ── Resolve clarification queues based on clarification_enabled ────
+        if clarification_enabled:
+            clar_up = _clarification_up_q
+            clar_down = _clarification_down_q
+        else:
+            clar_up = None
+            clar_down = None
+
+        globals_dict["__clarification_up_q__"] = clar_up
+        globals_dict["__clarification_down_q__"] = clar_down
+
+        # ── Function / primitive resolution ────────────────────────────────
         if primitive_name is not None:
             function_data = self._get_primitive_by_name(primitive_name)
             logger.info(
@@ -687,6 +855,7 @@ class SingleFunctionActor(BaseActor):
         is_primitive = function_data.get("is_primitive", False)
         fid = function_data.get("function_id")
         docstring = function_data.get("docstring")
+        argspec = function_data.get("argspec")
 
         if verify is None:
             should_verify = (
@@ -698,6 +867,38 @@ class SingleFunctionActor(BaseActor):
         if should_verify:
             logger.info(f"Verification enabled for '{function_name}'")
 
+        # ── LLM-based argument generation ──────────────────────────────────
+        # When the caller did not provide explicit call_kwargs and we have a
+        # description, use an LLM to map the description to the function's
+        # parameters.  Skip when:
+        #  - call_kwargs were explicitly provided (even if empty)
+        #  - description is None (direct ID/name execution with no description)
+        #  - the function takes no parameters (argspec is "()" or empty)
+        needs_arg_generation = (
+            not caller_provided_kwargs
+            and description is not None
+            and argspec is not None
+            and argspec.strip() not in ("()", "")
+        )
+
+        if needs_arg_generation:
+            logger.info(
+                f"SingleFunctionActor: Generating call_kwargs for '{function_name}' "
+                f"from description via LLM",
+            )
+            call_kwargs = await self._generate_call_kwargs(
+                function_name=function_name,
+                argspec=argspec,
+                docstring=docstring,
+                description=description,
+                parent_chat_context=_parent_chat_context,
+            )
+            logger.info(
+                f"SingleFunctionActor: Generated call_kwargs for '{function_name}': "
+                f"{call_kwargs}",
+            )
+
+        # ── Execution ──────────────────────────────────────────────────────
         if is_primitive:
             execution_task = asyncio.create_task(
                 self._execute_primitive(function_data, **call_kwargs),
@@ -716,6 +917,8 @@ class SingleFunctionActor(BaseActor):
             goal=description,
             docstring=docstring,
             actor=self,
+            _clarification_up_q=clar_up,
+            _clarification_down_q=clar_down,
         )
 
     async def close(self):

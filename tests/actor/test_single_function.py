@@ -576,8 +576,8 @@ async def test_handle_get_history_is_empty():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_clarification_queues_are_none():
-    """Clarification queues should be None."""
+async def test_handle_clarification_queues_none_when_not_provided():
+    """Clarification queues should be None when not provided by caller."""
     fm = FunctionManager()
     simple_sync_function = _create_sync_function(fm)
 
@@ -593,6 +593,358 @@ async def test_handle_clarification_queues_are_none():
     assert handle.clarification_down_q is None
 
     await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_clarification_queues_forwarded_when_provided():
+    """Clarification queues should be stored on the handle when provided by caller."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    up_q = asyncio.Queue()
+    down_q = asyncio.Queue()
+
+    function_id = simple_sync_function["function_id"]
+    handle = await actor.act(
+        function_id=function_id,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    assert handle.clarification_up_q is up_q
+    assert handle.clarification_down_q is down_q
+
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_clarification_queues_none_when_disabled():
+    """Clarification queues should be None when clarification_enabled=False, even if queues provided."""
+    fm = FunctionManager()
+    simple_sync_function = _create_sync_function(fm)
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    up_q = asyncio.Queue()
+    down_q = asyncio.Queue()
+
+    function_id = simple_sync_function["function_id"]
+    handle = await actor.act(
+        function_id=function_id,
+        clarification_enabled=False,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    assert handle.clarification_up_q is None
+    assert handle.clarification_down_q is None
+
+    await handle.result()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 4b. Context and clarification globals injection tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_parent_chat_context_injected_into_globals():
+    """_parent_chat_context should be available as __parent_chat_context__ via bare name access."""
+    fm = FunctionManager()
+
+    # The function's __globals__ IS the namespace dict that exec() used,
+    # so bare name lookup resolves injected values directly — no need for
+    # the globals() builtin (which is deliberately excluded from safe builtins).
+    impl = '''
+def read_parent_context() -> str:
+    """Reads __parent_chat_context__ via bare name access."""
+    ctx = __parent_chat_context__
+    if ctx is None:
+        return "no_context"
+    return str(ctx)
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["read_parent_context"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    parent_context = [{"role": "system", "content": "test snapshot"}]
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={},
+        _parent_chat_context=parent_context,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert "test snapshot" in str(result.result)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_parent_chat_context_none_when_not_provided():
+    """__parent_chat_context__ should be None when not provided by the caller."""
+    fm = FunctionManager()
+
+    impl = '''
+def check_no_context() -> str:
+    """Checks that __parent_chat_context__ is None when not provided."""
+    ctx = __parent_chat_context__
+    if ctx is None:
+        return "absent"
+    return "present"
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["check_no_context"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={},
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert result.result == "absent"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_clarification_queues_injected_into_globals():
+    """Clarification queues should be available as __clarification_up_q__/__clarification_down_q__."""
+    fm = FunctionManager()
+
+    impl = '''
+def check_queues() -> str:
+    """Checks that clarification queues are accessible via bare name."""
+    up = __clarification_up_q__
+    down = __clarification_down_q__
+    if up is not None and down is not None:
+        return "both_present"
+    elif up is not None:
+        return "only_up"
+    elif down is not None:
+        return "only_down"
+    return "neither"
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["check_queues"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    up_q = asyncio.Queue()
+    down_q = asyncio.Queue()
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={},
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert result.result == "both_present"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_clarification_queues_none_when_disabled():
+    """Clarification queues should be None when clarification_enabled=False."""
+    fm = FunctionManager()
+
+    impl = '''
+def check_queues_disabled() -> str:
+    """Checks that clarification queues are None when disabled."""
+    up = __clarification_up_q__
+    down = __clarification_down_q__
+    if up is None and down is None:
+        return "neither"
+    return "present"
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["check_queues_disabled"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    up_q = asyncio.Queue()
+    down_q = asyncio.Queue()
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={},
+        clarification_enabled=False,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert result.result == "neither"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 4c. LLM-based argument generation tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_arg_generation_single_string_param():
+    """When no call_kwargs are provided and the function takes a query param,
+    the SFA should use an LLM to generate call_kwargs from the description."""
+    fm = FunctionManager()
+
+    impl = '''
+def echo_query(query: str) -> str:
+    """Echoes back the provided query string."""
+    return f"You asked: {query}"
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["echo_query"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="What is the first time fix rate?",
+        function_id=func_data["function_id"],
+        # No call_kwargs — LLM should generate {"query": "What is the first time fix rate?"}
+        verify=False,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    # The LLM should have passed the description as the query argument
+    assert "first time fix rate" in str(result.result).lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_arg_generation_skipped_when_kwargs_provided():
+    """When explicit call_kwargs are provided, LLM generation should be skipped."""
+    fm = FunctionManager()
+
+    impl = '''
+def echo_query(query: str) -> str:
+    """Echoes back the provided query string."""
+    return f"You asked: {query}"
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["echo_query"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="What is the first time fix rate?",
+        function_id=func_data["function_id"],
+        call_kwargs={"query": "my explicit query"},
+        verify=False,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert "my explicit query" in str(result.result)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_arg_generation_skipped_for_no_params():
+    """When the function takes no parameters, LLM generation should be skipped."""
+    fm = FunctionManager()
+
+    impl = '''
+def no_args_task() -> str:
+    """A task that takes no arguments."""
+    return "completed"
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["no_args_task"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="run the no-args task",
+        function_id=func_data["function_id"],
+        verify=False,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert result.result == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.eval
+@_handle_project
+async def test_arg_generation_multiple_params():
+    """LLM should generate multiple arguments when the function requires them."""
+    fm = FunctionManager()
+
+    impl = '''
+def add_numbers(a: int, b: int) -> int:
+    """Adds two numbers and returns the result."""
+    return a + b
+'''
+    fm.add_functions(implementations=[impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["add_numbers"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    handle = await actor.act(
+        description="Add 7 and 13 together",
+        function_id=func_data["function_id"],
+        verify=False,
+    )
+
+    result = await handle.result()
+    assert result.error is None, f"Unexpected error: {result.error}"
+    assert result.result == 20
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1375,6 +1727,106 @@ async def counting_workflow(target: int):
     await handle.interject(
         "Actually, skip ahead and just say the final number directly.",
     )
+
+    await handle.stop("test cleanup")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7b. Compositional context / clarification forwarding integration tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_compositional_function_forwards_context_and_queues_to_inner_actor():
+    """End-to-end: a compositional function reads the SFA-injected globals
+    (__parent_chat_context__, __clarification_up_q__, __clarification_down_q__)
+    via bare-name access and forwards them to an inner CodeActActor.act().
+
+    This verifies the full chain:
+      SFA injects → function reads from namespace → function passes to inner actor
+    """
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    fm = FunctionManager()
+
+    # The compositional function:
+    # 1) reads the three injected globals via bare name
+    # 2) prints confirmation so we can assert via captured stdout
+    # 3) forwards them to CodeActActor.act()
+    # 4) returns the inner handle (which SFA detects as steerable)
+    codeact_impl = '''
+async def context_aware_workflow(goal: str):
+    """A workflow that forwards parent context and clarification queues to CodeActActor."""
+    from unity.actor.code_act_actor import CodeActActor
+
+    ctx = __parent_chat_context__
+    up_q = __clarification_up_q__
+    down_q = __clarification_down_q__
+
+    print(f"ctx_ok={ctx is not None}")
+    print(f"up_ok={up_q is not None}")
+    print(f"down_ok={down_q is not None}")
+
+    actor = CodeActActor()
+    handle = await actor.act(
+        description=goal,
+        _parent_chat_context=ctx,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+    return handle
+'''
+    fm.add_functions(implementations=[codeact_impl])
+    functions = fm.list_functions(include_implementations=True)
+    func_data = functions["context_aware_workflow"]
+
+    actor = SingleFunctionActor(
+        computer_primitives=None,
+        function_manager=fm,
+    )
+
+    parent_context = [{"role": "user", "content": "earlier conversation message"}]
+    up_q = asyncio.Queue()
+    down_q = asyncio.Queue()
+
+    handle = await actor.act(
+        function_id=func_data["function_id"],
+        call_kwargs={"goal": "Say hello briefly"},
+        verify=False,
+        _parent_chat_context=parent_context,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    await handle._handle_ready.wait()
+
+    # ── The inner CodeActActor handle was detected and wired ────────────
+    assert handle.is_steerable, "Handle should be steerable (inner CodeActActor)"
+    assert handle.inner_handle is not None
+    assert isinstance(handle.inner_handle, SteerableToolHandle)
+
+    # ── Intermediate notification carries captured stdout ───────────────
+    notification = handle._notification_q.get_nowait()
+    assert notification["type"] == "intermediate_result"
+    intermediate = notification["content"]
+    stdout_text = "".join(
+        part.text for part in (intermediate.stdout or []) if hasattr(part, "text")
+    )
+    # The function confirmed it received non-None values for all three
+    assert (
+        "ctx_ok=True" in stdout_text
+    ), f"Expected ctx_ok=True in stdout: {stdout_text}"
+    assert "up_ok=True" in stdout_text, f"Expected up_ok=True in stdout: {stdout_text}"
+    assert (
+        "down_ok=True" in stdout_text
+    ), f"Expected down_ok=True in stdout: {stdout_text}"
+
+    # ── SFA handle exposes the queues we originally provided ────────────
+    # (AsyncToolLoopHandle doesn't expose clarification_up_q, so the
+    #  SFA handle falls back to _clarification_up_q_local — our queues.)
+    assert handle.clarification_up_q is up_q
+    assert handle.clarification_down_q is down_q
 
     await handle.stop("test cleanup")
 
