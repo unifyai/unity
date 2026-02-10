@@ -128,8 +128,65 @@ class StateManagerEnvironment(BaseEnvironment):
         return tools
 
     def get_prompt_context(self) -> str:
-        """Generate prompt context from the registry for exposed managers."""
-        return self._registry.prompt_context(self._primitive_scope)
+        """Generate self-contained prompt context: rules, method docs, and examples."""
+        parts: list[str] = []
+
+        parts.append("""\
+### State Manager Rules
+
+- **Do not answer from scratch when `primitives` is available**:
+  - If the user asks an information question, prefer calling the relevant \
+state manager via `await primitives.<manager>.ask(...)` instead of answering \
+purely from memory.
+  - This applies even when you think you "already know" the answer \
+— use the manager as evidence/ground truth.
+
+- **Read vs write**:
+  - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
+  - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` \
+are **impure** (they mutate state or start work).
+
+- **Prefer return values as evidence**: treat return values from state managers \
+as the primary ground truth.
+
+- **Steerable handles**: Manager calls return `SteerableToolHandle` objects for \
+in-flight control.
+  You can either **await the result** for immediate use, or **return the handle \
+as the last expression** of `execute_code` to hand steering control back to the \
+outer loop (see `execute_code` docstring).
+
+  **SteerableToolHandle API:**
+
+  | Method | Returns | Purpose |
+  |--------|---------|---------|
+  | `await handle.result()` | `str` | Wait for the final result |
+  | `await handle.ask(question)` | `SteerableToolHandle` | Query status without modifying execution |
+  | `await handle.interject(message)` | `None` | Inject corrections or context mid-flight |
+  | `await handle.pause()` | `str | None` | Pause at the next safe point |
+  | `await handle.resume()` | `str | None` | Resume a paused operation |
+  | `await handle.stop(reason=None)` | `None` | Terminate immediately |
+  | `handle.done()` | `bool` | Check if execution has completed |
+
+  ```python
+  handle = await primitives.tasks.execute(task_id=123)
+  result = await handle.result()  # wait for completion
+
+  # Mid-flight steering (while handle is running):
+  await handle.interject("Also include the Q2 numbers")
+  await handle.pause()   # pause if needed
+  await handle.resume()  # continue later
+  await handle.stop()    # cancel if no longer needed
+  ```""")
+
+        registry_ctx = self._registry.prompt_context(self._primitive_scope)
+        if registry_ctx:
+            parts.append(registry_ctx)
+
+        examples = self._registry.prompt_examples(self._primitive_scope)
+        if examples:
+            parts.append(f"### Implementation Examples\n\n{examples}")
+
+        return "\n\n".join(p for p in parts if p and p.strip())
 
     async def capture_state(self) -> Dict[str, Any]:
         """State manager state is primarily evidenced via return values."""
