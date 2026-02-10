@@ -688,16 +688,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 # process events
                 event = Event.from_json(msg["data"])
 
-                # Block on initialization for all events except session
-                # config events (which trigger initialization themselves).
-                if not self.initialized and not isinstance(
-                    event,
-                    _SessionConfigBase,
-                ):
-                    from unity.conversation_manager.domains import managers_utils
-
-                    await managers_utils.wait_for_initialization(self)
-
                 await EventHandler.handle_event(
                     event,
                     self,

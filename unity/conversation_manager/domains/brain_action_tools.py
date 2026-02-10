@@ -1053,8 +1053,6 @@ class ConversationManagerBrainActionTools:
         """
         global _next_handle_id
 
-        await managers_utils.wait_for_initialization(self._cm)
-
         # Pass the fresh rendered state snapshot as context for the Actor.
         # Filter to remove CM-internal elements (steering tools) that don't exist in Actor scope.
         parent_context = (
@@ -1141,8 +1139,6 @@ class ConversationManagerBrainActionTools:
             phone_number: The boss's phone number.
             email_address: The boss's email address.
         """
-        await managers_utils.wait_for_initialization(self._cm)
-
         updates = {
             k: v
             for k, v in {
