@@ -8,6 +8,7 @@ Eval tests verify end-to-end sub-agent execution with a real LLM.
 from __future__ import annotations
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -145,6 +146,119 @@ def test_prompt_excludes_sub_agent_guidance_when_tool_absent():
     prompt = build_code_act_prompt(environments={}, tools=tools)
 
     assert "Sub-Agent Delegation" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Symbolic tests — run_sub_agent parameter exposure
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(30)
+def test_run_sub_agent_exposes_capability_parameters():
+    """run_sub_agent should expose can_compose, can_store, can_spawn_sub_agents,
+    and storage_check_on_return as parameters visible to the LLM."""
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    tools = actor.get_tools("act")
+    sig = inspect.signature(tools["run_sub_agent"])
+    param_names = set(sig.parameters.keys())
+
+    assert "can_compose" in param_names
+    assert "can_store" in param_names
+    assert "can_spawn_sub_agents" in param_names
+    assert "storage_check_on_return" in param_names
+
+
+@pytest.mark.timeout(30)
+def test_run_sub_agent_parameter_defaults():
+    """Verify the default values for the capability parameters match expectations."""
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    tools = actor.get_tools("act")
+    sig = inspect.signature(tools["run_sub_agent"])
+    params = sig.parameters
+
+    assert params["can_compose"].default is True
+    assert params["can_store"].default is False
+    assert params["can_spawn_sub_agents"].default is False
+    assert params["storage_check_on_return"].default is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_run_sub_agent_can_compose_false_requires_function_manager():
+    """
+    When the outer agent calls run_sub_agent with can_compose=False, the inner
+    act() call should raise RuntimeError if function_manager is None.
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+    )
+    actor.function_manager = None
+    try:
+        tools = actor.get_tools("act")
+        with pytest.raises(RuntimeError, match="function_manager is required"):
+            await tools["run_sub_agent"](
+                task="Do something",
+                can_compose=False,
+            )
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_run_sub_agent_forwards_capability_flags():
+    """
+    Calling run_sub_agent with non-default capability flags should produce a
+    working handle (not crash). We start and immediately stop to verify wiring.
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+        can_spawn_sub_agents=True,
+    )
+    try:
+        tools = actor.get_tools("act")
+        # Call with all flags explicitly set to non-defaults where safe.
+        # can_compose=True (default), can_store=True, can_spawn_sub_agents=True,
+        # storage_check_on_return=True.
+        # We just verify the call doesn't raise — stop immediately.
+        coro = tools["run_sub_agent"](
+            task="What is 1+1?",
+            timeout=10,
+            can_compose=True,
+            can_store=True,
+            can_spawn_sub_agents=True,
+            storage_check_on_return=True,
+        )
+        # run_sub_agent awaits handle.result() internally, so we need to
+        # let the event loop start the inner act() and then cancel.
+        sub_task = asyncio.create_task(coro)
+        # Give it a moment to start then cancel.
+        await asyncio.sleep(0.5)
+        sub_task.cancel()
+        try:
+            await sub_task
+        except asyncio.CancelledError:
+            pass
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
