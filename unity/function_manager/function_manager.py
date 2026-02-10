@@ -1640,6 +1640,7 @@ class FunctionManager(BaseFunctionManager):
         *,
         primitive_scope: Optional[PrimitiveScope] = None,
         filter_scope: Optional[str] = None,
+        include_primitives: bool = True,
         daemon: bool = True,
         file_manager: Optional[LocalFileManager] = None,
     ) -> None:
@@ -1647,6 +1648,7 @@ class FunctionManager(BaseFunctionManager):
         # Default to all managers if not specified
         self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
         self._filter_scope = filter_scope
+        self._include_primitives = include_primitives
         self._registry = get_registry()
         self._daemon = daemon
         # ToDo: expose tools to LLM once needed
@@ -3319,6 +3321,10 @@ class FunctionManager(BaseFunctionManager):
         The returned proxies provide state mode control (.stateful/.stateless/.read_only).
 
         For venv functions, the proxy is placed in namespace (no raw function exists).
+
+        For primitives, the callable is resolved from the live runtime registry
+        via ``get_primitive_callable``. Primitives are NOT injected into the
+        namespace (they are already accessible via the ``primitives`` object).
         """
         callables: List[Callable[..., Any]] = []
         visited: Set[str] = set()
@@ -3328,8 +3334,24 @@ class FunctionManager(BaseFunctionManager):
             if not isinstance(name, str) or not name:
                 raise ValueError("Function record missing valid 'name'")
 
-            # Skip primitives (no stored implementation; names often contain dots).
+            # Primitives: resolve callable from the live runtime registry.
+            # They are already accessible via the ``primitives`` object in the
+            # namespace, so we don't inject a new namespace entry.
             if func_data.get("is_primitive") is True:
+                from unity.function_manager.primitives.runtime import (
+                    get_primitive_callable,
+                )
+
+                primitives_obj = namespace.get("primitives")
+                computer_prims = namespace.get("computer_primitives")
+                fn = get_primitive_callable(
+                    func_data,
+                    computer_primitives=computer_prims,
+                    primitives=primitives_obj,
+                )
+                if fn is not None:
+                    fn = _LineageTrackedFunction(fn, name)
+                callables.append(fn)
                 continue
 
             # Check if we've already processed this function (e.g., duplicate in results)
@@ -3409,16 +3431,30 @@ class FunctionManager(BaseFunctionManager):
         if return_callable and namespace is None:
             raise ValueError("namespace required when return_callable=True")
 
-        # Always build metadata in the existing shape for backwards-compat.
-        metadata: Dict[str, Dict[str, Any]] = {}
-        logs = unify.get_logs(
+        # Query compositional context, and optionally primitives.
+        compositional_logs = unify.get_logs(
             context=self._compositional_ctx,
             filter=self._scoped_filter(None),
             exclude_fields=list_private_fields(self._compositional_ctx),
         )
 
+        primitive_logs: list = []
+        if self._include_primitives:
+            self.sync_primitives()
+            primitive_filter = self._registry.primitive_row_filter(
+                self._primitive_scope,
+            )
+            primitive_logs = unify.get_logs(
+                context=self._primitives_ctx,
+                filter=primitive_filter,
+                exclude_fields=list_private_fields(self._primitives_ctx),
+            )
+
+        all_logs = list(compositional_logs) + list(primitive_logs)
+
+        metadata: Dict[str, Dict[str, Any]] = {}
         func_rows: List[Dict[str, Any]] = []
-        for log in logs:
+        for log in all_logs:
             ent = log.entries
             name = ent.get("name")
             if not isinstance(name, str):
@@ -3436,6 +3472,7 @@ class FunctionManager(BaseFunctionManager):
                 "guidance_ids": ent.get("guidance_ids", []),
                 "verify": ent.get("verify", True),
                 "venv_id": ent.get("venv_id"),
+                "is_primitive": ent.get("is_primitive", False),
             }
             if include_implementations:
                 data["implementation"] = ent.get("implementation")
@@ -3462,12 +3499,21 @@ class FunctionManager(BaseFunctionManager):
 
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
+        # Check compositional first, then optionally primitives.
         logs = unify.get_logs(
             context=self._compositional_ctx,
             filter=self._scoped_filter(f"name == '{function_name}'"),
             limit=1,
             exclude_fields=list_private_fields(self._compositional_ctx),
         )
+        if not logs and self._include_primitives:
+            self.sync_primitives()
+            logs = unify.get_logs(
+                context=self._primitives_ctx,
+                filter=f"name == '{function_name}'",
+                limit=1,
+                exclude_fields=list_private_fields(self._primitives_ctx),
+            )
         if not logs:
             return None
 
@@ -3491,12 +3537,32 @@ class FunctionManager(BaseFunctionManager):
 
         Returns:
             Dictionary mapping function names to "deleted" or "already_deleted".
+
+        Raises:
+            ValueError: If any of the requested function_ids correspond to
+                primitives (system-owned functions that cannot be deleted).
         """
         # Normalize to list
         function_ids = [function_id] if isinstance(function_id, int) else function_id
 
         if not function_ids:
             return {}
+
+        # Reject deletion of primitives (only check when primitives are enabled).
+        if self._include_primitives:
+            self.sync_primitives()
+            id_clauses = " or ".join(f"function_id == {fid}" for fid in function_ids)
+            prim_logs = unify.get_logs(
+                context=self._primitives_ctx,
+                filter=id_clauses,
+                limit=len(function_ids),
+                exclude_fields=list_private_fields(self._primitives_ctx),
+            )
+            if prim_logs:
+                prim_names = [lg.entries.get("name", lg.entries.get("function_id")) for lg in prim_logs]
+                raise ValueError(
+                    f"Cannot delete primitives (system-owned): {prim_names}",
+                )
 
         # Handle single function optimization
         if len(function_ids) == 1:
@@ -3590,6 +3656,57 @@ class FunctionManager(BaseFunctionManager):
 
     # 4. Filter --------------------------------------------------------- #
 
+    def _get_logs_with_retry(
+        self,
+        context: str,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Query a context with retries for 404 (lazy context creation)."""
+        import time as _time
+
+        rows: List[Dict[str, Any]] = []
+        last_exc: Exception | None = None
+        kwargs: Dict[str, Any] = {
+            "context": context,
+            "exclude_fields": list_private_fields(context),
+        }
+        if filter is not None:
+            kwargs["filter"] = filter
+        if limit is not None:
+            kwargs["limit"] = limit
+        if offset:
+            kwargs["offset"] = offset
+
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                logs = unify.get_logs(**kwargs)
+                rows = [lg.entries for lg in logs]
+                last_exc = None
+                break
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+
+        if isinstance(last_exc, _UnifyRequestError):
+            status = getattr(getattr(last_exc, "response", None), "status_code", None)
+            if status == 404:
+                rows = []
+        elif last_exc is not None:
+            raise last_exc
+
+        return rows
+
     @functools.wraps(BaseFunctionManager.filter_functions, updated=())
     def filter_functions(
         self,
@@ -3609,44 +3726,35 @@ class FunctionManager(BaseFunctionManager):
             raise ValueError("namespace required when return_callable=True")
 
         normalized = self._scoped_filter(normalize_filter_expr(filter))
-        # The underlying Unify backend returns 404 when a context hasn't been created yet.
-        # In tests and fresh projects, contexts are created lazily, so we retry briefly and
-        # then treat missing context as "no functions" rather than crashing the Actor.
-        import time as _time
 
-        rows: List[Dict[str, Any]] = []
-        last_exc: Exception | None = None
-        for delay in (0.0, 0.05, 0.15):
-            if delay:
-                _time.sleep(delay)
-            try:
-                logs = unify.get_logs(
-                    context=self._compositional_ctx,
-                    filter=normalized,
-                    offset=offset,
-                    limit=limit,
-                    exclude_fields=list_private_fields(self._compositional_ctx),
-                )
-                rows = [lg.entries for lg in logs]
-                last_exc = None
-                break
-            except _UnifyRequestError as e:
-                status = getattr(getattr(e, "response", None), "status_code", None)
-                if status == 404:
-                    last_exc = e
-                    continue
-                raise
-            except Exception as e:
-                last_exc = e
-                break
+        # Query both contexts with the same limit (yielding up to 2x results).
+        per_ctx_limit = limit + offset
+        compositional_rows = self._get_logs_with_retry(
+            self._compositional_ctx,
+            filter=normalized,
+            limit=per_ctx_limit,
+        )
 
-        # If we still see 404 after retries, treat as empty library.
-        if isinstance(last_exc, _UnifyRequestError):
-            status = getattr(getattr(last_exc, "response", None), "status_code", None)
-            if status == 404:
-                rows = []
-        elif last_exc is not None:
-            raise last_exc
+        primitive_rows: List[Dict[str, Any]] = []
+        if self._include_primitives:
+            self.sync_primitives()
+            # Build primitives filter: combine caller filter with the primitive scope.
+            primitive_scope_filter = self._registry.primitive_row_filter(
+                self._primitive_scope,
+            )
+            prim_filter = normalize_filter_expr(filter)
+            if prim_filter and primitive_scope_filter:
+                prim_filter = f"({prim_filter}) and ({primitive_scope_filter})"
+            elif primitive_scope_filter:
+                prim_filter = primitive_scope_filter
+            primitive_rows = self._get_logs_with_retry(
+                self._primitives_ctx,
+                filter=prim_filter,
+                limit=per_ctx_limit,
+            )
+
+        # Stack compositional first, primitives last, then apply offset+limit.
+        rows = (compositional_rows + primitive_rows)[offset : offset + limit]
 
         if not return_callable:
             # Strip implementations if not requested (reduces payload size)
@@ -3658,7 +3766,6 @@ class FunctionManager(BaseFunctionManager):
             return rows
 
         assert namespace is not None  # validated above
-        # Note: rows must contain implementations for callable injection to work.
         callables_list = self._inject_callables_for_functions(rows, namespace=namespace)
         if also_return_metadata:
             # Strip implementations from metadata if not requested
@@ -3682,21 +3789,20 @@ class FunctionManager(BaseFunctionManager):
         return_callable: bool = False,
         namespace: Optional[Dict[str, Any]] = None,
         also_return_metadata: bool = False,
-        include_primitives: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Search for functions by semantic similarity to a natural-language query.
+
+        Searches both compositional (user-defined) and primitive (state manager)
+        functions, ranked purely by embedding distance.
 
         Args:
             query: Natural-language text describing the desired function(s).
             n: Number of similar results to return.
             include_implementations: If True (default), include full source code.
-            include_primitives: If True (default), sync and include primitives
-                in the search results alongside user-defined functions.
 
         Returns:
-            Up to n results ordered by similarity, including both user functions
-            and primitives (if include_primitives=True).
+            Up to n results ordered by similarity across all function types.
         """
         if also_return_metadata and not return_callable:
             raise ValueError("also_return_metadata requires return_callable=True")
@@ -3706,7 +3812,7 @@ class FunctionManager(BaseFunctionManager):
 
         allowed_fields = list(Function.model_fields.keys())
 
-        # Search user-defined functions in the Compositional context
+        # Search compositional context.
         compositional_rows = table_search_top_k(
             context=self._compositional_ctx,
             references={"embedding_text": query},
@@ -3716,17 +3822,13 @@ class FunctionManager(BaseFunctionManager):
             row_filter=self._filter_scope,
         )
 
-        if not include_primitives:
-            results = compositional_rows[:n]
-        else:
-            # Sync and search primitives (scoped)
+        # Optionally search primitives context.
+        primitive_rows: list = []
+        if self._include_primitives:
             self.sync_primitives()
-
-            # Build scoped filter for primitives
             primitive_filter = self._registry.primitive_row_filter(
                 self._primitive_scope,
             )
-
             primitive_rows = table_search_top_k(
                 context=self._primitives_ctx,
                 references={"embedding_text": query},
@@ -3736,19 +3838,19 @@ class FunctionManager(BaseFunctionManager):
                 row_filter=primitive_filter,
             )
 
-            # Merge and sort by the private score column (lower distance = better match)
-            all_rows = compositional_rows + primitive_rows
-            sort_key: str | None = None
-            for row in all_rows:
-                for key in row.keys():
-                    if key.startswith("_"):
-                        sort_key = key
-                        break
-                if sort_key:
+        # Merge and sort by the private score column (lower distance = better match)
+        all_rows = compositional_rows + primitive_rows
+        sort_key: str | None = None
+        for row in all_rows:
+            for key in row.keys():
+                if key.startswith("_"):
+                    sort_key = key
                     break
             if sort_key:
-                all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
-            results = all_rows[:n]
+                break
+        if sort_key:
+            all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
+        results = all_rows[:n]
 
         if not return_callable:
             # Strip implementations if not requested (reduces payload size)
@@ -3760,26 +3862,18 @@ class FunctionManager(BaseFunctionManager):
             return results
 
         assert namespace is not None  # validated above
-
-        # Only materialize non-primitive records as callables.
-        # Note: exec_rows must contain implementations for callable injection to work.
-        exec_rows = [
-            r
-            for r in results
-            if isinstance(r, dict) and r.get("is_primitive") is not True
-        ]
         callables_list = self._inject_callables_for_functions(
-            exec_rows,
+            results,
             namespace=namespace,
         )
 
         if also_return_metadata:
             # Strip implementations from metadata if not requested
-            metadata_rows = exec_rows
+            metadata_rows = results
             if not include_implementations:
                 metadata_rows = [
                     {k: v for k, v in row.items() if k != "implementation"}
-                    for row in exec_rows
+                    for row in results
                 ]
             return {"callables": callables_list, "metadata": metadata_rows}  # type: ignore[return-value]
 
@@ -4672,11 +4766,26 @@ class FunctionManager(BaseFunctionManager):
             ValueError: If the function doesn't exist or has no implementation.
             ValueError: If state_mode requires a pool but none is provided.
         """
-        # Look up function by name (compositional first, then primitives)
+        # Look up function by name (compositional first, then optionally primitives).
         func_data = self._get_function_data_by_name(name=function_name)
 
-        if func_data is None:
+        if func_data is None and self._include_primitives:
             func_data = self._get_primitive_data_by_name(name=function_name)
+
+        if func_data is None and self._include_primitives:
+            # Fallback: check primitives DB context directly.
+            self.sync_primitives()
+            try:
+                prim_logs = unify.get_logs(
+                    context=self._primitives_ctx,
+                    filter=f"name == {json.dumps(function_name)}",
+                    limit=1,
+                    exclude_fields=list_private_fields(self._primitives_ctx),
+                )
+                if prim_logs:
+                    func_data = prim_logs[0].entries
+            except Exception:
+                pass
 
         if func_data is None:
             raise ValueError(f"Function '{function_name}' not found")

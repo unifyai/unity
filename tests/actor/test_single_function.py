@@ -225,7 +225,7 @@ def greet_pet(name: str) -> str:
 @pytest.mark.asyncio
 @_handle_project
 async def test_semantic_search_finds_primitive():
-    """Semantic search should find primitives when include_primitives=True (default)."""
+    """Semantic search should find primitives by default."""
     fm = FunctionManager()
     fm.sync_primitives()  # Ensure primitives are loaded
 
@@ -238,7 +238,6 @@ async def test_semantic_search_finds_primitive():
     results = fm.search_functions(
         query="ask questions about my contacts",
         n=5,
-        include_primitives=True,
     )
 
     # Verify that at least one primitive is in the results
@@ -256,9 +255,8 @@ async def test_semantic_search_finds_primitive():
 @pytest.mark.asyncio
 @_handle_project
 async def test_semantic_search_excludes_primitives_when_disabled():
-    """Semantic search should exclude primitives when include_primitives=False."""
-    fm = FunctionManager()
-    fm.sync_primitives()  # Ensure primitives are loaded
+    """Semantic search should exclude primitives when include_primitives=False on the instance."""
+    fm = FunctionManager(include_primitives=False)
 
     # Add a user function about contacts
     contact_func = '''
@@ -273,11 +271,10 @@ def list_my_contacts() -> str:
         function_manager=fm,
     )
 
-    # Search with primitives excluded
+    # Search with primitives excluded (instance-level flag)
     results = fm.search_functions(
         query="ask questions about my contacts",
         n=10,
-        include_primitives=False,
     )
 
     # Verify no primitives in results
@@ -304,7 +301,6 @@ async def test_semantic_search_with_no_user_functions():
     results = fm.search_functions(
         query="manage my tasks and schedule",
         n=5,
-        include_primitives=True,
     )
 
     # Should find some primitives
@@ -1709,7 +1705,6 @@ async def counting_workflow(target: int):
 
     handle = await actor.act(
         description="count numbers slowly",
-        include_primitives=False,
         call_kwargs={"target": 10},
         verify=False,
     )

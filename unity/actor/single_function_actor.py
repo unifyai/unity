@@ -447,13 +447,11 @@ class SingleFunctionActor(BaseActor):
         self,
         description: str,
         namespace: Dict[str, Any],
-        include_primitives: bool = True,
     ) -> Dict[str, Any]:
         """Search for the best matching function, injecting dependencies into namespace."""
         result = self._function_manager.search_functions(
             query=description,
             n=1,
-            include_primitives=include_primitives,
             return_callable=True,
             namespace=namespace,
             also_return_metadata=True,
@@ -746,7 +744,6 @@ class SingleFunctionActor(BaseActor):
         response_format: Optional[Type[BaseModel]] = None,
         function_id: Optional[int] = None,
         primitive_name: Optional[str] = None,
-        include_primitives: bool = True,
         call_kwargs: Optional[Dict[str, Any]] = None,
         verify: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -767,7 +764,6 @@ class SingleFunctionActor(BaseActor):
                         If provided, skips the search step.
             primitive_name: Optional explicit primitive name (e.g., 'ContactManager.ask').
                            If provided, skips the search step.
-            include_primitives: If True (default), include primitives in semantic search.
             call_kwargs: Optional keyword arguments to pass to the function/primitive.
                         If not provided and the matched function has parameters, an LLM
                         step generates appropriate arguments from ``description``.
@@ -844,7 +840,6 @@ class SingleFunctionActor(BaseActor):
             function_data = self._search_function(
                 description,
                 namespace=globals_dict,
-                include_primitives=include_primitives,
             )
             logger.info(
                 f"SingleFunctionActor: Found '{function_data.get('name')}' "
