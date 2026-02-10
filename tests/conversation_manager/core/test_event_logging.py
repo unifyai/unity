@@ -24,10 +24,11 @@ import asyncio
 import pytest
 import pytest_asyncio
 
-from tests.helpers import _handle_project, capture_events
+from tests.helpers import _handle_project, capture_events, get_or_create_contact
 from unity.conversation_manager.events import (
     SMSReceived,
     EmailReceived,
+    EmailSent,
     UnifyMessageReceived,
 )
 
@@ -428,3 +429,198 @@ async def test_event_bus_event_excludes_sensitive_data(cm_with_eventbus):
         assert (
             "email_id" not in email_events[0].payload
         ), "email_id should be stripped from EventBus payload for security"
+
+
+# =============================================================================
+# Transcript Logging: Email Recipient Fidelity
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_inbound_email_transcript_includes_all_recipients(cm_with_eventbus):
+    """
+    When an inbound email has multiple to/cc recipients, the transcript
+    entry's receiver_ids should include all resolved recipient contact IDs,
+    not just [0] (the assistant).
+    """
+    from unity.conversation_manager.domains.event_handlers import EventHandler
+    import unify
+
+    cm = cm_with_eventbus
+    assert cm.contact_manager is not None, "ContactManager not initialized"
+
+    # Create sender and recipient contacts
+    alice_email = "alice_inbound@example.com"
+    bob_email = "bob_inbound@example.com"
+    charlie_email = "charlie_inbound@example.com"
+
+    alice_id = get_or_create_contact(
+        cm.contact_manager,
+        email_address=alice_email,
+        first_name="Alice",
+        surname="Sender",
+    )
+    bob_id = get_or_create_contact(
+        cm.contact_manager,
+        email_address=bob_email,
+        first_name="Bob",
+        surname="ToRecipient",
+    )
+    charlie_id = get_or_create_contact(
+        cm.contact_manager,
+        email_address=charlie_email,
+        first_name="Charlie",
+        surname="CcRecipient",
+    )
+
+    alice = {"contact_id": alice_id, "email_address": alice_email}
+
+    unique_subject = "Inbound Recipient Logging Test"
+
+    # Alice sends an email TO bob, CC charlie
+    email_event = EmailReceived(
+        contact=alice,
+        subject=unique_subject,
+        body="Testing inbound recipient logging.",
+        email_id="test_inbound_recipients_001",
+        to=[bob_email],
+        cc=[charlie_email],
+    )
+
+    await EventHandler.handle_event(email_event, cm, is_voice_call=False)
+    await wait_for_operations_queue()
+
+    # Query the transcript for this message
+    tm = cm.transcript_manager
+    assert tm is not None, "TranscriptManager not initialized"
+    ctx = getattr(tm, "_transcripts_ctx", None)
+    assert ctx, "TranscriptManager missing _transcripts_ctx"
+
+    logs = unify.get_logs(
+        context=ctx,
+        limit=10,
+        sorting={"timestamp": "descending"},
+        from_fields=["message_id", "content", "sender_id", "receiver_ids"],
+    )
+
+    # Find our message
+    target_log = None
+    for lg in logs or []:
+        content = str((lg.entries or {}).get("content") or "")
+        if unique_subject.lower() in content.lower():
+            target_log = dict(lg.entries or {})
+            break
+
+    assert target_log is not None, (
+        f"Did not find transcript message containing {unique_subject!r}"
+    )
+
+    receiver_ids = target_log.get("receiver_ids", [])
+    receiver_ids_int = [int(x) for x in receiver_ids]
+
+    # sender_id should be Alice
+    assert int(target_log["sender_id"]) == alice_id, (
+        f"Expected sender_id={alice_id}, got {target_log['sender_id']}"
+    )
+
+    # receiver_ids should include Bob (to) and Charlie (cc), not just [0]
+    assert bob_id in receiver_ids_int, (
+        f"Bob (to recipient, id={bob_id}) should be in receiver_ids, "
+        f"got {receiver_ids_int}"
+    )
+    assert charlie_id in receiver_ids_int, (
+        f"Charlie (cc recipient, id={charlie_id}) should be in receiver_ids, "
+        f"got {receiver_ids_int}"
+    )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_outbound_email_transcript_includes_all_recipients(cm_with_eventbus):
+    """
+    When an outbound email is sent to multiple to/cc recipients, the
+    transcript entry's receiver_ids should include all recipient contact IDs,
+    not just the single contact from event.contact.
+    """
+    from unity.conversation_manager.domains.event_handlers import EventHandler
+    import unify
+
+    cm = cm_with_eventbus
+    assert cm.contact_manager is not None, "ContactManager not initialized"
+
+    # Create recipient contacts
+    alice_email = "alice_outbound@example.com"
+    bob_email = "bob_outbound@example.com"
+
+    alice_id = get_or_create_contact(
+        cm.contact_manager,
+        email_address=alice_email,
+        first_name="Alice",
+        surname="Primary",
+    )
+    bob_id = get_or_create_contact(
+        cm.contact_manager,
+        email_address=bob_email,
+        first_name="Bob",
+        surname="CcRecipient",
+    )
+
+    alice = {"contact_id": alice_id, "email_address": alice_email}
+
+    unique_subject = "Outbound Recipient Logging Test"
+
+    # Assistant sends an email TO alice, CC bob
+    email_event = EmailSent(
+        contact=alice,
+        subject=unique_subject,
+        body="Testing outbound recipient logging.",
+        to=[alice_email],
+        cc=[bob_email],
+    )
+
+    await EventHandler.handle_event(email_event, cm, is_voice_call=False)
+    await wait_for_operations_queue()
+
+    # Query the transcript for this message
+    tm = cm.transcript_manager
+    assert tm is not None, "TranscriptManager not initialized"
+    ctx = getattr(tm, "_transcripts_ctx", None)
+    assert ctx, "TranscriptManager missing _transcripts_ctx"
+
+    logs = unify.get_logs(
+        context=ctx,
+        limit=10,
+        sorting={"timestamp": "descending"},
+        from_fields=["message_id", "content", "sender_id", "receiver_ids"],
+    )
+
+    # Find our message
+    target_log = None
+    for lg in logs or []:
+        content = str((lg.entries or {}).get("content") or "")
+        if unique_subject.lower() in content.lower():
+            target_log = dict(lg.entries or {})
+            break
+
+    assert target_log is not None, (
+        f"Did not find transcript message containing {unique_subject!r}"
+    )
+
+    receiver_ids = target_log.get("receiver_ids", [])
+    receiver_ids_int = [int(x) for x in receiver_ids]
+
+    # sender_id should be 0 (the assistant)
+    assert int(target_log["sender_id"]) == 0, (
+        f"Expected sender_id=0 (assistant), got {target_log['sender_id']}"
+    )
+
+    # receiver_ids should include both Alice (to) and Bob (cc)
+    assert alice_id in receiver_ids_int, (
+        f"Alice (to recipient, id={alice_id}) should be in receiver_ids, "
+        f"got {receiver_ids_int}"
+    )
+    assert bob_id in receiver_ids_int, (
+        f"Bob (cc recipient, id={bob_id}) should be in receiver_ids, "
+        f"got {receiver_ids_int}"
+    )
