@@ -163,6 +163,43 @@ async def test_execute_function_primitive_returns_handle(function_manager_factor
 
 @_handle_project
 @pytest.mark.asyncio
+async def test_execute_primitive_forwards_parent_chat_context(function_manager_factory):
+    """execute_function should forward _parent_chat_context to primitive
+    callables whose signature accepts it.
+
+    This verifies the full path: execute_function receives
+    _parent_chat_context → _execute_primitive inspects the callable's
+    signature → injects _parent_chat_context into the call kwargs.
+    """
+    fm = function_manager_factory()
+
+    received = {}
+
+    async def fake_ask(text: str, _parent_chat_context: list[dict] | None = None):
+        received["ctx"] = _parent_chat_context
+        return f"Answered: {text}"
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = fake_ask
+
+    parent_ctx = [{"role": "user", "content": "Hello"}]
+
+    result = await fm.execute_function(
+        function_name="primitives.contacts.ask",
+        call_kwargs={"text": "Who is Alice?"},
+        primitives=mock_primitives,
+        _parent_chat_context=parent_ctx,
+    )
+
+    assert result == "Answered: Who is Alice?"
+    assert received["ctx"] is parent_ctx, (
+        "_parent_chat_context was not forwarded to the primitive callable"
+    )
+
+
+@_handle_project
+@pytest.mark.asyncio
 async def test_execute_function_primitive_no_kwargs(function_manager_factory):
     """execute_function works for primitives that take no arguments."""
     fm = function_manager_factory()
