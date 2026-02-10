@@ -686,6 +686,8 @@ class CommsManager:
                     message.ack()
                 except Exception as e:
                     print(f"Error processing {thread} event: {e}")
+                    import traceback
+                    traceback.print_exc()
                     message.ack()
             else:
                 print(f"Unknown event type: {thread}")
