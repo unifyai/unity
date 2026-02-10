@@ -322,7 +322,7 @@ class ContactIndex:
     # Message push
     # =========================================================================
 
-    def push_message(
+    def build_message(
         self,
         contact_id: int,
         sender_name: str,
@@ -338,25 +338,12 @@ class ContactIndex:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         contact_role: str | None = None,
-    ):
+    ) -> "GlobalThreadEntry":
         """
-        Push a message to the shared global thread.
+        Build a GlobalThreadEntry without appending it to the global thread.
 
-        Args:
-            contact_id: The contact's ID.
-            sender_name: Display name for the message sender.
-            thread_name: Which medium (Medium.SMS_MESSAGE, Medium.EMAIL, etc.).
-            message_content: Message text (for SMS, voice).
-            subject: Email subject (for email).
-            body: Email body (for email).
-            email_id: Email ID (for email).
-            attachments: List of attachment filenames.
-            timestamp: Message timestamp (defaults to now).
-            role: "user" or "assistant".
-            to: List of recipient email addresses (for email).
-            cc: List of CC email addresses (for email).
-            bcc: List of BCC email addresses (for email).
-            contact_role: Contact's role in this email ("sender", "to", "cc", "bcc").
+        Accepts the same arguments as push_message. Also ensures that
+        conversation state exists for the contact.
         """
         if not timestamp:
             timestamp = prompt_now(as_string=False)
@@ -405,10 +392,60 @@ class ContactIndex:
                 role=role,
             )
 
-        self.global_thread.append(
-            GlobalThreadEntry(
-                message=message,
-                medium=thread_name,
-                contact_roles={contact_id: contact_role},
-            ),
+        return GlobalThreadEntry(
+            message=message,
+            medium=thread_name,
+            contact_roles={contact_id: contact_role},
         )
+
+    def push_message(
+        self,
+        contact_id: int,
+        sender_name: str,
+        thread_name: Medium,
+        message_content: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+        email_id: str | None = None,
+        attachments: list[str] | None = None,
+        timestamp: datetime | None = None,
+        role: str = "user",
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        contact_role: str | None = None,
+    ):
+        """
+        Build a message and append it to the shared global thread.
+        """
+        entry = self.build_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=thread_name,
+            message_content=message_content,
+            subject=subject,
+            body=body,
+            email_id=email_id,
+            attachments=attachments,
+            timestamp=timestamp,
+            role=role,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            contact_role=contact_role,
+        )
+        self.global_thread.append(entry)
+
+    def prepend_entries(self, entries: list) -> None:
+        """Prepend entries to the front of the global thread.
+
+        Used by hydration to insert historical messages before any messages
+        that arrived during initialization. Respects the deque maxlen by
+        keeping the most recent entries when the combined size exceeds it.
+        """
+        if not entries:
+            return
+        existing = list(self.global_thread)
+        self.global_thread.clear()
+        # extend respects maxlen, dropping oldest (leftmost) if over capacity
+        self.global_thread.extend(entries + existing)
