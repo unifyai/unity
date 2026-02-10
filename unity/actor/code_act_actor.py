@@ -2285,8 +2285,6 @@ class CodeActActor(BaseCodeActActor):
         )
         if system_prompt:
             client.set_system_message(system_prompt)
-        if _parent_chat_context:
-            client.append_messages(_parent_chat_context)
 
         # Add clarification tool when queues are supplied
         tools = dict(base_tools)
@@ -2306,6 +2304,7 @@ class CodeActActor(BaseCodeActActor):
             tools,
             loop_id=f"CodeActActor.act",
             propagate_chat_context=ChatContextPropagation.ALWAYS,
+            parent_chat_context=_parent_chat_context,
             interrupt_llm_with_interjections=True,
             log_steps=True,
             max_steps=100,
