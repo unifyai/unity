@@ -698,3 +698,134 @@ class TestContactIndexInitializationState:
         ci.set_fallback_contacts([boss_contact])
         result = ci.get_contact(contact_id=999)
         assert result is None, "Should return None for contact not in fallback"
+
+
+class TestActQueuedBeforeInit:
+    """
+    Tests for the act() tool queueing pattern.
+
+    When the CM brain calls act() before managers are initialized, the action
+    should be registered in in_flight_actions immediately (handle=None), the
+    ActorHandleStarted event should be published, and the actual actor.act()
+    invocation should be queued via queue_operation so it executes only after
+    initialization completes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_act_queues_invocation_without_calling_actor(self, event_broker):
+        """
+        Calling act() before init queues the actor invocation and publishes
+        the event, but does NOT call actor.act() yet.
+        """
+        from unittest.mock import patch, AsyncMock, MagicMock
+
+        from unity.conversation_manager.domains import managers_utils
+        from unity.conversation_manager.domains.brain_action_tools import (
+            ConversationManagerBrainActionTools,
+        )
+
+        # Drain the queue from previous tests
+        while not managers_utils._operations_queue.empty():
+            try:
+                managers_utils._operations_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        # Create a mock CM that is NOT initialized
+        mock_cm = MagicMock()
+        mock_cm.initialized = False
+        mock_cm.in_flight_actions = {}
+        mock_cm._current_state_snapshot = None
+        mock_cm._current_snapshot_state = None
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+        ) as mock_get_broker:
+            mock_broker = MagicMock()
+            mock_broker.publish = AsyncMock()
+            mock_get_broker.return_value = mock_broker
+
+            tools = ConversationManagerBrainActionTools(mock_cm)
+            result = await tools.act(query="look up Alice's phone number")
+
+        # act() should return immediately
+        assert result["status"] == "acting"
+
+        # The actor.act() should NOT have been called yet
+        mock_cm.actor.act.assert_not_called()
+
+        # The operation should be sitting in the queue
+        assert not managers_utils._operations_queue.empty(), (
+            "The actor invocation should be queued via queue_operation."
+        )
+
+    @pytest.mark.asyncio
+    async def test_queued_act_executes_after_init(self, event_broker):
+        """
+        The queued actor.act() call executes after initialization completes,
+        registering the action in in_flight_actions with the real handle.
+        """
+        from unittest.mock import patch, AsyncMock, MagicMock
+
+        from unity.conversation_manager.domains import managers_utils
+        from unity.conversation_manager.domains.brain_action_tools import (
+            ConversationManagerBrainActionTools,
+        )
+
+        # Drain the queue from previous tests
+        while not managers_utils._operations_queue.empty():
+            try:
+                managers_utils._operations_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        mock_cm = MagicMock()
+        mock_cm.initialized = False
+        mock_cm.in_flight_actions = {}
+        mock_cm._current_state_snapshot = None
+        mock_cm._current_snapshot_state = None
+
+        # actor.act() returns a mock handle
+        mock_handle = MagicMock()
+        mock_cm.actor.act = AsyncMock(return_value=mock_handle)
+
+        with patch(
+            "unity.conversation_manager.domains.brain_action_tools.get_event_broker",
+        ) as mock_get_broker:
+            mock_broker = MagicMock()
+            mock_broker.publish = AsyncMock()
+            mock_get_broker.return_value = mock_broker
+
+            tools = ConversationManagerBrainActionTools(mock_cm)
+            await tools.act(query="check calendar")
+
+        # Before processing: actor not called, in_flight_actions not yet populated
+        mock_cm.actor.act.assert_not_called()
+        assert len(mock_cm.in_flight_actions) == 0
+
+        # Simulate processing the queued operation (as listen_to_operations would)
+        with patch(
+            "unity.conversation_manager.domains.managers_utils.actor_watch_result",
+            new_callable=AsyncMock,
+        ), patch(
+            "unity.conversation_manager.domains.managers_utils.actor_watch_notifications",
+            new_callable=AsyncMock,
+        ), patch(
+            "unity.conversation_manager.domains.managers_utils.actor_watch_clarifications",
+            new_callable=AsyncMock,
+        ):
+            async_func, args, kwargs = await asyncio.wait_for(
+                managers_utils._operations_queue.get(),
+                timeout=1.0,
+            )
+            await async_func(*args, **kwargs)
+
+        # After processing: actor.act() was called and action is registered
+        mock_cm.actor.act.assert_called_once()
+        assert len(mock_cm.in_flight_actions) == 1
+        action = list(mock_cm.in_flight_actions.values())[0]
+        assert action["handle"] is mock_handle, (
+            "The real handle should be in in_flight_actions "
+            "after the queued operation executes."
+        )
+        assert action["query"] == "check calendar"
