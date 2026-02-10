@@ -32,7 +32,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         self,
         root: str | None = None,
         *,
-        enable_sync: bool = True,
+        enable_sync: bool = False,
     ):
         """Initialize LocalFileSystemAdapter.
 
@@ -40,7 +40,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         ----------
         root : str | None, default None
             Root directory for file operations. Defaults to ~ (home).
-        enable_sync : bool, default True
+        enable_sync : bool, default False
             Whether to enable VM file sync. Actual sync only occurs if
             SESSION_DETAILS.desktop_url is configured.
         """
