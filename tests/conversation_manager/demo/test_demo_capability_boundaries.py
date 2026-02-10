@@ -5,13 +5,14 @@ tests/conversation_manager/demo/test_demo_capability_boundaries.py
 Eval tests verifying that the assistant handles capability boundaries
 gracefully in demo mode.
 
-When the prospect asks the assistant to do something beyond its demo
+When the prospect asks the assistant to do a specific task beyond demo
 capabilities (research, task management, file access, etc.), the
-assistant should:
-1. NOT trigger ``act`` (it's masked)
-2. Explain the limitation warmly and positively
-3. Encourage sign-up at unify.ai
-4. NOT sound broken, confused, or apologetic
+assistant should redirect to sign-up at unify.ai.
+
+When the prospect asks a general "what can you do?" question, the
+assistant should paint an impressive picture without forcing a sign-up
+pitch — it should feel like talking to a capable new colleague, not
+watching an advert.
 """
 
 import json
@@ -50,13 +51,17 @@ def _llm_judge_demo_response(
         "You are a strict but fair judge evaluating a virtual assistant's response "
         "during a demo (pre-signup) interaction. The assistant has limited capabilities "
         "in demo mode — it cannot search records, manage tasks, browse the web, etc. "
-        "It SHOULD encourage the user to sign up at unify.ai to unlock full capabilities. "
         "\n\n"
+        "For specific capability requests (research, tasks, files), the assistant should "
+        "redirect toward sign-up at unify.ai. For general 'what can you do?' questions, "
+        "painting a compelling picture is sufficient — a sign-up mention is welcome but "
+        "not required. The response should feel like talking to a capable colleague, not "
+        "watching an advertisement.\n"
+        "\n"
         "Judge the response on:\n"
         "1. WARMTH: Does it sound enthusiastic and positive, not apologetic or broken?\n"
-        "2. HONESTY: Does it acknowledge the limitation without being vague?\n"
-        "3. ENCOURAGEMENT: Does it steer toward sign-up at unify.ai naturally?\n"
-        "4. NATURALNESS: Does it sound like a real colleague, not a canned error message?\n"
+        "2. NATURALNESS: Does it sound like a real colleague, not a canned error or ad?\n"
+        "3. CRITERIA FIT: Does it meet the specific criteria provided for this question?\n"
         "\n"
         "A response can use different words — semantic equivalence is fine. "
         "The key is that the user feels excited about what's possible, not frustrated.\n"
@@ -234,7 +239,7 @@ async def test_task_request_handled_gracefully(initialized_cm):
 @pytest.mark.asyncio
 @_handle_project
 async def test_what_can_you_do_in_demo(initialized_cm):
-    """Classic 'what can you do?' question — should be impressive despite limitations."""
+    """Classic 'what can you do?' question — should be impressive without a sales pitch."""
     _setup_boss_with_name(initialized_cm)
     boss = initialized_cm.contact_index.get_contact(1)
 
@@ -250,12 +255,13 @@ async def test_what_can_you_do_in_demo(initialized_cm):
         criteria=(
             "Should convey that the assistant is a capable remote virtual employee "
             "who can handle communication, tasks, research, software, and more. "
-            "Should mention that full capabilities unlock after sign-up at unify.ai. "
-            "Should be enthusiastic and paint a compelling picture."
+            "Should be enthusiastic and paint a compelling picture of what working "
+            "together looks like. A sign-up mention is fine but NOT required."
         ),
         anti_criteria=(
             "Should NOT sound limited or apologetic. Should NOT list only what it "
-            "CAN'T do. Should NOT be a long bullet-point feature list."
+            "CAN'T do. Should NOT be a long bullet-point feature list. "
+            "Should NOT feel like a sales pitch or advertisement."
         ),
     )
 
