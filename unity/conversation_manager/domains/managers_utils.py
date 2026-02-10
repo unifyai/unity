@@ -79,9 +79,10 @@ _MESSAGE_PRODUCING_EVENTS = {
 async def hydrate_global_thread(cm: "ConversationManager") -> None:
     """Populate the shared global deque from persisted EventBus Comms events.
 
-    Called during initialization to restore conversation state from the previous
-    session. After hydration, the rendered state is identical to what it was
-    before shutdown — session boundaries are invisible to the brain.
+    Called after initialization to restore conversation state from the previous
+    session.  Hydrated (historical) messages are prepended to the global thread
+    so that any messages that arrived during initialization keep their correct
+    chronological position at the end.
     """
     from unity.conversation_manager.domains.contact_index import ContactIndex
 
@@ -100,6 +101,11 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
     # Bus events come in descending order (most recent first), reverse for chronological
     bus_events.reverse()
+
+    # Build entries into a buffer via build_message (no append to the live
+    # deque), so we can prepend them all at once and preserve chronological
+    # ordering relative to any messages that arrived during initialization.
+    hydrated_entries: list = []
 
     restored = 0
     for bus_event in bus_events:
@@ -123,10 +129,11 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
         sender_name = _get_sender_name(contact)
         ts = cm_event.timestamp
 
+        entry = None
         match payload_cls:
             # --- SMS ---
             case "SMSReceived":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.SMS_MESSAGE,
@@ -135,7 +142,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
             case "SMSSent":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.SMS_MESSAGE,
@@ -146,7 +153,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Unify Messages ---
             case "UnifyMessageReceived":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.UNIFY_MESSAGE,
@@ -156,7 +163,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     attachments=getattr(cm_event, "attachments", None),
                 )
             case "UnifyMessageSent":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.UNIFY_MESSAGE,
@@ -168,7 +175,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Email ---
             case "EmailReceived":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.EMAIL,
@@ -184,7 +191,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     contact_role="sender",
                 )
             case "EmailSent":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.EMAIL,
@@ -200,7 +207,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Phone/Meet utterances ---
             case "InboundPhoneUtterance":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.PHONE_CALL,
@@ -209,7 +216,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
             case "OutboundPhoneUtterance":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.PHONE_CALL,
@@ -218,7 +225,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
             case "InboundUnifyMeetUtterance":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.UNIFY_MEET,
@@ -227,7 +234,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
             case "OutboundUnifyMeetUtterance":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.UNIFY_MEET,
@@ -238,7 +245,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Call guidance ---
             case "CallGuidance":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.PHONE_CALL,
@@ -249,7 +256,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
 
             # --- Call lifecycle ---
             case "PhoneCallReceived":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.PHONE_CALL,
@@ -258,7 +265,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
             case "PhoneCallSent":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.PHONE_CALL,
@@ -267,7 +274,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
             case "UnifyMeetReceived":
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.UNIFY_MEET,
@@ -281,7 +288,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     if payload_cls == "UnifyMeetStarted"
                     else Medium.PHONE_CALL
                 )
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=medium,
@@ -297,7 +304,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     "canceled": "call was canceled",
                     "failed": "call failed",
                 }.get(reason, f"not answered ({reason})")
-                cm.contact_index.push_message(
+                entry = cm.contact_index.build_message(
                     contact_id=contact_id,
                     sender_name=sender_name,
                     thread_name=Medium.PHONE_CALL,
@@ -306,7 +313,13 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
                     timestamp=ts,
                 )
 
-        restored += 1
+        if entry is not None:
+            hydrated_entries.append(entry)
+            restored += 1
+
+    # Prepend hydrated entries so historical messages appear before any
+    # messages that arrived during initialization.
+    cm.contact_index.prepend_entries(hydrated_entries)
 
     print(
         f"[Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
@@ -1072,16 +1085,10 @@ async def init_conv_manager(
                     ).to_json(),
                 )
 
-            # Hydrate the global thread from persisted EventBus events
-            print("[ManagersWorker] Hydrating global thread...")
-            local_start_time = perf_counter()
-            await hydrate_global_thread(cm)
-            print(
-                "[ManagersWorker] Global thread hydrated in "
-                f"{perf_counter() - local_start_time:.2f} seconds",
-            )
-
-            # Mark as initialized
+            # Mark as initialized before hydration so the CM is usable
+            # immediately.  Hydration runs in the background and prepends
+            # historical messages — any messages that arrive in the meantime
+            # are appended normally and stay in correct chronological order.
             cm.initialized = True
 
             # Publish initialization complete event for test synchronization
@@ -1098,3 +1105,22 @@ async def init_conv_manager(
         except Exception as e:
             print(f"[ManagersWorker] Error during initialization: {e}")
             raise
+
+    # Hydrate the global thread from persisted EventBus events.
+    # Runs after the init lock is released so the CM is fully usable.
+    # The EventBus search internally offloads I/O to a thread.
+    # Hydration failure is non-fatal — the brain can still operate on
+    # whatever messages arrive from this point forward.
+    try:
+        local_start_time = perf_counter()
+        print("[ManagersWorker] Hydrating global thread...")
+        await hydrate_global_thread(cm)
+        print(
+            "[ManagersWorker] Global thread hydrated in "
+            f"{perf_counter() - local_start_time:.2f} seconds",
+        )
+    except Exception as e:
+        print(f"[ManagersWorker] Global thread hydration failed: {e}")
+        import traceback
+
+        traceback.print_exc()
