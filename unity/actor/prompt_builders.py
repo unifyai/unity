@@ -11,7 +11,6 @@ from unity.actor.prompt_examples import (
     get_code_act_pattern_examples,
     get_code_act_function_first_examples,
     get_code_act_session_examples,
-    get_computer_examples,
 )
 
 # ---------------------------------------------------------------------------
@@ -84,18 +83,6 @@ _EXECUTION_RULES = textwrap.dedent("""
        - When the user's request has been fully addressed, you **MUST** provide the final answer directly as a tool-less assistant message.
        - Do not call a tool to print the final answer.
 """).strip()
-
-_COMPUTER_STATE_FEEDBACK = textwrap.dedent("""
-    ### Computer State Feedback
-
-    After computer actions (`computer_primitives.act`, `.navigate`, `.observe`), you automatically receive:
-    - The current computer state metadata (e.g., URL when available)
-    - A screenshot (as an image block) when available
-    - Any output from your code
-
-    Use **stateful sessions** for multi-step computer workflows (e.g., navigate then observe).
-""").strip()
-
 
 # ---------------------------------------------------------------------------
 # Private helpers with real logic
@@ -194,75 +181,6 @@ preview = await transform_data.read_only(sample_size=100)
     return "\n\n".join(parts)
 
 
-def _build_state_manager_rules_and_examples(
-    *,
-    managers: set[str] | None = None,
-    include_examples: bool = True,
-) -> str:
-    """Rules (and optionally examples) for the `primitives` state manager environment.
-
-    Args:
-        managers: If provided, only include examples for these managers.
-                  If None, include all managers.
-        include_examples: If False, only return rules without examples.
-                          Use this when examples are provided elsewhere to avoid duplication.
-
-    Note: Routing guidance (manager descriptions) is now provided by
-    StateManagerEnvironment.get_prompt_context() which dynamically generates
-    from unity.function_manager.primitives.ToolSurfaceRegistry. This avoids duplication.
-    """
-    rules = textwrap.dedent("""
-        ### 🧩 State Manager Rules
-
-        - **Do not answer from scratch when `primitives` is available**:
-          - If the user asks an information question, prefer calling the relevant state manager via `await primitives.<manager>.ask(...)`
-            instead of answering purely from memory.
-          - This applies even when you think you "already know" the answer — use the manager as evidence/ground truth.
-
-        - **Read vs write**:
-          - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
-          - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` are **impure** (they mutate state or start work).
-
-        - **Prefer return values as evidence**: treat return values from state managers as the primary ground truth.
-
-        - **Steerable handles**: Manager calls return `SteerableToolHandle` objects for in-flight control.
-          You can either **await the result** for immediate use, or **return the handle as the last expression**
-          of `execute_code` to hand steering control back to the outer loop (see `execute_code` docstring).
-
-          **SteerableToolHandle API:**
-
-          | Method | Returns | Purpose |
-          |--------|---------|---------|
-          | `await handle.result()` | `str` | Wait for the final result |
-          | `await handle.ask(question)` | `SteerableToolHandle` | Query status without modifying execution |
-          | `await handle.interject(message)` | `None` | Inject corrections or context mid-flight |
-          | `await handle.pause()` | `str | None` | Pause at the next safe point |
-          | `await handle.resume()` | `str | None` | Resume a paused operation |
-          | `await handle.stop(reason=None)` | `None` | Terminate immediately |
-          | `handle.done()` | `bool` | Check if execution has completed |
-
-          ```python
-          handle = await primitives.tasks.execute(task_id=123)
-          result = await handle.result()  # wait for completion
-
-          # Mid-flight steering (while handle is running):
-          await handle.interject("Also include the Q2 numbers")
-          await handle.pause()   # pause if needed
-          await handle.resume()  # continue later
-          await handle.stop()    # cancel if no longer needed
-          ```
-    """).strip()
-
-    if not include_examples:
-        return rules
-
-    from unity.actor.prompt_examples import get_primitives_examples
-
-    examples = get_primitives_examples(managers=managers)
-
-    return f"{rules}\n\n### Implementation Examples\n\n{examples}"
-
-
 def _build_code_act_rules_and_examples(
     *,
     environments: Mapping[str, "BaseEnvironment"],
@@ -298,26 +216,22 @@ def _build_code_act_rules_and_examples(
                 f"### Sessions & Multi-Language Execution (CRITICAL)\n\n{session_examples}",
             )
 
-    if "computer_primitives" in environments:
-        parts.append(_COMPUTER_STATE_FEEDBACK)
-
-        env = environments["computer_primitives"]
+    # Each environment provides its own rules, docs, and examples.
+    for _ns, env in environments.items():
         env_ctx = env.get_prompt_context()
-        if env_ctx:
+        if env_ctx and env_ctx.strip():
             parts.append(env_ctx)
-        computer_examples = get_computer_examples()
-        if computer_examples:
-            parts.append(
-                f"### Computer Examples\n\n{computer_examples}",
-            )
 
-    if "primitives" in environments:
-        env = environments["primitives"]
-        scope = getattr(env, "primitive_scope", None)
-        managers = set(scope.scoped_managers) if scope else None
-        parts.append(_build_state_manager_rules_and_examples(managers=managers))
-        env_ctx = env.get_prompt_context()
-        parts.append(env_ctx)
+    # Cross-environment (mixed) examples when multiple environments are present.
+    if len(environments) > 1:
+        has_computer = "computer_primitives" in environments
+        has_primitives = "primitives" in environments
+        if has_computer and has_primitives:
+            from unity.actor.prompt_examples import get_mixed_examples
+
+            mixed = get_mixed_examples()
+            if mixed and mixed.strip():
+                parts.append(f"### Mixed-Mode Examples\n\n{mixed}")
 
     return "\n\n---\n\n".join(p for p in parts if p and p.strip()).strip()
 

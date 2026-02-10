@@ -22,43 +22,23 @@ from unity.actor.prompt_builders import build_code_act_prompt
 class _DummyEnv:
     """Minimal environment stub for build_code_act_prompt (prompt-context only)."""
 
-    def __init__(self, prompt_context: str, instance: Any | None = None):
+    def __init__(self, prompt_context: str):
         self._prompt_context = prompt_context
-        self._instance = instance
 
     def get_prompt_context(self) -> str:
         return self._prompt_context
 
-    def get_instance(self) -> Any:
-        if self._instance is None:
-            raise RuntimeError("No instance configured")
-        return self._instance
 
+def _real_envs_mixed() -> Mapping[str, Any]:
+    """Real environments that produce self-contained prompt context."""
+    from unity.function_manager.primitives import ComputerPrimitives
+    from unity.actor.environments.computer import ComputerEnvironment
+    from unity.actor.environments.state_managers import StateManagerEnvironment
 
-class _ComputerPrimitivesStub:
-    async def navigate(self, url: str) -> None:
-        _ = url
-        return None
-
-    async def act(self, instruction: str) -> str:
-        _ = instruction
-        return "ok"
-
-    async def observe(self, question: str, response_format: Any = None) -> Any:
-        _ = (question, response_format)
-        return None
-
-
-def _envs_mixed() -> Mapping[str, Any]:
+    cp = ComputerPrimitives(computer_mode="mock")
     return {
-        "computer_primitives": _DummyEnv(
-            "### Computer tools (`computer_primitives`)\n- `navigate`, `act`, `observe`",
-            instance=_ComputerPrimitivesStub(),
-        ),
-        "primitives": _DummyEnv(
-            "### State manager tools (`primitives`)\n- `await primitives.contacts.ask(...)`\n",
-            instance=object(),
-        ),
+        "computer_primitives": ComputerEnvironment(cp),
+        "primitives": StateManagerEnvironment(),
     }
 
 
@@ -67,11 +47,10 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
     actor = CodeActActor(headless=True, computer_mode="mock")
     try:
         prompt = build_code_act_prompt(
-            environments=_envs_mixed(),
+            environments=_real_envs_mixed(),
             tools=dict(actor.get_tools("act")),
         )
     finally:
-        # build_code_act_prompt is sync; actor.close is async and not required for this unit test
         pass
 
     assert "execute_python_code" not in prompt
@@ -94,7 +73,7 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     actor = CodeActActor(headless=True, computer_mode="mock")
     try:
         prompt = build_code_act_prompt(
-            environments=_envs_mixed(),
+            environments=_real_envs_mixed(),
             tools=dict(actor.get_tools("act")),
         )
     finally:
@@ -114,8 +93,71 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert "observe" in prompt
 
     # State-manager guidance + examples (primitives)
-    assert "### 🧩 State Manager Rules" in prompt
+    assert "### State Manager Rules" in prompt
     assert "### Implementation Examples" in prompt
+
+
+@pytest.mark.timeout(30)
+def test_custom_environment_prompt_context_included():
+    """Custom environments (not computer_primitives/primitives) should have their
+    prompt context included in the generated prompt."""
+    actor = CodeActActor(headless=True, computer_mode="mock")
+
+    custom_marker = "### Custom Widget Tools\n- `widget.create(name)` — create a widget"
+    envs: Mapping[str, Any] = {
+        "primitives": _DummyEnv(
+            "### State manager tools\n- `await primitives.contacts.ask(...)`",
+        ),
+        "widget_tools": _DummyEnv(custom_marker),
+    }
+
+    prompt = build_code_act_prompt(
+        environments=envs,
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert custom_marker in prompt
+
+
+@pytest.mark.timeout(30)
+def test_multiple_custom_environments_all_included():
+    """Multiple custom environments should each have their prompt context included."""
+    actor = CodeActActor(headless=True, computer_mode="mock")
+
+    marker_a = "### Alpha Environment\nAlpha-specific guidance for the LLM."
+    marker_b = "### Beta Environment\nBeta-specific guidance for the LLM."
+    envs: Mapping[str, Any] = {
+        "alpha": _DummyEnv(marker_a),
+        "beta": _DummyEnv(marker_b),
+    }
+
+    prompt = build_code_act_prompt(
+        environments=envs,
+        tools=dict(actor.get_tools("act")),
+    )
+
+    assert marker_a in prompt
+    assert marker_b in prompt
+
+
+@pytest.mark.timeout(30)
+def test_custom_environment_empty_prompt_context_excluded():
+    """Custom environments returning empty prompt context should not inject noise."""
+    actor = CodeActActor(headless=True, computer_mode="mock")
+
+    envs: Mapping[str, Any] = {
+        "empty_env": _DummyEnv(""),
+        "whitespace_env": _DummyEnv("   \n  "),
+    }
+
+    prompt = build_code_act_prompt(
+        environments=envs,
+        tools=dict(actor.get_tools("act")),
+    )
+
+    # The prompt should still be valid (no crash) and not contain stray whitespace blocks.
+    assert "empty_env" not in prompt
+    assert "whitespace_env" not in prompt
 
 
 @pytest.mark.timeout(30)

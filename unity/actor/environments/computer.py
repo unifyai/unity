@@ -79,10 +79,32 @@ class ComputerEnvironment(BaseEnvironment):
         return tools
 
     def get_prompt_context(self) -> str:
-        """Generate prompt context from registry for computer methods."""
+        """Generate self-contained prompt context: rules, method docs, and examples."""
         from unity.function_manager.primitives import get_registry
+        from unity.actor.prompt_examples import get_computer_examples
 
-        return get_registry().computer_prompt_context()
+        parts: list[str] = []
+
+        parts.append(
+            "### Computer State Feedback\n\n"
+            "After computer actions (`computer_primitives.act`, `.navigate`, `.observe`), "
+            "you automatically receive:\n"
+            "- The current computer state metadata (e.g., URL when available)\n"
+            "- A screenshot (as an image block) when available\n"
+            "- Any output from your code\n\n"
+            "Use **stateful sessions** for multi-step computer workflows "
+            "(e.g., navigate then observe).",
+        )
+
+        registry_ctx = get_registry().computer_prompt_context()
+        if registry_ctx:
+            parts.append(registry_ctx)
+
+        examples = get_computer_examples()
+        if examples:
+            parts.append(f"### Computer Examples\n\n{examples}")
+
+        return "\n\n".join(p for p in parts if p and p.strip())
 
     async def capture_state(self) -> Dict[str, Any]:
         """Captures visual computer state (screenshot + URL)."""
