@@ -695,6 +695,22 @@ def make_request_clarification_tool(
     """
 
     async def _request(question: str) -> str:
+        """Ask the caller a clarifying question and block until they answer.
+
+        Use this when you cannot proceed without additional information from
+        the process that invoked you. The question is forwarded to the caller;
+        execution pauses until a response is received.
+
+        Parameters
+        ----------
+        question : str
+            The clarifying question to ask.
+
+        Returns
+        -------
+        str
+            The caller's answer.
+        """
         if up_q is None or down_q is None:
             raise RuntimeError(
                 "Clarification queues not supplied – cannot request clarification in this context.",
