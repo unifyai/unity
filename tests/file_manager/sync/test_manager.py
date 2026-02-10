@@ -22,7 +22,7 @@ def sync_config(tmp_path):
         ssh_user="testuser",
         ssh_key_path=str(tmp_path / "test_key"),
         local_root=str(tmp_path / "unity"),
-        remote_root="/Unity",
+        remote_root="/root",
     )
 
 
@@ -107,6 +107,35 @@ class TestSyncManagerStart:
         # Verify bisync was called with force_resync=True
         assert len(bisync_calls) == 1
         assert bisync_calls[0]["force_resync"] is True
+
+
+class TestSyncManagerSentinel:
+    """Tests for assistant.txt sentinel creation."""
+
+    def test_sentinel_created_on_start(self, sync_config, tmp_path):
+        """Test that _ensure_sentinel creates assistant.txt in local_root."""
+        manager = SyncManager(config=sync_config)
+        local_root = tmp_path / "unity"
+        local_root.mkdir(parents=True, exist_ok=True)
+
+        manager._ensure_sentinel()
+
+        sentinel = local_root / "assistant.txt"
+        assert sentinel.exists()
+        assert sentinel.read_text() == "unity assistant\n"
+
+    def test_sentinel_not_overwritten(self, sync_config, tmp_path):
+        """Test that _ensure_sentinel preserves existing assistant.txt."""
+        manager = SyncManager(config=sync_config)
+        local_root = tmp_path / "unity"
+        local_root.mkdir(parents=True, exist_ok=True)
+
+        sentinel = local_root / "assistant.txt"
+        sentinel.write_text("custom content")
+
+        manager._ensure_sentinel()
+
+        assert sentinel.read_text() == "custom content"
 
 
 class TestSyncManagerPolling:
