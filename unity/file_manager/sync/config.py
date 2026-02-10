@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List
 from urllib.parse import urlparse
+
+
+def _get_local_root() -> str:
+    from unity.file_manager.settings import get_local_root
+
+    return get_local_root()
 
 
 @dataclass
@@ -13,11 +18,10 @@ class SyncConfig:
     """Configuration for managed VM file sync via rclone SFTP.
 
     Paths:
-    - local_root: ~ (assistant container home directory)
-    - remote_root: /home (VM, chrooted via SFTP)
+    - local_root: get_local_root() (defaults to ~ ; /root in production)
+    - remote_root: /root (VM)
 
-    Syncs the home directory which contains user files (Downloads/,
-    functions/, etc.).
+    Syncs /root which contains user files (Downloads/, functions/, etc.).
 
     Conflict resolution: Latest wins (by modification time)
     """
@@ -32,9 +36,9 @@ class SyncConfig:
 
     # Paths
     local_root: str = field(
-        default_factory=lambda: str(Path.home()),
+        default_factory=lambda: _get_local_root(),
     )
-    remote_root: str = "/home"
+    remote_root: str = "/root"
 
     # Sync behavior
     sync_on_write: bool = True
@@ -87,7 +91,7 @@ class SyncConfig:
 
         print(
             f"[FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
-            f"local=~, remote=/home",
+            f"local=~, remote=/root",
         )
 
         return cls(
