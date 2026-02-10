@@ -84,14 +84,19 @@ def test_collect_primitives_returns_expected_methods():
     assert any("DataManager" in c for c in classes_found)
 
     # Verify primitives match what get_primitive_sources returns
-    # (i.e., the auto-discovery is working correctly)
+    # (i.e., the auto-discovery is working correctly).
+    # Build a lookup by (class_name_suffix, method) since names are now
+    # in ``primitives.{alias}.{method}`` format.
+    method_to_name = {
+        (row["primitive_class"].rsplit(".", 1)[-1], row["primitive_method"]): name
+        for name, row in primitives.items()
+    }
     for cls, method_names in get_primitive_sources():
         class_name = cls.__name__
         for method_name in method_names:
-            qualified_name = f"{class_name}.{method_name}"
             assert (
-                qualified_name in primitives
-            ), f"Expected auto-discovered primitive '{qualified_name}' not found"
+                (class_name, method_name) in method_to_name
+            ), f"Expected auto-discovered primitive for {class_name}.{method_name} not found"
 
 
 def test_collect_primitives_has_required_fields():
@@ -222,8 +227,7 @@ def test_collect_primitives_includes_file_manager():
     # Verify all are from files manager (using primitive_class)
     for name, p in primitives.items():
         assert "FileManager" in p["primitive_class"]
-        # Old format: "FileManager.method", not "primitives.files.method"
-        assert p["name"].startswith("FileManager.")
+        assert p["name"].startswith("primitives.files.")
 
 
 # ────────────────────────────────────────────────────────────────────────────

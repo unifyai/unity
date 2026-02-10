@@ -976,6 +976,7 @@ class ToolSurfaceRegistry:
         cls: Type,
         method_name: str,
         class_name: str,
+        manager_alias: str,
     ) -> Optional[Dict[str, Any]]:
         """
         Extract metadata (signature, docstring) from a class method.
@@ -986,7 +987,9 @@ class ToolSurfaceRegistry:
         Args:
             cls: The class containing the method.
             method_name: Name of the method to introspect.
-            class_name: Short class name for building qualified name.
+            class_name: Short class name (used for stable ID generation).
+            manager_alias: The canonical alias (e.g. "contacts") for
+                building the qualified name ``primitives.{alias}.{method}``.
 
         Returns:
             Primitive metadata dict, or None if method not found.
@@ -1011,7 +1014,7 @@ class ToolSurfaceRegistry:
                     docstring = ""
                     signature = "(...)"
 
-                qualified_name = f"{class_name}.{method_name}"
+                qualified_name = f"primitives.{manager_alias}.{method_name}"
                 return {
                     "name": qualified_name,
                     "function_id": _get_stable_id(class_name, method_name),
@@ -1041,7 +1044,7 @@ class ToolSurfaceRegistry:
         while hasattr(fn, "__wrapped__"):
             fn = fn.__wrapped__
 
-        qualified_name = f"{class_name}.{method_name}"
+        qualified_name = f"primitives.{manager_alias}.{method_name}"
 
         try:
             signature = str(inspect.signature(fn))
@@ -1092,7 +1095,7 @@ class ToolSurfaceRegistry:
                            state manager primitives (excludes ComputerPrimitives).
 
         Returns:
-            Dict mapping qualified_name (e.g. "ContactManager.ask") to primitive
+            Dict mapping qualified_name (e.g. "primitives.contacts.ask") to primitive
             metadata suitable for insertion into the Functions/Primitives context.
         """
         primitives: Dict[str, Dict[str, Any]] = {}
@@ -1116,7 +1119,9 @@ class ToolSurfaceRegistry:
             method_names = self.primitive_methods(manager_alias=spec.manager_alias)
 
             for method_name in method_names:
-                metadata = self._get_method_metadata(cls, method_name, class_name)
+                metadata = self._get_method_metadata(
+                    cls, method_name, class_name, spec.manager_alias,
+                )
                 if metadata is not None:
                     primitives[metadata["name"]] = metadata
 
@@ -1206,7 +1211,7 @@ def collect_primitives() -> Dict[str, Dict[str, Any]]:
     Delegates to ToolSurfaceRegistry.collect_primitives().
 
     Returns:
-        Dict mapping qualified_name (e.g. "ContactManager.ask") to primitive
+        Dict mapping qualified_name (e.g. "primitives.contacts.ask") to primitive
         metadata suitable for insertion into the Functions/Primitives context.
     """
     return get_registry().collect_primitives()

@@ -251,13 +251,14 @@ def test_state_manager_env_get_prompt_context_respects_scope():
     env = StateManagerEnvironment(Primitives(primitive_scope=scope))
     context = env.get_prompt_context()
 
-    # Should include scoped managers
-    assert "primitives.files" in context
-    assert "primitives.contacts" in context
+    # Should include scoped managers in the method reference sections
+    assert "#### `primitives.files`" in context
+    assert "#### `primitives.contacts`" in context
 
-    # Should NOT include unscoped managers
-    assert "primitives.tasks" not in context
-    assert "primitives.knowledge" not in context
+    # Should NOT include unscoped managers in method reference sections
+    # (general rules/examples may reference them generically)
+    assert "#### `primitives.tasks`" not in context
+    assert "#### `primitives.knowledge`" not in context
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -297,16 +298,21 @@ def test_primitive_discovery_complete():
     scope = PrimitiveScope.all_managers()
     collected = registry.collect_primitives(scope)
 
-    # Verify against get_primitive_sources
+    # Verify against get_primitive_sources.
+    # Build a lookup by (class_name_suffix, method) since names are now
+    # in ``primitives.{alias}.{method}`` format.
+    method_to_name = {
+        (row["primitive_class"].rsplit(".", 1)[-1], row["primitive_method"]): name
+        for name, row in collected.items()
+    }
     for cls, method_names in get_primitive_sources():
         class_name = cls.__name__
         for method_name in method_names:
-            qualified_name = f"{class_name}.{method_name}"
             assert (
-                qualified_name in collected
-            ), f"Primitive '{qualified_name}' should be collected"
+                (class_name, method_name) in method_to_name
+            ), f"Primitive for {class_name}.{method_name} should be collected"
             # Verify it has all required fields
-            data = collected[qualified_name]
+            data = collected[method_to_name[(class_name, method_name)]]
             assert data["is_primitive"] is True
             assert data["primitive_class"] is not None
             assert data["primitive_method"] == method_name
