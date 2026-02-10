@@ -25,7 +25,7 @@ class SyncResult:
 class RcloneSync:
     """Wrapper for rclone SFTP operations with retry and debugging.
 
-    Uses rclone to sync files between local ~ and remote /home via SFTP.
+    Uses rclone to sync files between local ~ and remote /root via SFTP.
     Conflict resolution: latest wins (by modification time).
     """
 
@@ -68,7 +68,7 @@ class RcloneSync:
 type = sftp
 host = {self.config.ssh_host}
 port = {self.config.ssh_port}
-user = {self.config.ssh_user}
+user = unifyuser
 key_file = {self.config.ssh_key_path}
 """
                 Path(self._config_path).write_text(rclone_config)
