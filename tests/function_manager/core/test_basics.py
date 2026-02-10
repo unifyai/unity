@@ -18,6 +18,12 @@ import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 
+
+def _FM(**kwargs) -> FunctionManager:
+    """Create a FunctionManager with primitives disabled (tests focus on compositional functions)."""
+    kwargs.setdefault("include_primitives", False)
+    return FunctionManager(**kwargs)
+
 # --------------------------------------------------------------------------- #
 #  4.  Existing add_functions tests                                           #
 # --------------------------------------------------------------------------- #
@@ -32,7 +38,7 @@ def test_add_single_success():
         "        y = y + x\n"
         "    return y\n"
     )
-    fm = FunctionManager()
+    fm = _FM()
     result = fm.add_functions(implementations=src)
     assert result == {"double": "added"}
 
@@ -42,7 +48,7 @@ def test_add_multiple_with_dependency():
     add_src = "def add(a, b):\n    return a + b\n"
     # Update to avoid user-defined function calls (now disallowed)
     twice_src = "def twice(x):\n    return x + x\n"
-    fm = FunctionManager()
+    fm = _FM()
     result = fm.add_functions(implementations=[add_src, twice_src])
     assert result == {"add": "added", "twice": "added"}
 
@@ -59,7 +65,7 @@ def test_batch_add_multiple():
         "def func_e(v):\n    return v ** 2\n",
     ]
 
-    fm = FunctionManager()
+    fm = _FM()
     result = fm.add_functions(implementations=sources)
 
     # All functions should be added successfully
@@ -84,7 +90,7 @@ def test_batch_add_multiple():
 @_handle_project
 def test_add_duplicate_skips_by_default():
     """Test that adding duplicate functions skips them by default."""
-    fm = FunctionManager()
+    fm = _FM()
 
     # Add initial function
     result1 = fm.add_functions(implementations="def alpha(x):\n    return x * 2\n")
@@ -108,7 +114,7 @@ def test_add_duplicate_skips_by_default():
 @_handle_project
 def test_add_duplicate_with_overwrite():
     """Test that adding duplicate functions with overwrite=True updates them in-place."""
-    fm = FunctionManager()
+    fm = _FM()
 
     # Add initial function
     result1 = fm.add_functions(implementations="def alpha(x):\n    return x * 2\n")
@@ -141,7 +147,7 @@ def test_add_duplicate_with_overwrite():
 @_handle_project
 def test_add_mixed_new_and_duplicate():
     """Test adding a batch with both new and duplicate functions."""
-    fm = FunctionManager()
+    fm = _FM()
 
     # Add initial functions
     result1 = fm.add_functions(
@@ -196,7 +202,7 @@ def test_add_mixed_new_and_duplicate():
     ],
 )
 def test_validation_errors(source: str, exp_msg: str):
-    fm = FunctionManager()
+    fm = _FM()
     results = fm.add_functions(implementations=source, raise_on_error=False)
     assert any(
         "error" in str(v) and exp_msg in str(v) for v in results.values()
@@ -215,7 +221,7 @@ def test_list_with_and_without_implementations():
         '    """Add two numbers"""\n'
         "    return a + b\n"
     )
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations=add_src)
 
     # (a) default summary
@@ -238,7 +244,7 @@ def test_list_with_and_without_implementations():
 
 @_handle_project
 def test_delete_single():
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations="def alpha():\n    return 1\n")
     assert len(fm.list_functions()) == 1
 
@@ -251,7 +257,7 @@ def test_delete_with_dependants_cascades():
     add_src = "def add(a, b):\n    return a + b\n"
     # No user-defined calls allowed; keep independent
     twin_src = "def twin(x):\n    return x + x\n"
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations=[add_src, twin_src])
 
     # delete `add`; since no dependants are allowed, only `add` is removed
@@ -264,7 +270,7 @@ def test_delete_with_dependants_cascades():
 def test_delete_without_cascading_leaves_dependants():
     add_src = "def add(a, b):\n    return a + b\n"
     twin_src = "def twin(x):\n    return x + x\n"
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations=[add_src, twin_src])
 
     fm.delete_function(function_id=0, delete_dependents=False)
@@ -275,7 +281,7 @@ def test_delete_without_cascading_leaves_dependants():
 @_handle_project
 def test_delete_already_deleted():
     """Test that deleting an already-deleted function doesn't raise an error."""
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations="def alpha():\n    return 1\n")
     listing = fm.list_functions()
     function_id = listing["alpha"]["function_id"]
@@ -293,7 +299,7 @@ def test_delete_already_deleted():
 @_handle_project
 def test_delete_multiple_handles_duplicates():
     """Test that deleting multiple functions handles cases where some are already deleted."""
-    fm = FunctionManager()
+    fm = _FM()
     sources = [
         "def func_a():\n    return 1\n",
         "def func_b():\n    return 2\n",
@@ -320,7 +326,7 @@ def test_delete_multiple_handles_duplicates():
 @_handle_project
 def test_batch_delete():
     """Test batch deletion of multiple functions at once."""
-    fm = FunctionManager()
+    fm = _FM()
     sources = [
         "def func_a():\n    return 1\n",
         "def func_b():\n    return 2\n",
@@ -349,7 +355,7 @@ def test_batch_delete():
 @_handle_project
 def test_batch_delete_all():
     """Test deleting all functions at once by passing all IDs."""
-    fm = FunctionManager()
+    fm = _FM()
     sources = [
         "def func_a():\n    return 1\n",
         "def func_b():\n    return 2\n",
@@ -373,7 +379,7 @@ def test_batch_delete_all():
 @_handle_project
 def test_batch_delete_with_cascade():
     """Test batch deletion with cascading deletes of dependents."""
-    fm = FunctionManager()
+    fm = _FM()
     sources = [
         "def base_a():\n    return 1\n",
         "def base_b():\n    return 2\n",
@@ -405,7 +411,7 @@ def test_batch_delete_with_cascade():
 @_handle_project
 def test_batch_delete_empty_list():
     """Test that batch deleting an empty list is a no-op."""
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations="def alpha():\n    return 1\n")
 
     result = fm.delete_function(function_id=[])
@@ -418,7 +424,7 @@ def test_batch_delete_empty_list():
 @_handle_project
 def test_batch_delete_nonexistent():
     """Test that batch deleting non-existent functions doesn't error."""
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations="def alpha():\n    return 1\n")
 
     # Try to delete functions that don't exist
@@ -445,7 +451,7 @@ def test_search_filtering_across_columns():
     )
     square_src = "def square(x):\n    return x * x\n"
     use_src = "def apply_price(x):\n    return x\n"
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations=[price_src, square_src, use_src])
 
     # filter on docstring contents
@@ -461,7 +467,7 @@ def test_search_filtering_across_columns():
 @_handle_project
 def test_filter_functions_include_implementations():
     """filter_functions respects include_implementations parameter."""
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations="def foo(x):\n    return x * 2\n")
 
     # Default (True): includes implementation
@@ -479,14 +485,13 @@ def test_filter_functions_include_implementations():
 @_handle_project
 def test_search_functions_include_implementations():
     """search_functions respects include_implementations parameter."""
-    fm = FunctionManager()
+    fm = _FM()
     fm.add_functions(implementations="def double_value(x):\n    return x * 2\n")
 
     # Default (True): includes implementation
     hits = fm.search_functions(
         query="double a number",
         n=5,
-        include_primitives=False,
     )
     user_funcs = [h for h in hits if h.get("name") == "double_value"]
     assert len(user_funcs) == 1
@@ -497,7 +502,6 @@ def test_search_functions_include_implementations():
         query="double a number",
         n=5,
         include_implementations=False,
-        include_primitives=False,
     )
     user_funcs = [h for h in hits if h.get("name") == "double_value"]
     assert len(user_funcs) == 1
@@ -512,7 +516,7 @@ def test_search_functions_include_implementations():
 
 @_handle_project
 def test_clear():
-    fm = FunctionManager()
+    fm = _FM()
 
     # Seed a couple of functions
     fm.add_functions(implementations="def alpha():\n    return 1\n")

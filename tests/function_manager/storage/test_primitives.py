@@ -337,8 +337,8 @@ def test_search_includes_primitives_by_default(function_manager_factory):
 
 
 @_handle_project
-def test_search_can_exclude_primitives(function_manager_factory):
-    """search_functions can exclude primitives."""
+def test_search_returns_primitives_by_default(function_manager_factory):
+    """search_functions returns both primitives and user functions by default."""
     function_manager = function_manager_factory()
 
     # First sync primitives so they exist
@@ -352,16 +352,17 @@ def ask_contact_question(question: str) -> str:
 '''
     function_manager.add_functions(implementations=[implementation])
 
-    # Search excluding primitives
+    # Search returns both types (callers can post-filter with is_primitive if needed)
     results = function_manager.search_functions(
         query="ask question about contacts",
         n=10,
-        include_primitives=False,
     )
 
-    # Should not have any primitives
-    has_primitive = any(r.get("is_primitive") for r in results)
-    assert not has_primitive, "Expected no primitives when include_primitives=False"
+    user_funcs = [r for r in results if not r.get("is_primitive")]
+    primitives = [r for r in results if r.get("is_primitive")]
+    assert len(user_funcs) >= 1, "Expected at least one user function"
+    # Primitives may or may not appear depending on relevance, but are not excluded
+    assert isinstance(results, list)
 
 
 @_handle_project

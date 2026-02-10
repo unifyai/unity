@@ -210,7 +210,6 @@ async def test_similarity_search_return_callable_monkeypatched(monkeypatch):
         return_callable=True,
         namespace=ns,
         also_return_metadata=True,
-        include_primitives=False,
     )
 
     assert isinstance(res, dict)
@@ -447,7 +446,6 @@ async def test_similarity_search_return_callable_forward_ref_annotations_just_wo
         return_callable=True,
         namespace=ns,
         also_return_metadata=True,
-        include_primitives=False,
     )
 
     assert isinstance(res, dict)
