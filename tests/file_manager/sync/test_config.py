@@ -15,21 +15,18 @@ class TestSyncConfig:
         assert config.ssh_host == ""
         assert config.ssh_port == 2222
         assert config.ssh_user == ""
-        assert config.remote_root == "/Unity"
+        assert config.remote_root == "/root"
         assert config.sync_on_write is True
         assert config.conflict_resolution == "latest"
         assert config.max_retries == 3
         assert config.poll_interval_seconds == 30.0
 
     def test_local_root_default(self):
-        """Test local_root defaults to ~/Unity."""
+        """Test local_root defaults to get_local_root()."""
+        from unity.file_manager.settings import get_local_root
+
         config = SyncConfig()
-        # Should end with /Unity but NOT /Unity/Local
-        assert config.local_root.endswith("/Unity") or config.local_root.endswith(
-            "\\Unity",
-        )
-        assert not config.local_root.endswith("/Unity/Local")
-        assert not config.local_root.endswith("\\Unity\\Local")
+        assert config.local_root == get_local_root()
 
     def test_exclude_patterns(self):
         """Test default exclude patterns."""
@@ -38,7 +35,7 @@ class TestSyncConfig:
         assert "__pycache__/**" in config.exclude_patterns
         assert "*.pyc" in config.exclude_patterns
         assert ".bisync/**" in config.exclude_patterns
-        assert "Local/venvs/**" in config.exclude_patterns
+        assert "venvs/**" in config.exclude_patterns
 
 
 class TestExtractHost:
