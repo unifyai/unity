@@ -1257,6 +1257,7 @@ class CodeActActor(BaseCodeActActor):
             async def execute_function(
                 function_name: str,
                 call_kwargs: Optional[Dict[str, Any]] = None,
+                _parent_chat_context: list[dict] | None = None,
             ) -> Dict[str, Any]:
                 """
                 Execute a stored function by name and return its result.
@@ -1367,6 +1368,7 @@ class CodeActActor(BaseCodeActActor):
                         venv_pool=self._venv_pool,
                         shell_pool=self._shell_pool,
                         state_mode="stateless",
+                        _parent_chat_context=_parent_chat_context,
                     )
                 except Exception as exc:
                     try:
