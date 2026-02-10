@@ -191,6 +191,37 @@ def extract_code_act_execute_code_snippets(handle: Any) -> list[str]:
     return snippets
 
 
+def extract_code_act_execute_function_names(handle: Any) -> list[str]:
+    """Extract the ``function_name`` arg from execute_function tool calls."""
+    chat_history = list(handle.get_history() or [])
+
+    names: list[str] = []
+    for tc in _iter_tool_calls_from_chat_history(chat_history):
+        fn = tc.get("function") or {}
+        name = None
+        args = None
+        if isinstance(fn, dict):
+            name = fn.get("name")
+            args = fn.get("arguments")
+        else:
+            name = tc.get("name")
+            args = tc.get("arguments")
+
+        if name != "execute_function":
+            continue
+
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = None
+        if isinstance(args, dict):
+            fn_name = args.get("function_name")
+            if isinstance(fn_name, str) and fn_name.strip():
+                names.append(fn_name)
+    return names
+
+
 def assert_code_act_tool_called(handle: Any, tool_name: str) -> None:
     names = get_code_act_tool_calls(handle)
     assert tool_name in set(names), f"Expected tool call '{tool_name}', saw: {names}"

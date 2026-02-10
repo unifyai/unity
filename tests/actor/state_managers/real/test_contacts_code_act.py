@@ -9,6 +9,7 @@ from tests.helpers import _handle_project
 from tests.actor.state_managers.utils import (
     assert_code_act_function_manager_used,
     extract_code_act_execute_code_snippets,
+    extract_code_act_execute_function_names,
     make_code_act_actor,
 )
 from unity.function_manager.function_manager import FunctionManager
@@ -151,7 +152,13 @@ async def update_contact_phone(email: str, phone: str) -> str:
 
         assert_code_act_function_manager_used(handle)
         snippets = "\n\n".join(extract_code_act_execute_code_snippets(handle))
-        assert "update_contact_phone" in snippets
+        fn_names = extract_code_act_execute_function_names(handle)
+        assert (
+            "update_contact_phone" in snippets or "update_contact_phone" in fn_names
+        ), (
+            f"Expected memoized function 'update_contact_phone' to be invoked. "
+            f"execute_code snippets: {snippets!r}, execute_function calls: {fn_names}"
+        )
 
         assert "primitives.contacts.update" in calls
         assert "primitives.contacts.ask" not in calls
