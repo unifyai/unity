@@ -43,6 +43,7 @@ class SyncConfig:
     # Sync behavior
     sync_on_write: bool = True
     conflict_resolution: str = "latest"  # "latest" = modification time wins
+    max_delete_percent: int = 100  # bisync delete safety threshold (100 = disabled)
 
     # Exclude patterns (rclone filter syntax)
     exclude_patterns: List[str] = field(
@@ -53,6 +54,13 @@ class SyncConfig:
             ".DS_Store",
             ".bisync/**",  # rclone's own state files
             "venvs/**",  # Virtual environments (managed via HTTP API)
+            # Non-relevant VM home directories
+            "Music/**",
+            "Pictures/**",
+            "Videos/**",
+            "Public/**",
+            "snap/**",
+            "Templates/**",
         ],
     )
 
