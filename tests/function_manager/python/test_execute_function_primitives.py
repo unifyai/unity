@@ -193,9 +193,9 @@ async def test_execute_primitive_forwards_parent_chat_context(function_manager_f
     )
 
     assert result == "Answered: Who is Alice?"
-    assert received["ctx"] is parent_ctx, (
-        "_parent_chat_context was not forwarded to the primitive callable"
-    )
+    assert (
+        received["ctx"] is parent_ctx
+    ), "_parent_chat_context was not forwarded to the primitive callable"
 
 
 @_handle_project

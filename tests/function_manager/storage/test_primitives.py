@@ -95,8 +95,9 @@ def test_collect_primitives_returns_expected_methods():
         class_name = cls.__name__
         for method_name in method_names:
             assert (
-                (class_name, method_name) in method_to_name
-            ), f"Expected auto-discovered primitive for {class_name}.{method_name} not found"
+                class_name,
+                method_name,
+            ) in method_to_name, f"Expected auto-discovered primitive for {class_name}.{method_name} not found"
 
 
 def test_collect_primitives_has_required_fields():

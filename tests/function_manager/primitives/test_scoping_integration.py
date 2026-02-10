@@ -309,8 +309,11 @@ def test_primitive_discovery_complete():
         class_name = cls.__name__
         for method_name in method_names:
             assert (
-                (class_name, method_name) in method_to_name
-            ), f"Primitive for {class_name}.{method_name} should be collected"
+                class_name,
+                method_name,
+            ) in method_to_name, (
+                f"Primitive for {class_name}.{method_name} should be collected"
+            )
             # Verify it has all required fields
             data = collected[method_to_name[(class_name, method_name)]]
             assert data["is_primitive"] is True

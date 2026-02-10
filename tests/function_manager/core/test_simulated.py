@@ -216,6 +216,6 @@ def test_filter_scope_respected_in_list_functions():
     # Every entry should report language as 'python' (or omit it, defaulting to python)
     for name, meta in listing.items():
         lang = meta.get("language", "python")
-        assert lang == "python", (
-            f"filter_scope='language == \"python\"' but {name!r} has language={lang!r}"
-        )
+        assert (
+            lang == "python"
+        ), f"filter_scope='language == \"python\"' but {name!r} has language={lang!r}"
