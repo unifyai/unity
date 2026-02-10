@@ -4718,6 +4718,7 @@ class FunctionManager(BaseFunctionManager):
         shell_pool: Optional["ShellPool"] = None,
         primitives: Optional[Any] = None,
         computer_primitives: Optional[Any] = None,
+        _parent_chat_context: Optional[list] = None,
     ) -> Any:
         """
         Execute a stored function by name with optional state mode overrides.
@@ -4797,6 +4798,7 @@ class FunctionManager(BaseFunctionManager):
                 call_kwargs=call_kwargs,
                 primitives=primitives,
                 computer_primitives=computer_primitives,
+                _parent_chat_context=_parent_chat_context,
             )
 
         implementation = func_data.get("implementation")
@@ -4848,6 +4850,7 @@ class FunctionManager(BaseFunctionManager):
         call_kwargs: Optional[Dict[str, Any]],
         primitives: Optional[Any],
         computer_primitives: Optional[Any],
+        _parent_chat_context: Optional[list] = None,
     ) -> Any:
         """Resolve a primitive callable and invoke it directly.
 
@@ -4867,6 +4870,16 @@ class FunctionManager(BaseFunctionManager):
             )
 
         kwargs = call_kwargs or {}
+
+        # Forward _parent_chat_context if the callable accepts it.
+        if _parent_chat_context is not None:
+            sig = inspect.signature(callable_fn)
+            params = sig.parameters
+            if "_parent_chat_context" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            ):
+                kwargs["_parent_chat_context"] = _parent_chat_context
+
         result = callable_fn(**kwargs)
         if inspect.isawaitable(result):
             result = await result
