@@ -608,10 +608,7 @@ class ToolSurfaceRegistry:
                         "---",
                     ):
                         break
-                    if (
-                        re.match(r"^[A-Z][a-zA-Z\s]+$", stripped)
-                        and len(stripped) < 30
-                    ):
+                    if re.match(r"^[A-Z][a-zA-Z\s]+$", stripped) and len(stripped) < 30:
                         break
                 params_lines.append(lines[j])
 

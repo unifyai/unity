@@ -417,7 +417,7 @@ async def test_sandbox_builtin_open_available(tmp_path):
 
     code = f'with open("{test_file}", "r") as f:\n    print(f.read())'
     result = await sandbox.execute(code)
-    assert result["error"] is None, (
-        f"open() should be available in the sandbox but got: {result['error']}"
-    )
+    assert (
+        result["error"] is None
+    ), f"open() should be available in the sandbox but got: {result['error']}"
     assert "hello world" in parts_to_text(result["stdout"])
