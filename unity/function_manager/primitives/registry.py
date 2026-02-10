@@ -1120,7 +1120,10 @@ class ToolSurfaceRegistry:
 
             for method_name in method_names:
                 metadata = self._get_method_metadata(
-                    cls, method_name, class_name, spec.manager_alias,
+                    cls,
+                    method_name,
+                    class_name,
+                    spec.manager_alias,
                 )
                 if metadata is not None:
                     primitives[metadata["name"]] = metadata

@@ -24,6 +24,7 @@ def _FM(**kwargs) -> FunctionManager:
     kwargs.setdefault("include_primitives", False)
     return FunctionManager(**kwargs)
 
+
 # --------------------------------------------------------------------------- #
 #  4.  Existing add_functions tests                                           #
 # --------------------------------------------------------------------------- #

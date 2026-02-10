@@ -17,12 +17,13 @@ def _FM(**kwargs) -> FunctionManager:
     kwargs.setdefault("include_primitives", False)
     return FunctionManager(**kwargs)
 
+
 # --------------------------------------------------------------------------- #
 #  Shared source snippets                                                      #
 # --------------------------------------------------------------------------- #
 
-_PY_ALPHA = "def alpha(x):\n    \"\"\"double x\"\"\"\n    return x * 2\n"
-_PY_BETA = "def beta(y):\n    \"\"\"square y\"\"\"\n    return y ** 2\n"
+_PY_ALPHA = 'def alpha(x):\n    """double x"""\n    return x * 2\n'
+_PY_BETA = 'def beta(y):\n    """square y"""\n    return y ** 2\n'
 
 _SH_HELLO = (
     "#!/bin/sh\n"
@@ -105,9 +106,9 @@ def test_filter_scope_filters_search_functions():
     fm_py = _FM(filter_scope="language == 'python'")
     hits = fm_py.search_functions(query="hello world", n=10)
     for h in hits:
-        assert h.get("language", "python") != "sh", (
-            f"search_functions returned out-of-scope row: {h['name']}"
-        )
+        assert (
+            h.get("language", "python") != "sh"
+        ), f"search_functions returned out-of-scope row: {h['name']}"
 
 
 # --------------------------------------------------------------------------- #

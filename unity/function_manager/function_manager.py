@@ -3559,7 +3559,10 @@ class FunctionManager(BaseFunctionManager):
                 exclude_fields=list_private_fields(self._primitives_ctx),
             )
             if prim_logs:
-                prim_names = [lg.entries.get("name", lg.entries.get("function_id")) for lg in prim_logs]
+                prim_names = [
+                    lg.entries.get("name", lg.entries.get("function_id"))
+                    for lg in prim_logs
+                ]
                 raise ValueError(
                     f"Cannot delete primitives (system-owned): {prim_names}",
                 )
