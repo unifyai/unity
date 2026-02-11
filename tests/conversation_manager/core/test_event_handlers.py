@@ -42,6 +42,7 @@ from unity.conversation_manager.events import (
     CallGuidance,
     GetChatHistory,
     ActorHandleStarted,
+    ActorHandleResponse,
     ActorResult,
     ActorClarificationRequest,
     ActorPause,
@@ -930,6 +931,47 @@ class TestActorEventHandlers:
         assert any(a["action_name"] == "act_completed" for a in handle_actions)
         # No notification pushed (result is shown in completed_actions section)
         assert len(mock_cm.notifications_bar.notifications) == 0
+
+    @pytest.mark.asyncio
+    async def test_actor_handle_response_sanitizes_verbose_error_payload(self, mock_cm):
+        """ActorHandleResponse should not persist huge raw LLM message dumps."""
+        verbose_dump = "x" * 20000
+        raw_response = (
+            "Error: LLM call failed. Messages at the time:\n"
+            f'{{"messages": ["{verbose_dump}"]}}'
+        )
+
+        mock_cm.in_flight_actions = {
+            1: {
+                "query": "Search transcripts for budget review",
+                "handle_actions": [
+                    {
+                        "action_name": "ask_1",
+                        "query": "what is the current status?",
+                        "status": "pending",
+                    },
+                ],
+            },
+        }
+        event = ActorHandleResponse(
+            handle_id=1,
+            action_name="ask",
+            query="what is the current status?",
+            response=raw_response,
+            call_id="",
+        )
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        ask_event = mock_cm.in_flight_actions[1]["handle_actions"][0]
+        assert ask_event["status"] == "completed"
+        assert "Messages at the time" not in ask_event.get(
+            "response",
+            "",
+        ), "Stored response should not include raw client message dumps"
+        assert (
+            len(ask_event.get("response", "")) < 4000
+        ), "Stored ask response should be bounded to avoid state prompt bloat"
 
     @pytest.mark.asyncio
     async def test_actor_clarification_request_updates_handle_actions(self, mock_cm):
