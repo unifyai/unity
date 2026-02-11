@@ -340,7 +340,9 @@ def _start_storage_check_loop(
             """
             fn = ask_tools.get(tool_name)
             if fn is None:
-                return f"Tool '{tool_name}' not found. Available: {list(ask_tools.keys())}"
+                return (
+                    f"Tool '{tool_name}' not found. Available: {list(ask_tools.keys())}"
+                )
             handle = await fn(question=question)
             if hasattr(handle, "result"):
                 result = handle.result
@@ -770,6 +772,34 @@ class CodeActActor(BaseCodeActActor):
             agent_mode=agent_mode,
             agent_server_url=agent_server_url,
         )
+
+        # Collect function_ids from all environments, split by context, to exclude
+        # from FunctionManager queries. This prevents overlap between prompt-injected
+        # environment tools and FunctionManager-discoverable functions.
+        # IDs are only unique within a context, so we must route each exclusion to
+        # the correct DB context (Functions/Primitives vs Functions/Compositional).
+        _excl_primitive: set[int] = set()
+        _excl_compositional: set[int] = set()
+        for env in self.environments.values():
+            for tool_meta in env.get_tools().values():
+                if tool_meta.function_id is not None:
+                    if tool_meta.function_context == "primitive":
+                        _excl_primitive.add(tool_meta.function_id)
+                    elif tool_meta.function_context == "compositional":
+                        _excl_compositional.add(tool_meta.function_id)
+
+        if (
+            _excl_primitive or _excl_compositional
+        ) and self.function_manager is not None:
+            from unity.function_manager.function_manager import FunctionManager as _FM
+
+            self.function_manager = _FM(
+                primitive_scope=self.function_manager.primitive_scope,
+                filter_scope=self.function_manager.filter_scope,
+                exclude_primitive_ids=frozenset(_excl_primitive) or None,
+                exclude_compositional_ids=frozenset(_excl_compositional) or None,
+                include_primitives=self.function_manager._include_primitives,
+            )
 
         # Create persistent pools that survive across act() calls
         from unity.function_manager.function_manager import VenvPool
@@ -1241,7 +1271,9 @@ class CodeActActor(BaseCodeActActor):
                                         "sandbox_id": sandbox_id,
                                         "error_kind": "exception",
                                         "traceback_preview": tb[:2000],
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                                        "timestamp": datetime.now(
+                                            timezone.utc,
+                                        ).isoformat(),
                                     },
                                 )
                             except Exception:
@@ -2126,9 +2158,7 @@ class CodeActActor(BaseCodeActActor):
                 The sub-agent's final answer / result.
             """
             effective_timeout = (
-                timeout
-                if timeout is not None
-                else min(self._timeout / 2, 300)
+                timeout if timeout is not None else min(self._timeout / 2, 300)
             )
 
             handle = await self.act(

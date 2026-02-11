@@ -123,6 +123,8 @@ class StateManagerEnvironment(BaseEnvironment):
                     is_steerable=True,
                     docstring=None,
                     signature=None,
+                    function_id=self._registry.get_function_id(alias, method_name),
+                    function_context="primitive",
                 )
 
         return tools

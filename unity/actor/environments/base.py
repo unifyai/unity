@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -17,6 +17,17 @@ class ToolMetadata(BaseModel):
         is_steerable: True if calling the tool may return a steerable handle.
         docstring: Tool documentation string (if available).
         signature: Human-readable signature string (if available).
+        function_id: Optional cross-reference to a stored FunctionManager function.
+            When set, indicates this environment tool corresponds to a function in
+            the FunctionManager backend, enabling automatic exclusion from
+            FunctionManager search/list/filter results to prevent overlap.
+            Must be paired with ``function_context`` to identify which DB context
+            the ID belongs to (IDs are only unique within a context).
+        function_context: Which FunctionManager DB context ``function_id``
+            belongs to. Required when ``function_id`` is set.
+            ``"primitive"`` for state manager methods (``Functions/Primitives``),
+            ``"compositional"`` for user-defined functions
+            (``Functions/Compositional``).
     """
 
     name: str
@@ -24,6 +35,8 @@ class ToolMetadata(BaseModel):
     is_steerable: bool = False
     docstring: Optional[str] = None
     signature: Optional[str] = None
+    function_id: Optional[int] = None
+    function_context: Optional[Literal["primitive", "compositional"]] = None
 
 
 def _callable_accepts_clarification_kwargs(fn: Any) -> bool:
