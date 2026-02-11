@@ -293,6 +293,7 @@ class CommsManager:
                         False,
                     ),
                     "user_desktop_url": event.get("user_desktop_url"),
+                    "demo_mode": event.get("demo_mode", False),
                 }
                 self._publish_from_callback(
                     f"app:comms:{thread}",

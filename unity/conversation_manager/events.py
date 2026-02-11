@@ -363,6 +363,7 @@ class _SessionConfigBase(Event):
     user_desktop_mode: str | None = None
     user_desktop_filesys_sync: bool = False
     user_desktop_url: str | None = None
+    demo_mode: bool = False  # Whether this is a demo assistant
 
 
 @dataclass
