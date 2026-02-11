@@ -1,8 +1,12 @@
 """
 Event Publisher for the ConversationManager sandbox.
 
-This module converts sandbox commands into inbound CM events and publishes them
-to the in-memory event broker using the same `app:comms:*` topics as production.
+Converts sandbox commands into inbound CM events and publishes them to the
+in-memory event broker using the same ``app:comms:*`` topics as production.
+
+When ``--live-voice`` is active, the ``call`` / ``end_call`` commands spawn
+the production voice agent subprocess over LiveKit instead of simulating
+text-based events.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from unity.conversation_manager.events import (
     EmailReceived,
@@ -18,6 +23,9 @@ from unity.conversation_manager.events import (
     PhoneCallStarted,
     SMSReceived,
 )
+
+if TYPE_CHECKING:
+    from sandboxes.conversation_manager.live_voice import LiveVoiceSession
 
 
 def get_simulated_user_contact() -> dict:
@@ -104,3 +112,77 @@ class EventPublisher:
             "app:comms:phone_call_ended",
             event.to_json(),
         )
+
+    # ── Live voice ────────────────────────────────────────────────────────
+
+    async def start_live_call(self) -> "list[str]":
+        """
+        Start a live voice call using the production voice agent over LiveKit.
+
+        Returns a list of status lines to display to the user.
+        Connection details are written to .live_voice_connect.json and the
+        token is copied to the system clipboard for easy pasting.
+        """
+        from sandboxes.conversation_manager.live_voice import start_session
+
+        contact = get_simulated_user_contact()
+        boss = get_simulated_user_contact()
+        try:
+            self.cm.contact_index.set_fallback_contacts([contact])
+        except Exception:
+            pass
+
+        session = await start_session(cm=self.cm, contact=contact, boss=boss)
+        self.state.live_voice_session = session
+        self.state.in_call = True
+        self.state.brain_run_in_flight = True
+        self.state.last_event_published_at = time.monotonic()
+
+        clipboard_ok = getattr(session, "clipboard_ok", False)
+        clipboard_line = (
+            "  Token copied to clipboard!"
+            if clipboard_ok
+            else "  (Could not copy token to clipboard.)"
+        )
+
+        return [
+            "",
+            "🎙️  Live voice call started!",
+            "",
+            "Connect via the LiveKit Agents Playground:",
+            "  1. Open  https://agents-playground.livekit.io",
+            '  2. Click the "Manual" tab',
+            f"  3. Paste URL:  {session.livekit_url}",
+            f"  4. Paste Token (from clipboard or {session.connection_file})",
+            '  5. Click "Connect"',
+            "",
+            clipboard_line,
+            f"  Connection details saved to: {session.connection_file}",
+            "",
+            f"  Room:      {session.room_name}",
+            f"  Agent log: {session.log_file}",
+            "",
+            "Speak through your browser mic; type `end_call` here when done.",
+            "",
+        ]
+
+    async def end_live_call(self) -> "list[str]":
+        """Stop the live voice call and clean up LiveKit + subprocess resources."""
+        from sandboxes.conversation_manager.live_voice import stop_session
+
+        session: LiveVoiceSession | None = getattr(
+            self.state,
+            "live_voice_session",
+            None,
+        )
+        if session is None:
+            self.state.in_call = False
+            return ["⚠️ No live voice session to end."]
+
+        await stop_session(cm=self.cm, session=session)
+        self.state.live_voice_session = None
+        self.state.in_call = False
+        self.state.brain_run_in_flight = True
+        self.state.last_event_published_at = time.monotonic()
+
+        return ["📞 Live voice call ended. Room and subprocess cleaned up."]
