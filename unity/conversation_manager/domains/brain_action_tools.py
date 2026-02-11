@@ -1091,6 +1091,7 @@ class ConversationManagerBrainActionTools:
                 "handle": handle,
                 "query": query,
                 "persist": persist,
+                "action_type": "act",
                 "handle_actions": [
                     {
                         "action_name": "act_started",
@@ -1122,6 +1123,163 @@ class ConversationManagerBrainActionTools:
         )
 
         return {"status": "acting", "query": query}
+
+    async def _invoke_contact_action(
+        self,
+        *,
+        text: str,
+        action_type: str,
+        contact_method: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """Shared lifecycle for ask_about_contacts / update_contacts.
+
+        Follows the same pattern as ``act``: queue invocation, store handle in
+        ``in_flight_actions``, spawn watcher tasks, publish started event.
+        """
+        global _next_handle_id
+
+        parent_context = (
+            [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
+            if self._cm._current_state_snapshot
+            else None
+        )
+
+        pydantic_response_format = None
+        if response_format is not None:
+            pydantic_response_format = schema_dict_to_pydantic(response_format)
+
+        cm = self._cm
+
+        async def _invoke():
+            method = getattr(cm.contact_manager, contact_method)
+            handle = await method(
+                text,
+                response_format=pydantic_response_format,
+                _parent_chat_context=parent_context,
+            )
+
+            initial_snapshot_state: SnapshotState | None = None
+            if hasattr(cm, "_current_snapshot_state"):
+                initial_snapshot_state = cm._current_snapshot_state
+
+            cm.in_flight_actions[handle_id] = {
+                "handle": handle,
+                "query": text,
+                "persist": False,
+                "action_type": action_type,
+                "handle_actions": [
+                    {
+                        "action_name": f"{action_type}_started",
+                        "query": text,
+                        "timestamp": prompt_now(),
+                    },
+                ],
+                "initial_snapshot_state": initial_snapshot_state,
+            }
+            asyncio.create_task(
+                managers_utils.actor_watch_result(handle_id, handle),
+            )
+            asyncio.create_task(
+                managers_utils.actor_watch_notifications(handle_id, handle),
+            )
+            asyncio.create_task(
+                managers_utils.actor_watch_clarifications(handle_id, handle),
+            )
+
+        await managers_utils.queue_operation(_invoke)
+        handle_id = _next_handle_id
+        _next_handle_id += 1
+
+        await self._event_broker.publish(
+            f"app:actor:actor_started_handle_{handle_id}",
+            ActorHandleStarted(
+                handle_id=handle_id,
+                action_name=action_type,
+                query=text,
+            ).to_json(),
+        )
+
+        return {"status": "acting", "query": text}
+
+    async def ask_about_contacts(
+        self,
+        *,
+        text: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Query contact records directly — names, emails, phone numbers, roles,
+        relationships, and any other stored contact attributes.
+
+        This is a **direct channel** to the contact management system, bypassing
+        the general ``act`` pathway. Use it for any purely contact-related
+        questions:
+
+        - Looking up a specific contact's details
+        - Finding contacts by attribute (role, location, company, etc.)
+        - Checking if a contact exists
+        - Listing or filtering contacts
+        - Comparing contact records
+
+        **Route here instead of ``act`` when the question is purely about
+        contact data.** If the question also involves non-contact information
+        (tasks, knowledge, transcripts, web, files, etc.) or requires
+        cross-domain reasoning, use ``act`` instead.
+
+        Args:
+            text: Natural language question about contacts
+                (e.g. "What is Sarah's email address?").
+            response_format: Optional structured schema describing the shape of
+                the result you need back. Same format as ``act``'s
+                ``response_format`` — keys are field names, values are type
+                strings (``"string"``, ``"integer"``, etc.), nested dicts, or
+                single-element lists for arrays. When omitted, a free-form text
+                answer is returned.
+        """
+        return await self._invoke_contact_action(
+            text=text,
+            action_type="ask_about_contacts",
+            contact_method="ask",
+            response_format=response_format,
+        )
+
+    async def update_contacts(
+        self,
+        *,
+        text: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Create, edit, delete, or merge contact records directly.
+
+        This is a **direct channel** to the contact management system, bypassing
+        the general ``act`` pathway. Use it for any purely contact-related
+        mutations:
+
+        - Creating new contacts
+        - Updating contact details (phone, email, address, role, bio, etc.)
+        - Deleting contacts
+        - Merging duplicate contacts
+
+        **Route here instead of ``act`` when the request is purely about
+        modifying contacts.** If the request also involves non-contact work
+        or cross-domain operations, use ``act`` instead.
+
+        Args:
+            text: Natural language description of the contact change
+                (e.g. "Add a new contact for John Smith, email john@acme.com").
+            response_format: Optional structured schema describing the shape of
+                the result you need back. Same format as ``act``'s
+                ``response_format``. When omitted, a free-form text summary of
+                the mutation is returned.
+        """
+        return await self._invoke_contact_action(
+            text=text,
+            action_type="update_contacts",
+            contact_method="update",
+            response_format=response_format,
+        )
 
     async def set_boss_details(
         self,
@@ -1198,6 +1356,8 @@ class ConversationManagerBrainActionTools:
             tools["set_boss_details"] = self.set_boss_details
         else:
             tools["act"] = self.act
+            tools["ask_about_contacts"] = self.ask_about_contacts
+            tools["update_contacts"] = self.update_contacts
         return tools
 
     def build_action_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
