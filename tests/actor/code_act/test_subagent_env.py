@@ -80,15 +80,17 @@ class TestCreateEnv:
         assert "public_method" in context
         assert "_private_method" not in context
 
-    def test_create_env_get_tools_returns_empty(self):
-        """get_tools() should return empty dict (ToolMetadata unused by CodeActActor)."""
+    def test_create_env_get_tools_returns_method_metadata(self):
+        """get_tools() should return ToolMetadata for each public method."""
 
         class DummyService:
             async def method(self) -> None:
                 pass
 
         env = create_env("dummy", DummyService())
-        assert env.get_tools() == {}
+        tools = env.get_tools()
+        assert "dummy.method" in tools
+        assert tools["dummy.method"].name == "dummy.method"
 
     @pytest.mark.asyncio
     async def test_create_env_capture_state(self):
