@@ -208,7 +208,7 @@ def _gcloud_logging_read(log_filter: str):
         [
             "gcloud", "logging", "read", log_filter,
             f"--project={GCP_PROJECT}",
-            "--freshness=30d",
+            "--freshness=3650d",
             "--limit=100000",
             "--format=value(textPayload)",
             "--order=asc",
