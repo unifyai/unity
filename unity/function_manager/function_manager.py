@@ -1723,18 +1723,30 @@ class FunctionManager(BaseFunctionManager):
 
     @property
     def filter_scope(self) -> Optional[str]:
-        """A boolean expression permanently applied to all read queries."""
+        """A boolean expression permanently applied to all compositional read queries."""
         return self._filter_scope
+
+    @filter_scope.setter
+    def filter_scope(self, value: Optional[str]) -> None:
+        self._filter_scope = value
 
     @property
     def exclude_primitive_ids(self) -> Optional[FrozenSet[int]]:
         """Primitive function IDs excluded from ``Functions/Primitives`` queries."""
         return self._exclude_primitive_ids
 
+    @exclude_primitive_ids.setter
+    def exclude_primitive_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_primitive_ids = frozenset(value) if value else None
+
     @property
     def exclude_compositional_ids(self) -> Optional[FrozenSet[int]]:
         """Compositional function IDs excluded from ``Functions/Compositional`` queries."""
         return self._exclude_compositional_ids
+
+    @exclude_compositional_ids.setter
+    def exclude_compositional_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_compositional_ids = frozenset(value) if value else None
 
     @staticmethod
     def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:

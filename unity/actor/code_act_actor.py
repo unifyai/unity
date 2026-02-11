@@ -869,33 +869,31 @@ class CodeActActor(BaseCodeActActor):
             agent_server_url=agent_server_url,
         )
 
-        # Collect function_ids from all environments, split by context, to exclude
-        # from FunctionManager queries. This prevents overlap between prompt-injected
-        # environment tools and FunctionManager-discoverable functions.
-        # IDs are only unique within a context, so we must route each exclusion to
-        # the correct DB context (Functions/Primitives vs Functions/Compositional).
-        _excl_primitive: set[int] = set()
-        _excl_compositional: set[int] = set()
-        for env in self.environments.values():
-            for tool_meta in env.get_tools().values():
-                if tool_meta.function_id is not None:
-                    if tool_meta.function_context == "primitive":
-                        _excl_primitive.add(tool_meta.function_id)
-                    elif tool_meta.function_context == "compositional":
-                        _excl_compositional.add(tool_meta.function_id)
+        # Collect function_ids from all environments, split by context, and set
+        # them on the FunctionManager via setters. This prevents overlap between
+        # prompt-injected environment tools and FunctionManager-discoverable
+        # functions. We update in-place rather than replacing the FM instance so
+        # that callers who pass a custom FM (e.g., SimulatedFunctionManager) keep
+        # their instance intact.
+        if self.function_manager is not None:
+            _excl_primitive: set[int] = set()
+            _excl_compositional: set[int] = set()
+            for env in self.environments.values():
+                for tool_meta in env.get_tools().values():
+                    if tool_meta.function_id is not None:
+                        if tool_meta.function_context == "primitive":
+                            _excl_primitive.add(tool_meta.function_id)
+                        elif tool_meta.function_context == "compositional":
+                            _excl_compositional.add(tool_meta.function_id)
 
-        if (
-            _excl_primitive or _excl_compositional
-        ) and self.function_manager is not None:
-            from unity.function_manager.function_manager import FunctionManager as _FM
-
-            self.function_manager = _FM(
-                primitive_scope=self.function_manager.primitive_scope,
-                filter_scope=self.function_manager.filter_scope,
-                exclude_primitive_ids=frozenset(_excl_primitive) or None,
-                exclude_compositional_ids=frozenset(_excl_compositional) or None,
-                include_primitives=self.function_manager._include_primitives,
-            )
+            if _excl_primitive:
+                self.function_manager.exclude_primitive_ids = frozenset(
+                    _excl_primitive,
+                )
+            if _excl_compositional:
+                self.function_manager.exclude_compositional_ids = frozenset(
+                    _excl_compositional,
+                )
 
         # Create persistent pools that survive across act() calls
         from unity.function_manager.function_manager import VenvPool
@@ -2294,25 +2292,30 @@ class CodeActActor(BaseCodeActActor):
                 timeout if timeout is not None else min(self._timeout / 2, 300)
             )
 
-            # ── Compose filter_scope (additive: AND with parent's scope) ──
-            inner_fm = self.function_manager
-            if filter_scope and inner_fm is not None:
+            # ── Create a fresh FunctionManager for the sub-agent ──
+            # Always create a new instance so that the inner CodeActActor's
+            # __init__ (which sets exclusions via setters) does not mutate the
+            # parent's FM.  The filter_scope is additive: ANDed with the parent's.
+            inner_fm = None
+            if self.function_manager is not None:
                 from unity.function_manager.function_manager import (
                     FunctionManager as _FM,
                 )
 
-                parent_scope = inner_fm.filter_scope
-                if parent_scope:
+                parent_scope = self.function_manager.filter_scope
+                if filter_scope and parent_scope:
                     combined_scope = f"({parent_scope}) and ({filter_scope})"
-                else:
+                elif filter_scope:
                     combined_scope = filter_scope
+                else:
+                    combined_scope = parent_scope
 
                 inner_fm = _FM(
-                    primitive_scope=inner_fm.primitive_scope,
+                    primitive_scope=self.function_manager.primitive_scope,
                     filter_scope=combined_scope,
-                    exclude_primitive_ids=inner_fm.exclude_primitive_ids,
-                    exclude_compositional_ids=inner_fm.exclude_compositional_ids,
-                    include_primitives=inner_fm._include_primitives,
+                    exclude_primitive_ids=self.function_manager.exclude_primitive_ids,
+                    exclude_compositional_ids=self.function_manager.exclude_compositional_ids,
+                    include_primitives=self.function_manager._include_primitives,
                 )
 
             # ── Build inner actor environments from environment patterns ──

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 
 from .base import BaseFunctionManager
@@ -42,10 +42,16 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
         self._filter_scope = filter_scope
+        self._exclude_primitive_ids: Optional[FrozenSet[int]] = None
+        self._exclude_compositional_ids: Optional[FrozenSet[int]] = None
 
         # One shared, *stateful* LLM for the simulation
         self._llm = new_llm_client(stateful=True)
 
+        self._rebuild_system_message()
+
+    def _rebuild_system_message(self) -> None:
+        """Reconstruct the LLM system message from current state."""
         columns = [{k: str(v.annotation)} for k, v in Function.model_fields.items()]
 
         guidance = (
@@ -64,13 +70,64 @@ class SimulatedFunctionManager(BaseFunctionManager):
             else ""
         )
 
+        exclusion_hint = ""
+        if self._exclude_primitive_ids or self._exclude_compositional_ids:
+            parts = []
+            if self._exclude_primitive_ids:
+                parts.append(
+                    f"primitive function_ids {sorted(self._exclude_primitive_ids)}",
+                )
+            if self._exclude_compositional_ids:
+                parts.append(
+                    f"compositional function_ids {sorted(self._exclude_compositional_ids)}",
+                )
+            exclusion_hint = (
+                f"\n\nIMPORTANT – The following function IDs are excluded from all "
+                f"read queries (they are prompt-injected via the environment and "
+                f"must NOT appear in search/list/filter results): {', '.join(parts)}."
+            )
+
         sys_msg = (
             "You are a simulated function-catalogue assistant. There is no real "
             "storage; invent plausible functions and keep answers self-consistent.\n\n"
-            f"Back-story: {self._description}{guidance}{scope_hint}\n\n"
+            f"Back-story: {self._description}{guidance}{scope_hint}{exclusion_hint}\n\n"
             "Function columns available (simulated):\n" + json.dumps(columns)
         )
         self._llm.set_system_message(sys_msg)
+
+    # ------------------------------------------------------------------ #
+    #  Properties & setters (same contract as FunctionManager)            #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def filter_scope(self) -> Optional[str]:
+        """A boolean expression applied to all simulated read queries."""
+        return self._filter_scope
+
+    @filter_scope.setter
+    def filter_scope(self, value: Optional[str]) -> None:
+        self._filter_scope = value
+        self._rebuild_system_message()
+
+    @property
+    def exclude_primitive_ids(self) -> Optional[FrozenSet[int]]:
+        """Primitive function IDs excluded from simulated queries."""
+        return self._exclude_primitive_ids
+
+    @exclude_primitive_ids.setter
+    def exclude_primitive_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_primitive_ids = frozenset(value) if value else None
+        self._rebuild_system_message()
+
+    @property
+    def exclude_compositional_ids(self) -> Optional[FrozenSet[int]]:
+        """Compositional function IDs excluded from simulated queries."""
+        return self._exclude_compositional_ids
+
+    @exclude_compositional_ids.setter
+    def exclude_compositional_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_compositional_ids = frozenset(value) if value else None
+        self._rebuild_system_message()
 
     # ------------------------------------------------------------------ #
     #  Internal helper: run async LLM from sync contexts                  #
