@@ -107,6 +107,41 @@ When enabled:
 - `sayv` records microphone audio, transcribes via Deepgram (STT), and sends the transcript as a phone utterance.
 - Assistant phone-call responses (`[Phone → User] ...`) are also spoken via TTS (Cartesia) on a best-effort basis.
 
+## Live voice mode (`--live-voice`)
+
+Enables **real voice calls** through the sandbox. When `--live-voice` is active, the `call` command:
+
+1. Creates a LiveKit room
+2. Spawns the **production voice agent subprocess** (the same `call.py` used in production)
+3. Dispatches the agent to the room
+4. Prints a **browser URL** for you to join the call with your microphone
+
+The full fast-brain (voice agent) + slow-brain (ConversationManager) loop runs exactly as it does in production. You talk through your browser, and the sandbox displays all events (utterances, call guidance, actor actions) in real-time.
+
+```bash
+# Start with live voice
+python -m sandboxes.conversation_manager.sandbox --live-voice --project_name Sandbox --overwrite
+
+# Then in the sandbox:
+cm> call
+#  => prints a LiveKit Playground URL — open it in your browser
+#  => speak to the assistant through your mic
+cm> end_call
+#  => tears down voice agent, room, and IPC socket
+```
+
+### Requirements
+
+| Environment Variable | Purpose |
+|---|---|
+| `LIVEKIT_URL` | LiveKit server URL (e.g. `wss://your-project.livekit.cloud`) |
+| `LIVEKIT_API_KEY` | LiveKit API key |
+| `LIVEKIT_API_SECRET` | LiveKit API secret |
+| `DEEPGRAM_API_KEY` | Speech-to-text (Deepgram) |
+| `CARTESIA_API_KEY` or `ELEVEN_API_KEY` | Text-to-speech (Cartesia or ElevenLabs) |
+
+These are the same credentials used in production voice calls.
+
 ## Real-comms safety confirmations
 
 In `--real-comms` mode, outbound actions are intercepted and require confirmation (default: **N**):
