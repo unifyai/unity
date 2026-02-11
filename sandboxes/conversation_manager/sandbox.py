@@ -326,7 +326,7 @@ async def _main_async() -> None:
         dest="real_comms",
         action="store_true",
         default=False,
-        help="Use real comms (SMS/email/calls). Requires external infrastructure and prompts for confirmation.",
+        help="Use real comms (SMS/email/calls). Requires external infrastructure. REPL prompts for confirmation; GUI auto-confirms.",
     )
     parser.add_argument(
         "--auto-confirm",
@@ -775,10 +775,6 @@ async def _main_async() -> None:
         setattr(args, "_restart_actor_config", None)
 
         try:
-            if args.gui and args.real_comms:
-                print("⚠️ Real-comms mode requires REPL. Starting REPL instead.")
-                args.gui = False
-
             ui_task = asyncio.create_task(run_repl(args=args, state=state))
             cm_stop_task = None
             try:

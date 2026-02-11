@@ -450,6 +450,9 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
         setattr(args, "real_comms", False)
     if not hasattr(args, "auto_confirm"):
         setattr(args, "auto_confirm", False)
+    # GUI has no stdin for confirmation prompts — auto-confirm outbound actions.
+    if getattr(args, "real_comms", False):
+        setattr(args, "auto_confirm", True)
 
     # ActorConfig is expected under `_actor_config` by existing sandbox code.
     actor_cfg = _coerce_actor_config(cfg)
