@@ -1296,6 +1296,21 @@ class ConversationManagerBrainActionTools:
 
         return tools
 
+    @staticmethod
+    def _extract_tool_param_value(
+        *,
+        kwargs: dict[str, Any],
+        primary_name: str,
+        aliases: tuple[str, ...] = (),
+    ) -> Any:
+        """Extract a tool parameter value from kwargs using primary name then aliases."""
+        if not primary_name:
+            return ""
+        for name in (primary_name, *aliases):
+            if name in kwargs:
+                return kwargs.get(name, "")
+        return ""
+
     def _make_completed_action_ask_tool(
         self,
         handle_id: int,
@@ -1308,11 +1323,18 @@ class ConversationManagerBrainActionTools:
 
         cm = self._cm
         event_broker = cm.event_broker
+        ask_param_aliases = tuple(
+            name for name in ("question", "query") if name != param_name
+        )
 
         async def ask_completed_action(
             **kwargs: Any,
         ) -> dict[str, Any]:
-            param_value = kwargs.get(param_name, "") if param_name else ""
+            param_value = self._extract_tool_param_value(
+                kwargs=kwargs,
+                primary_name=param_name,
+                aliases=ask_param_aliases,
+            )
 
             # Get handle_data from completed_actions
             handle_data = cm.completed_actions.get(handle_id)
@@ -1406,7 +1428,16 @@ class ConversationManagerBrainActionTools:
         async def steering_tool(
             **kwargs: Any,
         ) -> dict[str, Any]:
-            param_value = kwargs.get(param_name, "") if param_name else ""
+            param_aliases: tuple[str, ...] = ()
+            if operation == "ask":
+                param_aliases = tuple(
+                    name for name in ("question", "query") if name != param_name
+                )
+            param_value = self._extract_tool_param_value(
+                kwargs=kwargs,
+                primary_name=param_name,
+                aliases=param_aliases,
+            )
 
             handle_data = cm.in_flight_actions.get(handle_id)
 
