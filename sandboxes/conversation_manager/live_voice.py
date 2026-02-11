@@ -194,6 +194,7 @@ async def start_session(cm, contact: dict, boss: dict) -> LiveVoiceSession:
     agent_name = f"sandbox_{uuid.uuid4().hex[:8]}"
 
     _ensure_call_manager_config(cm)
+    cm.call_manager.call_contact = contact
     await _create_room(room_name)
 
     # The subprocess runs ``agents.cli.run_app()`` in "dev" mode which
