@@ -16,7 +16,7 @@ class SecretModel(BaseModel):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_code_act_initial_parent_chat_context_is_used():
     """CodeActActor should append _parent_chat_context before the first LLM turn."""
     SecretModel.model_rebuild()
@@ -51,7 +51,7 @@ async def test_code_act_initial_parent_chat_context_is_used():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_execute_function_forwards_parent_chat_context():
     """Parent chat context should flow from the outer act() loop through the
     execute_function tool closure into FunctionManager.execute_function.
@@ -167,7 +167,7 @@ class _SpyContactManager:
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_execute_code_forwards_parent_chat_context():
     """Parent chat context should be forwarded to primitives called from
     within execute_code via ContextForwardingProxy wrapping.

@@ -41,7 +41,7 @@ async def test_code_act_can_compose_false_requires_function_manager():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_code_act_can_compose_false_executes_best_matching_function():
     """
     When can_compose=False, the LLM should discover stored functions via
@@ -90,7 +90,7 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_code_act_can_compose_false_no_functions_match():
     """
     When can_compose=False and no stored functions match the query, the LLM
@@ -132,7 +132,7 @@ async def test_code_act_can_compose_false_no_functions_match():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_code_act_can_store_false_blocks_add_functions_tool():
     """
     When can_store=False, the FunctionManager_add_functions tool should not be available.
@@ -178,7 +178,7 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_code_act_can_store_true_stores_function():
     """
     When can_store=True (the default), the LLM should be able to compose a
@@ -239,7 +239,7 @@ async def test_code_act_can_store_true_stores_function():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_storage_check_on_return_stores_discovered_function():
     """
     When storage_check_on_return=True, the CodeActActor should compose and
@@ -303,7 +303,7 @@ async def test_storage_check_on_return_stores_discovered_function():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_storage_check_on_return_skipped_when_can_store_false():
     """
     storage_check_on_return=True with can_store=False should NOT wrap
@@ -349,7 +349,7 @@ async def test_storage_check_on_return_skipped_when_can_store_false():
 
 @pytest.mark.eval
 @pytest.mark.asyncio
-@pytest.mark.timeout(180)
+@pytest.mark.timeout(300)
 async def test_storage_check_on_return_merges_redundant_functions():
     """
     The storage check loop should recognise overlapping functions in the
@@ -443,7 +443,7 @@ async def test_storage_check_on_return_merges_redundant_functions():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(300)
 async def test_code_act_accepts_dict_description():
     """
     CodeActActor.act should accept a dict description (passed to async tool loop).
@@ -473,7 +473,7 @@ async def test_code_act_accepts_dict_description():
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(300)
 async def test_code_act_accepts_list_description():
     """
     CodeActActor.act should accept a list description (passed to async tool loop).

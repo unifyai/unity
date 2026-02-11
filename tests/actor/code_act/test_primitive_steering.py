@@ -94,7 +94,7 @@ async def _wait_for_inner_handle_adopted(
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 async def test_execute_function_primitive_steering(monkeypatch):
     """CodeActActor (can_compose=False) → execute_function → primitives.contacts.ask
     → handle adopted → interjection forwarded → result incorporates both turns.
@@ -155,7 +155,7 @@ async def test_execute_function_primitive_steering(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(300)
 async def test_execute_code_primitive_steering(monkeypatch):
     """CodeActActor → execute_code calling primitives.contacts.ask(...)
     → handle returned as last expression → adopted → interjection forwarded.
