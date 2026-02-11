@@ -52,7 +52,6 @@ class ComputerEnvironment(BaseEnvironment):
             "query",
             "get_links",
             "get_content",
-            "reason",
         ]
 
         tools: Dict[str, ToolMetadata] = {}

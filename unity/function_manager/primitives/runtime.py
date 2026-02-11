@@ -2,7 +2,7 @@
 Runtime primitives interface for state managers.
 
 This module provides:
-- `ComputerPrimitives` - Computer use (web/desktop) control and reasoning capabilities
+- `ComputerPrimitives` - Computer use (web/desktop) control capabilities
 - `Primitives` - Scoped runtime interface for accessing state manager primitives
 - `_AsyncPrimitiveWrapper` - Async wrapper for sync managers
 
@@ -15,14 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import inspect
 import logging
 import threading
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
-from pydantic import BaseModel
-
-from unity.common.llm_client import new_llm_client
 from unity.function_manager.primitives.scope import (
     PrimitiveScope,
     VALID_MANAGER_ALIASES,
@@ -73,10 +69,8 @@ class ComputerPrimitives:
         "get_links",
         "get_content",
     )
-    # Methods defined directly on this class
-    _STATIC_METHODS = ("reason",)
     # All primitive methods (used for discovery)
-    _PRIMITIVE_METHODS = _DYNAMIC_METHODS + _STATIC_METHODS
+    _PRIMITIVE_METHODS = _DYNAMIC_METHODS
 
     @staticmethod
     def _resolve_agent_server_url(explicit_url: str | None) -> str:
@@ -218,102 +212,6 @@ class ComputerPrimitives:
                 **self._computer_kwargs_map[self._computer_mode],
             )
         return self._computer
-
-    # --- Generic Reasoning Action ---
-    async def reason(
-        self,
-        request: str,
-        context: str,
-        response_format: Any = str,
-    ) -> Any:
-        """
-        Performs general-purpose reasoning with optional access to execution context.
-
-        This tool is designed for complex, stateless tasks like analysis,
-        classification, strategic decision-making, and data transformation.
-        When running inside an Actor execution context, it may automatically
-        receive additional scoped context (e.g. source code of the calling
-        function) to make more informed decisions.
-
-        ### Example 1: Classification with Structured Output
-        Use `reason` to analyze an ambiguous input and produce a structured decision.
-
-        ```python
-        from pydantic import BaseModel, Field
-        from typing import Literal
-
-        class SupportCategory(BaseModel):
-            category: Literal["technical", "billing", "account"]
-            justification: str = Field(description="A brief explanation for the chosen category.")
-
-        SupportCategory.model_rebuild()
-
-        user_message = "I can't access my dashboard and my last payment didn't go through."
-
-        decision = await computer_primitives.reason(
-            request="Classify the user's support request into the most appropriate category.",
-            context=f"User's message: '{user_message}'",
-            response_format=SupportCategory
-        )
-
-        print(f"Category: {decision.category} — {decision.justification}")
-        ```
-
-        ### Example 2: Data Transformation and Structuring
-        Use `reason` to parse unstructured text into a clean, Pydantic model.
-
-        ```python
-        from pydantic import BaseModel, Field
-
-        class UserDetails(BaseModel):
-            first_name: str
-            last_name: str
-            user_id: int = Field(description="The user's numerical ID.")
-
-        UserDetails.model_rebuild()
-
-        raw_text = "The user is Jane Doe, ID number 4815162342."
-
-        structured_data = await computer_primitives.reason(
-            request="Parse the user's first name, last name, and ID from the text.",
-            context=raw_text,
-            response_format=UserDetails
-        )
-
-        print(f"Welcome, {structured_data.first_name}! Your ID is {structured_data.user_id}.")
-        # Expected Output: Welcome, Jane! Your ID is 4815162342.
-        ```
-
-        Args:
-            request: The core instruction for the LLM (e.g., "Analyze the user's intent.").
-            context: The primary text content to be analyzed.
-            response_format: Optional. A Pydantic model to structure the output. Highly recommended.
-
-        Returns:
-            The processed text or a Pydantic object, depending on `response_format`.
-        """
-        client = new_llm_client(
-            reasoning_effort=None,
-            service_tier=None,
-        )
-        system_message = (
-            f"{request}\n\n"
-            "### CONTEXT\n"
-            "Use the following context, including the provided call stack information, to inform your reasoning.\n\n"
-            f"{context}"
-        )
-        client.set_system_message(system_message)
-
-        # Some providers reject empty user message blocks. We keep content in the system
-        # message above and send a minimal, non-empty user prompt for compatibility.
-        user_prompt = "."
-
-        if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
-            client.set_response_format(response_format)
-            raw_response = await client.generate(user_prompt)
-            return response_format.model_validate_json(raw_response)
-        else:
-            return await client.generate(user_prompt)
 
 
 # =============================================================================

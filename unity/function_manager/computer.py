@@ -90,14 +90,6 @@ class Computer:
             "multi_step method is not yet implemented. Use CodeActActor instead.",
         )
 
-    async def reason(self, query: str) -> str:
-        """
-        Asks a question about the current state of the page/screen.
-        e.g., "What is the title of the page?", "Is there a button with the text 'Submit'?"
-        """
-        # TODO: Implement reasoning logic
-        print("Starting computer reasoning...")
-
     def start_recording(
         self,
         include_video: bool = True,
