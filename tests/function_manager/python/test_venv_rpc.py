@@ -133,9 +133,6 @@ def full_mock_computer_primitives():
     computer.get_content = AsyncMock(
         return_value="<html><body>Page content here</body></html>",
     )
-    computer.reason = AsyncMock(
-        return_value="Based on analysis, the user wants to login",
-    )
     computer.type_text = AsyncMock(return_value="typed text successfully")
     return computer
 
@@ -558,12 +555,6 @@ def crash_subprocess() -> str:
             "async def use_get_content() -> str:\n    return await computer_primitives.get_content()",
             {},
             "<html>",
-        ),
-        (
-            "reason",
-            "async def use_reason(request: str, context: str) -> str:\n    return await computer_primitives.reason(request=request, context=context)",
-            {"request": "Analyze", "context": "User action"},
-            "login",
         ),
     ],
 )
