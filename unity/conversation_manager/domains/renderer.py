@@ -619,7 +619,9 @@ class Renderer:
 
                 is_persistent = handle_data.get("persist", False)
                 mode_attr = " mode='persistent'" if is_persistent else ""
-                action_render = f"<action id='{handle_id}' short_name='{short_name}' status='{status}'{mode_attr}>\n"
+                action_type = handle_data.get("action_type", "act")
+                type_attr = f" type='{action_type}'"
+                action_render = f"<action id='{handle_id}' short_name='{short_name}' status='{status}'{type_attr}{mode_attr}>\n"
                 action_render += f"<original_request>{query}</original_request>\n"
                 if is_persistent:
                     action_render += (
@@ -996,7 +998,8 @@ class Renderer:
                         result = a.get("query", "")
                         break
 
-                out += f"<action id='{handle_id}' short_name='{short_name}' status='completed'>\n"
+                action_type = handle_data.get("action_type", "act")
+                out += f"<action id='{handle_id}' short_name='{short_name}' status='completed' type='{action_type}'>\n"
                 out += f"<original_request>{query}</original_request>\n"
 
                 if result is not None:

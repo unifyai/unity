@@ -314,6 +314,8 @@ class TestActionToolsAsTools:
             "send_email",
             "make_call",
             "act",
+            "ask_about_contacts",
+            "update_contacts",
             "wait",
         }
         assert set(tools.keys()) == expected

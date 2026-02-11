@@ -35,6 +35,12 @@ async def test_act_is_masked_in_demo_mode(initialized_cm):
 
     assert "act" not in tools, "act should be masked in demo mode"
     assert (
+        "ask_about_contacts" not in tools
+    ), "ask_about_contacts should be masked in demo mode"
+    assert (
+        "update_contacts" not in tools
+    ), "update_contacts should be masked in demo mode"
+    assert (
         "set_boss_details" in tools
     ), "set_boss_details should be exposed in demo mode"
 
