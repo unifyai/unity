@@ -2192,6 +2192,7 @@ class CodeActActor(BaseCodeActActor):
             task: str,
             *,
             environment: list[str] | None = None,
+            filter_scope: str | None = None,
             timeout: float | None = None,
             can_compose: bool = True,
             can_store: bool = False,
@@ -2259,6 +2260,14 @@ class CodeActActor(BaseCodeActActor):
 
                 When omitted, the sub-agent receives no prompt-injected
                 functions and relies entirely on FunctionManager discovery.
+            filter_scope : str, optional
+                A boolean filter expression that restricts which functions the
+                sub-agent can discover via FunctionManager search/list/filter
+                (e.g., ``"language == 'python'"`` or
+                ``"'data' in docstring"``).  This is **additive** — it is
+                ANDed with the parent agent's existing filter scope, never
+                replacing it.  Use this to narrow the sub-agent's view of
+                the function library to only what is relevant for the task.
             timeout : float, optional
                 Maximum seconds for the sub-agent to complete. Defaults to half
                 the parent agent's timeout, capped at 300 seconds.
@@ -2285,12 +2294,33 @@ class CodeActActor(BaseCodeActActor):
                 timeout if timeout is not None else min(self._timeout / 2, 300)
             )
 
+            # ── Compose filter_scope (additive: AND with parent's scope) ──
+            inner_fm = self.function_manager
+            if filter_scope and inner_fm is not None:
+                from unity.function_manager.function_manager import (
+                    FunctionManager as _FM,
+                )
+
+                parent_scope = inner_fm.filter_scope
+                if parent_scope:
+                    combined_scope = f"({parent_scope}) and ({filter_scope})"
+                else:
+                    combined_scope = filter_scope
+
+                inner_fm = _FM(
+                    primitive_scope=inner_fm.primitive_scope,
+                    filter_scope=combined_scope,
+                    exclude_primitive_ids=inner_fm.exclude_primitive_ids,
+                    exclude_compositional_ids=inner_fm.exclude_compositional_ids,
+                    include_primitives=inner_fm._include_primitives,
+                )
+
             # ── Build inner actor environments from environment patterns ──
             if environment:
                 inner_envs = _build_sub_agent_environments(
                     environment=environment,
                     parent_environments=self.environments,
-                    function_manager=self.function_manager,
+                    function_manager=inner_fm,
                 )
             else:
                 inner_envs = []
@@ -2298,7 +2328,7 @@ class CodeActActor(BaseCodeActActor):
             # ── Create inner CodeActActor ──
             inner_actor = CodeActActor(
                 environments=inner_envs or [],
-                function_manager=self.function_manager,
+                function_manager=inner_fm,
                 can_compose=bool(can_compose),
                 can_store=bool(can_store),
                 can_spawn_sub_agents=bool(can_spawn_sub_agents),
