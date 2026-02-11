@@ -669,13 +669,13 @@ def test_request_clarification_tool_has_docstring_and_schema_description():
     fn = llmh.make_request_clarification_tool(asyncio.Queue(), asyncio.Queue())
 
     # The inner function should have a docstring.
-    assert fn.__doc__ and fn.__doc__.strip(), (
-        "make_request_clarification_tool returned a function without a docstring"
-    )
+    assert (
+        fn.__doc__ and fn.__doc__.strip()
+    ), "make_request_clarification_tool returned a function without a docstring"
 
     # The schema sent to the LLM should have a non-empty description.
     schema = llmh.method_to_schema(fn, "request_clarification")
     desc = schema["function"]["description"]
-    assert isinstance(desc, str) and desc.strip(), (
-        f"method_to_schema produced an empty description: {desc!r}"
-    )
+    assert (
+        isinstance(desc, str) and desc.strip()
+    ), f"method_to_schema produced an empty description: {desc!r}"

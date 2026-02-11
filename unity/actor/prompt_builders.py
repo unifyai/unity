@@ -344,7 +344,9 @@ def build_code_act_prompt(
 
         sub_agent_block = _SUB_AGENT_GUIDANCE if has_sub_agent else ""
 
-        storage_deferred_block = _STORAGE_DEFERRED_NOTICE if storage_check_on_return else ""
+        storage_deferred_block = (
+            _STORAGE_DEFERRED_NOTICE if storage_check_on_return else ""
+        )
 
         prompt = f"""
 ### Your Role: Code-First Automation Agent
