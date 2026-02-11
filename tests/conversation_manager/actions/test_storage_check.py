@@ -162,9 +162,9 @@ async def test_storage_check_two_phase_relay(initialized_cm):
         "handle",
     ]
     for term in skill_terms:
-        assert term.lower() not in phase1_text.lower(), (
-            f"Phase 1: leaked internal detail '{term}': {phase1_text}"
-        )
+        assert (
+            term.lower() not in phase1_text.lower()
+        ), f"Phase 1: leaked internal detail '{term}': {phase1_text}"
 
     # ── Phase 2: action completes (moved to COMPLETED) ────────────────
     #

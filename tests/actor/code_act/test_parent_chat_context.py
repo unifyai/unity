@@ -89,9 +89,7 @@ async def test_execute_function_forwards_parent_chat_context():
     parent_ctx = [
         {
             "role": "user",
-            "content": (
-                "Can you find Lucy's number? I think her surname is Baker."
-            ),
+            "content": ("Can you find Lucy's number? I think her surname is Baker."),
         },
         {"role": "assistant", "content": "Sure, let me look that up for you."},
     ]
@@ -200,9 +198,7 @@ async def test_execute_code_forwards_parent_chat_context():
     parent_ctx = [
         {
             "role": "user",
-            "content": (
-                "Can you find Lucy's number? I think her surname is Baker."
-            ),
+            "content": ("Can you find Lucy's number? I think her surname is Baker."),
         },
         {"role": "assistant", "content": "Sure, let me look that up for you."},
     ]
@@ -216,9 +212,7 @@ async def test_execute_code_forwards_parent_chat_context():
         )
         await asyncio.wait_for(handle.result(), timeout=90)
 
-        assert len(spy.ask_calls) > 0, (
-            "primitives.contacts.ask was never called"
-        )
+        assert len(spy.ask_calls) > 0, "primitives.contacts.ask was never called"
         assert spy.ask_calls[0]["_parent_chat_context"] is not None, (
             "primitives.contacts.ask was called without _parent_chat_context — "
             "execute_code needs to wrap primitives with ContextForwardingProxy"
@@ -250,7 +244,7 @@ async def test_sandbox_execute_wraps_primitives_via_contextvar():
     token = _PARENT_CHAT_CONTEXT.set(ctx)
     try:
         res = await sb.execute(
-            'await primitives.contacts.ask(text="Lucy number?")'
+            'await primitives.contacts.ask(text="Lucy number?")',
         )
     finally:
         _PARENT_CHAT_CONTEXT.reset(token)
@@ -270,7 +264,7 @@ async def test_sandbox_execute_no_wrap_when_contextvar_unset():
     sb.global_state["primitives"] = MagicMock(contacts=spy)
 
     res = await sb.execute(
-        'await primitives.contacts.ask(text="Lucy number?")'
+        'await primitives.contacts.ask(text="Lucy number?")',
     )
 
     assert res["error"] is None, f"sandbox execution failed: {res['error']}"
@@ -295,6 +289,6 @@ async def test_sandbox_execute_restores_original_primitives():
     finally:
         _PARENT_CHAT_CONTEXT.reset(token)
 
-    assert sb.global_state["primitives"] is original_prims, (
-        "original primitives not restored after execution"
-    )
+    assert (
+        sb.global_state["primitives"] is original_prims
+    ), "original primitives not restored after execution"
