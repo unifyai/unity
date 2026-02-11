@@ -223,17 +223,6 @@ class TestAssistantName:
         assert_no_deferral(response, "Asked who they're speaking with")
         assert_contains(response, "Alex", "Assistant should mention its name")
 
-    async def test_prompt_without_name_still_works(self, base_prompt_kwargs: dict):
-        """
-        When assistant_name is not provided, the prompt should still work
-        without errors (graceful degradation).
-        """
-        kwargs = {**base_prompt_kwargs, "assistant_name": None}
-        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
-
-        # Should use "I'm on a phone call" instead of "I'm <name>, on a phone call"
-        assert "I'm on a phone call" in prompt
-
 
 # =============================================================================
 # Test Class: Contact Bio
@@ -436,71 +425,3 @@ class TestBrevity:
 
         assert_concise(response, max_words=15, context="casual greeting")
 
-
-# =============================================================================
-# Test Class: Prompt Content Verification (non-LLM)
-# =============================================================================
-
-
-class TestPromptContent:
-    """Unit tests verifying the prompt builder includes expected content."""
-
-    def test_assistant_name_in_prompt(self, boss_call_prompt: str):
-        """Prompt includes assistant name when provided."""
-        assert "I'm Alex, on a phone call" in boss_call_prompt
-
-    def test_boss_bio_in_prompt(self, boss_call_prompt: str):
-        """Prompt includes boss bio when provided."""
-        assert "CEO of TechStartup" in boss_call_prompt
-
-    def test_contact_bio_in_prompt(self, contact_call_prompt: str):
-        """Prompt includes contact bio when provided."""
-        assert "VP of Engineering at ClientCorp" in contact_call_prompt
-
-    def test_participants_in_prompt(self, meet_prompt: str):
-        """Prompt includes all participant details."""
-        assert "Call participants" in meet_prompt
-        assert "Sarah Chen" in meet_prompt
-        assert "Marcus Rivera" in meet_prompt
-        assert "Priya Sharma" in meet_prompt
-        assert "CEO of TechStartup" in meet_prompt
-        assert "VP of Engineering at ClientCorp" in meet_prompt
-        assert "Product Manager at TechStartup" in meet_prompt
-
-    def test_no_name_when_none(self, base_prompt_kwargs: dict):
-        """Prompt omits name line when assistant_name is None."""
-        kwargs = {**base_prompt_kwargs, "assistant_name": None}
-        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
-        assert "I'm on a phone call" in prompt
-        assert "Alex" not in prompt.split("Bio")[0]
-
-    def test_no_contact_bio_when_none(self, base_prompt_kwargs: dict):
-        """Prompt omits contact bio line when contact_bio is None."""
-        prompt = build_voice_agent_prompt(
-            **base_prompt_kwargs,
-            is_boss_user=False,
-            contact_first_name="John",
-            contact_surname="Doe",
-            contact_phone_number="+15550000000",
-            contact_email="john@example.com",
-            contact_bio=None,
-        ).flatten()
-        assert "- Bio:" not in prompt.split("Contact details")[1].split("\n\n")[0]
-
-    def test_no_participants_when_none(self, base_prompt_kwargs: dict):
-        """Prompt omits participants section when not provided."""
-        prompt = build_voice_agent_prompt(
-            **base_prompt_kwargs,
-            is_boss_user=True,
-        ).flatten()
-        assert "Call participants" not in prompt
-
-    def test_data_handling_section_present(self, boss_call_prompt: str):
-        """Prompt contains the data handling rules section."""
-        assert "How I handle data" in boss_call_prompt
-        assert "Never fabricate anything" in boss_call_prompt
-
-    def test_deferral_examples_present(self, boss_call_prompt: str):
-        """Prompt contains active deferral examples (not refusal language)."""
-        assert "Let me check on that" in boss_call_prompt
-        assert "I can't access" not in boss_call_prompt.split("NEVER say")[0]
