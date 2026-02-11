@@ -2,18 +2,16 @@
 tests/conversation_manager/test_voice_agent_prompt.py
 =====================================================
 
-Tests for the Voice Agent (fast brain) prompt builder, verifying that the LLM
-can answer questions directly using context provided in the system prompt,
-rather than deferring to the slow brain.
+Tests for the Voice Agent (fast brain) prompt builder.
 
-These tests validate the three context enrichments:
+**Context enrichment tests** verify the LLM can answer questions directly
+using context provided in the system prompt, rather than deferring:
 1. **Assistant name**: The fast brain knows its own name and can introduce itself.
 2. **Contact bio**: The fast brain knows the bio/background of the person on the call.
 3. **Meet participants**: The fast brain knows all participant details in multi-party calls.
 
-Each test builds a voice agent prompt with the relevant context, sends a user
-question to the LLM, and asserts the response answers directly (no deferral
-phrases like "let me check").
+**Brevity tests** (eval) verify the fast brain keeps responses concise —
+short enough for a natural phone conversation, not chatbot-style paragraphs.
 """
 
 from __future__ import annotations
@@ -102,6 +100,24 @@ def assert_contains(response: str, expected: str, context: str = "") -> None:
     """
     assert expected.lower() in response.lower(), (
         f"Expected '{expected}' in response but not found!\n"
+        f"Full response: {response}\n"
+        f"{f'Context: {context}' if context else ''}"
+    )
+
+
+def assert_concise(
+    response: str, max_words: int = 50, context: str = ""
+) -> None:
+    """Assert that the response is concise (phone-call brevity).
+
+    Args:
+        response: The assistant's response text.
+        max_words: Maximum acceptable word count.
+        context: Optional description of what we're testing.
+    """
+    word_count = len(response.split())
+    assert word_count <= max_words, (
+        f"Response too verbose ({word_count} words, max {max_words})!\n"
         f"Full response: {response}\n"
         f"{f'Context: {context}' if context else ''}"
     )
@@ -337,6 +353,69 @@ class TestMeetParticipants:
             "ClientCorp",
             "Should mention Marcus's company from bio",
         )
+
+
+# =============================================================================
+# Test Class: Brevity (eval)
+# =============================================================================
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestBrevity:
+    """Eval tests verifying the fast brain keeps responses concise.
+
+    On a phone call, responses should sound like a person talking — one or two
+    sentences, not a paragraph.  These tests ask questions that typically provoke
+    chatbot-style monologues and assert the response stays short.
+    """
+
+    async def test_tell_me_about_yourself(self, boss_call_prompt: str):
+        """
+        "Tell me a bit about yourself" should get a brief, natural answer —
+        not a feature list or corporate brochure.
+        """
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "Tell me a bit about yourself.",
+        )
+
+        assert_concise(response, max_words=50, context="tell me about yourself")
+
+    async def test_what_can_you_do(self, boss_call_prompt: str):
+        """
+        "What can you do?" should get a conversational one-liner, not an
+        exhaustive capability dump.
+        """
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "So what can you do?",
+        )
+
+        assert_concise(response, max_words=50, context="what can you do")
+
+    async def test_how_can_you_help_me(self, boss_call_prompt: str):
+        """
+        "How can you help me?" — another common trigger for verbose responses.
+        """
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "How can you help me?",
+        )
+
+        assert_concise(response, max_words=50, context="how can you help me")
+
+    async def test_simple_greeting_is_short(self, boss_call_prompt: str):
+        """
+        A casual "hey, how's it going?" should get a brief, warm reply —
+        not a paragraph about the assistant's purpose.
+        """
+        response = await ask_fast_brain(
+            boss_call_prompt,
+            "Hey, how's it going?",
+        )
+
+        assert_concise(response, max_words=30, context="casual greeting")
 
 
 # =============================================================================
