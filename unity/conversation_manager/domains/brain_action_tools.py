@@ -1067,10 +1067,10 @@ class ConversationManagerBrainActionTools:
         if response_format is not None:
             pydantic_response_format = schema_dict_to_pydantic(response_format)
 
-        # Queue the actor invocation. listen_to_operations() ensures
-        # this runs only after managers are initialized.  Queueing is
-        # instant (just a queue.put), so the registration and event
-        # publish below happen before the queued work executes.
+        # Invoke the actor. If managers are already initialized, run
+        # directly so in_flight_actions is populated before we return.
+        # Otherwise queue via listen_to_operations() which defers until
+        # initialization completes.
         cm = self._cm
 
         async def _invoke_actor():
@@ -1109,9 +1109,13 @@ class ConversationManagerBrainActionTools:
                 managers_utils.actor_watch_clarifications(handle_id, handle),
             )
 
-        await managers_utils.queue_operation(_invoke_actor)
         handle_id = _next_handle_id
         _next_handle_id += 1
+
+        if cm.initialized:
+            await _invoke_actor()
+        else:
+            await managers_utils.queue_operation(_invoke_actor)
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
@@ -1188,9 +1192,13 @@ class ConversationManagerBrainActionTools:
                 managers_utils.actor_watch_clarifications(handle_id, handle),
             )
 
-        await managers_utils.queue_operation(_invoke)
         handle_id = _next_handle_id
         _next_handle_id += 1
+
+        if cm.initialized:
+            await _invoke()
+        else:
+            await managers_utils.queue_operation(_invoke)
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
