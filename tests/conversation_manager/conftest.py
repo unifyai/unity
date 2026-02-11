@@ -10,9 +10,11 @@ Uses **direct handler testing** pattern (same as ContactManager tests):
 - Direct state inspection
 - Works reliably with pytest-asyncio
 
-These tests use **real** state managers (ContactManager, TranscriptManager, etc.)
-with only the **Actor** being simulated (SimulatedActor) to avoid computer
-environment dependencies while still testing real database-backed behavior.
+These tests use **simulated** state managers (SimulatedActor,
+SimulatedContactManager, SimulatedTranscriptManager) to avoid real LLM
+calls and computer environment dependencies. The brain tools route
+directly to ContactManager/TranscriptManager (ask_about_contacts,
+update_contacts, query_past_transcripts), so those must also be simulated.
 
 Parallel execution is coordinated using scenario_file_lock (same pattern as
 ContactManager tests) to prevent race conditions when multiple test processes
@@ -113,10 +115,14 @@ TEST_CONTACTS = [
 
 def pytest_configure(config):
     """Configure environment variables before any tests run."""
-    # Only Actor is simulated - all other state managers use real implementations
-    # This avoids computer environment dependencies while testing real DB behavior
+    # Actor, ContactManager, and TranscriptManager are all simulated.
+    # The brain tools route to these managers directly (ask_about_contacts,
+    # update_contacts, query_past_transcripts), so they must be simulated
+    # to avoid real LLM calls and _LoggedHandle wrapping.
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "0"  # Allows pause+resume interactions
+    os.environ["UNITY_CONTACT_IMPL"] = "simulated"
+    os.environ["UNITY_TRANSCRIPT_IMPL"] = "simulated"
 
     # Disable optional managers not needed for conversation manager tests
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
