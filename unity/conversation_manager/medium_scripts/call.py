@@ -65,7 +65,7 @@ class Assistant(Agent):
     """
     TTS Fast Brain - handles real-time conversation independently.
 
-    Uses a lightweight LLM (gpt-5-nano via UnifyLLM adapter) for fast
+    Uses a lightweight LLM (gpt-5-mini via UnifyLLM adapter) for fast
     conversational responses. Routes through unillm.AsyncUnify for local
     caching (CI) and usage tracking.
     Communicates with the Main CM Brain (slow brain) via Unix domain socket IPC.
@@ -163,7 +163,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     # Fast brain LLM - lightweight model for responsive conversation
     # Uses UnifyLLM adapter for local caching (CI) and usage tracking
-    llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="minimal")
+    llm_model = UnifyLLM(model="gpt-5-mini@openai", reasoning_effort="minimal")
 
     # Build Voice Agent prompt (used by both TTS and STS modes)
     from unity.settings import SETTINGS
