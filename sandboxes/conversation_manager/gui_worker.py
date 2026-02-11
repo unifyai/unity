@@ -220,6 +220,7 @@ class _Sender:
     def __init__(self, *, worker_to_ui) -> None:
         self._q = worker_to_ui
         self._dropped_noncritical = 0
+        self._conversation_lines: list[str] | None = None
 
     def send(self, msg: Dict[str, Any], *, critical: bool) -> None:
         try:
@@ -249,14 +250,18 @@ class _Sender:
     def send_lines(self, lines: list[str], *, id: str | None = None) -> None:
         if not lines:
             return
+        cleaned = [str(l) for l in lines if str(l).strip() != ""]
         self.send(
             create_message(
                 MessageType.LINES,
                 id=id,
-                payload={"lines": [str(l) for l in lines if str(l).strip() != ""]},
+                payload={"lines": cleaned},
             ),
             critical=True,
         )
+        buf = self._conversation_lines
+        if buf is not None:
+            buf.extend(cleaned)
 
     def send_error(self, message: str, *, tb: str = "", id: str | None = None) -> None:
         self.send(
@@ -640,6 +645,11 @@ async def _ipc_loop(
         raw_trimmed = (raw or "").strip()
         raw_lower = raw_trimmed.lower()
 
+        if raw_trimmed:
+            buf = sender._conversation_lines
+            if buf is not None:
+                buf.append(f"[you] {raw_trimmed}")
+
         # Config switching is handled here (CommandRouter's config switch is REPL-only).
         if state.awaiting_config_choice:
             choice = raw_lower
@@ -990,6 +1000,8 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
     )
 
     stop_event = asyncio.Event()
+
+    sender._conversation_lines = router.conversation_lines
 
     # Start broker subscriber (app:comms:* and app:actor:*).
     async def _display_callback(line: str) -> None:
