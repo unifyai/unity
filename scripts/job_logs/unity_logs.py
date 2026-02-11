@@ -15,6 +15,7 @@ Environment:
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 import argparse
 import os
@@ -29,7 +30,6 @@ GCP_PROJECT = "responsive-city-458413-a2"
 GKE_CLUSTER = "unity"
 GKE_REGION = "us-central1"
 SHARED_UNIFY_KEY = os.environ["SHARED_UNIFY_KEY"]
-
 
 
 # ─── Colours ─────────────────────────────────────────────────────────────────
@@ -90,10 +90,15 @@ def ensure_gke_credentials():
     """Silently refresh GKE cluster credentials."""
     result = subprocess.run(
         [
-            "gcloud", "container", "clusters", "get-credentials",
+            "gcloud",
+            "container",
+            "clusters",
+            "get-credentials",
             GKE_CLUSTER,
-            "--region", GKE_REGION,
-            "--project", GCP_PROJECT,
+            "--region",
+            GKE_REGION,
+            "--project",
+            GCP_PROJECT,
             "--quiet",
         ],
         capture_output=True,
@@ -178,8 +183,11 @@ def stream_logs(job_name: str, namespace: str):
     try:
         subprocess.run(
             [
-                "kubectl", "logs", f"job/{job_name}",
-                "-n", namespace,
+                "kubectl",
+                "logs",
+                f"job/{job_name}",
+                "-n",
+                namespace,
                 "-f",
                 "--tail=-1",
             ],
@@ -188,11 +196,15 @@ def stream_logs(job_name: str, namespace: str):
     except subprocess.CalledProcessError:
         warn("kubectl could not attach. Retrying in 5s...")
         import time
+
         time.sleep(5)
         subprocess.run(
             [
-                "kubectl", "logs", f"job/{job_name}",
-                "-n", namespace,
+                "kubectl",
+                "logs",
+                f"job/{job_name}",
+                "-n",
+                namespace,
                 "-f",
                 "--tail=-1",
             ],
@@ -206,7 +218,10 @@ def _gcloud_logging_read(log_filter: str):
     """Run gcloud logging read with the given filter."""
     subprocess.run(
         [
-            "gcloud", "logging", "read", log_filter,
+            "gcloud",
+            "logging",
+            "read",
+            log_filter,
             f"--project={GCP_PROJECT}",
             "--freshness=3650d",
             "--limit=100000",
@@ -249,8 +264,16 @@ def main():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--job", required=True, help="Name of the GKE job (e.g. unity-2026-02-10-17-30-53-staging)")
-    parser.add_argument("--namespace", required=True, help="Kubernetes namespace (e.g. staging, production)")
+    parser.add_argument(
+        "--job",
+        required=True,
+        help="Name of the GKE job (e.g. unity-2026-02-10-17-30-53-staging)",
+    )
+    parser.add_argument(
+        "--namespace",
+        required=True,
+        help="Kubernetes namespace (e.g. staging, production)",
+    )
     args = parser.parse_args()
 
     job_name = args.job
