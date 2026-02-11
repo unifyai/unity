@@ -180,9 +180,6 @@ class ActorIntegrationManager:
             f"computer_mode={config.computer_mode}",
         )
 
-        # Step 1: Create ComputerPrimitives
-        # MockComputerBackend is used when computer_mode="mock"
-        # MagnitudeBackend is used when computer_mode="magnitude" (requires agent-service)
         computer_primitives = ComputerPrimitives(
             headless=config.headless,
             computer_mode=config.computer_mode,

@@ -27,6 +27,7 @@ from unity.function_manager.primitives.registry import (
     get_registry,
     _CLASS_PATH_TO_ALIAS,
 )
+from unity.manager_registry import SingletonABCMeta
 
 if TYPE_CHECKING:
     from unity.function_manager.computer import Computer
@@ -54,10 +55,15 @@ DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
 _vm_ready = threading.Event()
 
 
-class ComputerPrimitives:
+class ComputerPrimitives(metaclass=SingletonABCMeta):
     """
     Provides a library of high-level, agentic actions for the Actor.
     Each public method is a tool that the actor can incorporate into its generated code.
+
+    There is exactly one VM and one screen per assistant, so this class is a
+    singleton (via ``SingletonABCMeta`` / ``ManagerRegistry``).  All actors —
+    including nested sub-agents — share the same backend connection.  Call
+    ``ManagerRegistry.clear()`` to reset the singleton (e.g. between tests).
     """
 
     # Methods dynamically created from the backend (single source of truth)
@@ -395,7 +401,9 @@ class Primitives:
         Special handling for 'computer' which is not part of the scoped registry.
         All other names are treated as manager aliases.
         """
-        # Computer primitives are not in the primitives registry
+        # Computer primitives are not in the primitives registry.
+        # ComputerPrimitives uses SingletonABCMeta, so the constructor
+        # returns the shared instance automatically.
         if name == "computer":
             if self._computer is None:
                 self._computer = ComputerPrimitives()
