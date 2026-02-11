@@ -449,6 +449,29 @@ class ToolSurfaceRegistry:
         """Get a single manager spec by alias (includes ComputerPrimitives)."""
         return _MANAGER_BY_ALIAS.get(manager_alias)
 
+    def get_function_id(self, manager_alias: str, method_name: str) -> int:
+        """Compute the stable function_id for a primitive method.
+
+        This returns the same ID that ``collect_primitives`` / ``sync_primitives``
+        store in the ``Functions/Primitives`` database context, without requiring
+        a DB round-trip.
+
+        Args:
+            manager_alias: Canonical manager alias (e.g., ``"contacts"``).
+            method_name: Method name (e.g., ``"ask"``).
+
+        Returns:
+            Stable non-negative integer ID (deterministic, hash-based).
+
+        Raises:
+            ValueError: If *manager_alias* is not a known manager.
+        """
+        spec = _MANAGER_BY_ALIAS.get(manager_alias)
+        if spec is None:
+            raise ValueError(f"Unknown manager alias: {manager_alias!r}")
+        class_name = spec.primitive_class_path.rsplit(".", 1)[-1]
+        return _get_stable_id(class_name, method_name)
+
     def _load_manager_class(self, class_path: str) -> Optional[Type]:
         """Dynamically load a manager class for introspection."""
         if class_path in self._class_cache:

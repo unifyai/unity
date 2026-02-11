@@ -19,6 +19,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    FrozenSet,
     List,
     Literal,
     Optional,
@@ -1640,6 +1641,8 @@ class FunctionManager(BaseFunctionManager):
         *,
         primitive_scope: Optional[PrimitiveScope] = None,
         filter_scope: Optional[str] = None,
+        exclude_primitive_ids: Optional[FrozenSet[int]] = None,
+        exclude_compositional_ids: Optional[FrozenSet[int]] = None,
         include_primitives: bool = True,
         daemon: bool = True,
         file_manager: Optional[LocalFileManager] = None,
@@ -1648,6 +1651,12 @@ class FunctionManager(BaseFunctionManager):
         # Default to all managers if not specified
         self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
         self._filter_scope = filter_scope
+        self._exclude_primitive_ids = (
+            frozenset(exclude_primitive_ids) if exclude_primitive_ids else None
+        )
+        self._exclude_compositional_ids = (
+            frozenset(exclude_compositional_ids) if exclude_compositional_ids else None
+        )
         self._include_primitives = include_primitives
         self._registry = get_registry()
         self._daemon = daemon
@@ -1717,18 +1726,58 @@ class FunctionManager(BaseFunctionManager):
         """A boolean expression permanently applied to all read queries."""
         return self._filter_scope
 
-    def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
-        """Compose *caller_filter* with the instance-level ``_filter_scope``.
+    @property
+    def exclude_primitive_ids(self) -> Optional[FrozenSet[int]]:
+        """Primitive function IDs excluded from ``Functions/Primitives`` queries."""
+        return self._exclude_primitive_ids
 
-        Returns ``None`` when both are absent, meaning "no filter".
+    @property
+    def exclude_compositional_ids(self) -> Optional[FrozenSet[int]]:
+        """Compositional function IDs excluded from ``Functions/Compositional`` queries."""
+        return self._exclude_compositional_ids
+
+    @staticmethod
+    def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
+        """Build a ``function_id != X and ...`` filter clause from a set of IDs.
+
+        Returns ``None`` when *ids* is empty or ``None``.
         """
-        if not self._filter_scope and not caller_filter:
+        if not ids:
             return None
-        if not self._filter_scope:
-            return caller_filter
-        if not caller_filter:
-            return self._filter_scope
-        return f"({caller_filter}) and ({self._filter_scope})"
+        clauses = [f"function_id != {fid}" for fid in sorted(ids)]
+        return " and ".join(clauses)
+
+    def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
+        """Compose *caller_filter* with ``_filter_scope`` and compositional exclusions.
+
+        Returns ``None`` when all parts are absent, meaning "no filter".
+        """
+        parts = [
+            p
+            for p in [
+                caller_filter,
+                self._filter_scope,
+                self._build_id_exclusion(self._exclude_compositional_ids),
+            ]
+            if p
+        ]
+        if not parts:
+            return None
+        if len(parts) == 1:
+            return parts[0]
+        return " and ".join(f"({p})" for p in parts)
+
+    def _scoped_primitive_filter(self) -> str:
+        """Compose ``primitive_row_filter`` with primitive exclusions.
+
+        Always returns a non-empty string (``primitive_row_filter`` never
+        returns empty for valid scopes).
+        """
+        base = self._registry.primitive_row_filter(self._primitive_scope)
+        excl = self._build_id_exclusion(self._exclude_primitive_ids)
+        if not excl:
+            return base
+        return f"({base}) and ({excl})"
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -2600,8 +2649,7 @@ class FunctionManager(BaseFunctionManager):
         """
         entries: Dict[str, Dict[str, Any]] = {}
         try:
-            # Build scoped filter
-            filter_expr = self._registry.primitive_row_filter(self._primitive_scope)
+            filter_expr = self._scoped_primitive_filter()
             logs = unify.get_logs(
                 context=self._primitives_ctx,
                 filter=filter_expr,
@@ -3441,9 +3489,7 @@ class FunctionManager(BaseFunctionManager):
         primitive_logs: list = []
         if self._include_primitives:
             self.sync_primitives()
-            primitive_filter = self._registry.primitive_row_filter(
-                self._primitive_scope,
-            )
+            primitive_filter = self._scoped_primitive_filter()
             primitive_logs = unify.get_logs(
                 context=self._primitives_ctx,
                 filter=primitive_filter,
@@ -3508,9 +3554,13 @@ class FunctionManager(BaseFunctionManager):
         )
         if not logs and self._include_primitives:
             self.sync_primitives()
+            prim_name_filter = f"name == '{function_name}'"
+            prim_filter = (
+                f"({prim_name_filter}) and ({self._scoped_primitive_filter()})"
+            )
             logs = unify.get_logs(
                 context=self._primitives_ctx,
-                filter=f"name == '{function_name}'",
+                filter=prim_filter,
                 limit=1,
                 exclude_fields=list_private_fields(self._primitives_ctx),
             )
@@ -3741,15 +3791,13 @@ class FunctionManager(BaseFunctionManager):
         primitive_rows: List[Dict[str, Any]] = []
         if self._include_primitives:
             self.sync_primitives()
-            # Build primitives filter: combine caller filter with the primitive scope.
-            primitive_scope_filter = self._registry.primitive_row_filter(
-                self._primitive_scope,
-            )
+            # Combine caller filter with the scoped primitive filter (scope + exclusions).
+            primitive_base = self._scoped_primitive_filter()
             prim_filter = normalize_filter_expr(filter)
-            if prim_filter and primitive_scope_filter:
-                prim_filter = f"({prim_filter}) and ({primitive_scope_filter})"
-            elif primitive_scope_filter:
-                prim_filter = primitive_scope_filter
+            if prim_filter:
+                prim_filter = f"({prim_filter}) and ({primitive_base})"
+            else:
+                prim_filter = primitive_base
             primitive_rows = self._get_logs_with_retry(
                 self._primitives_ctx,
                 filter=prim_filter,
@@ -3822,16 +3870,14 @@ class FunctionManager(BaseFunctionManager):
             k=n,
             allowed_fields=allowed_fields,
             unique_id_field="function_id",
-            row_filter=self._filter_scope,
+            row_filter=self._scoped_filter(None),
         )
 
         # Optionally search primitives context.
         primitive_rows: list = []
         if self._include_primitives:
             self.sync_primitives()
-            primitive_filter = self._registry.primitive_row_filter(
-                self._primitive_scope,
-            )
+            primitive_filter = self._scoped_primitive_filter()
             primitive_rows = table_search_top_k(
                 context=self._primitives_ctx,
                 references={"embedding_text": query},
