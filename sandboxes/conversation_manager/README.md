@@ -37,9 +37,10 @@ Configuration persistence:
 
 ### Real-comms mode (`--real-comms`)
 - Comms are **real** (SMS/email/calls) via `CommsManager`
-- Sandbox applies a **confirmation prompt** before any outbound action
+- **REPL**: prompts for Y/N confirmation before each outbound action
+- **GUI**: auto-confirms (the GUI provides its own compose-and-send UX)
 - Requires backend infrastructure + correct session/env configuration
-- **REPL only** (GUI is simulated-only)
+- Use `--auto-confirm` in REPL mode to skip confirmation prompts
 
 ## Computer integration (Mode 3)
 
