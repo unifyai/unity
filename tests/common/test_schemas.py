@@ -175,6 +175,7 @@ def test_model_to_fields_message_schema_complete():
         "content",
         "exchange_id",
         "images",
+        "metadata",
     }
     assert expected_fields <= set(fields.keys())
 
