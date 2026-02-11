@@ -286,6 +286,7 @@ def build_code_act_prompt(
     environments: Mapping[str, "BaseEnvironment"],
     tools: Optional[Dict[str, Callable]] = None,
     storage_check_on_return: bool = False,
+    instructions: Optional[str] = None,
 ) -> str:
     """
     Build the rich system prompt for the CodeActActor.
@@ -348,10 +349,18 @@ def build_code_act_prompt(
             _STORAGE_DEFERRED_NOTICE if storage_check_on_return else ""
         )
 
+        instructions_block = (
+            f"\n### Instructions\n\n"
+            f"You MUST follow these instructions throughout this session:\n\n"
+            f"{instructions}\n"
+            if instructions
+            else ""
+        )
+
         prompt = f"""
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
-
+{instructions_block}
 {critical_rules}
 
 ### Primary Execution & Session Tools
@@ -392,10 +401,18 @@ They are the only supported way to run Python/shell code and manage sessions.
             render_tools_block=render_tools_block,
         )
 
+        instructions_block = (
+            f"\n### Instructions\n\n"
+            f"You MUST follow these instructions throughout this session:\n\n"
+            f"{instructions}\n"
+            if instructions
+            else ""
+        )
+
         prompt = f"""
 ### Your Role: Function Execution Agent
 {role_line} {capabilities_line}
-
+{instructions_block}
 ### Workflow
 1. **Discover** stored functions using `FunctionManager_search_functions`,
    `FunctionManager_filter_functions`, or `FunctionManager_list_functions`.

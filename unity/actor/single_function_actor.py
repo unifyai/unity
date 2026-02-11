@@ -645,6 +645,7 @@ class SingleFunctionActor(BaseActor):
         docstring: Optional[str],
         description: str,
         parent_chat_context: list[dict] | None = None,
+        instructions: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Use an LLM to generate keyword arguments for a function call.
 
@@ -659,12 +660,13 @@ class SingleFunctionActor(BaseActor):
             docstring: The function's docstring.
             description: The user's natural-language description / query.
             parent_chat_context: Optional conversation history for additional context.
+            instructions: Optional meta-guidance on how to approach argument generation.
 
         Returns:
             A dictionary of keyword arguments to pass to the function.
         """
         client = new_llm_client()
-        client.set_system_message(
+        system_msg = (
             "You are an argument-generation assistant. Given a function's signature, "
             "docstring, and the user's natural-language request, produce the keyword "
             "arguments that should be passed to the function.\n\n"
@@ -675,8 +677,11 @@ class SingleFunctionActor(BaseActor):
             "- If the function takes a single string parameter (e.g. `query`, `goal`, "
             "`description`, `message`, `prompt`, `question`, `text`, `input`), "
             "pass the user's full description as that parameter.\n"
-            "- Return an empty dict {} if the function takes no arguments.",
+            "- Return an empty dict {} if the function takes no arguments."
         )
+        if instructions:
+            system_msg += f"\n\nAdditional instructions to follow:\n{instructions}"
+        client.set_system_message(system_msg)
 
         prompt_parts = [f"## Function: `{function_name}`"]
 
@@ -740,6 +745,7 @@ class SingleFunctionActor(BaseActor):
         self,
         description: Optional[str] = None,
         *,
+        instructions: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         function_id: Optional[int] = None,
@@ -760,6 +766,9 @@ class SingleFunctionActor(BaseActor):
                         Also used for LLM-based argument generation when ``call_kwargs``
                         is not explicitly provided.
                         Required when neither function_id nor primitive_name is specified.
+            instructions: Optional meta-guidance on *how* to approach the task, as
+                opposed to *what* to do. When provided, these are included in the
+                LLM context for argument generation and verification steps.
             function_id: Optional explicit function ID to execute.
                         If provided, skips the search step.
             primitive_name: Optional explicit primitive name (e.g., 'ContactManager.ask').
@@ -887,6 +896,7 @@ class SingleFunctionActor(BaseActor):
                 docstring=docstring,
                 description=description,
                 parent_chat_context=_parent_chat_context,
+                instructions=instructions,
             )
             logger.info(
                 f"SingleFunctionActor: Generated call_kwargs for '{function_name}': "
