@@ -316,6 +316,7 @@ class TestActionToolsAsTools:
             "act",
             "ask_about_contacts",
             "update_contacts",
+            "query_past_transcripts",
             "wait",
         }
         assert set(tools.keys()) == expected

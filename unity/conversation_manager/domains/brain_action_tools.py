@@ -1124,15 +1124,16 @@ class ConversationManagerBrainActionTools:
 
         return {"status": "acting", "query": query}
 
-    async def _invoke_contact_action(
+    async def _invoke_manager_action(
         self,
         *,
+        manager: Any,
+        method_name: str,
         text: str,
         action_type: str,
-        contact_method: str,
         response_format: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Shared lifecycle for ask_about_contacts / update_contacts.
+        """Shared lifecycle for direct manager tools (contact and transcript actions).
 
         Follows the same pattern as ``act``: queue invocation, store handle in
         ``in_flight_actions``, spawn watcher tasks, publish started event.
@@ -1152,7 +1153,7 @@ class ConversationManagerBrainActionTools:
         cm = self._cm
 
         async def _invoke():
-            method = getattr(cm.contact_manager, contact_method)
+            method = getattr(manager, method_name)
             handle = await method(
                 text,
                 response_format=pydantic_response_format,
@@ -1237,10 +1238,11 @@ class ConversationManagerBrainActionTools:
                 single-element lists for arrays. When omitted, a free-form text
                 answer is returned.
         """
-        return await self._invoke_contact_action(
+        return await self._invoke_manager_action(
+            manager=self._cm.contact_manager,
+            method_name="ask",
             text=text,
             action_type="ask_about_contacts",
-            contact_method="ask",
             response_format=response_format,
         )
 
@@ -1274,10 +1276,53 @@ class ConversationManagerBrainActionTools:
                 ``response_format``. When omitted, a free-form text summary of
                 the mutation is returned.
         """
-        return await self._invoke_contact_action(
+        return await self._invoke_manager_action(
+            manager=self._cm.contact_manager,
+            method_name="update",
             text=text,
             action_type="update_contacts",
-            contact_method="update",
+            response_format=response_format,
+        )
+
+    async def query_past_transcripts(
+        self,
+        *,
+        text: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Search and analyse past messages and conversation history directly.
+
+        This is a **direct channel** to the transcript store, bypassing the
+        general ``act`` pathway. Use it for any purely transcript-related
+        questions:
+
+        - Retrieving recent messages from a specific contact or channel
+        - Searching past conversations for a keyword or topic
+        - Summarising what was discussed in a previous exchange
+        - Checking what someone said or when they last messaged
+        - Comparing or filtering messages by date, medium, or sender
+
+        **Route here instead of ``act`` when the question is purely about
+        past messages or conversation history.** If the question also involves
+        non-transcript information (contacts, knowledge, tasks, web, files,
+        etc.) or requires cross-domain reasoning, use ``act`` instead.
+
+        Args:
+            text: Natural language question about past transcripts
+                (e.g. "What did Bob say about the deadline yesterday?").
+            response_format: Optional structured schema describing the shape of
+                the result you need back. Same format as ``act``'s
+                ``response_format`` — keys are field names, values are type
+                strings (``"string"``, ``"integer"``, etc.), nested dicts, or
+                single-element lists for arrays. When omitted, a free-form text
+                answer is returned.
+        """
+        return await self._invoke_manager_action(
+            manager=self._cm.transcript_manager,
+            method_name="ask",
+            text=text,
+            action_type="query_past_transcripts",
             response_format=response_format,
         )
 
@@ -1358,6 +1403,7 @@ class ConversationManagerBrainActionTools:
             tools["act"] = self.act
             tools["ask_about_contacts"] = self.ask_about_contacts
             tools["update_contacts"] = self.update_contacts
+            tools["query_past_transcripts"] = self.query_past_transcripts
         return tools
 
     def build_action_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
