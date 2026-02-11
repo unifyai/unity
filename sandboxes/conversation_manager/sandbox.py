@@ -581,12 +581,7 @@ async def _main_async() -> None:
                     "agent_server_url",
                     "http://localhost:3000",
                 ),
-                require_agent_service_running=(
-                    not (
-                        bool(getattr(args, "gui", False))
-                        and (not bool(getattr(args, "real_comms", False)))
-                    )
-                ),
+                require_agent_service_running=(not bool(getattr(args, "gui", False))),
             )
             if vr.ok:
                 break
