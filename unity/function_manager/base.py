@@ -394,8 +394,7 @@ class BaseFunctionManager(BaseStateManager):
         session_id: int = 0,
         venv_pool: Optional[Any] = None,
         shell_pool: Optional[Any] = None,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute a stored function by name with optional venv and state mode overrides.
@@ -411,8 +410,7 @@ class BaseFunctionManager(BaseStateManager):
             session_id: int = 0,
             venv_pool: VenvPool | None = None,
             shell_pool: ShellPool | None = None,
-            primitives: Any | None = None,
-            computer_primitives: Any | None = None,
+            extra_namespaces: dict[str, Any] | None = None,
         ) -> dict[str, Any]
 
         Parameters
@@ -466,10 +464,12 @@ class BaseFunctionManager(BaseStateManager):
             The ShellPool instance for stateful shell execution. Required when
             ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
             is a shell script. If not provided for these modes, an error is raised.
-        primitives : Any | None, default ``None``
-            The Primitives instance for RPC access to state managers.
-        computer_primitives : Any | None, default ``None``
-            The ComputerPrimitives instance for web/desktop RPC access.
+        extra_namespaces : dict[str, Any] | None, default ``None``
+            Named objects to inject into the function's execution namespace.
+            For in-process Python execution, all entries are injected into the
+            globals dict. For venv/subprocess execution, ``"primitives"`` and
+            ``"computer_primitives"`` entries are bridged via RPC; other entries
+            are only available in-process.
 
         Returns
         -------
@@ -504,10 +504,10 @@ class BaseFunctionManager(BaseStateManager):
         ...     shell_pool=shell_pool,
         ... )
 
-        >>> # Execute statelessly - fresh environment every time
+        >>> # Execute with extra namespaces (e.g. sub-agent environment)
         >>> result = await fm.execute_function(
-        ...     function_name="pure_func",
-        ...     state_mode="stateless",
+        ...     function_name="my_func",
+        ...     extra_namespaces={"primitives": prims, "sub_agents": agent_env},
         ... )
         """
 

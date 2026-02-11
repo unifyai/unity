@@ -160,7 +160,7 @@ async def test_execute_function_with_primitives_default_env(
     result = await fm.execute_function(
         function_name="ask_contacts",
         call_kwargs={"question": "Who is Alice?"},
-        primitives=mock_primitives,
+        extra_namespaces={"primitives": mock_primitives},
     )
 
     assert result["error"] is None, f"Unexpected error: {result['error']}"
