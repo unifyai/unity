@@ -721,11 +721,11 @@ async def update_session_contacts(
 
     # In demo mode:
     # - Skip updating boss contact (contact_id=1) - prospect details come from Orchestra meta
-    # - Create/update demoer contact (contact_id=2) with user_* fields
+    # - Update demoer contact (contact_id=2) with user_* fields (initially created in _init_managers)
     if SETTINGS.DEMO_MODE:
         print(
             "[ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
-            "creating demoer contact (contact_id=2)"
+            "updating demoer contact (contact_id=2)"
         )
         user_first_name, user_last_name = _get_name_parts(user_name)
         await _update_contact(
@@ -946,7 +946,6 @@ def _init_managers(
     # and set_boss_details to update their record.
     if SETTINGS.DEMO_MODE:
         # Ensure boss (contact_id=1) is visible in active conversations for the brain
-        # (demoer contact_id=2 is created via update_session_contacts when StartupEvent is received)
         cm.contact_index.get_or_create_conversation(1)
         # If we have a demo_id, fetch prospect details from Orchestra and apply
         # them to the boss contact (contact_id=1)
@@ -971,6 +970,24 @@ def _init_managers(
                 print(
                     f"[ManagersWorker] Failed to fetch/apply demo prospect details: {e}"
                 )
+
+        # Create demoer contact (contact_id=2) with the user's details
+        # In demo mode, SESSION_DETAILS.user contains the demoer's info
+        # Note: We don't add to active_conversations as the demoer isn't someone
+        # the assistant would typically interact with (call/email)
+        try:
+            demoer_first = SESSION_DETAILS.user.name.split(" ")[0] if SESSION_DETAILS.user.name else ""
+            demoer_last = " ".join(SESSION_DETAILS.user.name.split(" ")[1:]) if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name else ""
+            cm.contact_manager.update_contact(
+                contact_id=2,
+                first_name=demoer_first,
+                surname=demoer_last,
+                phone_number=SESSION_DETAILS.user.phone or "",
+                email_address=SESSION_DETAILS.user.email or "",
+            )
+            print(f"[ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}")
+        except Exception as e:
+            print(f"[ManagersWorker] Failed to create demoer contact: {e}")
     print(
         f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",

@@ -39,8 +39,12 @@ class DemoProspectDetails:
 
 
 def _get_api_key() -> Optional[str]:
-    """Get the admin API key for Orchestra calls."""
-    return os.getenv("ORCHESTRA_ADMIN_KEY")
+    """Get an API key for Orchestra calls."""
+    try:
+        from unity.conversation_manager.domains.managers_utils import SESSION_DETAILS
+        return SESSION_DETAILS.unify_key
+    except Exception:
+        return None
 
 
 def _get_base_url() -> str:
@@ -60,7 +64,7 @@ async def fetch_demo_meta(demo_id: int) -> Optional[DemoProspectDetails]:
     """
     api_key = _get_api_key()
     if not api_key:
-        logger.warning("ORCHESTRA_ADMIN_KEY not set, cannot fetch demo metadata")
+        logger.warning("No API key available (ORCHESTRA_ADMIN_KEY or session key), cannot fetch demo metadata")
         return None
 
     base_url = _get_base_url()
@@ -85,11 +89,13 @@ async def fetch_demo_meta(demo_id: int) -> Optional[DemoProspectDetails]:
                 return None
 
             data = response.json()
+            # Orchestra wraps responses in {"info": {...}} - extract the inner data
+            info = data.get("info", data) if isinstance(data, dict) else data
             return DemoProspectDetails(
-                first_name=data.get("prospect_first_name"),
-                surname=data.get("prospect_surname"),
-                email=data.get("prospect_email"),
-                phone=data.get("prospect_phone"),
+                first_name=info.get("prospect_first_name"),
+                surname=info.get("prospect_surname"),
+                email=info.get("prospect_email"),
+                phone=info.get("prospect_phone"),
             )
 
     except httpx.TimeoutException:
