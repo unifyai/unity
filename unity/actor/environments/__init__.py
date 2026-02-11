@@ -13,6 +13,7 @@ from typing import Any, Dict
 
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
 from unity.actor.environments.computer import ComputerEnvironment
+from unity.actor.environments.function_store import FunctionStoreEnvironment
 from unity.actor.environments.state_managers import StateManagerEnvironment
 from unity.function_manager.primitives.registry import get_registry
 
@@ -92,6 +93,7 @@ __all__ = [
     "BaseEnvironment",
     "ToolMetadata",
     "ComputerEnvironment",
+    "FunctionStoreEnvironment",
     "StateManagerEnvironment",
     "create_env",
 ]
