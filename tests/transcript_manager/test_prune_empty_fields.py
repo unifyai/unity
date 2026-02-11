@@ -57,14 +57,18 @@ def test_json_omits_empty_fields():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_search_tool_omits_empty(static_now):
+async def test_ask_search_tool_omits_empty(static_now, monkeypatch):
     """
     Real tool-loop: TM.ask triggers search_messages on first step. Verify the
     tool result inserted into the transcript does not expose empty fields like
     images: [] or screen_share: {} to the LLM.
     """
     import json
+    from unity.settings import SETTINGS
     from unity.transcript_manager.transcript_manager import TranscriptManager
+
+    # Force search_messages on the first step so the assertion below is deterministic
+    monkeypatch.setattr(SETTINGS, "FIRST_ASK_TOOL_IS_SEARCH", True)
     from unity.transcript_manager.types.message import Message
 
     tm = TranscriptManager()
