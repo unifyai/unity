@@ -52,6 +52,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ) -> None:
         self._llm = llm
         self._initial_text = initial_text
@@ -100,6 +101,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._paused = False
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        self._init_completion_gate(hold_completion)
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API required by SteerableToolHandle
@@ -337,6 +340,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Optional: customise how the SimulatedActor is constructed per execute()
         actor_factory: Optional[Callable[..., Any]] = None,
         actor_steps: Optional[int] = None,
@@ -345,6 +349,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         **kwargs: Any,
     ) -> None:
         self._description = description
+        self._hold_completion = hold_completion
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
@@ -452,6 +457,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
             actor_factory=getattr(self, "_actor_factory", None),
             actor_steps=getattr(self, "_actor_steps", None),
             actor_duration=getattr(self, "_actor_duration", None),
@@ -500,6 +506,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -550,6 +557,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Tool-style scheduled log (only when no parent lineage)

@@ -202,6 +202,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -223,6 +224,8 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._log_label = SimulatedLineage.make_label(
             f"SimulatedContactManager.{self._mode}",
         )
+
+        self._init_completion_gate(hold_completion)
 
         if self._needs_clar:
             try:
@@ -316,6 +319,8 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            # Await the completion gate (no-op when hold_completion=False).
+            await self._await_completion_gate()
             self._done.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -357,6 +362,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         """
         self._log_stop(reason)
         self._cancelled = True
+        self._open_completion_gate()
         try:
             self._cancel_event.set()
         except Exception:
@@ -378,7 +384,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         return "Resumed."
 
     def done(self) -> bool:  # type: ignore[override]
-        return self._done.is_set()
+        return self._done.is_set() and self._gate_open
 
     async def ask(
         self,
@@ -489,6 +495,7 @@ class SimulatedContactManager(BaseContactManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
@@ -497,6 +504,7 @@ class SimulatedContactManager(BaseContactManager):
         self._log_events = log_events
         self._simulation_guidance = simulation_guidance
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        self._hold_completion = hold_completion
 
         # ─────────────────────────────────────────────────────────────────────
         # Internal contact store for deterministic state tracking
@@ -737,6 +745,7 @@ class SimulatedContactManager(BaseContactManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -792,6 +801,7 @@ class SimulatedContactManager(BaseContactManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Tool-style scheduled log (only when no parent lineage)

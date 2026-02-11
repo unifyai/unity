@@ -53,6 +53,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -100,6 +101,8 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._paused = False
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        self._init_completion_gate(hold_completion)
 
     # --------------------------------------------------------------------- #
     # SteerableToolHandle API
@@ -166,6 +169,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done_event.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -520,6 +524,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         if should_log and call_id is not None:
@@ -585,6 +590,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         if should_log and call_id is not None:
@@ -619,6 +625,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
         )
         if sched:
             label, cid, t0 = sched

@@ -329,6 +329,7 @@ class SimulatedFileManager(BaseFileManager):
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        self._hold_completion = hold_completion
         # In-memory storage for simulated files
         self._files: Dict[str, Dict[str, Any]] = {}
         # Track protected files by display name (read-only from simulated API)
@@ -499,6 +500,7 @@ class SimulatedFileManager(BaseFileManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
         return handle
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
+import threading
 from typing import Any, Dict, List, Tuple
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -372,9 +374,65 @@ async def simulated_llm_roundtrip(
 
 
 class SimulatedHandleMixin:
-    """Lightweight mixin to standardise steering logs for simulated handles."""
+    """Lightweight mixin to standardise steering logs for simulated handles.
+
+    Provides an optional **completion gate**: when ``hold_completion=True`` is
+    passed to :meth:`_init_completion_gate`, the handle's ``result()`` blocks
+    (and ``done()`` returns ``False``) until :meth:`trigger_completion` is
+    called externally.  This enables deterministic test control over handle
+    lifetimes without relying on timing.
+    """
 
     # Derived classes are expected to set: self._log_label : str
+
+    # ── Completion gate ──────────────────────────────────────────────────
+    _completion_gate: "threading.Event | None" = None
+
+    def _init_completion_gate(self, hold_completion: bool = False) -> None:
+        """Set up the optional completion gate.
+
+        Args:
+            hold_completion: When ``True``, the gate starts *closed* and
+                ``result()`` / ``done()`` will block until
+                :meth:`trigger_completion` is called.  When ``False``
+                (the default), no gate is created and behaviour is
+                unchanged from the pre-gate era.
+        """
+        import threading as _threading  # noqa: WPS433
+
+        if hold_completion:
+            self._completion_gate = _threading.Event()
+        else:
+            self._completion_gate = None
+
+    async def _await_completion_gate(self) -> None:
+        """Block (async-friendly) until the completion gate is open."""
+        gate = self._completion_gate
+        if gate is None:
+            return
+        while not gate.is_set():
+            await asyncio.sleep(0.05)
+
+    def _open_completion_gate(self) -> None:
+        """Open the gate, unblocking any waiters."""
+        gate = self._completion_gate
+        if gate is not None:
+            gate.set()
+
+    @property
+    def _gate_open(self) -> bool:
+        """``True`` when the gate is open (or absent)."""
+        return self._completion_gate is None or self._completion_gate.is_set()
+
+    def trigger_completion(self, result: str | None = None) -> None:
+        """Release the completion gate so ``result()`` can return.
+
+        Subclasses (e.g. ``SimulatedActorHandle``) may extend this to
+        also finalise internal state.
+        """
+        self._open_completion_gate()
+
+    # ── Steering logs ────────────────────────────────────────────────────
 
     def _log_interject(self, message: str) -> None:
         try:
