@@ -235,12 +235,15 @@ async def test_storage_check_on_return_stores_discovered_function():
     execute code, then run a storage-check loop that reviews the trajectory
     and stores reusable functions via FunctionManager_add_functions.
     result() blocks until both phases complete.
+
+    The function must be complex enough that the librarian LLM consistently
+    judges it as worth storing (non-trivial logic, validation, edge cases).
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"format_contact_card": "added"})
+    fm.add_functions = MagicMock(return_value={"parse_and_validate_contacts": "added"})
 
     actor = CodeActActor(
         function_manager=fm,
@@ -250,12 +253,17 @@ async def test_storage_check_on_return_stores_discovered_function():
     )
     try:
         handle = await actor.act(
-            "Write a general-purpose Python function called `format_contact_card` "
-            "that takes `name` (str), `email` (str), and `phone` (str, optional, default None) "
-            "and returns a formatted multi-line string card like:\n"
-            "  Name: Alice\n  Email: alice@example.com\n  Phone: 555-1234\n"
-            "If phone is None, omit the Phone line. "
-            "Execute it with name='Alice', email='alice@example.com', phone='555-1234' to verify.",
+            "Write a reusable Python function called `parse_and_validate_contacts` that:\n"
+            "1. Takes a list of dicts, each with optional keys: name, email, phone, company\n"
+            "2. Validates each entry: name must be non-empty string, email must contain '@',\n"
+            "   phone (if present) must be digits/dashes/spaces only and at least 7 chars\n"
+            "3. Returns a dict with keys:\n"
+            "   - 'valid': list of cleaned entries (strip whitespace, normalize phone to digits-only)\n"
+            "   - 'invalid': list of (index, entry, errors) tuples describing validation failures\n"
+            "   - 'stats': dict with counts of total, valid, invalid, and entries_with_company\n"
+            "4. Handle edge cases: None inputs, empty lists, entries that are not dicts\n\n"
+            "Test it with a mixed list of 5 entries including at least 2 invalid ones "
+            "and verify the stats are correct.",
             storage_check_on_return=True,
             persist=False,
             clarification_enabled=False,
@@ -269,8 +277,8 @@ async def test_storage_check_on_return_stores_discovered_function():
         call_kwargs = fm.add_functions.call_args.kwargs
         impl = str(call_kwargs.get("implementations", ""))
         assert (
-            "format_contact_card" in impl
-        ), f"Expected 'format_contact_card' in stored implementation, got: {impl}"
+            "parse_and_validate_contacts" in impl
+        ), f"Expected 'parse_and_validate_contacts' in stored implementation, got: {impl}"
     finally:
         try:
             await actor.close()
