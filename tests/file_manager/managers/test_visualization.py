@@ -16,12 +16,11 @@ import re
 import pytest
 
 from unity.file_manager.simulated import SimulatedFileManager
-from unity.file_manager.managers.utils.viz_utils import (
-    PlotType,
+from unity.data_manager.ops.plot_ops import (
     PlotConfig,
     PlotResult,
-    build_plot_config_dict,
-    build_project_config_dict,
+    _build_plot_config_dict,
+    _build_project_config_dict,
 )
 from unity.common.llm_helpers import _dumps
 from unity.common.llm_client import new_llm_client
@@ -130,19 +129,8 @@ def simulated_file_manager():
 
 
 # =============================================================================
-# UNIT TESTS: viz_utils.py
+# UNIT TESTS: plot_ops.py
 # =============================================================================
-
-
-class TestPlotType:
-    """Tests for PlotType enum."""
-
-    def test_plot_type_values(self):
-        """Verify all expected plot types exist."""
-        assert PlotType.BAR.value == "bar"
-        assert PlotType.LINE.value == "line"
-        assert PlotType.SCATTER.value == "scatter"
-        assert PlotType.HISTOGRAM.value == "histogram"
 
 
 class TestPlotConfig:
@@ -216,12 +204,12 @@ class TestPlotResult:
 
 
 class TestBuildPlotConfigDict:
-    """Tests for build_plot_config_dict function."""
+    """Tests for _build_plot_config_dict function."""
 
     def test_minimal_config(self):
         """Build dict with minimal config."""
         config = PlotConfig(plot_type="bar", x_axis="Category")
-        d = build_plot_config_dict(config)
+        d = _build_plot_config_dict(config)
         assert d["type"] == "bar"
         assert d["x_axis"] == "Category"
         assert "y_axis" not in d
@@ -236,7 +224,7 @@ class TestBuildPlotConfigDict:
             metric="mean",
             show_regression=True,
         )
-        d = build_plot_config_dict(config)
+        d = _build_plot_config_dict(config)
         assert d["type"] == "scatter"
         assert d["x_axis"] == "X"
         assert d["y_axis"] == "Y"
@@ -246,11 +234,11 @@ class TestBuildPlotConfigDict:
 
 
 class TestBuildProjectConfigDict:
-    """Tests for build_project_config_dict function."""
+    """Tests for _build_project_config_dict function."""
 
     def test_minimal_config(self):
         """Build project config with minimal required fields."""
-        d = build_project_config_dict(
+        d = _build_project_config_dict(
             project_name="TestProject",
             context="DefaultUser/Assistant/Files/Local/test",
         )
@@ -263,7 +251,7 @@ class TestBuildProjectConfigDict:
 
     def test_with_filter(self):
         """Build project config with filter expression."""
-        d = build_project_config_dict(
+        d = _build_project_config_dict(
             project_name="TestProject",
             context="DefaultUser/Assistant/Files/Local/test",
             filter_expr="status == 'active'",
@@ -272,7 +260,7 @@ class TestBuildProjectConfigDict:
 
     def test_with_randomize(self):
         """Build project config with randomize enabled."""
-        d = build_project_config_dict(
+        d = _build_project_config_dict(
             project_name="TestProject",
             context="DefaultUser/Assistant/Files/Local/test",
             randomize=True,
@@ -281,7 +269,7 @@ class TestBuildProjectConfigDict:
 
     def test_with_exclude_fields(self):
         """Build project config with excluded fields."""
-        d = build_project_config_dict(
+        d = _build_project_config_dict(
             project_name="TestProject",
             context="DefaultUser/Assistant/Files/Local/test",
             exclude_fields=["password", "secret"],
@@ -290,7 +278,7 @@ class TestBuildProjectConfigDict:
 
     def test_with_group_by(self):
         """Build project config with group_by column."""
-        d = build_project_config_dict(
+        d = _build_project_config_dict(
             project_name="TestProject",
             context="DefaultUser/Assistant/Files/Local/test",
             group_by="category",
@@ -299,7 +287,7 @@ class TestBuildProjectConfigDict:
 
     def test_full_config(self):
         """Build project config with all fields."""
-        d = build_project_config_dict(
+        d = _build_project_config_dict(
             project_name="TestProject",
             context="DefaultUser/Assistant/Files/Local/test",
             filter_expr="status == 'active'",
@@ -638,8 +626,8 @@ def test_real_visualize_single_table(file_manager, tmp_path):
     # For now, we just verify the method exists and has the right signature.
     fm = file_manager
     assert hasattr(fm, "visualize")
-    # Check that the method is in the ask tools
-    tools = fm.get_tools("ask")
+    # Check that the method is in the ask_about_file tools
+    tools = fm.get_tools("ask_about_file")
     tool_names = list(tools.keys())
     assert any("visualize" in name for name in tool_names)
 

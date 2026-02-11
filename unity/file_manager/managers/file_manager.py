@@ -1054,9 +1054,6 @@ class FileManager(BaseFileManager):
         bin_count: Optional[int] = None,
         show_regression: Optional[bool] = None,
     ) -> Union["_VizPlotResult", List["_VizPlotResult"]]:
-        # Import DataManager types for compatibility
-        from unity.data_manager.types import PlotConfig as DMPlotConfig
-
         # Normalize tables to list
         table_list: List[str] = []
         if isinstance(tables, str):
@@ -1082,24 +1079,31 @@ class FileManager(BaseFileManager):
                     table=tbl,
                 )
 
-        # Build plot config using DataManager types
-        dm_config = DMPlotConfig(
+        # Delegate to DataManager for plot generation.
+        # plot_batch expects individual kwargs (x, y, ...) not a config object.
+        # Note: DataManager uses "x"/"y" while FileManager uses "x_axis"/"y_axis".
+        plot_kwargs: dict = dict(
             plot_type=plot_type,
-            x_axis=x_axis,
-            y_axis=y_axis,
+            x=x_axis,
+            y=y_axis,
             group_by=group_by,
-            metric=metric,
             aggregate=aggregate,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            bin_count=bin_count,
-            show_regression=show_regression,
-            title=title,
             filter=filter,
+            title=title,
         )
+        # Pass optional kwargs only when set (they go through **kwargs)
+        if metric is not None:
+            plot_kwargs["metric"] = metric
+        if scale_x is not None:
+            plot_kwargs["scale_x"] = scale_x
+        if scale_y is not None:
+            plot_kwargs["scale_y"] = scale_y
+        if bin_count is not None:
+            plot_kwargs["bin_count"] = bin_count
+        if show_regression is not None:
+            plot_kwargs["show_regression"] = show_regression
 
-        # Delegate to DataManager for plot generation
-        dm_results = self._data_manager.plot_batch(contexts=contexts, config=dm_config)
+        dm_results = self._data_manager.plot_batch(contexts=contexts, **plot_kwargs)
 
         # Convert DataManager results to FileManager result type for backward compat
         results: List[_VizPlotResult] = []
