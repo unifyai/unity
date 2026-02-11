@@ -69,7 +69,7 @@ async def test_execute_function_primitive_async(function_manager_factory):
     result = await fm.execute_function(
         function_name="primitives.contacts.ask",
         call_kwargs={"text": "Who is Alice?"},
-        primitives=mock_primitives,
+        extra_namespaces={"primitives": mock_primitives},
     )
 
     # Primitive returns the raw result, not a dict envelope.
@@ -91,7 +91,7 @@ async def test_execute_function_primitive_sync(function_manager_factory):
     result = await fm.execute_function(
         function_name="primitives.knowledge.ask",
         call_kwargs={"text": "What colour is the sky?"},
-        primitives=mock_primitives,
+        extra_namespaces={"primitives": mock_primitives},
     )
 
     assert result == "The sky is blue"
@@ -153,7 +153,7 @@ async def test_execute_function_primitive_returns_handle(function_manager_factor
     result = await fm.execute_function(
         function_name="primitives.contacts.ask",
         call_kwargs={"text": "Find Bob"},
-        primitives=mock_primitives,
+        extra_namespaces={"primitives": mock_primitives},
     )
 
     # The raw handle must flow through, not a serialized dict.
@@ -188,7 +188,7 @@ async def test_execute_primitive_forwards_parent_chat_context(function_manager_f
     result = await fm.execute_function(
         function_name="primitives.contacts.ask",
         call_kwargs={"text": "Who is Alice?"},
-        primitives=mock_primitives,
+        extra_namespaces={"primitives": mock_primitives},
         _parent_chat_context=parent_ctx,
     )
 
@@ -211,7 +211,7 @@ async def test_execute_function_primitive_no_kwargs(function_manager_factory):
     result = await fm.execute_function(
         function_name="primitives.knowledge.ask",
         # No call_kwargs provided
-        primitives=mock_primitives,
+        extra_namespaces={"primitives": mock_primitives},
     )
 
     assert result == "All knowledge tables"

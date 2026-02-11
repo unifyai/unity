@@ -632,8 +632,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         state_mode: str = "stateless",
         session_id: int = 0,
         venv_pool: Optional[Any] = None,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         sched = maybe_tool_log_scheduled(

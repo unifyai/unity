@@ -1121,15 +1121,21 @@ class _InProcessFunctionProxy:
                 result = await result
             return result
 
-        # For stateless and read_only, use execute_function with appropriate mode
+        # For stateless and read_only, use execute_function with appropriate
+        # mode. Forward environment namespace objects (primitives, etc.) but
+        # NOT user-defined state variables -- those are managed by state_mode.
+        proxy_ns: Dict[str, Any] = {}
+        for key in ("primitives", "computer_primitives"):
+            val = self._namespace.get(key)
+            if val is not None:
+                proxy_ns[key] = val
         result = await self._function_manager.execute_function(
             function_name=self.__name__,
             call_kwargs=kwargs,
             target_venv_id=None,  # Force in-process execution
             state_mode=state_mode,
             session_id=0,  # Default session for read_only state source
-            primitives=self._namespace.get("primitives"),
-            computer_primitives=self._namespace.get("computer_primitives"),
+            extra_namespaces=proxy_ns if proxy_ns else None,
         )
 
         if result.get("error"):
@@ -4777,8 +4783,7 @@ class FunctionManager(BaseFunctionManager):
         session_id: int = 0,
         venv_pool: Optional["VenvPool"] = None,
         shell_pool: Optional["ShellPool"] = None,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
         _parent_chat_context: Optional[list] = None,
     ) -> Any:
         """
@@ -4816,8 +4821,10 @@ class FunctionManager(BaseFunctionManager):
                 Only applies to stateful/read_only modes.
             venv_pool: VenvPool for stateful/read_only modes with Python venv functions.
             shell_pool: ShellPool for stateful/read_only modes with shell functions.
-            primitives: Primitives instance for RPC access to state managers.
-            computer_primitives: ComputerPrimitives instance for web/desktop RPC.
+            extra_namespaces: Named objects to inject into the function's execution
+                namespace. For in-process execution, all entries are injected into
+                globals. For venv/subprocess execution, "primitives" and
+                "computer_primitives" entries are bridged via RPC.
 
         Returns:
             For composed functions: dict with keys result, error, stdout, stderr.
@@ -4828,6 +4835,7 @@ class FunctionManager(BaseFunctionManager):
             ValueError: If the function doesn't exist or has no implementation.
             ValueError: If state_mode requires a pool but none is provided.
         """
+        ns = extra_namespaces or {}
         # Look up function by name (compositional first, then optionally primitives).
         func_data = self._get_function_data_by_name(name=function_name)
 
@@ -4857,8 +4865,7 @@ class FunctionManager(BaseFunctionManager):
             return await self._execute_primitive(
                 func_data=func_data,
                 call_kwargs=call_kwargs,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=ns,
                 _parent_chat_context=_parent_chat_context,
             )
 
@@ -4878,8 +4885,7 @@ class FunctionManager(BaseFunctionManager):
                 state_mode=state_mode,
                 session_id=session_id,
                 venv_pool=venv_pool,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=ns,
             )
         elif language in ("bash", "zsh", "sh", "powershell"):
             return await self._execute_shell_function(
@@ -4889,8 +4895,7 @@ class FunctionManager(BaseFunctionManager):
                 state_mode=state_mode,
                 session_id=session_id,
                 shell_pool=shell_pool,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=ns,
             )
         else:
             raise ValueError(f"Unsupported function language: {language}")
@@ -4909,8 +4914,7 @@ class FunctionManager(BaseFunctionManager):
         *,
         func_data: Dict[str, Any],
         call_kwargs: Optional[Dict[str, Any]],
-        primitives: Optional[Any],
-        computer_primitives: Optional[Any],
+        extra_namespaces: Dict[str, Any],
         _parent_chat_context: Optional[list] = None,
     ) -> Any:
         """Resolve a primitive callable and invoke it directly.
@@ -4922,8 +4926,8 @@ class FunctionManager(BaseFunctionManager):
 
         callable_fn = get_primitive_callable(
             func_data,
-            computer_primitives=computer_primitives,
-            primitives=primitives,
+            computer_primitives=extra_namespaces.get("computer_primitives"),
+            primitives=extra_namespaces.get("primitives"),
         )
         if callable_fn is None:
             raise ValueError(
@@ -5444,8 +5448,7 @@ if __name__ == "__main__":
         state_mode: Literal["stateful", "read_only", "stateless"],
         session_id: int,
         venv_pool: Optional["VenvPool"],
-        primitives: Optional[Any],
-        computer_primitives: Optional[Any],
+        extra_namespaces: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Execute a Python function with venv and state mode support."""
         # Check if remote Windows execution is required
@@ -5472,6 +5475,10 @@ if __name__ == "__main__":
 
         call_kwargs = call_kwargs or {}
 
+        # Extract RPC-bridgeable namespaces for subprocess execution paths.
+        primitives = extra_namespaces.get("primitives")
+        computer_primitives = extra_namespaces.get("computer_primitives")
+
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
             # No venv - execute in default environment with state_mode support
@@ -5481,8 +5488,7 @@ if __name__ == "__main__":
                 is_async=is_async,
                 state_mode=state_mode,
                 session_id=session_id,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=extra_namespaces,
             )
 
         # Venv execution - state_mode matters
@@ -5550,8 +5556,7 @@ if __name__ == "__main__":
         state_mode: Literal["stateful", "read_only", "stateless"],
         session_id: int,
         shell_pool: Optional["ShellPool"],
-        primitives: Optional[Any],
-        computer_primitives: Optional[Any],
+        extra_namespaces: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         Execute a shell function with state mode support.
@@ -5570,8 +5575,8 @@ if __name__ == "__main__":
             return await self.execute_shell_script(
                 implementation=implementation,
                 language=language,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                primitives=extra_namespaces.get("primitives"),
+                computer_primitives=extra_namespaces.get("computer_primitives"),
             )
 
         elif state_mode == "stateful":
@@ -5645,8 +5650,7 @@ if __name__ == "__main__":
         is_async: bool,
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
         session_id: int = 0,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Execute a function in the default Python environment (no custom venv).
@@ -5682,11 +5686,10 @@ if __name__ == "__main__":
         else:  # stateless
             globals_dict = create_base_globals()
 
-        # Inject primitives (always, since they may change between calls)
-        if primitives is not None:
-            globals_dict["primitives"] = primitives
-        if computer_primitives is not None:
-            globals_dict["computer_primitives"] = computer_primitives
+        # Inject all extra namespaces into globals (always, since they may
+        # change between calls).
+        if extra_namespaces:
+            globals_dict.update(extra_namespaces)
 
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()

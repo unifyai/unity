@@ -1669,20 +1669,19 @@ class CodeActActor(BaseCodeActActor):
                     icon="🛠️",
                 )
 
-                primitives = None
-                try:
-                    env = self.environments.get("primitives")
-                    if env is not None:
-                        primitives = env.get_instance()
-                except Exception:
-                    primitives = None
+                # Collect all environment instances for namespace injection.
+                extra_namespaces: Dict[str, Any] = {}
+                for ns, env in self.environments.items():
+                    try:
+                        extra_namespaces[ns] = env.get_instance()
+                    except Exception:
+                        pass
 
                 try:
                     result = await fm.execute_function(
                         function_name=function_name,
                         call_kwargs=call_kwargs,
-                        primitives=primitives,
-                        computer_primitives=self._computer_primitives,
+                        extra_namespaces=extra_namespaces,
                         venv_pool=self._venv_pool,
                         shell_pool=self._shell_pool,
                         state_mode="stateless",
