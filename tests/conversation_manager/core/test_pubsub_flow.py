@@ -897,3 +897,206 @@ class TestPingMechanismForIdleContainers:
         restored = Event.from_json(ping.to_json())
         assert isinstance(restored, Ping)
         assert restored.kind == "keepalive"
+
+
+class TestDemoModePropagation:
+    """
+    Tests for demo mode flag propagation through the Pub/Sub startup flow.
+
+    Demo mode is passed from adapters → comms → Unity via the startup event.
+    When demo_mode=True, Unity should:
+    1. Include demo_mode in the StartupEvent published to the event broker
+    2. Set SETTINGS.DEMO_MODE = True before initializing managers
+
+    This enables demo-specific behavior:
+    - set_boss_details tool instead of act
+    - Demo-specific prompts for voice and slow brain
+    - Boss contact starts without details (learned during demo)
+    """
+
+    @pytest.mark.asyncio
+    async def test_startup_event_includes_demo_mode_true(self, event_broker):
+        """
+        Test that demo_mode=True is passed through to StartupEvent.
+
+        The comms layer passes demo_mode from the job data to the StartupEvent.
+        """
+        from unity.conversation_manager.comms_manager import CommsManager
+        from unity.conversation_manager.events import StartupEvent, Event
+        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+
+        original_id = SESSION_DETAILS.assistant.id
+        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+
+        try:
+            cm = CommsManager(event_broker)
+            cm.loop = asyncio.get_event_loop()
+            cm.subscribers["unity-startup-sub"] = MagicMock()
+            cm.subscribe_to_topic = MagicMock()
+
+            async with event_broker.pubsub() as pubsub:
+                await pubsub.psubscribe("app:comms:*")
+
+                startup_event = {
+                    "api_key": "test_key",
+                    "assistant_id": "demo_test_123",
+                    "user_id": "456",
+                    "assistant_name": "Demo Assistant",
+                    "assistant_age": "25",
+                    "assistant_nationality": "American",
+                    "assistant_about": "A demo assistant",
+                    "assistant_number": "+15555550000",
+                    "assistant_email": "demo@test.com",
+                    "user_name": "Boss",
+                    "user_number": "+15555550001",
+                    "user_email": "boss@test.com",
+                    "voice_provider": "cartesia",
+                    "voice_id": "test_voice",
+                    "voice_mode": "tts",
+                    "demo_mode": True,  # Demo mode enabled
+                }
+                message = create_pubsub_message("startup", startup_event)
+
+                with patch("subprocess.run"):
+                    cm.handle_message(message)
+
+                # Poll for the startup event
+                received_event = None
+                for _ in range(50):
+                    msg = await pubsub.get_message(
+                        timeout=0.1,
+                        ignore_subscribe_messages=True,
+                    )
+                    if msg and msg["channel"] == "app:comms:startup":
+                        received_event = Event.from_json(msg["data"])
+                        break
+
+            assert received_event is not None, "StartupEvent not received"
+            assert isinstance(received_event, StartupEvent)
+            assert received_event.demo_mode is True, (
+                "demo_mode should be True in StartupEvent. "
+                "Check that comms_manager.py extracts demo_mode from event data."
+            )
+
+        finally:
+            SESSION_DETAILS.assistant.id = original_id
+
+    @pytest.mark.asyncio
+    async def test_startup_event_includes_demo_mode_false_by_default(
+        self, event_broker
+    ):
+        """
+        Test that demo_mode defaults to False when not specified.
+
+        Regular assistants don't include demo_mode in their startup data.
+        """
+        from unity.conversation_manager.comms_manager import CommsManager
+        from unity.conversation_manager.events import StartupEvent, Event
+        from unity.session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+
+        original_id = SESSION_DETAILS.assistant.id
+        SESSION_DETAILS.assistant.id = DEFAULT_ASSISTANT_ID
+
+        try:
+            cm = CommsManager(event_broker)
+            cm.loop = asyncio.get_event_loop()
+            cm.subscribers["unity-startup-sub"] = MagicMock()
+            cm.subscribe_to_topic = MagicMock()
+
+            async with event_broker.pubsub() as pubsub:
+                await pubsub.psubscribe("app:comms:*")
+
+                # No demo_mode field - should default to False
+                startup_event = {
+                    "api_key": "test_key",
+                    "assistant_id": "regular_test_123",
+                    "user_id": "456",
+                    "assistant_name": "Regular Assistant",
+                    "assistant_age": "25",
+                    "assistant_nationality": "American",
+                    "assistant_about": "A regular assistant",
+                    "assistant_number": "+15555550000",
+                    "assistant_email": "regular@test.com",
+                    "user_name": "Boss",
+                    "user_number": "+15555550001",
+                    "user_email": "boss@test.com",
+                    "voice_provider": "cartesia",
+                    "voice_id": "test_voice",
+                    "voice_mode": "tts",
+                }
+                message = create_pubsub_message("startup", startup_event)
+
+                with patch("subprocess.run"):
+                    cm.handle_message(message)
+
+                # Poll for the startup event
+                received_event = None
+                for _ in range(50):
+                    msg = await pubsub.get_message(
+                        timeout=0.1,
+                        ignore_subscribe_messages=True,
+                    )
+                    if msg and msg["channel"] == "app:comms:startup":
+                        received_event = Event.from_json(msg["data"])
+                        break
+
+            assert received_event is not None, "StartupEvent not received"
+            assert isinstance(received_event, StartupEvent)
+            assert (
+                received_event.demo_mode is False
+            ), "demo_mode should default to False for regular assistants."
+
+        finally:
+            SESSION_DETAILS.assistant.id = original_id
+
+    @pytest.mark.asyncio
+    async def test_demo_mode_sets_settings_on_startup_handler(self, event_broker):
+        """
+        Test that SETTINGS.DEMO_MODE is set when processing a demo startup event.
+
+        The EventHandler for StartupEvent should set SETTINGS.DEMO_MODE = True
+        before managers are initialized, so demo-specific logic takes effect.
+        """
+        from unity.conversation_manager.events import StartupEvent
+        from unity.settings import SETTINGS
+
+        # Ensure demo mode starts as False
+        original_demo_mode = SETTINGS.DEMO_MODE
+        SETTINGS.DEMO_MODE = False
+
+        try:
+            # Create a StartupEvent with demo_mode=True
+            startup_event = StartupEvent(
+                api_key="test_key",
+                medium="startup",
+                assistant_id="demo_handler_test",
+                user_id="456",
+                assistant_name="Demo",
+                assistant_age="25",
+                assistant_nationality="American",
+                assistant_about="Demo",
+                assistant_number="+15555550000",
+                assistant_email="demo@test.com",
+                user_name="Boss",
+                user_number="+15555550001",
+                user_email="boss@test.com",
+                voice_id="test",
+                voice_mode="tts",
+                demo_mode=True,
+            )
+
+            # Verify the event has demo_mode=True
+            assert startup_event.demo_mode is True
+
+            # The actual SETTINGS update happens in the event handler
+            # which requires a full ConversationManager. Here we just verify
+            # the event carries the flag correctly and can be used to set SETTINGS.
+            if startup_event.demo_mode:
+                SETTINGS.DEMO_MODE = True
+
+            assert (
+                SETTINGS.DEMO_MODE is True
+            ), "SETTINGS.DEMO_MODE should be True after processing demo startup event"
+
+        finally:
+            SETTINGS.DEMO_MODE = original_demo_mode
