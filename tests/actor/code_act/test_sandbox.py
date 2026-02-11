@@ -127,9 +127,9 @@ result = ContactListResponse(
 print(result.model_dump_json())
 """
     result = await sandbox.execute(code)
-    assert result["error"] is None, (
-        f"Pydantic model with List[ContactItem] failed in sandbox:\n{result['error']}"
-    )
+    assert (
+        result["error"] is None
+    ), f"Pydantic model with List[ContactItem] failed in sandbox:\n{result['error']}"
     stdout = parts_to_text(result["stdout"]).strip()
     assert '"total_count": 1' in stdout or '"total_count":1' in stdout
 
@@ -157,9 +157,9 @@ r = Record(name="test", tags=[Tag(key="a", value="b")], metadata={"x": "y"})
 print(r.model_dump_json())
 """
     result = await sandbox.execute(code)
-    assert result["error"] is None, (
-        f"Pydantic model with Optional[List[Tag]] failed in sandbox:\n{result['error']}"
-    )
+    assert (
+        result["error"] is None
+    ), f"Pydantic model with Optional[List[Tag]] failed in sandbox:\n{result['error']}"
     stdout = parts_to_text(result["stdout"]).strip()
     assert '"name": "test"' in stdout or '"name":"test"' in stdout
 

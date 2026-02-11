@@ -11,7 +11,9 @@ import asyncio
 import ast
 import contextvars
 import logging
+import sys
 import traceback
+import types
 import uuid
 from datetime import datetime, timezone
 from typing import (
@@ -353,8 +355,16 @@ class PythonExecutionSession:
         from unity.function_manager.execution_env import create_execution_globals
 
         self.id: str = str(uuid.uuid4())
-        self.global_state: Dict[str, Any] = create_execution_globals()
+        self._module_name: str = f"__sandbox_{self.id}__"
         self._computer_used: bool = False
+
+        # Register the sandbox globals as a proper module in sys.modules.
+        _mod = types.ModuleType(self._module_name)
+        _initial = create_execution_globals()
+        _mod.__dict__.update(_initial)
+        sys.modules[self._module_name] = _mod
+        self.global_state: Dict[str, Any] = _mod.__dict__
+        self.global_state["__name__"] = self._module_name
 
         # Expose sandbox metadata to user code (best-effort; callers may ignore).
         self.global_state["__sandbox_id__"] = self.id
@@ -447,6 +457,7 @@ class PythonExecutionSession:
         - This method is safe to call multiple times.
         """
         try:
+            sys.modules.pop(self._module_name, None)
             self.global_state.clear()
         except Exception as e:
             try:
