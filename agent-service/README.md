@@ -1,6 +1,6 @@
 # Magnitude BrowserAgent Service
 
-This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, allowing a Python client (like the Hierarchical Actor) to perform autonomous web automation tasks.
+This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, allowing a Python client (like the CodeActActor) to perform autonomous web automation tasks.
 
 ## Setup
 
