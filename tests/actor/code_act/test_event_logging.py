@@ -483,3 +483,100 @@ async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_li
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
+
+
+# ---------------------------------------------------------------------------
+# execute_function: clarification queue + context forwarding wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_function_wraps_namespaces_with_clarification_injector():
+    """When _clarification_up_q / _clarification_down_q are provided,
+    execute_function wraps environment instances with
+    _ClarificationQueueInjector before passing to FunctionManager."""
+
+    captured_ns: dict = {}
+
+    class _CapturingFM(_StubFunctionManager):
+        async def execute_function(self, **kwargs):
+            captured_ns.update(kwargs.get("extra_namespaces") or {})
+            return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+
+    from unity.actor.environments import create_env
+    from unity.actor.environments.base import _ClarificationQueueInjector
+
+    class _DummyService:
+        async def do_something(self):
+            pass
+
+    actor = CodeActActor(
+        environments=[create_env("my_service", _DummyService())],
+        headless=True,
+        computer_mode="mock",
+        function_manager=_CapturingFM(),
+    )
+
+    execute_function = actor.get_tools("act")["execute_function"]
+
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
+    try:
+        await execute_function(
+            function_name="greet",
+            call_kwargs=None,
+            _clarification_up_q=up_q,
+            _clarification_down_q=down_q,
+        )
+    finally:
+        TOOL_LOOP_LINEAGE.reset(token)
+
+    # The environment instance should be wrapped with _ClarificationQueueInjector.
+    assert "my_service" in captured_ns
+    assert isinstance(captured_ns["my_service"], _ClarificationQueueInjector)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_function_no_wrapping_without_clarification_queues():
+    """Without clarification queues, environment instances are passed unwrapped."""
+
+    captured_ns: dict = {}
+
+    class _CapturingFM(_StubFunctionManager):
+        async def execute_function(self, **kwargs):
+            captured_ns.update(kwargs.get("extra_namespaces") or {})
+            return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+
+    from unity.actor.environments import create_env
+    from unity.actor.environments.base import _ClarificationQueueInjector
+
+    class _DummyService:
+        async def do_something(self):
+            pass
+
+    svc = _DummyService()
+    actor = CodeActActor(
+        environments=[create_env("my_service", svc)],
+        headless=True,
+        computer_mode="mock",
+        function_manager=_CapturingFM(),
+    )
+
+    execute_function = actor.get_tools("act")["execute_function"]
+
+    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
+    try:
+        await execute_function(
+            function_name="greet",
+            call_kwargs=None,
+        )
+    finally:
+        TOOL_LOOP_LINEAGE.reset(token)
+
+    # Without clarification queues, the raw instance should be passed.
+    assert "my_service" in captured_ns
+    assert not isinstance(captured_ns["my_service"], _ClarificationQueueInjector)

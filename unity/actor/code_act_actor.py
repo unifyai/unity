@@ -1576,6 +1576,8 @@ class CodeActActor(BaseCodeActActor):
                 function_name: str,
                 call_kwargs: Optional[Dict[str, Any]] = None,
                 _parent_chat_context: list[dict] | None = None,
+                _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+                _clarification_down_q: Optional[asyncio.Queue[str]] = None,
             ) -> Dict[str, Any]:
                 """
                 Execute a stored function by name and return its result.
@@ -1670,10 +1672,28 @@ class CodeActActor(BaseCodeActActor):
                 )
 
                 # Collect all environment instances for namespace injection.
+                # When clarification queues are available, wrap instances
+                # with _ClarificationQueueInjector so that environment
+                # methods called from stored functions receive the queues
+                # (mirroring the sandbox's get_sandbox_instance() pattern).
                 extra_namespaces: Dict[str, Any] = {}
                 for ns, env in self.environments.items():
                     try:
-                        extra_namespaces[ns] = env.get_instance()
+                        instance = env.get_instance()
+                        if (
+                            _clarification_up_q is not None
+                            and instance is not None
+                        ):
+                            from unity.actor.environments.base import (
+                                _ClarificationQueueInjector,
+                            )
+
+                            instance = _ClarificationQueueInjector(
+                                target=instance,
+                                clarification_up_q=_clarification_up_q,
+                                clarification_down_q=_clarification_down_q,
+                            )
+                        extra_namespaces[ns] = instance
                     except Exception:
                         pass
 
