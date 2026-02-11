@@ -198,8 +198,8 @@ Settings are organized in two classes with inheritance:
 | `ASYNCIO_VERBOSE_DEBUG` | bool | `false` | Verbose asyncio logging |
 | `PYTEST_LOG_TO_FILE` | bool | `true` | Log pytest output to files |
 | `UNITY_READONLY_ASK_GUARD` | bool | `true` | Enable read-only ask guard |
-| `FIRST_ASK_TOOL_IS_SEARCH` | bool | `true` | Force semantic search on first `ask` step |
-| `FIRST_MUTATION_TOOL_IS_ASK` | bool | `true` | Force `ask` on first mutation step |
+| `FIRST_ASK_TOOL_IS_SEARCH` | bool | `false` | Force semantic search on first `ask` step |
+| `FIRST_MUTATION_TOOL_IS_ASK` | bool | `false` | Force `ask` on first mutation step |
 
 **Test-Only Settings**:
 

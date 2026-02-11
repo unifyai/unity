@@ -127,8 +127,8 @@ class ProductionSettings(BaseSettings):
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_READONLY_ASK_GUARD: bool = True
-    FIRST_ASK_TOOL_IS_SEARCH: bool = True
-    FIRST_MUTATION_TOOL_IS_ASK: bool = True
+    FIRST_ASK_TOOL_IS_SEARCH: bool = False
+    FIRST_MUTATION_TOOL_IS_ASK: bool = False
     STAGING: bool = False
     DEMO_MODE: bool = False
 
