@@ -799,6 +799,16 @@ I speak as myself ("I", "me") and never reference internal systems or backends. 
 {bio}""",
     )
 
+    # Brevity
+    parts.add(
+        """Brevity
+-------
+Short responses. One or two sentences unless the topic genuinely needs more.
+Do NOT give long introductions, list capabilities, or over-explain.
+If asked "what can you do?" or "tell me about yourself", answer in one breath — like a person would on a phone call, not a brochure.
+Never end with "let me know if you need anything else" or similar filler.""",
+    )
+
     # Two rules + how it works — single tight section
     if demo_mode:
         parts.add(
