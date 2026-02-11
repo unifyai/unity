@@ -703,12 +703,17 @@ async def update_session_contacts(
         assistant_email,
     )
 
-    # In demo mode, skip updating boss contact (contact_id=1) because user_*
-    # fields contain demoer details, not prospect details
+    # In demo mode:
+    # - Skip updating boss contact (contact_id=1) - prospect details come from Orchestra meta
+    # - Create/update demoer contact (contact_id=2) with user_* fields
     if SETTINGS.DEMO_MODE:
         print(
-            "[ManagersWorker] Skipping boss contact update in demo mode "
-            "(user details are demoer, not prospect)"
+            "[ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
+            "creating demoer contact (contact_id=2)"
+        )
+        user_first_name, user_last_name = _get_name_parts(user_name)
+        await _update_contact(
+            2, user_first_name, user_last_name, user_number, user_email
         )
         return
 
@@ -924,6 +929,8 @@ def _init_managers(
     # communication tools (e.g., make_call(contact_id=1, phone_number=...))
     # and set_boss_details to update their record.
     if SETTINGS.DEMO_MODE:
+        # Ensure boss (contact_id=1) is visible in active conversations for the brain
+        # (demoer contact_id=2 is created via update_session_contacts when StartupEvent is received)
         cm.contact_index.get_or_create_conversation(1)
         # If we have a demo_id, fetch prospect details from Orchestra and apply
         # them to the boss contact (contact_id=1)
