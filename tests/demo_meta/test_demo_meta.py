@@ -263,11 +263,17 @@ class TestApplyProspectToBossContact:
 
 
 class TestUpdateSessionContactsDemoModeProtection:
-    """Tests for update_session_contacts skipping boss update in demo mode."""
+    """Tests for update_session_contacts behavior in demo mode.
+
+    In demo mode:
+    - contact_id=0 (assistant) is updated with assistant details
+    - contact_id=1 (boss/prospect) is NOT updated (preserved from Orchestra meta)
+    - contact_id=2 (demoer) IS updated with user_* details
+    """
 
     @pytest.mark.asyncio
-    async def test_update_session_contacts_skips_boss_in_demo_mode(self):
-        """In demo mode, update_session_contacts should not update boss contact."""
+    async def test_update_session_contacts_creates_demoer_in_demo_mode(self):
+        """In demo mode, update_session_contacts should create demoer contact (id=2)."""
         from unittest.mock import MagicMock, AsyncMock
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
@@ -294,15 +300,29 @@ class TestUpdateSessionContactsDemoModeProtection:
                 user_email="demoer@unify.ai",
             )
 
-            # Verify assistant contact (contact_id=0) was updated
+            # Verify contact updates
             calls = mock_contact_manager.update_contact.call_args_list
             contact_ids_updated = [call.kwargs.get("contact_id") for call in calls]
 
-            assert 0 in contact_ids_updated, "Assistant contact should be updated"
+            assert (
+                0 in contact_ids_updated
+            ), "Assistant contact (id=0) should be updated"
             assert 1 not in contact_ids_updated, (
-                "Boss contact should NOT be updated in demo mode "
-                "(user details are demoer, not prospect)"
+                "Boss contact (id=1) should NOT be updated in demo mode "
+                "(prospect details come from Orchestra meta)"
             )
+            assert (
+                2 in contact_ids_updated
+            ), "Demoer contact (id=2) should be updated with user_* details"
+
+            # Verify demoer contact has correct details
+            demoer_call = next(
+                call for call in calls if call.kwargs.get("contact_id") == 2
+            )
+            assert demoer_call.kwargs.get("first_name") == "Demoer"
+            assert demoer_call.kwargs.get("surname") == "Person"
+            assert demoer_call.kwargs.get("phone_number") == "+15555551111"
+            assert demoer_call.kwargs.get("email_address") == "demoer@unify.ai"
 
         finally:
             SETTINGS.DEMO_MODE = original_demo_mode

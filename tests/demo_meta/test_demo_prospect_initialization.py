@@ -280,31 +280,44 @@ class TestDemoProspectInitialization:
     @pytest.mark.asyncio
     async def test_demo_operator_contact_exists(self, demo_cm_factory):
         """
-        In demo mode, the demo operator (contact_id=2) should be created
-        regardless of whether prospect details are provided.
+        In demo mode, the demo operator (contact_id=2) should exist in the
+        contact index, ready to be populated with demoer details when
+        update_session_contacts is called.
+
+        This test verifies that demo mode properly initializes the contact
+        structure with all three contacts:
+        - contact_id=0: Assistant
+        - contact_id=1: Boss (prospect)
+        - contact_id=2: Demo operator (demoer)
         """
         cm = await demo_cm_factory(
             demo_id=42,
             prospect_details=None,
         )
 
-        # Verify demo mode creates the right contact structure:
-        # contact_id=0: Assistant
-        # contact_id=1: Boss (prospect)
-        # contact_id=2: Demo operator (demoer) - may or may not be created
-
+        # Verify demo mode creates the right contact structure
         contact_info_0 = cm.contact_manager.get_contact_info(0)
         contact_info_1 = cm.contact_manager.get_contact_info(1)
         assistant_contact = contact_info_0.get(0, {})
         boss_contact = contact_info_1.get(1, {})
 
-        assert assistant_contact is not None, "Assistant contact should exist"
-        assert boss_contact is not None, "Boss contact should exist"
+        assert (
+            assistant_contact is not None
+        ), "Assistant contact (contact_id=0) should exist"
+        assert boss_contact is not None, "Boss contact (contact_id=1) should exist"
+
+        # Verify contact_id=2 is tracked in the contact index (ready for demoer details)
+        # The actual demoer details are populated via update_session_contacts when
+        # a StartupEvent is received with user_* fields
+        assert (
+            2 in cm.contact_index.active_conversations
+        ), "Demoer contact (contact_id=2) should be in active_conversations"
 
         print(
             f"✅ Demo contact structure verified: "
             f"assistant={assistant_contact.get('first_name')!r}, "
-            f"boss={boss_contact.get('first_name')!r}"
+            f"boss={boss_contact.get('first_name')!r}, "
+            f"demoer_slot_ready=True"
         )
 
     @pytest.mark.asyncio
