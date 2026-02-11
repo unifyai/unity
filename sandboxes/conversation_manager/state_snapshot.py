@@ -38,6 +38,8 @@ class StateSnapshot:
     # CodeAct traces grouped by handle
     traces: dict[str | None, list[dict]]
 
+    conversation_lines: list[str]
+
     # Summary counts
     summary: dict[str, Any]
 
@@ -111,6 +113,7 @@ def capture_snapshot(
     log_aggregator: LogAggregator | None = None,
     event_tree_display: EventTreeDisplay | None = None,
     trace_display: TraceDisplay | None = None,
+    conversation_lines: list[str] | None = None,
 ) -> StateSnapshot:
     """
     Capture a structured snapshot of the current sandbox state.
@@ -156,6 +159,8 @@ def capture_snapshot(
     if trace_display is not None:
         traces = _group_by_handle(trace_display._entries, _trace_entry_to_dict)
 
+    conv_lines = list(conversation_lines or [])
+
     # Summary
     summary = {
         "total_cm_logs": sum(len(v) for v in cm_logs.values()),
@@ -163,6 +168,7 @@ def capture_snapshot(
         "total_manager_logs": sum(len(v) for v in manager_logs.values()),
         "total_event_trees": len(event_trees),
         "total_traces": sum(len(v) for v in traces.values()),
+        "total_conversation_lines": len(conv_lines),
         "active_handles": list(
             set(
                 k
@@ -181,6 +187,7 @@ def capture_snapshot(
         manager_logs=manager_logs,
         event_trees=event_trees,
         traces=traces,
+        conversation_lines=conv_lines,
         summary=summary,
     )
 
@@ -220,6 +227,7 @@ def save_snapshot_auto(
     log_aggregator: LogAggregator | None = None,
     event_tree_display: EventTreeDisplay | None = None,
     trace_display: TraceDisplay | None = None,
+    conversation_lines: list[str] | None = None,
     output_dir: Path | str | None = None,
     prefix: str = "sandbox_state",
 ) -> Path:
@@ -240,6 +248,7 @@ def save_snapshot_auto(
         log_aggregator=log_aggregator,
         event_tree_display=event_tree_display,
         trace_display=trace_display,
+        conversation_lines=conversation_lines,
     )
 
     if output_dir is None:
@@ -401,6 +410,17 @@ def render_snapshot_text(snapshot: StateSnapshot) -> str:
                     )
             else:
                 lines.append(f"  result: {str(result)[:200]}")
+    lines.append("")
+
+    # Conversation Lines (main pane)
+    lines.append("=" * 80)
+    lines.append("## Conversation Lines (main pane)")
+    lines.append("=" * 80)
+    if snapshot.conversation_lines:
+        for cl in snapshot.conversation_lines:
+            lines.append(cl)
+    else:
+        lines.append("(no conversation lines captured)")
     lines.append("")
 
     lines.append("=" * 80)
