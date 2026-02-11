@@ -654,6 +654,12 @@ async def update_session_contacts(
     in the ContactManager when session details change.
 
     Called when an AssistantUpdateEvent is received.
+
+    Note: In demo mode, we skip updating the boss contact (contact_id=1) because
+    the user_* fields contain the demoer's details, not the prospect's. The
+    prospect's details are either:
+    - Set during initialization from demo metadata (prospect_* fields), or
+    - Updated dynamically via set_boss_details during the demo
     """
     if cm.contact_manager is None:
         print("[ManagersWorker] Cannot update contacts: contact_manager is None")
@@ -687,7 +693,7 @@ async def update_session_contacts(
         except Exception as e:
             print(f"[ManagersWorker] Failed to update contact {contact_id}: {e}")
 
-    user_first_name, user_last_name = _get_name_parts(user_name)
+    # Always update assistant contact (contact_id=0)
     assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
     await _update_contact(
         0,
@@ -696,6 +702,17 @@ async def update_session_contacts(
         assistant_number,
         assistant_email,
     )
+
+    # In demo mode, skip updating boss contact (contact_id=1) because user_*
+    # fields contain demoer details, not prospect details
+    if SETTINGS.DEMO_MODE:
+        print(
+            "[ManagersWorker] Skipping boss contact update in demo mode "
+            "(user details are demoer, not prospect)"
+        )
+        return
+
+    user_first_name, user_last_name = _get_name_parts(user_name)
     await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
 
 
@@ -908,6 +925,29 @@ def _init_managers(
     # and set_boss_details to update their record.
     if SETTINGS.DEMO_MODE:
         cm.contact_index.get_or_create_conversation(1)
+        # If we have a demo_id, fetch prospect details from Orchestra and apply
+        # them to the boss contact (contact_id=1)
+        if SETTINGS.DEMO_ID is not None:
+            try:
+                from unity.demo_meta import (
+                    fetch_demo_meta,
+                    apply_prospect_to_boss_contact,
+                )
+
+                # Run async fetch_demo_meta on the event loop from this sync context
+                future = asyncio.run_coroutine_threadsafe(
+                    fetch_demo_meta(SETTINGS.DEMO_ID), loop
+                )
+                prospect = future.result(timeout=10.0)  # 10 second timeout
+                if prospect and prospect.has_any_details():
+                    apply_prospect_to_boss_contact(cm.contact_manager, prospect)
+                    print(
+                        f"[ManagersWorker] Applied prospect details from demo_id={SETTINGS.DEMO_ID}"
+                    )
+            except Exception as e:
+                print(
+                    f"[ManagersWorker] Failed to fetch/apply demo prospect details: {e}"
+                )
     print(
         f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
         f"{perf_counter() - local_start_time:.2f} seconds",

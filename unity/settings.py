@@ -131,6 +131,7 @@ class ProductionSettings(BaseSettings):
     FIRST_MUTATION_TOOL_IS_ASK: bool = False
     STAGING: bool = False
     DEMO_MODE: bool = False
+    DEMO_ID: int | None = None  # Demo assistant metadata ID (if DEMO_MODE is True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Manager Configuration
