@@ -96,7 +96,7 @@ async def _wait_for_inner_handle_adopted(
 @pytest.mark.asyncio
 @pytest.mark.timeout(240)
 async def test_execute_function_primitive_steering(monkeypatch):
-    """CodeActActor (can_compose=False) → execute_function → ContactManager.ask
+    """CodeActActor (can_compose=False) → execute_function → primitives.contacts.ask
     → handle adopted → interjection forwarded → result incorporates both turns.
     """
     _force_simulated(monkeypatch)
@@ -114,7 +114,7 @@ async def test_execute_function_primitive_steering(monkeypatch):
         # exact function name to use on step 1.
         handle = await actor.act(
             "Step 1: Call FunctionManager_list_functions (required first step).\n"
-            "Step 2: Call execute_function with function_name='ContactManager.ask' "
+            "Step 2: Call execute_function with function_name='primitives.contacts.ask' "
             "and call_kwargs={'text': 'Find all contacts located in Berlin'}. "
             "The function WILL be found even if the list appeared empty.",
             can_compose=False,
