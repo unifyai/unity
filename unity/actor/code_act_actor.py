@@ -2802,5 +2802,6 @@ class CodeActActor(BaseCodeActActor):
         await self._venv_pool.close()
         await self._shell_pool.close()
 
-        if self._computer_primitives:
-            self._computer_primitives.computer.stop()
+        # The ComputerPrimitives backend is a process-wide singleton (one VM,
+        # one screen).  Individual actors must not tear it down — the process
+        # owns the lifecycle.
