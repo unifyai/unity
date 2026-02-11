@@ -12,7 +12,6 @@ The metadata is fetched once during initialization and cached in SETTINGS.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -49,7 +48,8 @@ def _get_api_key() -> Optional[str]:
 
 def _get_base_url() -> str:
     """Get the Orchestra API base URL."""
-    return os.getenv("ORCHESTRA_URL", "https://api.unify.ai/v0")
+    from unity.settings import SETTINGS
+    return SETTINGS.ORCHESTRA_URL
 
 
 async def fetch_demo_meta(demo_id: int) -> Optional[DemoProspectDetails]:
