@@ -169,8 +169,8 @@ def test_run_sub_agent_exposes_capability_parameters():
     assert "can_store" in param_names
     assert "can_spawn_sub_agents" in param_names
     assert "storage_check_on_return" in param_names
-    assert "environment" in param_names
-    assert "filter_scope" in param_names
+    assert "prompt_functions" in param_names
+    assert "discovery_scope" in param_names
 
 
 @pytest.mark.timeout(30)
@@ -192,8 +192,8 @@ def test_run_sub_agent_parameter_defaults():
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_filter_scope_composes_with_parent():
-    """filter_scope on run_sub_agent should AND with the parent's filter_scope.
+def test_run_sub_agent_discovery_scope_composes_with_parent():
+    """discovery_scope on run_sub_agent should AND with the parent's filter_scope.
 
     This is a symbolic test that verifies the composition logic by
     inspecting the FunctionManager that the inner CodeActActor would
@@ -212,7 +212,7 @@ def test_run_sub_agent_filter_scope_composes_with_parent():
     parent_fm = actor.function_manager
     parent_scope = parent_fm.filter_scope if parent_fm else None
 
-    # Simulate the filter_scope composition logic from run_sub_agent.
+    # Simulate the discovery_scope composition logic from run_sub_agent.
     new_scope = "language == 'python'"
     if parent_scope:
         expected = f"({parent_scope}) and ({new_scope})"
@@ -230,8 +230,8 @@ def test_run_sub_agent_filter_scope_composes_with_parent():
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_filter_scope_additive_not_replacing():
-    """filter_scope must be additive: a parent scope is never lost.
+def test_run_sub_agent_discovery_scope_narrows_not_replaces():
+    """discovery_scope must narrow: a parent scope is never lost.
 
     Verifies that composing two scopes produces an AND expression
     containing both parts.

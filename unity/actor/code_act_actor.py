@@ -2189,8 +2189,8 @@ class CodeActActor(BaseCodeActActor):
         async def run_sub_agent(
             task: str,
             *,
-            environment: list[str] | None = None,
-            filter_scope: str | None = None,
+            prompt_functions: list[str] | None = None,
+            discovery_scope: str | None = None,
             timeout: float | None = None,
             can_compose: bool = True,
             can_store: bool = False,
@@ -2232,40 +2232,48 @@ class CodeActActor(BaseCodeActActor):
                 accomplish. Be specific and include all necessary context, because
                 the sub-agent does **not** share the parent agent's conversation
                 history or session state.
-            environment : list[str], optional
-                Names of functions that should be unpacked directly into the
-                sub-agent's prompt and made immediately callable in its
-                sandbox — no searching or discovery needed.
+            prompt_functions : list[str], optional
+                Functions to place directly in the sub-agent's system prompt,
+                making them immediately callable without any discovery step.
 
-                Think of this as: "which functions would be most useful if
-                the sub-agent could just call them directly, without having
-                to find them first?"
+                Use this for the functions most critical to the sub-task —
+                the ones you actively want the sub-agent to reach for.
+                Because they appear directly in the prompt, they receive the
+                sub-agent's full attention and are the first tools it will
+                consider.
+
+                Prompt-injected functions are automatically excluded from the
+                sub-agent's FunctionManager search index, so they will not
+                appear as duplicate results during discovery.
 
                 Names use dotted-segment matching:
 
                 - ``"primitives"`` — all state manager primitives
                 - ``"primitives.contacts"`` — all contacts methods
                 - ``"primitives.contacts.ask"`` — just contacts.ask
-                - ``"alpha"`` — a specific stored function from the
-                  FunctionManager (seen via search/list/filter)
+                - ``"alpha"`` — a specific stored function
                 - ``"my_service"`` — all methods from a custom environment
                 - ``"my_service.do_something"`` — a specific custom method
 
                 Any function you have seen (in your prompt, in search
                 results, or in your environment) can be listed here.
-                Functions not listed are still discoverable via the
-                FunctionManager search tools.
+                Functions not listed are still discoverable via
+                FunctionManager search (subject to ``discovery_scope``).
 
                 When omitted, the sub-agent receives no prompt-injected
                 functions and relies entirely on FunctionManager discovery.
-            filter_scope : str, optional
-                A boolean filter expression that restricts which functions the
-                sub-agent can discover via FunctionManager search/list/filter
-                (e.g., ``"language == 'python'"`` or
-                ``"'data' in docstring"``).  This is **additive** — it is
-                ANDed with the parent agent's existing filter scope, never
-                replacing it.  Use this to narrow the sub-agent's view of
-                the function library to only what is relevant for the task.
+            discovery_scope : str, optional
+                A boolean filter expression that restricts which functions
+                the sub-agent can discover via FunctionManager
+                search/list/filter (e.g., ``"language == 'python'"`` or
+                ``"'data' in docstring"``).
+
+                The sub-agent automatically inherits the parent agent's
+                existing scope.  This parameter strictly narrows that
+                inherited scope further (ANDed with the parent's filter),
+                so the sub-agent's discoverable function library is always
+                a subset of the parent's.  Use this to keep the sub-agent
+                focused on only the functions relevant to its specific task.
             timeout : float, optional
                 Maximum seconds for the sub-agent to complete. Defaults to half
                 the parent agent's timeout, capped at 300 seconds.
@@ -2295,7 +2303,8 @@ class CodeActActor(BaseCodeActActor):
             # ── Create a fresh FunctionManager for the sub-agent ──
             # Always create a new instance so that the inner CodeActActor's
             # __init__ (which sets exclusions via setters) does not mutate the
-            # parent's FM.  The filter_scope is additive: ANDed with the parent's.
+            # parent's FM.  The discovery_scope is ANDed with the parent's
+            # existing scope, strictly narrowing it.
             inner_fm = None
             if self.function_manager is not None:
                 from unity.function_manager.function_manager import (
@@ -2303,10 +2312,10 @@ class CodeActActor(BaseCodeActActor):
                 )
 
                 parent_scope = self.function_manager.filter_scope
-                if filter_scope and parent_scope:
-                    combined_scope = f"({parent_scope}) and ({filter_scope})"
-                elif filter_scope:
-                    combined_scope = filter_scope
+                if discovery_scope and parent_scope:
+                    combined_scope = f"({parent_scope}) and ({discovery_scope})"
+                elif discovery_scope:
+                    combined_scope = discovery_scope
                 else:
                     combined_scope = parent_scope
 
@@ -2318,10 +2327,10 @@ class CodeActActor(BaseCodeActActor):
                     include_primitives=self.function_manager._include_primitives,
                 )
 
-            # ── Build inner actor environments from environment patterns ──
-            if environment:
+            # ── Build inner actor environments from prompt_functions patterns ──
+            if prompt_functions:
                 inner_envs = _build_sub_agent_environments(
-                    environment=environment,
+                    environment=prompt_functions,
                     parent_environments=self.environments,
                     function_manager=inner_fm,
                 )
