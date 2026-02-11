@@ -54,6 +54,22 @@ class SyncConfig:
             ".DS_Store",
             ".bisync/**",  # rclone's own state files
             "venvs/**",  # Virtual environments (managed via HTTP API)
+            # Shell config (overwriting breaks the VM)
+            ".ssh/**",
+            ".gnupg/**",
+            ".bash_history",
+            ".bashrc",
+            ".profile",
+            # Runtime / cache
+            ".cache/**",
+            ".local/**",
+            ".npm/**",
+            ".bun/**",
+            # Desktop environment artifacts
+            ".dbus/**",
+            ".ICEauthority",
+            ".vnc/**",
+            ".config/**",
             # Non-relevant VM home directories
             "Music/**",
             "Pictures/**",
