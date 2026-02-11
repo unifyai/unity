@@ -13,10 +13,10 @@ import pytest
 
 from unity.settings import SETTINGS
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _force_simulated(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch contact and transcript managers to simulated impl."""

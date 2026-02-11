@@ -569,12 +569,14 @@ class TestSteeringContextPropagation:
 
         # Create a mock handle that captures ask calls
         captured_context = []
+        captured_questions = []
 
         class MockAskHandle:
             async def result(self):
                 return "mock answer"
 
         async def capturing_ask(question, **kwargs):
+            captured_questions.append(question)
             captured_context.append(kwargs.get("_parent_chat_context"))
             return MockAskHandle()
 
@@ -619,6 +621,9 @@ class TestSteeringContextPropagation:
 
             # Verify context was captured
             assert len(captured_context) == 1, "ask should have been called once"
+            assert captured_questions == [
+                "what's the status?",
+            ], "ask should receive the question text from steering tool args"
             context = captured_context[0]
 
             assert context is not None, "_parent_chat_context should not be None"

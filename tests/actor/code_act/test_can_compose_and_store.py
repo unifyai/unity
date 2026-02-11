@@ -222,9 +222,9 @@ async def test_code_act_can_store_true_stores_function():
         fm.add_functions.assert_called_once()
         call_kwargs = fm.add_functions.call_args.kwargs
         impl = call_kwargs.get("implementations", "")
-        assert "normalize_address" in str(impl), (
-            f"Expected 'normalize_address' in implementation, got: {impl}"
-        )
+        assert "normalize_address" in str(
+            impl,
+        ), f"Expected 'normalize_address' in implementation, got: {impl}"
     finally:
         try:
             await actor.close()
