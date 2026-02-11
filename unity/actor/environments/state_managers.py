@@ -7,7 +7,7 @@ generated plan code via the `primitives` namespace.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from unity.actor.environments.base import (
     BaseEnvironment,
@@ -29,6 +29,12 @@ class StateManagerEnvironment(BaseEnvironment):
         The Primitives instance to wrap. If None, a default instance exposing
         all managers is created. The instance is already scoped at construction
         time via ``Primitives(primitive_scope=...)``.
+    allowed_methods : set[str] | None
+        Optional set of fully-qualified method names to expose (e.g.,
+        ``{"primitives.contacts.ask", "primitives.tasks.update"}``). When
+        set, only these methods appear in ``get_tools()`` and
+        ``get_prompt_context()``. When ``None`` (default), all methods
+        from scoped managers are exposed.
     clarification_up_q : asyncio.Queue | None
         Queue for sending clarification requests to the user.
     clarification_down_q : asyncio.Queue | None
@@ -39,6 +45,7 @@ class StateManagerEnvironment(BaseEnvironment):
         self,
         primitives: Optional[Primitives] = None,
         *,
+        allowed_methods: Optional[Set[str]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
@@ -52,6 +59,7 @@ class StateManagerEnvironment(BaseEnvironment):
         )
         self._primitives = primitives
         self._primitive_scope = primitives.primitive_scope
+        self._allowed_methods = frozenset(allowed_methods) if allowed_methods else None
         self._registry = get_registry()
 
     @property
@@ -117,6 +125,11 @@ class StateManagerEnvironment(BaseEnvironment):
             method_names = self._registry.primitive_methods(manager_alias=alias)
             for method_name in method_names:
                 fq_name = f"{self.namespace}.{alias}.{method_name}"
+                if (
+                    self._allowed_methods is not None
+                    and fq_name not in self._allowed_methods
+                ):
+                    continue
                 tools[fq_name] = ToolMetadata(
                     name=fq_name,
                     is_impure=(method_name not in pure_methods),
@@ -180,15 +193,66 @@ outer loop (see `execute_code` docstring).
   await handle.stop()    # cancel if no longer needed
   ```""")
 
-        registry_ctx = self._registry.prompt_context(self._primitive_scope)
-        if registry_ctx:
-            parts.append(registry_ctx)
+        if self._allowed_methods is not None:
+            # Per-method filtering: build method docs only for allowed methods.
+            parts.append(self._build_filtered_method_docs())
+        else:
+            # Full registry-generated context (all methods for scoped managers).
+            registry_ctx = self._registry.prompt_context(self._primitive_scope)
+            if registry_ctx:
+                parts.append(registry_ctx)
 
-        examples = self._registry.prompt_examples(self._primitive_scope)
-        if examples:
-            parts.append(f"### Implementation Examples\n\n{examples}")
+            examples = self._registry.prompt_examples(self._primitive_scope)
+            if examples:
+                parts.append(f"### Implementation Examples\n\n{examples}")
 
         return "\n\n".join(p for p in parts if p and p.strip())
+
+    def _build_filtered_method_docs(self) -> str:
+        """Build method-level documentation for only the allowed methods."""
+        assert self._allowed_methods is not None
+
+        # Determine which managers have at least one allowed method.
+        allowed_aliases: dict[str, list[str]] = {}
+        for fq in sorted(self._allowed_methods):
+            parts = fq.split(".")
+            if len(parts) != 3 or parts[0] != self.namespace:
+                continue
+            alias, method = parts[1], parts[2]
+            allowed_aliases.setdefault(alias, []).append(method)
+
+        if not allowed_aliases:
+            return ""
+
+        lines = ["### Method Reference\n"]
+        for alias in sorted(allowed_aliases):
+            spec = self._registry.get_manager_spec(alias)
+            mgr_cls = (
+                self._registry._load_manager_class(spec.primitive_class_path)
+                if spec
+                else None
+            )
+
+            lines.append(f"\n#### `primitives.{alias}`")
+            if spec:
+                lines.append(f"*{spec.domain}* — {spec.description}")
+
+            for method_name in sorted(allowed_aliases[alias]):
+                sig_str = self._registry._format_method_signature(
+                    mgr_cls,
+                    method_name,
+                )
+                full_doc = self._registry._extract_method_docstring(
+                    mgr_cls,
+                    method_name,
+                )
+                compact_doc = self._registry._extract_summary_and_params(full_doc)
+                lines.append(f"\n**`.{method_name}{sig_str}`**")
+                if compact_doc:
+                    for doc_line in compact_doc.splitlines():
+                        lines.append(f"  {doc_line}")
+
+        return "\n".join(lines)
 
     async def capture_state(self) -> Dict[str, Any]:
         """State manager state is primarily evidenced via return values."""
