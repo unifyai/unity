@@ -2215,7 +2215,7 @@ async def async_tool_loop_inner(
                         llm_task.result()
                     except Exception as e:
                         raise Exception(
-                            f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                            f"LLM call failed: {type(e).__name__}: {e}",
                         ) from e
 
                     # Clarification request bubbled up while LLM thinking
@@ -2248,10 +2248,10 @@ async def async_tool_loop_inner(
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
                     )
-                except Exception:
+                except Exception as e:
                     raise Exception(
-                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
-                    )
+                        f"LLM call failed: {type(e).__name__}: {e}",
+                    ) from e
 
             msg = client.messages[-1]
             await to_event_bus(msg, cfg)

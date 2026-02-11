@@ -388,15 +388,17 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             )
             await cm.request_llm_run()
     elif isinstance(event, ActorHandleResponse):
-        # Handle response from an ask operation
+        # Handle response from an action steering operation.
         if event.handle_id in cm.in_flight_actions:
             handle_data = cm.in_flight_actions[event.handle_id]
             handle_actions = handle_data.get("handle_actions", [])
+            action_name = event.action_name or "ask"
+            expected_action_name = f"{action_name}_{event.handle_id}"
 
-            # Find the pending ask action and update it with the response
+            # Find the pending action and update it with the response.
             for action in reversed(handle_actions):
                 if (
-                    action.get("action_name") == f"ask_{event.handle_id}"
+                    action.get("action_name") == expected_action_name
                     and action.get("status") == "pending"
                 ):
                     action["status"] = "completed"
