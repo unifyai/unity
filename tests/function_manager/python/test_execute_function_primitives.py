@@ -255,6 +255,58 @@ async def test_execute_function_primitive_callable_resolution_failure(
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Test: _parent_chat_context flows to composed functions via
+#       ContextForwardingProxy in _execute_in_default_env
+# ────────────────────────────────────────────────────────────────────────────
+
+
+FUNCTION_THAT_CALLS_PRIMITIVES = """
+async def ask_contacts_with_context(question: str):
+    return await primitives.contacts.ask(text=question)
+""".strip()
+
+
+@_handle_project
+@pytest.mark.asyncio
+async def test_execute_function_composed_forwards_parent_chat_context(
+    function_manager_factory,
+):
+    """_parent_chat_context is forwarded to primitive methods called from
+    composed functions via ContextForwardingProxy wrapping in
+    _execute_in_default_env."""
+    fm = function_manager_factory()
+
+    fm.add_functions(implementations=FUNCTION_THAT_CALLS_PRIMITIVES)
+
+    received_ctx = {}
+
+    async def fake_ask(
+        text: str, _parent_chat_context: list[dict] | None = None
+    ):
+        received_ctx["value"] = _parent_chat_context
+        return f"Answer: {text}"
+
+    mock_primitives = MagicMock()
+    mock_primitives.contacts = MagicMock()
+    mock_primitives.contacts.ask = fake_ask
+
+    parent_ctx = [{"role": "user", "content": "Hello"}]
+
+    result = await fm.execute_function(
+        function_name="ask_contacts_with_context",
+        call_kwargs={"question": "Who is Alice?"},
+        extra_namespaces={"primitives": mock_primitives},
+        _parent_chat_context=parent_ctx,
+    )
+
+    assert result["error"] is None, f"Unexpected error: {result['error']}"
+    assert result["result"] == "Answer: Who is Alice?"
+    assert received_ctx.get("value") is parent_ctx, (
+        "_parent_chat_context was not forwarded via ContextForwardingProxy"
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Test: Regression — composed functions still work
 # ────────────────────────────────────────────────────────────────────────────
 

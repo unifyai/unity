@@ -4886,6 +4886,7 @@ class FunctionManager(BaseFunctionManager):
                 session_id=session_id,
                 venv_pool=venv_pool,
                 extra_namespaces=ns,
+                _parent_chat_context=_parent_chat_context,
             )
         elif language in ("bash", "zsh", "sh", "powershell"):
             return await self._execute_shell_function(
@@ -5449,6 +5450,7 @@ if __name__ == "__main__":
         session_id: int,
         venv_pool: Optional["VenvPool"],
         extra_namespaces: Dict[str, Any],
+        _parent_chat_context: Optional[list] = None,
     ) -> Dict[str, Any]:
         """Execute a Python function with venv and state mode support."""
         # Check if remote Windows execution is required
@@ -5489,6 +5491,7 @@ if __name__ == "__main__":
                 state_mode=state_mode,
                 session_id=session_id,
                 extra_namespaces=extra_namespaces,
+                _parent_chat_context=_parent_chat_context,
             )
 
         # Venv execution - state_mode matters
@@ -5651,6 +5654,7 @@ if __name__ == "__main__":
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
         session_id: int = 0,
         extra_namespaces: Optional[Dict[str, Any]] = None,
+        _parent_chat_context: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
         Execute a function in the default Python environment (no custom venv).
@@ -5690,6 +5694,18 @@ if __name__ == "__main__":
         # change between calls).
         if extra_namespaces:
             globals_dict.update(extra_namespaces)
+
+        # Wrap primitives with ContextForwardingProxy so that environment
+        # methods called from composed functions receive _parent_chat_context
+        # (mirroring the PythonExecutionSession.execute() pattern).
+        _orig_prims = globals_dict.get("primitives")
+        if _parent_chat_context is not None and _orig_prims is not None:
+            from .primitives.context_proxy import ContextForwardingProxy
+
+            globals_dict["primitives"] = ContextForwardingProxy(
+                _orig_prims,
+                _parent_chat_context=_parent_chat_context,
+            )
 
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
