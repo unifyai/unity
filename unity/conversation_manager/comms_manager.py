@@ -561,10 +561,6 @@ class CommsManager:
                                 content=msg_content,
                                 role=role,
                                 exchange_id=UNASSIGNED,
-                                metadata={
-                                    "source": "pre_hire",
-                                    "assistant_id": assistant_id,
-                                },
                             )
 
                             self._publish_from_callback(
