@@ -713,6 +713,102 @@ class _StorageCheckHandle(SteerableToolHandle):
         return self._inner.get_history()
 
 
+def _build_sub_agent_environments(
+    *,
+    environment: list[str],
+    parent_environments: Dict[str, "BaseEnvironment"],
+    function_manager: Optional["FunctionManager"],
+) -> list["BaseEnvironment"]:
+    """Build the environment list for an inner sub-agent.
+
+    Resolves ``environment`` patterns against the parent's environments
+    and the FunctionManager, then constructs the minimal set of environments
+    for the inner actor.
+
+    Resolution order for each matched canonical name:
+
+    1. **Parent environment tool** — if the name appears in any parent
+       environment's ``get_tools()`` output, the function is "locally
+       available" and is passed through via the source environment.
+    2. **FunctionManager lookup** — if the name is NOT in any parent
+       environment, it is looked up in the FunctionManager by bare name
+       and wrapped in a ``FunctionStoreEnvironment``.
+    """
+    from unity.actor.environments.base import resolve_directly_callable
+    from unity.actor.environments.function_store import FunctionStoreEnvironment
+    from unity.actor.environments.state_managers import StateManagerEnvironment
+    from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+    if not environment:
+        return []
+
+    # ── Step 1: Build complete tool name → (namespace, metadata) mapping ──
+    all_env_tools: Dict[str, tuple[str, Any]] = {}
+    for ns, env in parent_environments.items():
+        for fq_name, meta in env.get_tools().items():
+            all_env_tools[fq_name] = (ns, meta)
+
+    # Also include bare FM function names (not in any env) for matching.
+    fm_only_names: set[str] = set()
+    if function_manager is not None:
+        try:
+            fm_listing = function_manager.list_functions()
+            fm_only_names = {name for name in fm_listing if name not in all_env_tools}
+        except Exception:
+            pass
+
+    all_known_names = set(all_env_tools.keys()) | fm_only_names
+
+    # ── Step 2: Resolve patterns to canonical names ──
+    matched_names = resolve_directly_callable(environment, all_known_names)
+
+    # ── Step 3: Bucket by source ──
+    primitive_methods: set[str] = set()
+    local_env_namespaces: set[str] = set()
+    fm_function_names: list[str] = []
+
+    for name in matched_names:
+        if name in all_env_tools:
+            env_ns, meta = all_env_tools[name]
+            if meta.function_context == "primitive":
+                primitive_methods.add(name)
+            else:
+                local_env_namespaces.add(env_ns)
+        else:
+            fm_function_names.append(name)
+
+    # ── Step 4: Build environments ──
+    envs: list["BaseEnvironment"] = []
+
+    if primitive_methods:
+        needed_managers: set[str] = set()
+        for fq in primitive_methods:
+            parts = fq.split(".")
+            if len(parts) >= 2:
+                needed_managers.add(parts[1])
+        scope = PrimitiveScope(scoped_managers=frozenset(needed_managers))
+        envs.append(
+            StateManagerEnvironment(
+                Primitives(primitive_scope=scope),
+                allowed_methods=primitive_methods,
+            ),
+        )
+
+    for ns in local_env_namespaces:
+        if ns in parent_environments:
+            envs.append(parent_environments[ns])
+
+    if fm_function_names and function_manager is not None:
+        envs.append(
+            FunctionStoreEnvironment(
+                function_manager,
+                function_names=fm_function_names,
+            ),
+        )
+
+    return envs
+
+
 class CodeActActor(BaseCodeActActor):
     """
     An actor that uses a conversational tool loop and a stateful code execution
@@ -2095,6 +2191,7 @@ class CodeActActor(BaseCodeActActor):
         async def run_sub_agent(
             task: str,
             *,
+            environment: list[str] | None = None,
             timeout: float | None = None,
             can_compose: bool = True,
             can_store: bool = False,
@@ -2107,9 +2204,10 @@ class CodeActActor(BaseCodeActActor):
             """
             Spawn a sub-agent to work on a focused sub-task.
 
-            The sub-agent is an independent CodeActActor with the same tools and
-            environment access as the current agent. It runs the given task to
-            completion and returns the final result as a string.
+            The sub-agent is an independent CodeActActor with its own sandbox,
+            prompt, and (optionally) a curated set of directly callable
+            functions.  It runs the given task to completion and returns the
+            final result as a string.
 
             When to use
             -----------
@@ -2135,6 +2233,32 @@ class CodeActActor(BaseCodeActActor):
                 accomplish. Be specific and include all necessary context, because
                 the sub-agent does **not** share the parent agent's conversation
                 history or session state.
+            environment : list[str], optional
+                Names of functions that should be unpacked directly into the
+                sub-agent's prompt and made immediately callable in its
+                sandbox — no searching or discovery needed.
+
+                Think of this as: "which functions would be most useful if
+                the sub-agent could just call them directly, without having
+                to find them first?"
+
+                Names use dotted-segment matching:
+
+                - ``"primitives"`` — all state manager primitives
+                - ``"primitives.contacts"`` — all contacts methods
+                - ``"primitives.contacts.ask"`` — just contacts.ask
+                - ``"alpha"`` — a specific stored function from the
+                  FunctionManager (seen via search/list/filter)
+                - ``"my_service"`` — all methods from a custom environment
+                - ``"my_service.do_something"`` — a specific custom method
+
+                Any function you have seen (in your prompt, in search
+                results, or in your environment) can be listed here.
+                Functions not listed are still discoverable via the
+                FunctionManager search tools.
+
+                When omitted, the sub-agent receives no prompt-injected
+                functions and relies entirely on FunctionManager discovery.
             timeout : float, optional
                 Maximum seconds for the sub-agent to complete. Defaults to half
                 the parent agent's timeout, capped at 300 seconds.
@@ -2161,29 +2285,52 @@ class CodeActActor(BaseCodeActActor):
                 timeout if timeout is not None else min(self._timeout / 2, 300)
             )
 
-            handle = await self.act(
-                task,
-                clarification_enabled=True,
+            # ── Build inner actor environments from environment patterns ──
+            if environment:
+                inner_envs = _build_sub_agent_environments(
+                    environment=environment,
+                    parent_environments=self.environments,
+                    function_manager=self.function_manager,
+                )
+            else:
+                inner_envs = []
+
+            # ── Create inner CodeActActor ──
+            inner_actor = CodeActActor(
+                environments=inner_envs or [],
+                function_manager=self.function_manager,
                 can_compose=bool(can_compose),
                 can_store=bool(can_store),
                 can_spawn_sub_agents=bool(can_spawn_sub_agents),
                 storage_check_on_return=bool(storage_check_on_return),
-                _parent_chat_context=_parent_chat_context,
-                _clarification_up_q=_clarification_up_q,
-                _clarification_down_q=_clarification_down_q,
+                timeout=effective_timeout,
+                model=self._model,
+                preprocess_msgs=self._preprocess_msgs,
+                prompt_caching=self._prompt_caching,
             )
 
             try:
-                result = await asyncio.wait_for(
-                    handle.result(),
-                    timeout=effective_timeout,
+                handle = await inner_actor.act(
+                    task,
+                    clarification_enabled=True,
+                    _parent_chat_context=_parent_chat_context,
+                    _clarification_up_q=_clarification_up_q,
+                    _clarification_down_q=_clarification_down_q,
                 )
-            except asyncio.TimeoutError:
-                await handle.stop("Sub-agent timed out")
-                result = (
-                    f"Sub-agent timed out after {effective_timeout}s. "
-                    f"The sub-task may have been too broad or complex."
-                )
+
+                try:
+                    result = await asyncio.wait_for(
+                        handle.result(),
+                        timeout=effective_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    await handle.stop("Sub-agent timed out")
+                    result = (
+                        f"Sub-agent timed out after {effective_timeout}s. "
+                        f"The sub-task may have been too broad or complex."
+                    )
+            finally:
+                await inner_actor.close()
 
             return result
 

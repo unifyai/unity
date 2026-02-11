@@ -15,7 +15,6 @@ import pytest
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.prompt_builders import build_code_act_prompt
 
-
 # ---------------------------------------------------------------------------
 # Symbolic tests — tool registration and gating
 # ---------------------------------------------------------------------------
