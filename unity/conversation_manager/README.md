@@ -119,7 +119,7 @@ User speaks → STT transcribes → Fast Brain (text LLM) → TTS speaks
     └──────── Main CM Brain provides CallGuidance ─────────┘
 ```
 
-Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-nano) for fast responses.
+Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-mini) for fast responses.
 
 ### 2. STS Mode (Speech-to-Speech)
 

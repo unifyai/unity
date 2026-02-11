@@ -32,13 +32,13 @@ class UnifyLLM(llm.LLM):
     - Consistent routing through our standard LLM client
 
     Usage:
-        llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="none")
+        llm_model = UnifyLLM(model="gpt-5-mini@openai", reasoning_effort="none")
         session = AgentSession(llm=llm_model, ...)
     """
 
     def __init__(
         self,
-        model: str = "gpt-5-nano@openai",
+        model: str = "gpt-5-mini@openai",
         *,
         reasoning_effort: str | None = None,
         service_tier: str | None = None,
