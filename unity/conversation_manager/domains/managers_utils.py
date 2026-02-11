@@ -982,7 +982,7 @@ def _init_managers(
                 contact_id=2,
                 first_name=demoer_first,
                 surname=demoer_last,
-                phone_number=SESSION_DETAILS.user.phone or "",
+                phone_number=SESSION_DETAILS.user.number or "",
                 email_address=SESSION_DETAILS.user.email or "",
             )
             print(f"[ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}")
