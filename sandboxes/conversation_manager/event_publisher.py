@@ -34,7 +34,7 @@ def get_simulated_user_contact() -> dict:
         "contact_id": 1,
         "first_name": os.getenv("USER_NAME", "User"),
         "surname": os.getenv("USER_SURNAME", ""),
-        "phone_number": os.getenv("USER_PHONE_NUMBER", "+15550001234"),
+        "phone_number": os.getenv("USER_NUMBER", "+15550001234"),
         "email_address": os.getenv("USER_EMAIL", "user@example.com"),
     }
 
