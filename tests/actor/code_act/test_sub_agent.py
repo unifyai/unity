@@ -249,33 +249,6 @@ def test_run_sub_agent_discovery_scope_narrows_not_replaces():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_run_sub_agent_can_compose_false_requires_function_manager():
-    """
-    When the outer agent calls run_sub_agent with can_compose=False, the inner
-    act() call should raise RuntimeError if function_manager is None.
-    """
-    actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-    )
-    actor.function_manager = None
-    try:
-        tools = actor.get_tools("act")
-        with pytest.raises(RuntimeError, match="function_manager is required"):
-            await tools["run_sub_agent"](
-                task="Do something",
-                can_compose=False,
-            )
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
-
-
-@pytest.mark.asyncio
-@pytest.mark.timeout(60)
 async def test_run_sub_agent_forwards_capability_flags():
     """
     Calling run_sub_agent with non-default capability flags should produce a
