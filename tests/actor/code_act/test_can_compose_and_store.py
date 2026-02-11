@@ -382,8 +382,8 @@ async def test_storage_check_on_return_merges_redundant_functions():
 
     fm = MagicMock()
     # Discovery tools return the two existing overlapping functions.
-    fm.search_functions = MagicMock(return_value=_existing_functions)
-    fm.filter_functions = MagicMock(return_value=_existing_functions)
+    fm.search_functions = MagicMock(return_value={"metadata": _existing_functions})
+    fm.filter_functions = MagicMock(return_value={"metadata": _existing_functions})
     fm.list_functions = MagicMock(
         return_value={"metadata": _existing_functions},
     )
