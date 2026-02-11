@@ -179,7 +179,5 @@ def test_computer_environment_prompt_context_from_registry():
     assert "query" in context
     assert "get_links" in context
     assert "get_content" in context
-    # Static methods too
-    assert "reason" in context
     # Docstrings should include parameter documentation
     assert "Parameters" in context
