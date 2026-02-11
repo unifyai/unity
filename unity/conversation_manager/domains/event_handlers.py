@@ -707,11 +707,15 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm._session_logger.info("startup", "Received startup event")
 
         # Set demo mode from startup event before initializing managers
-        if event.demo_mode:
+        # Demo mode is derived from the presence of a demo_id
+        if event.demo_id is not None:
             from unity.settings import SETTINGS
 
             SETTINGS.DEMO_MODE = True
-            cm._session_logger.info("startup", "Demo mode enabled")
+            SETTINGS.DEMO_ID = event.demo_id
+            cm._session_logger.info(
+                "startup", f"Demo mode enabled (demo_id={event.demo_id})"
+            )
 
         payload = event.to_dict()["payload"]
         cm.set_details(payload)

@@ -363,7 +363,9 @@ class _SessionConfigBase(Event):
     user_desktop_mode: str | None = None
     user_desktop_filesys_sync: bool = False
     user_desktop_url: str | None = None
-    demo_mode: bool = False  # Whether this is a demo assistant
+    # Demo assistant metadata ID. If set, this is a demo session.
+    # Unity derives demo_mode from (demo_id is not None).
+    demo_id: int | None = None
 
 
 @dataclass
