@@ -46,6 +46,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_down_q: asyncio.Queue[str] | None,
         mode: str,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -67,6 +68,8 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._log_label = SimulatedLineage.make_label(
             f"SimulatedGuidanceManager.{self._mode}",
         )
+
+        self._init_completion_gate(hold_completion)
 
         if self._needs_clar:
             try:
@@ -157,6 +160,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -195,6 +199,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
             reason: Optional reason for stopping.
         """
         self._log_stop(reason)
+        self._open_completion_gate()
         self._cancelled = True
         try:
             self._cancel_event.set()
@@ -217,7 +222,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         return "Resumed."
 
     def done(self) -> bool:  # type: ignore[override]
-        return self._done.is_set()
+        return self._done.is_set() and self._gate_open
 
     async def ask(
         self,
@@ -309,10 +314,12 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
         self._description = description
+        self._hold_completion = hold_completion
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
@@ -398,6 +405,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
             clarification_down_q=_clarification_down_q,
             mode="ask",
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         return handle
@@ -442,6 +450,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
             clarification_down_q=_clarification_down_q,
             mode="update",
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         return handle
@@ -467,6 +476,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
         )
         if sched:
             label, cid, t0 = sched

@@ -44,6 +44,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ) -> None:
         self._llm = llm
         self._initial = initial_text
@@ -89,6 +90,8 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._messages: list[dict[str, Any]] = []
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        self._init_completion_gate(hold_completion)
 
     async def result(self):
         if self._cancelled:
@@ -190,6 +193,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             reason: Optional reason for stopping.
         """
         self._log_stop(reason)
+        self._open_completion_gate()
         self._cancelled = True
         try:
             self._cancel_event.set()
@@ -359,6 +363,7 @@ class SimulatedSecretManager(BaseSecretManager):
             ),
             log_events=getattr(self, "_log_events", False),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
         )
         if sched:
             label, cid, t0 = sched
@@ -552,6 +557,7 @@ class SimulatedSecretManager(BaseSecretManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         if should_log and call_id is not None:

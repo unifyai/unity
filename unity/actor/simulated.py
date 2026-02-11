@@ -110,6 +110,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         response_format: Optional[Type[BaseModel]] = None,
         # Whether to emit notifications via next_notification()
         emit_notifications: bool = True,
+        hold_completion: bool = False,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -156,6 +157,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         except Exception:
             self._log_label = "SimulatedActor.act"
 
+        self._init_completion_gate(hold_completion)
         self._start()
 
     @property
@@ -312,6 +314,8 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         # cancelled cleanly during event loop shutdown.
         while not self._done_event.is_set():
             await asyncio.sleep(0.1)
+        # Honour the shared completion gate (no-op when hold_completion=False).
+        await self._await_completion_gate()
         raw_result = self._result_str  # type: ignore
 
         # If response_format is specified, generate structured output
@@ -347,7 +351,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         Args:
             reason: Optional reason for stopping.
         """
-        if self._done_event.is_set():
+        if self._done_event.is_set() and self._gate_open:
             return
         if not self._description:
             raise Exception("No actions are currently being performed.")
@@ -357,6 +361,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
         except Exception:
             pass
+        self._open_completion_gate()
         # Unpause immediately so the action loop can observe the stop signal
         try:
             self._pause_event.set()
@@ -493,14 +498,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         return _StaticAnswerHandle(answer)
 
     def done(self) -> bool:
-        return self._done_event.is_set()
+        return self._done_event.is_set() and self._gate_open
 
     def trigger_completion(self, result: str | None = None) -> None:
         """Trigger immediate completion of the simulated actor.
 
-        This is a test-only method that forces the actor to complete immediately,
-        unblocking any awaiting result() calls. Useful for deterministic testing
-        without relying on step counts or durations.
+        Forces the actor to complete immediately, unblocking any awaiting
+        ``result()`` calls.  Also opens the shared completion gate from
+        :class:`SimulatedHandleMixin`.
 
         Args:
             result: Optional result string. If not provided, uses a default
@@ -508,15 +513,15 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
         Note: Idempotent - calling on an already-completed actor has no effect.
         """
-        if self._done_event.is_set():
-            return  # Already done, no-op
-
-        msg = (
-            result
-            if result is not None
-            else f"Completed '{self._description}' (triggered)."
-        )
-        self._complete(msg)
+        if not self._done_event.is_set():
+            msg = (
+                result
+                if result is not None
+                else f"Completed '{self._description}' (triggered)."
+            )
+            self._complete(msg)
+        # Delegate to the mixin to open the shared gate.
+        super().trigger_completion(result)
 
     # ------------------------
     # Status query helpers
@@ -640,6 +645,7 @@ class SimulatedActor(BaseActor):
         simulation_guidance: Optional[str] = None,
         # Whether handles emit notifications via next_notification()
         emit_notifications: bool = True,
+        hold_completion: bool = False,
         # Accept but ignore parameters that real Actor may use
         description: str = "",
         **kwargs: Any,
@@ -663,6 +669,7 @@ class SimulatedActor(BaseActor):
             log_mode if log_mode in ("print", "log", None) else "log"
         )
         self._emit_notifications = emit_notifications
+        self._hold_completion = hold_completion
         # Store simulation-only guidance
         self._sim_guidance: Optional[str] = simulation_guidance
 
@@ -786,4 +793,5 @@ class SimulatedActor(BaseActor):
             session_suffix=session_suffix,
             response_format=response_format,
             emit_notifications=self._emit_notifications,
+            hold_completion=self._hold_completion,
         )

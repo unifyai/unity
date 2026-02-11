@@ -38,6 +38,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -83,6 +84,8 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._paused = False
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        self._init_completion_gate(hold_completion)
 
     async def result(self):
         if self._cancelled:
@@ -146,6 +149,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -184,6 +188,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
             reason: Optional reason for stopping.
         """
         self._log_stop(reason)
+        self._open_completion_gate()
         self._cancelled = True
         try:
             self._cancel_event.set()
@@ -206,7 +211,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         return "Resumed."
 
     def done(self) -> bool:  # type: ignore[override]
-        return self._done.is_set()
+        return self._done.is_set() and self._gate_open
 
     async def ask(
         self,
@@ -289,11 +294,13 @@ class SimulatedWebSearcher(BaseWebSearcher):
         description: str = "simulate sensible web research answers",
         *,
         log_events: bool = False,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._hold_completion = hold_completion
         # Mirror the real manager's tool exposure programmatically for prompts
         self._ask_tools = mirror_web_searcher_tools()
 
@@ -392,6 +399,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
                 "simulate sensible web research answers",
             ),
             log_events=getattr(self, "_log_events", False),
+            hold_completion=getattr(self, "_hold_completion", False),
         )
         if sched:
             label, cid, t0 = sched

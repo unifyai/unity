@@ -49,6 +49,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -96,6 +97,8 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         # label already set above
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        self._init_completion_gate(hold_completion)
 
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
@@ -160,6 +163,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -198,6 +202,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
             reason: Optional reason for stopping.
         """
         self._log_stop(reason)
+        self._open_completion_gate()
         self._cancelled = True
         try:
             self._cancel_event.set()
@@ -220,7 +225,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         return "Resumed."
 
     def done(self) -> bool:
-        return self._done.is_set()
+        return self._done.is_set() and self._gate_open
 
     async def ask(
         self,
@@ -312,12 +317,14 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore parameters that real TranscriptManager uses
         contact_manager: Any = None,
         **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events
+        self._hold_completion = hold_completion
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
@@ -437,6 +444,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Do not emit ❓ Ask requested here; tool-style scheduled log above already captures inputs
