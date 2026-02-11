@@ -77,8 +77,8 @@ Display commands:
 Inbound event simulation:
   sms <msg>                     Simulate incoming SMS
   email <subject> | <body>      Simulate incoming email
-  call                          Start simulated phone call
-  say <text>                    Phone utterance (during a call)
+  call                          Start phone call (simulated, or live via LiveKit with --live-voice)
+  say <text>                    Phone utterance (during a simulated call)
   sayv                          Record voice, transcribe, and send as a phone utterance (requires --voice)
   sayv <text>                   Send <text> as a phone utterance (convenience; no recording)
   end_call                      End active phone call

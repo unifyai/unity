@@ -134,6 +134,7 @@ def _build_worker_config(*, args: Any, actor_config: ActorConfig) -> dict:
         ),
         "real_comms": bool(getattr(args, "real_comms", False)),
         "auto_confirm": bool(getattr(args, "auto_confirm", False)),
+        "live_voice": bool(getattr(args, "live_voice", False)),
         # Nested copy for future-proofing (UI already prefers this when present).
         "actor_config": actor_config.to_json_obj(),
     }
@@ -333,6 +334,18 @@ async def _main_async() -> None:
         action="store_true",
         default=False,
         help="(real-comms) Auto-confirm all outbound actions (use with care).",
+    )
+    parser.add_argument(
+        "--live-voice",
+        dest="live_voice",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable live voice calls via LiveKit. "
+            "The `call` command spawns the production voice agent and provides "
+            "a browser URL to join the call with your microphone. "
+            "Requires LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET env vars."
+        ),
     )
     args = parser.parse_args()
 
@@ -712,6 +725,12 @@ async def _main_async() -> None:
             except Exception:
                 pass
             print(line)
+            try:
+                r = getattr(args, "_router", None)
+                if r is not None:
+                    r.conversation_lines.append(str(line))
+            except Exception:
+                pass
 
         sub_task = asyncio.create_task(
             subscribe_to_responses(

@@ -12,7 +12,7 @@ import asyncio
 import logging
 from pathlib import Path
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
 
@@ -74,6 +74,7 @@ class CommandRouter:
     trace_display: TraceDisplay | None = None
     event_tree_display: EventTreeDisplay | None = None
     log_aggregator: LogAggregator | None = None
+    conversation_lines: list[str] = field(default_factory=list)
 
     async def execute_raw(
         self,
@@ -226,15 +227,18 @@ class CommandRouter:
             log_aggregator=self.log_aggregator,
             event_tree_display=self.event_tree_display,
             trace_display=self.trace_display,
+            conversation_lines=self.conversation_lines,
         )
+
+        repo_root = Path(__file__).resolve().parents[2]
 
         # Determine output path
         if args and args.strip():
-            json_path = Path(args.strip())
+            json_path = repo_root / args.strip()
         else:
             # Auto-generate filename with timestamp
             timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-            json_path = Path(f".sandbox_state_{timestamp}.json")
+            json_path = repo_root / f".sandbox_state_{timestamp}.json"
 
         # Save JSON
         try:
@@ -263,7 +267,9 @@ class CommandRouter:
                 f"💾 State saved:",
                 f"   JSON: {json_path}",
                 f"   Text: {text_path}",
-                f"   Summary: {snapshot.summary['total_actor_logs']} actor logs, "
+                f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
+                f"{snapshot.summary['total_cm_logs']} CM logs, "
+                f"{snapshot.summary['total_actor_logs']} actor logs, "
                 f"{snapshot.summary['total_manager_logs']} manager logs, "
                 f"{snapshot.summary['total_traces']} traces, "
                 f"{snapshot.summary['total_event_trees']} trees",
@@ -469,6 +475,14 @@ class CommandRouter:
 
     async def _reset_best_effort(self) -> None:
         st = self.state
+
+        # Clean up live voice session if active.
+        if getattr(st, "live_voice_active", False):
+            try:
+                await self.publisher.end_live_call()
+            except Exception:
+                pass
+
         try:
             st.reset_ephemeral()
         except Exception:
@@ -533,6 +547,20 @@ class CommandRouter:
             await self.publisher.publish_email(subj, body)
             return RouterResult(lines=[])
         if cmd.name == "call":
+            # Live voice mode: spawn real LiveKit voice agent
+            if getattr(self.args, "live_voice", False):
+                if getattr(st, "live_voice_active", False):
+                    return RouterResult(
+                        lines=["⚠️ A live voice call is already active."],
+                    )
+                try:
+                    lines = await self.publisher.start_live_call()
+                    return RouterResult(lines=lines)
+                except Exception as exc:
+                    st.in_call = False
+                    return RouterResult(
+                        lines=[f"❌ Failed to start live voice call: {exc}"],
+                    )
             await self.publisher.publish_call_start()
             return RouterResult(
                 lines=[
@@ -543,11 +571,25 @@ class CommandRouter:
         if cmd.name == "say":
             if not getattr(st, "in_call", False):
                 return RouterResult(lines=["⚠️ No active call. Use `call` first."])
+            if getattr(st, "live_voice_active", False):
+                return RouterResult(
+                    lines=[
+                        "🎙️  Live voice is active — speak through your browser mic.",
+                        "   The voice agent handles speech-to-text automatically.",
+                    ],
+                )
             await self.publisher.publish_phone_utterance(cmd.args)
             return RouterResult(lines=[])
         if cmd.name == "sayv":
             if not getattr(st, "in_call", False):
                 return RouterResult(lines=["⚠️ No active call. Use `call` first."])
+            if getattr(st, "live_voice_active", False):
+                return RouterResult(
+                    lines=[
+                        "🎙️  Live voice is active — speak through your browser mic.",
+                        "   The voice agent handles speech-to-text automatically.",
+                    ],
+                )
             if not self.allow_voice:
                 return RouterResult(
                     lines=["⚠️ Voice input is not enabled in this mode."],
@@ -592,6 +634,18 @@ class CommandRouter:
             await self.publisher.publish_phone_utterance(text)
             return RouterResult(lines=[f"▶️ {text}"])
         if cmd.name == "end_call":
+            # Live voice mode: clean up LiveKit room + subprocess
+            if getattr(st, "live_voice_active", False):
+                try:
+                    lines = await self.publisher.end_live_call()
+                    return RouterResult(lines=lines)
+                except Exception as exc:
+                    LG.error("end_live_call failed: %s", exc, exc_info=True)
+                    st.in_call = False
+                    st.live_voice_session = None
+                    return RouterResult(
+                        lines=[f"❌ Error ending live voice call: {exc}"],
+                    )
             await self.publisher.publish_call_end()
             return RouterResult(lines=["📞 Call ended."])
 

@@ -31,6 +31,11 @@ class SandboxState:
     last_event_published_at: float = 0.0
     queued_events: list[ParsedCommand] = field(default_factory=list)
     _steering_hint_visible: bool = False
+    live_voice_session: object = None
+
+    @property
+    def live_voice_active(self) -> bool:
+        return self.live_voice_session is not None
 
     def reset_ephemeral(self) -> None:
         """Reset sandbox-local state (CM state reset is handled separately)."""
@@ -41,6 +46,7 @@ class SandboxState:
         self.last_event_published_at = 0.0
         self.queued_events.clear()
         self._steering_hint_visible = False
+        self.live_voice_session = None
 
 
 def get_prompt(state: SandboxState) -> str:
@@ -55,6 +61,7 @@ def _print_welcome(*, args: Any) -> None:
     mode = "REAL-COMMS" if getattr(args, "real_comms", False) else "SIMULATED"
     gui = "on" if getattr(args, "gui", False) else "off"
     voice = "on" if getattr(args, "voice", False) else "off"
+    live_voice = "on" if getattr(args, "live_voice", False) else "off"
     cfg = getattr(args, "_actor_config", None)
     actor_type = getattr(cfg, "actor_type", None) if cfg is not None else None
 
@@ -66,6 +73,8 @@ def _print_welcome(*, args: Any) -> None:
         print(f"ActorConfig: {actor_type}")
     print(f"GUI:  {gui}")
     print(f"Voice:{voice}")
+    if live_voice == "on":
+        print(f"Live Voice: {live_voice} (calls use real LiveKit voice agent)")
     print("\n" + HELP_TEXT + "\n")
 
 
@@ -100,6 +109,7 @@ async def run_repl(*, args: Any, state: SandboxState | None = None) -> None:
             event_tree_display=getattr(args, "_event_tree_display", None),
             log_aggregator=getattr(args, "_log_aggregator", None),
         )
+        setattr(args, "_router", router)
 
     while True:
         try:
