@@ -983,7 +983,8 @@ class TestDemoModePropagation:
 
     @pytest.mark.asyncio
     async def test_startup_event_includes_demo_mode_false_by_default(
-        self, event_broker
+        self,
+        event_broker,
     ):
         """
         Test that demo_mode defaults to False when not specified.

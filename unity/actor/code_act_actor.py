@@ -1680,10 +1680,7 @@ class CodeActActor(BaseCodeActActor):
                 for ns, env in self.environments.items():
                     try:
                         instance = env.get_instance()
-                        if (
-                            _clarification_up_q is not None
-                            and instance is not None
-                        ):
+                        if _clarification_up_q is not None and instance is not None:
                             from unity.actor.environments.base import (
                                 _ClarificationQueueInjector,
                             )
