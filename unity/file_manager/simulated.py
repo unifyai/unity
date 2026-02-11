@@ -721,6 +721,7 @@ class SimulatedFileManager(BaseFileManager):
         group_by: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
+        metric: Optional[str] = None,
         aggregate: Optional[str] = None,
         scale_x: Optional[str] = None,
         scale_y: Optional[str] = None,
@@ -978,6 +979,7 @@ class SimulatedFileManager(BaseFileManager):
             )
 
         # File not found - return minimal map
+        file_id = 0
         return FileStorageMap(
             file_path=file_path or f"unknown_file_{file_id}",
             file_id=file_id,
