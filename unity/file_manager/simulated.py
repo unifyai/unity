@@ -35,7 +35,7 @@ from ..logger import LOGGER
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Handle returned by SimulatedFileManager.ask_about_file.
     """
@@ -292,9 +292,6 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

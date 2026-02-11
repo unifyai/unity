@@ -186,7 +186,7 @@ _MergeOutcomeStrict.model_rebuild()
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedContactHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Minimal LLM-backed handle used by SimulatedContactManager.ask / update.
     """
@@ -448,9 +448,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

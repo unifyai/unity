@@ -432,6 +432,20 @@ class SimulatedHandleMixin:
         """
         self._open_completion_gate()
 
+    # ── Notifications ────────────────────────────────────────────────────
+
+    async def next_notification(self) -> dict:
+        """Block until cancelled — simulated handles don't emit notifications.
+
+        Callers (e.g. ``actor_watch_notifications``) wrap this in
+        ``asyncio.wait_for(..., timeout=N)`` which raises ``TimeoutError``
+        and re-checks ``handle.done()``.  This matches the real
+        ``SteerableToolLoopHandle`` behaviour where ``next_notification``
+        blocks on an ``asyncio.Queue.get()`` that may never receive an item.
+        """
+        await asyncio.Event().wait()
+        return {}  # unreachable; satisfies return type
+
     # ── Steering logs ────────────────────────────────────────────────────
 
     def _log_interject(self, message: str) -> None:

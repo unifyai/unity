@@ -24,7 +24,7 @@ import functools
 from ..logger import LOGGER
 
 
-class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedWebSearcherHandle(SimulatedHandleMixin, SteerableToolHandle):
     """Minimal LLM-backed handle used by SimulatedWebSearcher.ask/update."""
 
     def __init__(
@@ -273,9 +273,6 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

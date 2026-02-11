@@ -34,7 +34,7 @@ from ..logger import LOGGER
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedTranscriptHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     A very small, LLM-backed handle used by SimulatedTranscriptManager.ask.
     """
@@ -287,9 +287,6 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

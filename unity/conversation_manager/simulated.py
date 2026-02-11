@@ -135,7 +135,7 @@ class SimulatedConversationManagerHandle(
         if response_format:
             prompt += "\n**FORMAT INSTRUCTIONS:** Your response MUST be a JSON object that strictly conforms to the provided Pydantic model schema."
 
-        class _AnswerHandle(SteerableToolHandle, SimulatedHandleMixin):
+        class _AnswerHandle(SimulatedHandleMixin, SteerableToolHandle):
             def __init__(
                 inner_self,
                 stateful_llm: unillm.AsyncUnify,
@@ -180,9 +180,6 @@ class SimulatedConversationManagerHandle(
                 return inner_self
 
             async def next_clarification(inner_self) -> dict:
-                return {}
-
-            async def next_notification(inner_self) -> dict:
                 return {}
 
             async def answer_clarification(
@@ -267,9 +264,6 @@ class SimulatedConversationManagerHandle(
         return self._final_result
 
     async def next_clarification(self) -> dict:
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
