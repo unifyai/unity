@@ -133,15 +133,7 @@ cm> end_call
 
 ### Requirements
 
-| Environment Variable | Purpose |
-|---|---|
-| `LIVEKIT_URL` | LiveKit server URL (e.g. `wss://your-project.livekit.cloud`) |
-| `LIVEKIT_API_KEY` | LiveKit API key |
-| `LIVEKIT_API_SECRET` | LiveKit API secret |
-| `DEEPGRAM_API_KEY` | Speech-to-text (Deepgram) |
-| `CARTESIA_API_KEY` or `ELEVEN_API_KEY` | Text-to-speech (Cartesia or ElevenLabs) |
-
-These are the same credentials used in production voice calls.
+Requires voice-related env vars (`LIVEKIT_*`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` or `ELEVEN_API_KEY`). See the **Voice / Live-Voice** section under Environment Variables for the full list.
 
 ## Real-comms safety confirmations
 
@@ -197,20 +189,132 @@ The snapshot includes:
 
 ## Environment Variables
 
-### `EVENTBUS_PUBLISHING_ENABLED`
+All env vars are read from `.env` at the repo root. The tables below group them by feature; only "Core" is needed for basic simulated mode.
 
-**Required for Event Tree and Manager Logs.** By default, EventBus publishing is disabled for local development. To enable the Event Tree and Manager Logs panels in the GUI, set:
+### Core (all modes)
+
+| Variable | Required | Description |
+|---|---|---|
+| `UNIFY_KEY` | **Yes** | Unify API key (auth for Orchestra) |
+| `ORCHESTRA_URL` | **Yes** | Orchestra API base URL (e.g. `http://localhost:8000/v0`) |
+| `ORCHESTRA_ADMIN_KEY` | **Yes** (real-comms) | Admin key for comms service auth |
+| `UNIFY_ENDPOINT` | No | Default LLM endpoint (e.g. `gpt-5@openai`). Falls back to unillm defaults |
+| `OPENAI_API_KEY` | Depends | Required if using OpenAI models |
+| `ANTHROPIC_API_KEY` | Depends | Required if using Anthropic models |
+
+### Identity (user / assistant)
+
+These populate `SESSION_DETAILS` and the boss contact record. Without them the sandbox falls back to placeholder values, which breaks real-comms.
+
+| Variable | Default | Description |
+|---|---|---|
+| `USER_NAME` | `"User"` | Boss's first name |
+| `USER_NUMBER` | `"+15550001234"` | Boss's phone number — **must be set for real SMS** |
+| `USER_EMAIL` | `"user@example.com"` | Boss's email — **must be set for real email** |
+| `USER_ID` | (auto) | Boss's user ID |
+| `ASSISTANT_NAME` | `"Default"` | Assistant's display name |
+| `ASSISTANT_NUMBER` | `"+10000000000"` | Assistant's outbound phone number (Twilio) — **must be set for real SMS/calls** |
+| `ASSISTANT_EMAIL` | `"assistant@unify.ai"` | Assistant's outbound email address — **must be set for real email** |
+| `ASSISTANT_ID` | (auto) | Assistant ID |
+| `ASSISTANT_AGE` | `""` | Assistant's age (used in prompts) |
+
+### Real-Comms mode (`--real-comms`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `UNITY_COMMS_URL` | **Yes** | Communication service URL (e.g. `https://unity-comms-app-staging-....run.app`) |
+| `ORCHESTRA_ADMIN_KEY` | **Yes** | Admin key used by comms service for auth headers |
+| `ASSISTANT_NUMBER` | **Yes** | Twilio-provisioned number for outbound SMS and calls |
+| `ASSISTANT_EMAIL` | **Yes** | Email address for outbound email |
+| `USER_NUMBER` | **Yes** | Boss's real phone number (SMS replies go here) |
+| `USER_EMAIL` | **Yes** | Boss's real email (email replies go here) |
+
+### Voice / Live-Voice (`--voice`, `--live-voice`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `LIVEKIT_URL` | **Yes** | LiveKit server URL (e.g. `wss://your-project.livekit.cloud`) |
+| `LIVEKIT_API_KEY` | **Yes** | LiveKit API key |
+| `LIVEKIT_API_SECRET` | **Yes** | LiveKit API secret |
+| `LIVEKIT_SIP_URI` | For SIP calls | LiveKit SIP trunk URI |
+| `DEEPGRAM_API_KEY` | **Yes** | Speech-to-text (Deepgram) |
+| `CARTESIA_API_KEY` | Depends | Text-to-speech (Cartesia) — required if `VOICE_PROVIDER=cartesia` |
+| `ELEVEN_API_KEY` | Depends | Text-to-speech (ElevenLabs) — required if `VOICE_PROVIDER=elevenlabs` |
+| `VOICE_PROVIDER` | No | `cartesia`, `elevenlabs`, or `gpt-realtime` (default: `cartesia`) |
+| `VOICE_ID` | No | Voice ID for the selected TTS provider |
+| `VOICE_MODE` | No | `tts` or `sts` (speech-to-speech) |
+
+### Debugging / Observability
+
+| Variable | Default | Description |
+|---|---|---|
+| `EVENTBUS_PUBLISHING_ENABLED` | `false` | **Required for Event Tree and Manager Logs** in the GUI. Without this, Event Tree is empty and Manager Logs show "(no logs)" |
+| `DEBUG_TOOL_RESULTS` | `false` | Log full tool call results |
+| `DEBUG_LLM_TURN` | `false` | Log each LLM turn |
+| `LLM_IO_DEBUG` | `false` | Log raw LLM request/response I/O |
+| `STAGING` | `false` | Enable staging-mode behaviors |
+
+### Mode 3 (agent-service / Magnitude)
+
+| Variable | Required | Description |
+|---|---|---|
+| `UNIFY_KEY` | **Yes** | Used by agent-service for auth |
+| `ORCHESTRA_URL` | **Yes** | Agent-service connects to Orchestra |
+
+### Vertex AI (optional provider)
+
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Depends | Path to service account JSON |
+| `VERTEXAI_PROJECT` | Depends | GCP project ID |
+| `VERTEXAI_LOCATION` | Depends | GCP region (e.g. `europe-west1`) |
+
+### Example `.env` (real-comms + live-voice)
 
 ```bash
-export EVENTBUS_PUBLISHING_ENABLED=true
-```
+# Core
+UNIFY_KEY=your-unify-key
+ORCHESTRA_URL=http://localhost:8000/v0
+ORCHESTRA_ADMIN_KEY=your-admin-key
 
-Without this, the Event Tree will be empty and Manager Logs will show "(no logs)". The Actor Logs and CM Logs panels work independently and are not affected.
+# LLM
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+UNIFY_ENDPOINT=gpt-5@openai
+
+# Identity
+USER_NAME=Yusha
+USER_NUMBER=+19294608302
+USER_EMAIL=yusha@unify.ai
+ASSISTANT_NAME=Liz
+ASSISTANT_NUMBER=+19134048493
+ASSISTANT_EMAIL=default-assistant-4@unify.ai
+ASSISTANT_ID=4
+
+# Comms
+UNITY_COMMS_URL=https://unity-comms-app-staging-....run.app
+
+# Voice
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=your-key
+LIVEKIT_API_SECRET=your-secret
+DEEPGRAM_API_KEY=your-key
+CARTESIA_API_KEY=your-key
+VOICE_PROVIDER=cartesia
+
+# Debugging
+EVENTBUS_PUBLISHING_ENABLED=true
+DEBUG_TOOL_RESULTS=true
+DEBUG_LLM_TURN=true
+```
 
 ## Troubleshooting
 
 ### Event Tree is empty / Manager Logs show "(no logs)"
-Set `EVENTBUS_PUBLISHING_ENABLED=true` (see Environment Variables section above).
+Set `EVENTBUS_PUBLISHING_ENABLED=true` (see Debugging / Observability in the Environment Variables section above).
+
+### SMS replies fail with "Failed to send sms to +15550001234"
+The placeholder number means `USER_NUMBER` is not set in `.env`. Set it to the boss's real phone number (see Identity section above).
 
 ### “(no active conversation) Steering commands…”
 Steering commands only work while CM is processing (active handle or brain run in-flight). Send an event (`sms ...`, `call`, etc.) first.
