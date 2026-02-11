@@ -75,7 +75,7 @@ def _make_fake_actor():
     """Create a mock Actor whose act() returns a controllable handle."""
     captured_kwargs: dict[str, Any] = {}
 
-    async def fake_act(description, **kwargs):
+    async def fake_act(request, **kwargs):
         captured_kwargs.update(kwargs)
         handle = MagicMock()
         handle.result = AsyncMock(return_value="done")

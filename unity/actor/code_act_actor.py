@@ -2397,12 +2397,12 @@ class CodeActActor(BaseCodeActActor):
         return tools
 
     @functools.wraps(BaseCodeActActor.act, updated=())
-    @log_manager_call("CodeActActor", "act", payload_key="description")
+    @log_manager_call("CodeActActor", "act", payload_key="request")
     async def act(
         self,
-        description: str | dict | list[str | dict],
+        request: str | dict | list[str | dict],
         *,
-        instructions: Optional[str] = None,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -2689,7 +2689,7 @@ class CodeActActor(BaseCodeActActor):
             environments=sandbox_envs,
             tools=base_tools,
             storage_check_on_return=effective_storage_check,
-            instructions=instructions,
+            guidelines=guidelines,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
@@ -2747,7 +2747,7 @@ class CodeActActor(BaseCodeActActor):
 
         handle = start_async_tool_loop(
             client,
-            description or initial_prompt,
+            request or initial_prompt,
             tools,
             loop_id=f"CodeActActor.act",
             propagate_chat_context=ChatContextPropagation.ALWAYS,

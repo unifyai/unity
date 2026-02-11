@@ -138,7 +138,7 @@ async def test_execute_function_by_description():
 
     # Search by description instead of ID
     handle = await actor.act(
-        description="greet a user by their name",
+        request="greet a user by their name",
         call_kwargs={"name": "Charlie"},
     )
 
@@ -178,7 +178,7 @@ def send_email(to: str, subject: str) -> str:
 
     # Search for calculation-related task
     handle = await actor.act(
-        description="add two numbers together",
+        request="add two numbers together",
         call_kwargs={"a": 5, "b": 3},
     )
 
@@ -212,7 +212,7 @@ def greet_pet(name: str) -> str:
 
     # Search specifically for pet greeting
     handle = await actor.act(
-        description="say hello to my dog",
+        request="say hello to my dog",
         call_kwargs={"name": "Buddy"},
     )
 
@@ -367,7 +367,7 @@ async def test_function_not_found_by_description(monkeypatch):
     monkeypatch.setattr(fm, "search_functions", mock_search)
 
     with pytest.raises(ValueError, match="No function found matching"):
-        await actor.act(description="anything")
+        await actor.act(request="anything")
 
 
 @pytest.mark.asyncio
@@ -835,7 +835,7 @@ def echo_query(query: str) -> str:
     )
 
     handle = await actor.act(
-        description="What is the first time fix rate?",
+        request="What is the first time fix rate?",
         function_id=func_data["function_id"],
         # No call_kwargs — LLM should generate {"query": "What is the first time fix rate?"}
         verify=False,
@@ -869,7 +869,7 @@ def echo_query(query: str) -> str:
     )
 
     handle = await actor.act(
-        description="What is the first time fix rate?",
+        request="What is the first time fix rate?",
         function_id=func_data["function_id"],
         call_kwargs={"query": "my explicit query"},
         verify=False,
@@ -901,7 +901,7 @@ def no_args_task() -> str:
     )
 
     handle = await actor.act(
-        description="run the no-args task",
+        request="run the no-args task",
         function_id=func_data["function_id"],
         verify=False,
     )
@@ -933,7 +933,7 @@ def add_numbers(a: int, b: int) -> int:
     )
 
     handle = await actor.act(
-        description="Add 7 and 13 together",
+        request="Add 7 and 13 together",
         function_id=func_data["function_id"],
         verify=False,
     )
@@ -1110,7 +1110,7 @@ async def test_execute_venv_function_by_description(cleanup_venvs):
 
     # Search by description - should find and execute in venv
     handle = await actor.act(
-        description="greet someone from a virtual environment",
+        request="greet someone from a virtual environment",
         call_kwargs={"name": "SearchUser"},
     )
 
@@ -1643,7 +1643,7 @@ async def codeact_workflow(goal: str):
 
     actor = CodeActActor()
     handle = await actor.act(
-        description=goal,
+        request=goal,
         clarification_enabled=False,
     )
     return handle
@@ -1691,7 +1691,7 @@ async def counting_workflow(target: int):
 
     actor = CodeActActor()
     handle = await actor.act(
-        description=f"Count from 1 to {target}, saying each number one at a time. Take your time.",
+        request=f"Count from 1 to {target}, saying each number one at a time. Take your time.",
         clarification_enabled=False,
     )
     return handle
@@ -1704,7 +1704,7 @@ async def counting_workflow(target: int):
     )
 
     handle = await actor.act(
-        description="count numbers slowly",
+        request="count numbers slowly",
         call_kwargs={"target": 10},
         verify=False,
     )
@@ -1765,7 +1765,7 @@ async def context_aware_workflow(goal: str):
 
     actor = CodeActActor()
     handle = await actor.act(
-        description=goal,
+        request=goal,
         _parent_chat_context=ctx,
         _clarification_up_q=up_q,
         _clarification_down_q=down_q,
@@ -1892,7 +1892,7 @@ async def test_dependency_resolution_by_description():
     )
 
     handle = await actor.act(
-        description="compute (a * b) + c, product plus addition",
+        request="compute (a * b) + c, product plus addition",
         call_kwargs={"a": 4, "b": 6, "c": 1},
         verify=False,
     )

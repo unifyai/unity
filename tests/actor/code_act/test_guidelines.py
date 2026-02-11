@@ -1,8 +1,8 @@
 """
-Tests for the ``instructions`` parameter on Actor.act().
+Tests for the ``guidelines`` parameter on Actor.act().
 
-The ``instructions`` parameter provides meta-guidance on *how* to approach a task,
-as opposed to the ``description`` which specifies *what* to do.
+The ``guidelines`` parameter provides meta-guidance on *how* to approach a task,
+as opposed to the ``request`` which specifies *what* to do.
 """
 
 import asyncio
@@ -18,50 +18,50 @@ from unity.actor.prompt_builders import build_code_act_prompt
 # ---------------------------------------------------------------------------
 
 
-def test_build_code_act_prompt_without_instructions():
-    """When instructions is None, the prompt should not contain an Instructions section."""
-    prompt = build_code_act_prompt(environments={}, tools=None, instructions=None)
-    assert "### Instructions" not in prompt
+def test_build_code_act_prompt_without_guidelines():
+    """When guidelines is None, the prompt should not contain a Guidelines section."""
+    prompt = build_code_act_prompt(environments={}, tools=None, guidelines=None)
+    assert "### Guidelines" not in prompt
 
 
-def test_build_code_act_prompt_with_instructions():
-    """When instructions is provided, the prompt should contain the Instructions section."""
+def test_build_code_act_prompt_with_guidelines():
+    """When guidelines is provided, the prompt should contain the Guidelines section."""
     prompt = build_code_act_prompt(
         environments={},
         tools=None,
-        instructions="Always use sub-agents for parallel tasks.",
+        guidelines="Always use sub-agents for parallel tasks.",
     )
-    assert "### Instructions" in prompt
+    assert "### Guidelines" in prompt
     assert "Always use sub-agents for parallel tasks." in prompt
-    assert "You MUST follow these instructions" in prompt
+    assert "You MUST follow these guidelines" in prompt
 
 
-def test_build_code_act_prompt_instructions_placed_before_rules():
-    """Instructions should appear before the execution rules / tool signatures."""
+def test_build_code_act_prompt_guidelines_placed_before_rules():
+    """Guidelines should appear before the execution rules / tool signatures."""
     prompt = build_code_act_prompt(
         environments={},
         tools=None,
-        instructions="Prefer simple solutions.",
+        guidelines="Prefer simple solutions.",
     )
-    instructions_pos = prompt.index("### Instructions")
-    # The role line always appears; instructions should come after the role but
+    guidelines_pos = prompt.index("### Guidelines")
+    # The role line always appears; guidelines should come after the role but
     # the prompt overall should still contain the standard role header.
     assert (
         "Code-First Automation Agent" in prompt or "Function Execution Agent" in prompt
     )
-    assert instructions_pos > 0
+    assert guidelines_pos > 0
 
 
 # ---------------------------------------------------------------------------
-# CodeActActor.act accepts instructions (symbolic)
+# CodeActActor.act accepts guidelines (symbolic)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_code_act_actor_accepts_instructions_parameter():
+async def test_code_act_actor_accepts_guidelines_parameter():
     """
-    CodeActActor.act should accept the ``instructions`` keyword argument
+    CodeActActor.act should accept the ``guidelines`` keyword argument
     without raising TypeError, and return a valid handle.
     """
     actor = CodeActActor(
@@ -72,7 +72,7 @@ async def test_code_act_actor_accepts_instructions_parameter():
     try:
         handle = await actor.act(
             "What is 2 + 2?",
-            instructions="Keep your response concise.",
+            guidelines="Keep your response concise.",
             persist=False,
             clarification_enabled=False,
         )
@@ -87,9 +87,9 @@ async def test_code_act_actor_accepts_instructions_parameter():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_code_act_actor_instructions_none_by_default():
+async def test_code_act_actor_guidelines_none_by_default():
     """
-    When instructions is not passed, it defaults to None and the actor
+    When guidelines is not passed, it defaults to None and the actor
     operates normally.
     """
     actor = CodeActActor(
@@ -113,16 +113,16 @@ async def test_code_act_actor_instructions_none_by_default():
 
 
 # ---------------------------------------------------------------------------
-# CodeActActor.act instructions influence behavior (eval)
+# CodeActActor.act guidelines influence behavior (eval)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_code_act_instructions_forbid_execute_code():
+async def test_code_act_guidelines_forbid_execute_code():
     """
-    When instructions say "do NOT use execute_code", the actor should answer
+    When guidelines say "do NOT use execute_code", the actor should answer
     directly without calling execute_code.
     """
     actor = CodeActActor(
@@ -133,7 +133,7 @@ async def test_code_act_instructions_forbid_execute_code():
     try:
         handle = await actor.act(
             "What is 7 * 6?",
-            instructions=(
+            guidelines=(
                 "Do NOT use the execute_code tool. Answer the question directly "
                 "from your own knowledge without running any code."
             ),
@@ -150,7 +150,7 @@ async def test_code_act_instructions_forbid_execute_code():
 
         tool_calls = get_code_act_tool_calls(handle)
         assert "execute_code" not in tool_calls, (
-            f"Instructions said not to use execute_code, but it was called. "
+            f"Guidelines said not to use execute_code, but it was called. "
             f"Tool calls: {tool_calls}"
         )
     finally:
@@ -163,10 +163,10 @@ async def test_code_act_instructions_forbid_execute_code():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_code_act_instructions_include_marker_in_response():
+async def test_code_act_guidelines_include_marker_in_response():
     """
-    When instructions require including a specific marker phrase in the final
-    answer, the actor should comply. This validates that instructions reach the
+    When guidelines require including a specific marker phrase in the final
+    answer, the actor should comply. This validates that guidelines reach the
     LLM and influence its output.
     """
     actor = CodeActActor(
@@ -177,9 +177,9 @@ async def test_code_act_instructions_include_marker_in_response():
     try:
         handle = await actor.act(
             "What is the capital of France?",
-            instructions=(
+            guidelines=(
                 "You MUST end your final answer with the exact phrase "
-                "'[INSTRUCTIONS_FOLLOWED]' on its own line."
+                "'[GUIDELINES_FOLLOWED]' on its own line."
             ),
             persist=False,
             clarification_enabled=False,
@@ -188,7 +188,7 @@ async def test_code_act_instructions_include_marker_in_response():
         result_str = str(result)
 
         assert "Paris" in result_str
-        assert "INSTRUCTIONS_FOLLOWED" in result_str
+        assert "GUIDELINES_FOLLOWED" in result_str
     finally:
         try:
             await actor.close()
@@ -199,9 +199,9 @@ async def test_code_act_instructions_include_marker_in_response():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_code_act_instructions_response_format_constraint():
+async def test_code_act_guidelines_response_format_constraint():
     """
-    Instructions can guide how the result is formatted.
+    Guidelines can guide how the result is formatted.
     """
     actor = CodeActActor(
         headless=True,
@@ -211,7 +211,7 @@ async def test_code_act_instructions_response_format_constraint():
     try:
         handle = await actor.act(
             "List three colors.",
-            instructions=(
+            guidelines=(
                 "Format your final answer as a numbered list, one color per line, "
                 "like:\n1. Red\n2. Blue\n3. Green"
             ),
@@ -233,15 +233,15 @@ async def test_code_act_instructions_response_format_constraint():
 
 
 # ---------------------------------------------------------------------------
-# SingleFunctionActor.act accepts instructions (symbolic)
+# SingleFunctionActor.act accepts guidelines (symbolic)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_single_function_actor_accepts_instructions():
+async def test_single_function_actor_accepts_guidelines():
     """
-    SingleFunctionActor.act should accept the ``instructions`` parameter
+    SingleFunctionActor.act should accept the ``guidelines`` parameter
     without raising TypeError.
     """
     from unity.actor.single_function_actor import SingleFunctionActor
@@ -271,7 +271,7 @@ async def test_single_function_actor_accepts_instructions():
     try:
         handle = await actor.act(
             "do something",
-            instructions="Be concise in any LLM-generated arguments.",
+            guidelines="Be concise in any LLM-generated arguments.",
         )
         assert handle is not None
         # Wait for completion (the function just returns 42)
