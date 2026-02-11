@@ -219,3 +219,84 @@ def test_filter_scope_respected_in_list_functions():
         assert (
             lang == "python"
         ), f"filter_scope='language == \"python\"' but {name!r} has language={lang!r}"
+
+
+# --------------------------------------------------------------------------- #
+#  Setter contract (shared with FunctionManager)                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_scope_setter():
+    """filter_scope can be set after construction."""
+    fm = SimulatedFunctionManager()
+    assert fm.filter_scope is None
+
+    fm.filter_scope = "language == 'python'"
+    assert fm.filter_scope == "language == 'python'"
+
+    fm.filter_scope = None
+    assert fm.filter_scope is None
+
+
+def test_exclude_primitive_ids_setter():
+    """exclude_primitive_ids can be set after construction."""
+    fm = SimulatedFunctionManager()
+    assert fm.exclude_primitive_ids is None
+
+    fm.exclude_primitive_ids = frozenset({1, 2, 3})
+    assert fm.exclude_primitive_ids == frozenset({1, 2, 3})
+
+    fm.exclude_primitive_ids = None
+    assert fm.exclude_primitive_ids is None
+
+
+def test_exclude_compositional_ids_setter():
+    """exclude_compositional_ids can be set after construction."""
+    fm = SimulatedFunctionManager()
+    assert fm.exclude_compositional_ids is None
+
+    fm.exclude_compositional_ids = frozenset({10, 20})
+    assert fm.exclude_compositional_ids == frozenset({10, 20})
+
+    fm.exclude_compositional_ids = None
+    assert fm.exclude_compositional_ids is None
+
+
+def test_setters_do_not_crash_when_called_from_code_act_actor():
+    """SimulatedFunctionManager should survive CodeActActor.__init__ setter calls.
+
+    CodeActActor.__init__ collects function_ids from environments and sets
+    them on the FM via setters. This must not crash for SimulatedFunctionManager.
+    """
+    from unity.actor.code_act_actor import CodeActActor
+    from unity.actor.environments.state_managers import StateManagerEnvironment
+
+    fm = SimulatedFunctionManager(description="test")
+
+    # Constructing a CodeActActor with environments that have function_ids
+    # should set exclusions on the FM via setters, not replace it.
+    actor = CodeActActor(
+        environments=[StateManagerEnvironment()],
+        function_manager=fm,
+        timeout=30,
+    )
+
+    # The FM instance should be the SAME object (not replaced).
+    assert actor.function_manager is fm
+
+    # Exclusion IDs should have been set via the setter.
+    assert fm.exclude_primitive_ids is not None
+    assert len(fm.exclude_primitive_ids) > 0
+
+
+def test_setters_update_system_message():
+    """Setting exclusions should update the LLM system message."""
+    fm = SimulatedFunctionManager()
+    original_sys = fm._llm.system_message
+
+    fm.exclude_primitive_ids = frozenset({42})
+    updated_sys = fm._llm.system_message
+
+    assert original_sys != updated_sys
+    assert "42" in updated_sys
+    assert "excluded" in updated_sys.lower()
