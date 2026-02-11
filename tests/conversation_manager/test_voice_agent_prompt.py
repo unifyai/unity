@@ -43,7 +43,7 @@ DEFERRAL_PHRASES = [
 ]
 
 # The model used by the fast brain in production
-FAST_BRAIN_MODEL = "gpt-5-nano@openai"
+FAST_BRAIN_MODEL = "gpt-5-mini@openai"
 
 
 # =============================================================================
@@ -231,8 +231,8 @@ class TestAssistantName:
         kwargs = {**base_prompt_kwargs, "assistant_name": None}
         prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
 
-        # Should not contain "My name is" when name is not set
-        assert "My name is" not in prompt
+        # Should use "I'm on a phone call" instead of "I'm <name>, on a phone call"
+        assert "I'm on a phone call" in prompt
 
 
 # =============================================================================
@@ -368,54 +368,73 @@ class TestBrevity:
     On a phone call, responses should sound like a person talking — one or two
     sentences, not a paragraph.  These tests ask questions that typically provoke
     chatbot-style monologues and assert the response stays short.
+
+    Each test uses a distinct, realistic bio (the kind a real user would write)
+    so we exercise brevity against rich context, not bland test stubs.
     """
 
-    async def test_tell_me_about_yourself(self, boss_call_prompt: str):
+    async def test_tell_me_about_yourself(self):
         """
         "Tell me a bit about yourself" should get a brief, natural answer —
         not a feature list or corporate brochure.
         """
-        response = await ask_fast_brain(
-            boss_call_prompt,
-            "Tell me a bit about yourself.",
-        )
+        prompt = build_voice_agent_prompt(
+            bio="I have been working as an admin assistant for 3 years. I live in Spain, I love football, and I'm especially comfortable with MS Office.",
+            assistant_name="Alex",
+            boss_first_name="Sarah",
+            boss_surname="Chen",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "Tell me a bit about yourself.")
 
-        assert_concise(response, max_words=50, context="tell me about yourself")
+        assert_concise(response, max_words=40, context="tell me about yourself")
 
-    async def test_what_can_you_do(self, boss_call_prompt: str):
+    async def test_what_can_you_do(self):
         """
         "What can you do?" should get a conversational one-liner, not an
         exhaustive capability dump.
         """
-        response = await ask_fast_brain(
-            boss_call_prompt,
-            "So what can you do?",
-        )
+        prompt = build_voice_agent_prompt(
+            bio="Former executive assistant at a London law firm. I handle calendars, travel bookings, expense reports, and client correspondence. Big fan of hiking on weekends.",
+            assistant_name="Jordan",
+            boss_first_name="Marcus",
+            boss_surname="Rivera",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "So what can you do?")
 
-        assert_concise(response, max_words=50, context="what can you do")
+        assert_concise(response, max_words=40, context="what can you do")
 
-    async def test_how_can_you_help_me(self, boss_call_prompt: str):
+    async def test_how_can_you_help_me(self):
         """
         "How can you help me?" — another common trigger for verbose responses.
         """
-        response = await ask_fast_brain(
-            boss_call_prompt,
-            "How can you help me?",
-        )
+        prompt = build_voice_agent_prompt(
+            bio="I've supported C-suite execs for 5 years across finance and tech. I'm great with Notion, Slack, and Google Workspace. Originally from Brazil, currently based in Lisbon.",
+            assistant_name="Sam",
+            boss_first_name="Priya",
+            boss_surname="Sharma",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "How can you help me?")
 
-        assert_concise(response, max_words=50, context="how can you help me")
+        assert_concise(response, max_words=40, context="how can you help me")
 
-    async def test_simple_greeting_is_short(self, boss_call_prompt: str):
+    async def test_simple_greeting_is_short(self):
         """
         A casual "hey, how's it going?" should get a brief, warm reply —
         not a paragraph about the assistant's purpose.
         """
-        response = await ask_fast_brain(
-            boss_call_prompt,
-            "Hey, how's it going?",
-        )
+        prompt = build_voice_agent_prompt(
+            bio="Personal assistant with a background in event planning. I'm based in Tokyo and speak Japanese and English fluently. I enjoy cooking and running.",
+            assistant_name="Riley",
+            boss_first_name="Tom",
+            boss_surname="Nakamura",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "Hey, how's it going?")
 
-        assert_concise(response, max_words=30, context="casual greeting")
+        assert_concise(response, max_words=15, context="casual greeting")
 
 
 # =============================================================================
@@ -428,7 +447,7 @@ class TestPromptContent:
 
     def test_assistant_name_in_prompt(self, boss_call_prompt: str):
         """Prompt includes assistant name when provided."""
-        assert "My name is Alex." in boss_call_prompt
+        assert "I'm Alex, on a phone call" in boss_call_prompt
 
     def test_boss_bio_in_prompt(self, boss_call_prompt: str):
         """Prompt includes boss bio when provided."""
@@ -452,7 +471,8 @@ class TestPromptContent:
         """Prompt omits name line when assistant_name is None."""
         kwargs = {**base_prompt_kwargs, "assistant_name": None}
         prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
-        assert "My name is" not in prompt
+        assert "I'm on a phone call" in prompt
+        assert "Alex" not in prompt.split("Bio")[0]
 
     def test_no_contact_bio_when_none(self, base_prompt_kwargs: dict):
         """Prompt omits contact bio line when contact_bio is None."""
@@ -478,7 +498,7 @@ class TestPromptContent:
     def test_data_handling_section_present(self, boss_call_prompt: str):
         """Prompt contains the data handling rules section."""
         assert "How I handle data" in boss_call_prompt
-        assert "Never fabricate data" in boss_call_prompt
+        assert "Never fabricate anything" in boss_call_prompt
 
     def test_deferral_examples_present(self, boss_call_prompt: str):
         """Prompt contains active deferral examples (not refusal language)."""
