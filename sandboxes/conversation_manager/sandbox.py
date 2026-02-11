@@ -285,9 +285,9 @@ async def _main_async() -> None:
     parser.add_argument(
         "--agent-server-url",
         dest="agent_server_url",
-        default=None,
+        default="http://localhost:3000",
         metavar="URL",
-        help="Override agent-service URL (auto-resolved from desktop_url if not specified)",
+        help="agent-service URL (default: http://localhost:3000)",
     )
     parser.add_argument(
         "--agent-mode",
@@ -629,9 +629,7 @@ async def _main_async() -> None:
         setattr(args, "_actor_config", selected)
 
         # GUI mode: do not initialize CM in this process.
-        if bool(getattr(args, "gui", False)) and not bool(
-            getattr(args, "real_comms", False),
-        ):
+        if bool(getattr(args, "gui", False)):
             cfg = _build_worker_config(args=args, actor_config=selected)
             # Run UI + worker processes; returns when they exit.
             restart = await _run_gui_mode_multiprocess(args=args, config=cfg)
