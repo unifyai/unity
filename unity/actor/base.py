@@ -49,7 +49,7 @@ class BaseActor(ABC):
     Abstract contract that every concrete actor must satisfy.
 
     An actor is a component capable of performing work based on a natural
-    language description. It returns a steerable handle that can be paused,
+    language request. It returns a steerable handle that can be paused,
     resumed, interjected, or stopped. This type is intentionally decoupled
     from any task-specific terminology or lifecycle.
 
@@ -210,9 +210,9 @@ class BaseActor(ABC):
     @abstractmethod
     async def act(
         self,
-        description: str,
+        request: str,
         *,
-        instructions: Optional[str] = None,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -220,7 +220,7 @@ class BaseActor(ABC):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Perform work from a natural language description and return a steerable handle.
+        Perform work from a natural language request and return a steerable handle.
 
         This is the all-purpose method for engaging with knowledge, resources, and
         the world beyond immediate conversational context. Use ``act`` for any work
@@ -251,10 +251,10 @@ class BaseActor(ABC):
         - Multiple ``act`` calls can run concurrently
 
         Args:
-            description: Natural language description of what to do. Can be a question
+            request: Natural language request specifying what to do. Can be a question
                 ("What is David's email?"), a command ("Send an email to David"), or
                 a combination ("Find David's email and send him a reminder").
-            instructions: Optional meta-guidance on *how* to approach the task, as
+            guidelines: Optional meta-guidance on *how* to approach the task, as
                 opposed to *what* to do. Examples: "don't install new python packages",
                 "use sub-agents for solving this task", "prefer simple solutions over
                 complex ones". When provided, these are injected into the system prompt
@@ -322,9 +322,9 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
     @abstractmethod
     async def act(
         self,
-        description: str,
+        request: str,
         *,
-        instructions: Optional[str] = None,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -337,5 +337,5 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         persist: bool = True,
     ) -> SteerableToolHandle:
-        """Perform work from a natural-language description and return a steerable handle."""
+        """Perform work from a natural-language request and return a steerable handle."""
         raise NotImplementedError

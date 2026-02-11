@@ -647,7 +647,7 @@ class WebSearcher(BaseWebSearcher):
         # Start the actor plan with explicit entrypoint args
         queries_desc = ", ".join(queries[:3]) + ("..." if len(queries) > 3 else "")
         handle = await self.actor.act(
-            description=f"Search website for information: {queries_desc}. Start with {host}",
+            request=f"Search website for information: {queries_desc}. Start with {host}",
             entrypoint=function_id,
             entrypoint_args=[queries, host, creds],
             persist=False,

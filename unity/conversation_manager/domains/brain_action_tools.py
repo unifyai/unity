@@ -1001,7 +1001,7 @@ class ConversationManagerBrainActionTools:
         it, it will tell you, and you can then ask the user.
 
         Args:
-            query: Natural language description of what to do or find.
+            query: Natural language request specifying what to do or find.
             response_format: An optional structured schema describing the shape of
                 the result you need back.  When provided, the action is required to
                 return a JSON object conforming to this schema (via a dedicated
