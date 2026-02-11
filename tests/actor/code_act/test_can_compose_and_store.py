@@ -184,12 +184,15 @@ async def test_code_act_can_store_true_stores_function():
     When can_store=True (the default), the LLM should be able to compose a
     function via execute_code, then store it via FunctionManager_add_functions
     for future reuse.
+
+    The function must be complex enough that the LLM consistently considers
+    it worth storing (non-trivial logic, validation, edge cases).
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"greet": "added"})
+    fm.add_functions = MagicMock(return_value={"normalize_address": "added"})
 
     actor = CodeActActor(
         function_manager=fm,
@@ -199,9 +202,16 @@ async def test_code_act_can_store_true_stores_function():
     )
     try:
         handle = await actor.act(
-            "Write a Python function called `greet` that takes a `name` parameter "
-            "and returns f'Hello, {name}!'. Then store it using "
-            "FunctionManager_add_functions so it can be reused in the future.",
+            "Write a reusable Python function called `normalize_address` that:\n"
+            "1. Takes a dict with optional keys: street, city, state, zip_code, country\n"
+            "2. Strips whitespace and title-cases street/city/country\n"
+            "3. Uppercases state and validates it is exactly 2 letters (or raises ValueError)\n"
+            "4. Normalizes zip_code: strip to digits only, pad to 5 digits with leading zeros\n"
+            "5. Returns a new dict with all normalized fields, plus a 'formatted' key\n"
+            "   containing a single-line string like '123 Main St, Austin, TX 73301, US'\n"
+            "6. Handle edge cases: missing keys default to empty string, None values\n\n"
+            "Test it with an address that has messy whitespace and a 4-digit zip, "
+            "then store it using FunctionManager_add_functions for future reuse.",
             can_store=True,
             persist=False,
             clarification_enabled=False,
@@ -212,8 +222,9 @@ async def test_code_act_can_store_true_stores_function():
         fm.add_functions.assert_called_once()
         call_kwargs = fm.add_functions.call_args.kwargs
         impl = call_kwargs.get("implementations", "")
-        # The implementation should contain the function definition.
-        assert "greet" in str(impl), f"Expected 'greet' in implementation, got: {impl}"
+        assert "normalize_address" in str(impl), (
+            f"Expected 'normalize_address' in implementation, got: {impl}"
+        )
     finally:
         try:
             await actor.close()
