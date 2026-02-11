@@ -86,6 +86,47 @@ async def test_timeout_exceeded(llm_config):
         await handle.result()
 
 
+@pytest.mark.asyncio
+async def test_llm_failure_exception_omits_full_client_messages(
+    llm_config,
+    monkeypatch,
+):
+    """LLM failures should not embed full client.messages in exception text."""
+    from unity.common._async_tool import loop as _loop
+
+    client = new_llm_client(**llm_config)
+    huge_content = "x" * 20000
+    client.append_messages([{"role": "user", "content": huge_content}])
+
+    async def _failing_generate_with_preprocess(_client, preprocess_msgs, **gen_kwargs):
+        raise RuntimeError("synthetic llm failure for regression")
+
+    monkeypatch.setattr(
+        _loop,
+        "generate_with_preprocess",
+        _failing_generate_with_preprocess,
+        raising=True,
+    )
+
+    handle = start_async_tool_loop(
+        client,
+        message="trigger llm failure path",
+        tools={},
+        timeout=5,
+        max_steps=10,
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        await handle.result()
+
+    error_text = str(exc_info.value)
+    assert "LLM call failed:" in error_text
+    assert "Messages at the time" not in error_text
+    assert "synthetic llm failure for regression" in error_text
+    assert huge_content[:200] not in error_text
+    assert len(error_text) < 2000
+
+
 # ── 3 & 4. graceful early-exit when limits hit (NO raise) ──────────────────
 class _ToolCallingDriver:
     """Deprecated stub removed – tests now instruct the real LLM instead."""
