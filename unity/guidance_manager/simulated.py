@@ -30,7 +30,7 @@ from ..logger import LOGGER
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedGuidanceHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Minimal LLM-backed handle used by SimulatedGuidanceManager.ask / update.
     """
@@ -283,9 +283,6 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

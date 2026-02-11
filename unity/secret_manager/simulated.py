@@ -30,7 +30,7 @@ from ..events.manager_event_logging import (
 from ..logger import LOGGER
 
 
-class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedSecretHandle(SimulatedHandleMixin, SteerableToolHandle):
     """Minimal LLM-backed handle used by SimulatedSecretManager.ask / update."""
 
     def __init__(
@@ -242,9 +242,6 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

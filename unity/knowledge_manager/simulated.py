@@ -37,7 +37,7 @@ from ..common.llm_client import new_llm_client
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedKnowledgeHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Handle returned by SimulatedKnowledgeManager.store / retrieve.
     """
@@ -293,9 +293,6 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:

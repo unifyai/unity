@@ -38,7 +38,7 @@ from ..common.simulated import (
 )
 
 
-class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedTaskScheduleHandle(SimulatedHandleMixin, SteerableToolHandle):
     """A minimal, LLM-backed handle for ask/update interactions."""
 
     def __init__(
@@ -264,9 +264,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
         return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
