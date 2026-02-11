@@ -2402,6 +2402,7 @@ class CodeActActor(BaseCodeActActor):
         self,
         description: str | dict | list[str | dict],
         *,
+        instructions: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -2688,6 +2689,7 @@ class CodeActActor(BaseCodeActActor):
             environments=sandbox_envs,
             tools=base_tools,
             storage_check_on_return=effective_storage_check,
+            instructions=instructions,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a

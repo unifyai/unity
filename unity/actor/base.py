@@ -212,6 +212,7 @@ class BaseActor(ABC):
         self,
         description: str,
         *,
+        instructions: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -253,6 +254,11 @@ class BaseActor(ABC):
             description: Natural language description of what to do. Can be a question
                 ("What is David's email?"), a command ("Send an email to David"), or
                 a combination ("Find David's email and send him a reminder").
+            instructions: Optional meta-guidance on *how* to approach the task, as
+                opposed to *what* to do. Examples: "don't install new python packages",
+                "use sub-agents for solving this task", "prefer simple solutions over
+                complex ones". When provided, these are injected into the system prompt
+                so the actor follows them throughout the session.
             clarification_enabled: Whether the actor can request clarification from
                 its **caller** (i.e. whichever process holds the returned handle).
                 This does NOT surface questions to the end user directly — the
@@ -318,6 +324,7 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         self,
         description: str,
         *,
+        instructions: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
