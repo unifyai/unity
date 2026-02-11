@@ -95,6 +95,77 @@ async def test_sandbox_stateful_class_definition():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
+async def test_sandbox_pydantic_model_with_typing_annotations():
+    """Pydantic models using typing constructs (List, Optional, Dict) must work.
+
+    Pydantic v2 resolves type annotations lazily via sys.modules[cls.__module__].
+    If the sandbox doesn't register itself as a proper module, cls.__module__
+    points to 'builtins' (because __name__ is missing from the exec globals),
+    and typing constructs can't be resolved — only builtin types (int, str) work.
+    """
+    sandbox = PythonExecutionSession()
+
+    code = """
+from pydantic import BaseModel
+from typing import List, Optional
+
+class ContactItem(BaseModel):
+    contact_id: int
+    first_name: str
+    surname: str
+    phone_number: str = ""
+    email_address: str = ""
+
+class ContactListResponse(BaseModel):
+    contacts: List[ContactItem]
+    total_count: int
+
+result = ContactListResponse(
+    contacts=[ContactItem(contact_id=1, first_name="Alice", surname="Smith")],
+    total_count=1,
+)
+print(result.model_dump_json())
+"""
+    result = await sandbox.execute(code)
+    assert result["error"] is None, (
+        f"Pydantic model with List[ContactItem] failed in sandbox:\n{result['error']}"
+    )
+    stdout = parts_to_text(result["stdout"]).strip()
+    assert '"total_count": 1' in stdout or '"total_count":1' in stdout
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_sandbox_pydantic_model_with_optional_nested():
+    """Optional[List[Model]] annotations must resolve in the sandbox."""
+    sandbox = PythonExecutionSession()
+
+    code = """
+from pydantic import BaseModel
+from typing import Dict, List, Optional
+
+class Tag(BaseModel):
+    key: str
+    value: str
+
+class Record(BaseModel):
+    name: str
+    tags: Optional[List[Tag]] = None
+    metadata: Optional[Dict[str, str]] = None
+
+r = Record(name="test", tags=[Tag(key="a", value="b")], metadata={"x": "y"})
+print(r.model_dump_json())
+"""
+    result = await sandbox.execute(code)
+    assert result["error"] is None, (
+        f"Pydantic model with Optional[List[Tag]] failed in sandbox:\n{result['error']}"
+    )
+    stdout = parts_to_text(result["stdout"]).strip()
+    assert '"name": "test"' in stdout or '"name":"test"' in stdout
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
 async def test_sandbox_computer_tool_execution(mock_computer_primitives):
     """
     Tests that the sandbox can execute code that calls computer tools via
