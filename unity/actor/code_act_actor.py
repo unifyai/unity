@@ -828,7 +828,7 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
-        can_spawn_sub_agents: bool = True,
+        can_spawn_sub_agents: bool = False,
         storage_check_on_return: bool = False,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
