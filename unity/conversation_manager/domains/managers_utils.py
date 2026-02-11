@@ -978,12 +978,14 @@ def _init_managers(
         try:
             demoer_first = SESSION_DETAILS.user.name.split(" ")[0] if SESSION_DETAILS.user.name else ""
             demoer_last = " ".join(SESSION_DETAILS.user.name.split(" ")[1:]) if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name else ""
-            cm.contact_manager.update_contact(
-                contact_id=2,
+            # Use _create_contact since contact_id=2 doesn't exist yet
+            cm.contact_manager._create_contact(
                 first_name=demoer_first,
                 surname=demoer_last,
                 phone_number=SESSION_DETAILS.user.number or "",
                 email_address=SESSION_DETAILS.user.email or "",
+                should_respond=True,
+                is_system=True,
             )
             print(f"[ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}")
         except Exception as e:
