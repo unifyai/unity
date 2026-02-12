@@ -82,10 +82,10 @@ async def test_ask_with_response_format():
         "Provide a one-sentence summary of a recent technology news item; output JSON matching the provided schema.",
         response_format=SimpleSummary,
     )
-    final = await handle.result()
+    result = await handle.result()
 
-    parsed = SimpleSummary.model_validate_json(final)
-    assert isinstance(parsed.summary, str) and parsed.summary.strip() != ""
+    assert isinstance(result, SimpleSummary)
+    assert isinstance(result.summary, str) and result.summary.strip() != ""
 
 
 def test_clear_initialises_and_resets_caches():
