@@ -23,9 +23,11 @@ from pydantic import BaseModel
 from unity.actor.base import BaseCodeActActor
 from unity.actor.execution import (
     ExecutionResult,
+    PackageOverlay,
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
+    _CURRENT_PACKAGE_OVERLAY,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
     _validate_execution_params,
@@ -1468,8 +1470,83 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
 
+        # ───────────────────────── Package installation tool ────────────────── #
+
+        async def install_python_packages(
+            packages: list[str],
+        ) -> dict:
+            """Install Python packages into the current execution environment.
+
+            **CRITICAL**: You MUST use this tool whenever you need a Python
+            package that is not already available. Do NOT attempt to install
+            packages yourself via ``execute_code`` (e.g.
+            ``subprocess.run(["pip", "install", ...])``, ``!pip install``,
+            ``uv pip install``, or any other shell-based installation).  Direct
+            installs bypass the managed overlay and will leave residual
+            packages that pollute subsequent sessions.
+
+            Packages are installed into a temporary directory that is
+            automatically cleaned up when this task finishes.  They are
+            immediately importable in any subsequent ``execute_code`` Python
+            call for the remainder of this task, but they do **not** persist
+            beyond it.
+
+            Parameters
+            ----------
+            packages : list[str]
+                One or more package specifiers, using the same syntax accepted
+                by ``pip install`` / ``uv pip install``.  Examples:
+
+                - ``["pandas"]`` — latest version from PyPI
+                - ``["pandas==2.1.0"]`` — exact version pin
+                - ``["pandas>=2.0,<3.0"]`` — version range
+                - ``["pandas[sql]"]`` — with extras
+                - ``["requests", "beautifulsoup4"]`` — multiple packages
+                - ``["git+https://github.com/user/repo.git"]`` — from a Git repository
+                - ``["./some_wheel.whl"]`` — from a local file
+
+            Returns
+            -------
+            dict
+                - **success** (bool): Whether installation succeeded.
+                - **stdout** (str): Installer standard output.
+                - **stderr** (str): Installer standard error (contains
+                  resolution/download progress and any error messages).
+                - **packages** (list[str]): The specifiers that were requested.
+
+            Notes
+            -----
+            - If a requested package conflicts with a system dependency, the
+              system version takes precedence and the import will resolve to
+              the pre-installed version.  This is by design — the runtime
+              environment must remain stable.
+            - If installation fails, inspect ``stderr`` for resolution errors
+              and adjust your specifiers (e.g. relax a version constraint).
+            """
+            try:
+                sb = _CURRENT_SANDBOX.get()
+                overlay: PackageOverlay | None = sb.global_state.get(
+                    "__package_overlay__",
+                )
+            except Exception:
+                overlay = None
+
+            if overlay is None:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": (
+                        "Package installation is not available outside of an "
+                        "active act() session."
+                    ),
+                    "packages": list(packages),
+                }
+
+            return overlay.install(packages)
+
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
             "execute_code": execute_code,
+            "install_python_packages": install_python_packages,
         }
 
         # Add FunctionManager tools (auto-inject callables into sandbox) if available.
@@ -2200,6 +2277,65 @@ class CodeActActor(BaseCodeActActor):
         tools["close_session"] = close_session
         tools["close_all_sessions"] = close_all_sessions
 
+        # ───────────────────── Package installation tool ───────────────── #
+
+        async def install_python_packages(
+            packages: list[str],
+        ) -> Dict[str, Any]:
+            """
+            Install Python packages into the current execution environment.
+
+            **You MUST use this tool whenever you need a Python package that is
+            not already available.**  Do NOT attempt to install packages via
+            ``execute_code`` (e.g. ``!pip install ...``, ``subprocess.run(["pip",
+            ...])``), ``uv pip install``, or any other shell-based method.
+            Doing so bypasses the managed overlay and will leave the
+            environment in an inconsistent state.
+
+            Accepts the full range of pip/uv package specifiers:
+
+            - ``"pandas"`` (latest version)
+            - ``"pandas==2.1.0"`` (exact version)
+            - ``"pandas>=2.0,<3.0"`` (version range)
+            - ``"pandas[sql]"`` (extras)
+            - ``"git+https://github.com/user/repo.git"`` (VCS)
+            - ``"git+https://github.com/user/repo.git@branch"`` (VCS + ref)
+            - ``"./path/to/wheel.whl"`` (local file)
+
+            Installed packages become immediately importable in subsequent
+            ``execute_code`` Python calls within the same trajectory.
+
+            **Automatic cleanup**: all packages installed via this tool are
+            automatically removed when the current act() trajectory completes.
+            They do NOT persist across trajectories.  If a future trajectory
+            needs the same package, it must install it again.
+
+            Parameters
+            ----------
+            packages : list[str]
+                One or more package specifiers (see examples above).
+
+            Returns
+            -------
+            dict
+                - **success** (bool): True if installation succeeded.
+                - **stdout** (str): Installer standard output.
+                - **stderr** (str): Installer standard error (includes
+                  resolution details and any warnings).
+                - **packages** (list[str]): The specifiers that were requested.
+            """
+            overlay = _CURRENT_PACKAGE_OVERLAY.get()
+            if overlay is None:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": "No package overlay is bound for this trajectory.",
+                    "packages": packages,
+                }
+            return overlay.install(packages)
+
+        tools["install_python_packages"] = install_python_packages
+
         # ───────────────────────── Sub-agent delegation tool ─────────────── #
 
         async def run_sub_agent(
@@ -2536,6 +2672,7 @@ class CodeActActor(BaseCodeActActor):
         )
         # Note: __notification_up_q__ is injected dynamically by execute_code
         # when it receives a _notification_up_q from the async tool loop.
+
         token = _CURRENT_SANDBOX.set(sandbox)
 
         # Set agent context for depth tracking and handle access
@@ -2547,7 +2684,23 @@ class CodeActActor(BaseCodeActActor):
         )
         ctx_token = _CURRENT_AGENT_CONTEXT.set(new_ctx)
 
+        # Per-trajectory package overlay: lazily installs packages into a
+        # temporary directory on sys.path and cleans them up when act() ends.
+        # Created after AgentContext so it can use agent_id for directory naming,
+        # and after _CURRENT_PACKAGE_OVERLAY is readable so child overlays
+        # discover their parent's directory for hierarchical nesting.
+        pkg_overlay = PackageOverlay(agent_id=new_ctx.agent_id)
+        pkg_overlay_token = _CURRENT_PACKAGE_OVERLAY.set(pkg_overlay)
+
         async def _cleanup() -> None:
+            try:
+                pkg_overlay.cleanup()
+            except Exception:
+                pass
+            try:
+                _CURRENT_PACKAGE_OVERLAY.reset(pkg_overlay_token)
+            except Exception:
+                pass
             try:
                 # Best-effort cleanup
                 if hasattr(sandbox, "close") and callable(getattr(sandbox, "close")):
@@ -2623,6 +2776,7 @@ class CodeActActor(BaseCodeActActor):
         # no session management, no function persistence.
         _code_and_session_tools = {
             "execute_code",
+            "install_python_packages",
             "list_sessions",
             "inspect_state",
             "close_session",

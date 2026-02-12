@@ -28,6 +28,8 @@ from .capture import (
 
 from .callable import execute_callable
 
+from .package_overlay import PackageOverlay, _CURRENT_PACKAGE_OVERLAY
+
 from .session import (
     PythonExecutionSession,
     SessionExecutor,
@@ -60,6 +62,9 @@ __all__ = [
     "capture_sandbox_output",
     # callable
     "execute_callable",
+    # package_overlay
+    "PackageOverlay",
+    "_CURRENT_PACKAGE_OVERLAY",
     # session
     "SupportedShellLanguage",
     "SupportedLanguage",
