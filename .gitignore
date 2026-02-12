@@ -1,5 +1,5 @@
 .env
-.env.*
+.env.deprecated*
 *.env
 .sensitive_data
 application_default_credentials.json
