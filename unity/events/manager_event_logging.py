@@ -319,6 +319,14 @@ def log_manager_call(
     """
 
     def _decorator(func):
+        import inspect as _inspect
+
+        _sig = _inspect.signature(func)
+        _accepts_call_id = (
+            call_id_kw in _sig.parameters
+            or any(p.kind == p.VAR_KEYWORD for p in _sig.parameters.values())
+        )
+
         @functools.wraps(func, updated=())
         async def _wrapper(self, *args, **kwargs):
             # Prefer the declared payload_key if present, falling back to the common "text"
@@ -342,8 +350,9 @@ def log_manager_call(
                 **{payload_key: payload_value},
             )
 
-            # Inject call_id for the inner method (for clarification events, etc.)
-            kwargs[call_id_kw] = call_id
+            # Inject call_id only when the wrapped method declares it (for clarification events, etc.)
+            if _accepts_call_id:
+                kwargs[call_id_kw] = call_id
             handle = await func(self, *args, **kwargs)
             return wrap_handle_with_logging(
                 handle, call_id, manager_name, method_name, display_label=display_label,
