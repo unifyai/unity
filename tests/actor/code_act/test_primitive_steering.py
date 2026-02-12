@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from tests.actor.state_managers.utils import extract_code_act_execute_code_snippets
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.environments import StateManagerEnvironment
 from unity.function_manager.primitives import Primitives, PrimitiveScope
@@ -54,6 +55,12 @@ def _force_simulated(monkeypatch: pytest.MonkeyPatch) -> None:
             )
 
     ManagerRegistry.clear()
+
+
+def _restrict_to_execute_code(actor: CodeActActor) -> None:
+    """Limit the actor tool surface so mode selection happens inside execute_code."""
+    act_tools = actor.get_tools("act")
+    actor.add_tools("act", {"execute_code": act_tools["execute_code"]})
 
 
 async def _wait_for_inner_handle_adopted(
@@ -140,6 +147,99 @@ async def test_execute_function_primitive_steering(monkeypatch):
     finally:
         try:
             if not handle.done():
+                await handle.stop("test cleanup")
+        except Exception:
+            pass
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_execute_code_mode_selection_realistic_steerable_intent(monkeypatch):
+    """Natural request that implies mid-flight control should return a handle."""
+    _force_simulated(monkeypatch)
+
+    scope = PrimitiveScope(scoped_managers=frozenset({"contacts"}))
+    primitives = Primitives(primitive_scope=scope)
+    env = StateManagerEnvironment(primitives)
+    actor = CodeActActor(environments=[env], timeout=220)
+    _restrict_to_execute_code(actor)
+    handle = None
+
+    try:
+        handle = await actor.act(
+            "Start checking contacts in Berlin now, but keep the lookup running because "
+            "I may refine the criteria while it is underway.",
+            clarification_enabled=False,
+        )
+
+        await _wait_for_inner_handle_adopted(handle, timeout=120)
+
+        snippets = extract_code_act_execute_code_snippets(handle)
+        assert snippets, "Expected CodeAct to use execute_code."
+        assert any(
+            "primitives.contacts.ask" in snippet and ".result(" not in snippet
+            for snippet in snippets
+        ), (
+            "Expected at least one execute_code snippet to return a primitive handle "
+            "without awaiting .result() for steerable user intent.\n"
+            f"Snippets:\n{chr(10).join(snippets)}"
+        )
+
+        await handle.interject("Also include contacts in Munich.")
+        result = await asyncio.wait_for(handle.result(), timeout=120)
+        assert result is not None, "Expected a non-None result from the actor"
+    finally:
+        try:
+            if handle is not None and not handle.done():
+                await handle.stop("test cleanup")
+        except Exception:
+            pass
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_execute_code_mode_selection_realistic_inline_composition(monkeypatch):
+    """Natural request that requires same-block processing should await result."""
+    _force_simulated(monkeypatch)
+
+    scope = PrimitiveScope(scoped_managers=frozenset({"contacts"}))
+    primitives = Primitives(primitive_scope=scope)
+    env = StateManagerEnvironment(primitives)
+    actor = CodeActActor(environments=[env], timeout=220)
+    _restrict_to_execute_code(actor)
+    handle = None
+
+    try:
+        handle = await actor.act(
+            "In one code step, look up contacts in Berlin and immediately compute a "
+            "short summary string with the number of matches before replying.",
+            clarification_enabled=False,
+        )
+
+        result = await asyncio.wait_for(handle.result(), timeout=120)
+        assert result is not None, "Expected a non-None result from the actor"
+
+        snippets = extract_code_act_execute_code_snippets(handle)
+        assert snippets, "Expected CodeAct to use execute_code."
+        assert any(
+            "primitives.contacts.ask" in snippet and ".result(" in snippet
+            for snippet in snippets
+        ), (
+            "Expected at least one execute_code snippet to await .result() for inline "
+            "composition intent.\n"
+            f"Snippets:\n{chr(10).join(snippets)}"
+        )
+    finally:
+        try:
+            if handle is not None and not handle.done():
                 await handle.stop("test cleanup")
         except Exception:
             pass
