@@ -71,7 +71,6 @@ class _LineageTrackedFunction:
     It is injected into the Python namespace **in place of** the raw callable so that
     inter-function calls (function A calling function B) still pass through a boundary that:
     - updates `TOOL_LOOP_LINEAGE` (ContextVar)
-    - publishes ManagerMethod events with `hierarchy` + `hierarchy_label`
     - emits a concise boundary log line for terminal debugging
 
     Note: async functions can be awaited in a different task context than the call-site.
@@ -100,44 +99,14 @@ class _LineageTrackedFunction:
             build_hierarchy_label,
             log_boundary_event,
         )
-        from unity.events.manager_event_logging import (
-            new_call_id,
-            publish_manager_method_event,
-        )
 
         suffix = token_hex(2)
-        call_id = new_call_id()
 
         parent = TOOL_LOOP_LINEAGE.get([])
         parent_lineage = list(parent) if isinstance(parent, list) else []
         hierarchy = [*parent_lineage, self._function_name]
         hierarchy_label = build_hierarchy_label(hierarchy, suffix)
 
-        async def _publish_safe(**payload: Any) -> None:
-            try:
-                await publish_manager_method_event(
-                    call_id,
-                    "FunctionManager",
-                    self._function_name,
-                    hierarchy=hierarchy,
-                    hierarchy_label=hierarchy_label,
-                    display_label=f"Running: {self._function_name}",
-                    **payload,
-                )
-            except Exception as e:
-                # Best-effort visibility; never fail execution due to event issues.
-                log_boundary_event(
-                    hierarchy_label,
-                    f"Warning: failed to publish event: {type(e).__name__}: {e}",
-                    icon="⚠️",
-                    level="warning",
-                )
-
-        # Publish incoming before running the function (best-effort).
-        try:
-            asyncio.create_task(_publish_safe(phase="incoming"))
-        except Exception:
-            pass
         try:
             log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
         except Exception:
@@ -147,22 +116,8 @@ class _LineageTrackedFunction:
         token_call = TOOL_LOOP_LINEAGE.set(hierarchy)
         try:
             result = self._wrapped(*args, **kwargs)
-        except Exception as e:
-            try:
-                try:
-                    asyncio.create_task(
-                        _publish_safe(
-                            phase="outgoing",
-                            status="error",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            traceback=traceback.format_exc()[:2000],
-                        ),
-                    )
-                except Exception:
-                    pass
-            finally:
-                TOOL_LOOP_LINEAGE.reset(token_call)
+        except Exception:
+            TOOL_LOOP_LINEAGE.reset(token_call)
             raise
         finally:
             # For async results we only needed the lineage during coroutine construction.
@@ -178,38 +133,12 @@ class _LineageTrackedFunction:
             async def _await_and_finalize():
                 token_run = TOOL_LOOP_LINEAGE.set(hierarchy)
                 try:
-                    out = await result
-                    try:
-                        await _publish_safe(phase="outgoing", status="ok")
-                    except Exception:
-                        pass
-                    return out
-                except Exception as e:
-                    try:
-                        await _publish_safe(
-                            phase="outgoing",
-                            status="error",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            traceback=traceback.format_exc()[:2000],
-                        )
-                    except Exception:
-                        pass
-                    raise
+                    return await result
                 finally:
                     TOOL_LOOP_LINEAGE.reset(token_run)
 
             return _await_and_finalize()
 
-        # Sync success path: publish outgoing best-effort and restore lineage.
-        try:
-            try:
-                asyncio.create_task(_publish_safe(phase="outgoing", status="ok"))
-            except Exception:
-                pass
-        finally:
-            # token_call already reset above; nothing to do here.
-            pass
         return result
 
 
