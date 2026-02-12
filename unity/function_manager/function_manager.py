@@ -4336,12 +4336,14 @@ class FunctionManager(BaseFunctionManager):
         The path includes the Unify context name to ensure isolation between
         different assistants/users and during parallel test runs.
         """
+        from unity.file_manager.settings import get_local_root
+
         # Get current context for isolation
         ctx = unify.get_active_context()
         ctx_name = ctx.get("read") or ctx.get("write") or "default"
         # Sanitize context name for filesystem use
         safe_ctx = ctx_name.replace("/", "_").replace("\\", "_")
-        return Path.home() / ".unity" / "venvs" / safe_ctx
+        return Path(get_local_root()) / ".unity" / "venvs" / safe_ctx
 
     def _get_venv_dir(self, venv_id: int) -> Path:
         """Get the directory for a specific venv."""
@@ -4955,10 +4957,10 @@ class FunctionManager(BaseFunctionManager):
     #  Remote Windows Execution Helpers                                  #
     # ------------------------------------------------------------------ #
 
-    # Remote Windows workspace directory (matches UNITY_WORKSPACE_DIR in agent-service)
-    # agent-service: path.join(path.parse(process.cwd()).root, 'Unity')
-    # On Windows: 'C:\Unity'
-    REMOTE_WINDOWS_WORKSPACE_DIR = "C:\\Unity"
+    # Remote Windows local root (matches LOCAL_ROOT in agent-service)
+    # agent-service resolves to /root on cloud VMs, ~/ locally
+    # On Windows: 'C:\root'
+    REMOTE_WINDOWS_LOCAL_ROOT = "C:\\root"
 
     # Shell mode for remote Windows command execution ('powershell' or 'cmd')
     REMOTE_WINDOWS_SHELL_MODE = "powershell"
@@ -5209,7 +5211,7 @@ class FunctionManager(BaseFunctionManager):
                 f"{desktop_url}/api/exec",
                 json={
                     "command": "pip install uv",
-                    "cwd": self.REMOTE_WINDOWS_WORKSPACE_DIR,
+                    "cwd": self.REMOTE_WINDOWS_LOCAL_ROOT,
                     "timeout": 300000,
                     "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
                 },
@@ -5219,7 +5221,7 @@ class FunctionManager(BaseFunctionManager):
                 await resp.json()  # Don't fail if uv already installed
 
             # Step 3: Run 'uv sync'
-            venv_full_path = f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{venv_dir}"
+            venv_full_path = f"{self.REMOTE_WINDOWS_LOCAL_ROOT}\\{venv_dir}"
             print(f"[windows exec] Running uv sync")
             async with session.post(
                 f"{desktop_url}/api/exec",
@@ -5374,7 +5376,7 @@ if __name__ == "__main__":
                     }
 
             # Step 6: Execute script
-            cwd = self.REMOTE_WINDOWS_WORKSPACE_DIR
+            cwd = self.REMOTE_WINDOWS_LOCAL_ROOT
             exec_command = f'& "{python_path}" "{script_filename}"'
             print(
                 f"[windows exec] Starting script: {exec_command} - CWD: {cwd} - "
