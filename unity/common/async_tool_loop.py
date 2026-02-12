@@ -467,7 +467,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
             parent_chat_context=parent_ctx,  # ← nested context
-            propagate_chat_context=False,
+            propagate_chat_context=ChatContextPropagation.NEVER,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
