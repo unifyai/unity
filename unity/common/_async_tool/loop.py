@@ -497,10 +497,12 @@ async def async_tool_loop_inner(
     # We always add this section (even if empty) so that context continuations
     # sent via interjections can correctly reference "the initial Parent Chat Context
     # in your system message" without appearing to be fabricated/injected.
+    _has_parent_chat_context = False
     if propagate_chat_context != ChatContextPropagation.NEVER:
         ctx_content = parent_chat_context_safe if parent_chat_context_safe else []
         # Transform roles to outer_* to disambiguate from current conversation roles
         ctx_content_transformed = _transform_context_roles(ctx_content)
+        _has_parent_chat_context = True
         runtime_context_parts.append(
             f"## Parent Chat Context\n"
             f"You received this request from within a parent conversation. "
@@ -525,6 +527,8 @@ async def async_tool_loop_inner(
             "_ctx_header": True,  # backwards compatibility
             "content": "\n\n".join(runtime_context_parts),
         }
+        if _has_parent_chat_context:
+            sys_msg["_parent_chat_context"] = True
         await _msg_dispatcher.append_msgs([sys_msg])
 
     # ── 0-a++. Initialize context state for incremental propagation ──────────

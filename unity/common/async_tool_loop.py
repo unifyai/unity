@@ -53,6 +53,40 @@ def _transform_inner_roles(messages: list[dict]) -> list[dict]:
     return transformed
 
 
+_PARENT_CTX_POINTER = (
+    "## Parent Chat Context\n"
+    "[The parent chat context that was available to this loop has been omitted "
+    "from this transcript to avoid duplication. Refer to the Parent Chat Context "
+    "section in your system context for the full, up-to-date version.]"
+)
+
+
+def _replace_runtime_parent_context(messages: list[dict]) -> list[dict]:
+    """Replace runtime parent-context headers with a short pointer.
+
+    When the inspection loop receives fresh parent context via the standard
+    machinery, the stale copy embedded in the inspected transcript is redundant.
+    This finds any message tagged ``_parent_chat_context=True`` and replaces
+    the Parent Chat Context portion of its content with a pointer, preserving
+    other sections (e.g. Caller Context) in the same message.
+    """
+    result = []
+    for msg in messages:
+        if msg.get("_parent_chat_context"):
+            new_msg = dict(msg)
+            # The runtime context message may contain multiple sections
+            # (e.g. Caller Context + Parent Chat Context).  Replace only the
+            # Parent Chat Context portion.
+            content = new_msg.get("content") or ""
+            pcc_idx = content.find("## Parent Chat Context")
+            if pcc_idx >= 0:
+                new_msg["content"] = content[:pcc_idx] + _PARENT_CTX_POINTER
+            result.append(new_msg)
+        else:
+            result.append(msg)
+    return result
+
+
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
 from abc import ABC, abstractmethod
@@ -390,6 +424,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             _parent_chat_context,
         )
 
+        # When fresh parent context is provided, replace the stale runtime
+        # parent-context header in the transcript with a pointer.  This avoids
+        # duplicating the (potentially large) parent context while preserving
+        # the structural marker so the inspection LLM knows the loop received
+        # parent context and where it appeared in the conversation.
+        if _parent_chat_context:
+            loop_chat_context_safe = _replace_runtime_parent_context(
+                loop_chat_context_safe,
+            )
+
         # 1b. Snapshot ask_* tools available at invocation time so the
         #     inspection loop can propagate questions to inner handles.
         ask_tools: dict = {}
@@ -486,14 +530,23 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # The question is sent as a plain user message (context is in system message)
         _ask_message = question
 
+        # Only thread parent context through the standard machinery when fresh
+        # context was explicitly provided.  Otherwise the inspected transcript
+        # already contains whatever parent context the loop received at start.
+        _propagation = ChatContextPropagation.NEVER
+        _pcc: list[dict] | None = None
+        if _parent_chat_context:
+            _propagation = ChatContextPropagation.LLM_DECIDES
+            _pcc = parent_chat_context_safe
+
         helper_handle = start_async_tool_loop(
             inspection_client,
             _ask_message,
             ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=parent_chat_context_safe,
-            propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
+            parent_chat_context=_pcc,
+            propagate_chat_context=_propagation,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
