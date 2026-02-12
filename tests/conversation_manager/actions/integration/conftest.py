@@ -35,6 +35,11 @@ def pytest_configure(config) -> None:
     os.environ.setdefault("TEST", "true")
     os.environ.setdefault("UNITY_CONVERSATION_JOB_NAME", "test_job")
 
+    # These tests validate direct manager behavior (including fast-path tools),
+    # so they need concrete manager implementations.
+    os.environ["UNITY_CONTACT_IMPL"] = "real"
+    os.environ["UNITY_TRANSCRIPT_IMPL"] = "real"
+
     # Enable FileManager for attachment/file flows.
     os.environ["UNITY_FILE_ENABLED"] = "true"
 

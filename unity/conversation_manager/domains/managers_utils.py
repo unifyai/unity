@@ -951,6 +951,16 @@ def _init_managers(
     if SETTINGS.DEMO_MODE:
         # Ensure boss (contact_id=1) is visible in active conversations for the brain
         cm.contact_index.get_or_create_conversation(1)
+        # Start the boss contact sparse in demo mode; details can be provided
+        # later via set_boss_details or demo prospect metadata.
+        cm.contact_manager.update_contact(
+            contact_id=1,
+            first_name="",
+            surname="",
+            email_address="",
+            phone_number="",
+            should_respond=True,
+        )
         # If we have a demo_id, fetch prospect details from Orchestra and apply
         # them to the boss contact (contact_id=1)
         if SETTINGS.DEMO_ID is not None:
