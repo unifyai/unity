@@ -23,11 +23,6 @@ from ..common.simulated import (
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
 from ..logger import LOGGER
 
 
@@ -310,13 +305,11 @@ class SimulatedSecretManager(BaseSecretManager):
         self,
         description: str = "simulate secret storage and actions (no real database)",
         *,
-        log_events: bool = False,
         simulation_guidance: Optional[str] = None,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
         self._description = description
-        self._log_events = log_events
         self._simulation_guidance = simulation_guidance
 
         # Shared, stateful async LLM
@@ -359,7 +352,6 @@ class SimulatedSecretManager(BaseSecretManager):
                 "_description",
                 "simulate secret storage and actions (no real database)",
             ),
-            log_events=getattr(self, "_log_events", False),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
             hold_completion=getattr(self, "_hold_completion", False),
         )
@@ -378,28 +370,13 @@ class SimulatedSecretManager(BaseSecretManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedSecretManager.ask",
             "ask",
             {"text": text, "requests_clarification": _requests_clarification},
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "ask",
-                phase="incoming",
-                display_label="Checking Credentials",
-                question=text,
-            )
 
         # Build the simulated instruction (no real tools will run)
         instruction = (
@@ -423,90 +400,26 @@ class SimulatedSecretManager(BaseSecretManager):
             response_format=response_format,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle, call_id, "SecretManager", "ask", display_label="Checking Credentials",
-            )
-
         return handle
 
     async def from_placeholder(self, text: str) -> str:
         """Simulate resolving ${name} placeholders to opaque values (no LLM)."""
-        call_id = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "from_placeholder",
-                phase="incoming",
-                display_label="Retrieving Credential",
-                query=text,
-            )
-        except Exception:
-            pass
-
         import re
 
         def _repl(m: "re.Match[str]") -> str:
             name = m.group(1)
             return f"<value:{name}>"
 
-        result = re.sub(r"\$\{([^}]+)\}", _repl, text)
-
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "from_placeholder",
-                    phase="outgoing",
-                    display_label="Retrieving Credential",
-                    status="resolved",
-                )
-        except Exception:
-            pass
-
-        return result
+        return re.sub(r"\$\{([^}]+)\}", _repl, text)
 
     async def to_placeholder(self, text: str) -> str:
         """Simulate redacting known raw values back to ${name} placeholders (no LLM)."""
-        call_id = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "to_placeholder",
-                phase="incoming",
-                display_label="Securing Credential",
-                info="start",
-            )
-        except Exception:
-            pass
-
         result = text
-        replaced: list[str] = []
         for name in self._list_secret_keys():
             token = f"<value:{name}>"
             placeholder = f"${{{name}}}"
             if token in result:
                 result = result.replace(token, placeholder)
-                replaced.append(name)
-
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "to_placeholder",
-                    phase="outgoing",
-                    display_label="Securing Credential",
-                    status="converted",
-                    names=replaced,
-                )
-        except Exception:
-            pass
 
         return result
 
@@ -521,28 +434,13 @@ class SimulatedSecretManager(BaseSecretManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedSecretManager.update",
             "update",
             {"text": text, "requests_clarification": _requests_clarification},
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "update",
-                phase="incoming",
-                display_label="Updating Credentials",
-                request=text,
-            )
 
         instruction = (
             "Simulate the behaviour of SecretManager.update for the following request. "
@@ -565,15 +463,6 @@ class SimulatedSecretManager(BaseSecretManager):
             response_format=response_format,
             hold_completion=self._hold_completion,
         )
-
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "SecretManager",
-                "update",
-                display_label="Updating Credentials",
-            )
 
         return handle
 
