@@ -121,8 +121,8 @@ def pytest_configure(config):
     # to avoid real LLM calls and _LoggedHandle wrapping.
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "0"  # Allows pause+resume interactions
-    os.environ["UNITY_CONTACT_IMPL"] = "simulated"
-    os.environ["UNITY_TRANSCRIPT_IMPL"] = "simulated"
+    os.environ.setdefault("UNITY_CONTACT_IMPL", "simulated")
+    os.environ.setdefault("UNITY_TRANSCRIPT_IMPL", "simulated")
 
     # Disable optional managers not needed for conversation manager tests
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
