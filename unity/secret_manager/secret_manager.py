@@ -22,11 +22,7 @@ from ..common.async_tool_loop import (
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import (
-    log_manager_call,
-    new_call_id,
-    publish_manager_method_event,
-)
+from ..events.manager_event_logging import log_manager_call
 from ..common.tool_outcome import ToolOutcome
 from ..common.embed_utils import ensure_vector_column
 from ..common.context_store import TableStore
@@ -292,12 +288,6 @@ class SecretManager(BaseSecretManager):
     async def from_placeholder(self, text: str) -> str:
         """Resolve ${name} placeholders in text to raw secret values (no LLM).
 
-        Notes
-        -----
-        - Logs a single incoming ManagerMethod event and returns the resolved
-          string without publishing any outgoing event to avoid leaking values.
-        - Never persists or logs secret values.
-
         Parameters
         ----------
         text : str
@@ -308,41 +298,10 @@ class SecretManager(BaseSecretManager):
         str
             String with placeholders substituted with their secret values.
         """
-        call_id: str | None = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "from_placeholder",
-                phase="incoming",
-                display_label="Retrieving Credential",
-                query=text,
-            )
-        except Exception:
-            # Logging is best-effort – failures must not impact resolution
-            pass
-
-        resolved = self._resolve_placeholders(text)
-
-        # Publish an outgoing event that does NOT include sensitive data
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "from_placeholder",
-                    phase="outgoing",
-                    display_label="Retrieving Credential",
-                    status="resolved",
-                )
-        except Exception:
-            pass
-
-        return resolved
+        return self._resolve_placeholders(text)
 
     async def to_placeholder(self, text: str) -> str:
-        """Convert a secret values in text to a placeholder.
+        """Convert secret values in text to placeholders.
 
         Parameters
         ----------
@@ -354,21 +313,6 @@ class SecretManager(BaseSecretManager):
         str
             The text with secret values converted to placeholders.
         """
-        # Best-effort metadata-only logging; never include raw text or values
-        call_id: str | None = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "to_placeholder",
-                phase="incoming",
-                display_label="Securing Credential",
-                info="start",
-            )
-        except Exception:
-            pass
-
         # Build a mapping from raw value → name using current storage
         try:
             rows = unify.get_logs(
@@ -399,32 +343,12 @@ class SecretManager(BaseSecretManager):
         import re
 
         ordered_values = sorted(value_to_name.keys(), key=len, reverse=True)
-        replaced_names: set[str] = set()
         result = text
-        total_replacements = 0
         for val in ordered_values:
             name = value_to_name[val]
             pattern = re.escape(val)
             placeholder = f"${{{name}}}"
-            result, count = re.subn(pattern, placeholder, result)
-            if count:
-                total_replacements += count
-                replaced_names.add(name)
-
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "to_placeholder",
-                    phase="outgoing",
-                    display_label="Securing Credential",
-                    status="converted",
-                    replacements=total_replacements,
-                    names=sorted(replaced_names),
-                )
-        except Exception:
-            pass
+            result = re.sub(pattern, placeholder, result)
 
         return result
 
