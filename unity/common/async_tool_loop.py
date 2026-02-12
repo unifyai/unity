@@ -395,6 +395,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
+        _propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
         _return_reasoning_steps: bool = False,
         **kwargs,
     ) -> "SteerableToolHandle":
@@ -537,7 +538,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
             parent_chat_context=parent_chat_context_safe if _parent_chat_context else None,
-            propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
+            propagate_chat_context=_propagate_chat_context,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
