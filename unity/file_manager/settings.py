@@ -38,7 +38,6 @@ class FileSettings(BaseSettings):
         LOCAL_ROOT: Root directory for local file operations and the
             CodeActActor working directory.  Defaults to ``~`` (home).
             Override via ``UNITY_FILE_LOCAL_ROOT`` env var.
-        CONSOLE_BASE_URL: Base URL for Unify Console (Plot API).
         PLOT_API_ENDPOINT: Endpoint path for plot creation.
         PLOT_API_TIMEOUT: Timeout in seconds for plot API requests.
         PLOT_API_MAX_RETRIES: Maximum number of retries for plot API requests.
@@ -50,8 +49,7 @@ class FileSettings(BaseSettings):
     LOCAL_ROOT: str = ""
 
     # Plot API settings
-    CONSOLE_BASE_URL: str = "https://console.unify.ai"
-    PLOT_API_ENDPOINT: str = "/api/plot/create"
+    PLOT_API_ENDPOINT: str = "/logs/plot"
     PLOT_API_TIMEOUT: float = 30.0
     PLOT_API_MAX_RETRIES: int = 3
     PLOT_API_RETRY_BACKOFF: float = 1.0

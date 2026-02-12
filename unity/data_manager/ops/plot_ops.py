@@ -5,8 +5,8 @@ Implementation functions for plot, plot_batch.
 These are called by DataManager methods and should not be used directly.
 
 Architecture Note:
-    Currently uses Console API (POST {CONSOLE_BASE_URL}/api/plot/create).
-    This is the integration path until the Plot API is migrated to Orchestra.
+    Currently uses Console API (POST {ORCHESTRA_URL}/logs/plot).
+    This is the integration path until an equivalent path exists through unify.
 """
 
 from __future__ import annotations
@@ -254,13 +254,9 @@ def generate_plot(
     }
 
     try:
-        console_base = getattr(
-            SETTINGS.file,
-            "CONSOLE_BASE_URL",
-            "https://console.unify.ai",
-        )
-        plot_endpoint = getattr(SETTINGS.file, "PLOT_API_ENDPOINT", "/api/plot/create")
-        endpoint = f"{console_base}{plot_endpoint}"
+        orchestra_base_url = SETTINGS.ORCHESTRA_URL
+        plot_endpoint = SETTINGS.file.PLOT_API_ENDPOINT
+        endpoint = f"{orchestra_base_url}{plot_endpoint}"
 
         response = _make_plot_request(
             endpoint=endpoint,
@@ -279,7 +275,9 @@ def generate_plot(
 
     except httpx.HTTPStatusError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
-        logger.warning(f"Plot API HTTP error: {error_msg}")
+        logger.warning(
+            f"Plot API HTTP error: {error_msg}. Request Body: {request_body}",
+        )
         return PlotResult(
             title=title,
             context=context,
@@ -289,7 +287,9 @@ def generate_plot(
 
     except httpx.RequestError as e:
         error_msg = f"Request error: {type(e).__name__}: {e}"
-        logger.warning(f"Plot API request error: {error_msg}")
+        logger.warning(
+            f"Plot API request error: {error_msg}. Request Body: {request_body}",
+        )
         return PlotResult(
             title=title,
             context=context,
@@ -299,7 +299,9 @@ def generate_plot(
 
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
-        logger.warning(f"Plot generation failed unexpectedly: {error_msg}")
+        logger.warning(
+            f"Plot generation failed unexpectedly: {error_msg}. Request Body: {request_body}",
+        )
         return PlotResult(
             title=title,
             context=context,
