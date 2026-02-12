@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List
 
 from unity.web_searcher.web_searcher import WebSearcher
 from unity.web_searcher.simulated import SimulatedWebSearcher
@@ -28,17 +28,6 @@ class SearchResult(BaseModel):
         description="URLs of sources consulted",
     )
     summary: str = Field(..., description="Brief natural language summary")
-
-
-class WebsiteUpdateResult(BaseModel):
-    """Structured result after a website update operation."""
-
-    success: bool = Field(..., description="Whether the update was successful")
-    website_host: Optional[str] = Field(
-        None,
-        description="Host of the website that was modified",
-    )
-    action_taken: str = Field(..., description="Description of what was done")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -66,23 +55,6 @@ async def test_simulated_ask_response_format():
     assert result.summary.strip(), "Summary should be non-empty"
 
 
-@pytest.mark.asyncio
-@_handle_project
-async def test_simulated_update_response_format():
-    """Simulated WebSearcher.update should return structured output when response_format is provided."""
-    ws = SimulatedWebSearcher("Demo web searcher for testing updates.")
-
-    handle = await ws.update(
-        "Add a new website entry for techcrunch.com with tags ['tech', 'news']",
-        response_format=WebsiteUpdateResult,
-    )
-    result = await handle.result()
-
-    assert isinstance(result, WebsiteUpdateResult)
-    assert isinstance(result.success, bool)
-    assert result.action_taken.strip(), "Action description should be non-empty"
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # Real WebSearcher tests
 # ────────────────────────────────────────────────────────────────────────────
@@ -104,20 +76,3 @@ async def test_real_ask_response_format():
     assert isinstance(result.sources_count, int)
     assert isinstance(result.key_findings, list)
     assert result.summary.strip(), "Summary should be non-empty"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_real_update_response_format():
-    """Real WebSearcher.update should return structured output when response_format is provided."""
-    ws = WebSearcher()
-
-    handle = await ws.update(
-        "Create a website entry for host=example.org with name='Example Site' and tags=['demo']",
-        response_format=WebsiteUpdateResult,
-    )
-    result = await handle.result()
-
-    assert isinstance(result, WebsiteUpdateResult)
-    assert isinstance(result.success, bool)
-    assert result.action_taken.strip(), "Action description should be non-empty"

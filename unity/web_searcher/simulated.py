@@ -25,7 +25,7 @@ from ..logger import LOGGER
 
 
 class _SimulatedWebSearcherHandle(SimulatedHandleMixin, SteerableToolHandle):
-    """Minimal LLM-backed handle used by SimulatedWebSearcher.ask/update."""
+    """Minimal LLM-backed handle used by SimulatedWebSearcher.ask."""
 
     def __init__(
         self,
@@ -401,38 +401,3 @@ class SimulatedWebSearcher(BaseWebSearcher):
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)
-
-    @functools.wraps(BaseWebSearcher.update, updated=())
-    async def update(
-        self,
-        text: str,
-        *,
-        response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: asyncio.Queue[str] | None = None,
-        _clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> SteerableToolHandle:
-        # Tool-style scheduled log (only when no parent lineage)
-        maybe_tool_log_scheduled(
-            "SimulatedWebSearcher.update",
-            "update",
-            {"text": text if isinstance(text, str) else repr(text)},
-        )
-        instruction = build_simulated_method_prompt(
-            "update",
-            text,
-            parent_chat_context=_parent_chat_context,
-        )
-
-        handle = _SimulatedWebSearcherHandle(
-            self._llm,
-            instruction,
-            mode="update",
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=False,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            response_format=response_format,
-        )
-        return handle

@@ -161,8 +161,8 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         excluded_methods=frozenset(),
         priority=5,
         domain="Time-Sensitive & External Research",
-        description="External/public information and research (including general concepts/definitions), plus current events and 'today/latest/now' queries",
-        use_when="Questions answered from public/external knowledge (including definitions/concepts) or requiring up-to-date info: current events, weather, news",
+        description="Quick one-off internet queries against the public web (headlines, weather, definitions, current events). Not for gated sites, browser automation, or multi-step web workflows — use Tavily + SecretManager + ComputerPrimitives directly for those",
+        use_when="Fast, simple public-web lookups: current events, weather, news, definitions, stock prices, quick factual questions",
         examples="'What is the Eisenhower Matrix?', 'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?'",
     ),
     ManagerSpec(
