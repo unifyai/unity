@@ -858,7 +858,7 @@ class ToolSurfaceRegistry:
         if len(specs) > 1:
             lines.append("\n**General Rules**:")
             lines.append(
-                "- All manager calls return a steerable handle; await `.result()` to get the final answer",
+                "- All manager calls return a steerable handle; default to returning the handle as the last expression so outer-loop steering/progress stays available. Await `.result()` only for immediate in-code composition",
             )
             lines.append(
                 "- If a manager asks for clarification, wait for the user response and answer via the handle's API",

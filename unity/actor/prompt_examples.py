@@ -109,6 +109,29 @@ async def run_with_steering() -> str:
 """
 
 
+def get_handle_mode_selection_example() -> str:
+    """Example: choosing between return-handle and await modes."""
+
+    return """
+# Example: Choose return-handle vs await based on task shape
+async def long_running_status_visible() -> object:
+    # Long-running or externally dependent work: return the handle so
+    # the outer loop can expose progress and steering.
+    return await primitives.tasks.execute(task_id=123)
+
+async def neutral_intent_defaults_to_handle() -> object:
+    # Neutral or uncertain intent: return the handle by default so
+    # outer-loop steering and progress visibility stay available.
+    return await primitives.contacts.ask("Find contacts in Berlin")
+
+async def compose_immediately() -> str:
+    # Immediate composition: await the result for same-block logic.
+    handle = await primitives.contacts.ask("Who is Alice?")
+    answer = await handle.result()
+    return f"Contact lookup complete: {answer}"
+"""
+
+
 def get_clarification_example() -> str:
     """Example: handling clarification requests from tools."""
 
@@ -1454,6 +1477,7 @@ def get_code_act_pattern_examples() -> str:
 
     examples = [
         get_error_handling_example().strip(),
+        get_handle_mode_selection_example().strip(),
         get_clarification_example().strip(),
     ]
     return "\n\n".join(examples)

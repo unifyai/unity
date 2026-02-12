@@ -95,6 +95,11 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     # State-manager guidance + examples (primitives)
     assert "### State Manager Rules" in prompt
     assert "### Implementation Examples" in prompt
+    assert "return the handle as the last expression" in prompt
+    assert "immediate in-code composition" in prompt
+    assert "neutral or uncertain" in prompt.lower()
+    assert "default to returning the handle" in prompt.lower()
+    assert "Choose return-handle vs await based on task shape" in prompt
 
 
 @pytest.mark.timeout(30)
