@@ -778,10 +778,12 @@ run_cmd() {
     env_exports="$env_exports; unset UNIFY_TESTS_DELETE_PROJ_ON_START UNIFY_TESTS_DELETE_PROJ_ON_EXIT"
   fi
   # Append user-provided --env overrides (includes UNITY_TEST_SOCKET for log scoping)
+  # Uses a separate `export` statement because in shared-project mode env_exports
+  # ends with `; unset ...` and bare NAME=VALUE pairs would be swallowed by unset.
   local user_overrides
   user_overrides="$(build_env_exports)"
   if [[ -n "$user_overrides" ]]; then
-    env_exports="$env_exports$user_overrides"
+    env_exports="$env_exports; export$user_overrides"
   fi
   # Build pytest command with optional marker filter, scenario overwrite, and extra args
   local pytest_cmd
