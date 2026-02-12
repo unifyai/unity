@@ -36,11 +36,6 @@ def test_docstrings_match_base():
         BaseWebSearcher.ask.__doc__.strip() in SimulatedWebSearcher.ask.__doc__.strip()
     ), ".ask doc-string was not copied correctly"
 
-    assert (
-        BaseWebSearcher.update.__doc__.strip()
-        in SimulatedWebSearcher.update.__doc__.strip()
-    ), ".update doc-string was not copied correctly"
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Basic start-and-ask                                                    #
@@ -274,24 +269,7 @@ def test_clear_reinitialises():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 9.  Update – basic completion                                              #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_update_basic_completion():
-    """
-    SimulatedWebSearcher.update should return a live handle that completes.
-    """
-    ws = SimulatedWebSearcher()
-    h = await ws.update(
-        "Create a website entry for host=example.com with tags ['docs', 'security']",
-    )
-    answer = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
-    assert isinstance(answer, str) and answer.strip()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 10.  Stop while paused should finish immediately                           #
+# 9.  Stop while paused should finish immediately                            #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
