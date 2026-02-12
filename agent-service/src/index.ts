@@ -24,10 +24,10 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // On cloud VMs the service runs as root and `/root` is the natural workspace.
 // Locally (macOS, Windows, non-root Linux) that path is either non-existent or
 // requires elevated privileges, so we fall back to `~/.unity-workspace`.
-// An explicit `UNITY_WORKSPACE_DIR` env var always takes precedence.
-function _resolveWorkspaceDir(): string {
-  if (process.env.UNITY_WORKSPACE_DIR) {
-    return process.env.UNITY_WORKSPACE_DIR;
+// An explicit `UNITY_LOCAL_ROOT` env var always takes precedence.
+function _resolveLocalRoot(): string {
+  if (process.env.UNITY_LOCAL_ROOT) {
+    return process.env.UNITY_LOCAL_ROOT;
   }
   const candidate = path.join(path.parse(process.cwd()).root, 'root');
   try {
@@ -37,7 +37,7 @@ function _resolveWorkspaceDir(): string {
     return path.join(os.homedir(), '.unity-workspace');
   }
 }
-const UNITY_WORKSPACE_DIR = _resolveWorkspaceDir();
+const LOCAL_ROOT = _resolveLocalRoot();
 const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
 
 
@@ -166,8 +166,8 @@ async function executeCommandInUserSession(
 ): Promise<ExecResult> {
   const startTime = Date.now();
   const taskName = `unity_exec_${execId}`;
-  const scriptFile = path.join(UNITY_WORKSPACE_DIR, `_script_${execId}.ps1`);
-  const resultFile = path.join(UNITY_WORKSPACE_DIR, `_result_${execId}.json`);
+  const scriptFile = path.join(LOCAL_ROOT, `_script_${execId}.ps1`);
+  const resultFile = path.join(LOCAL_ROOT, `_result_${execId}.json`);
 
   // Escape single quotes for PowerShell
   const escapedCwd = cwd.replace(/\\/g, '\\\\').replace(/'/g, "''");
@@ -254,7 +254,7 @@ Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Silent
   return new Promise((resolve) => {
     const proc = spawn(createTaskScript, [], {
       shell: 'powershell.exe',
-      cwd: UNITY_WORKSPACE_DIR,
+      cwd: LOCAL_ROOT,
       timeout,
     });
 
@@ -307,8 +307,8 @@ Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Silent
 }
 
 function getDefaultBrowserPaths() {
-  const downloadsPath = path.join(UNITY_WORKSPACE_DIR, 'Downloads');
-  const tracesDir = path.join(UNITY_WORKSPACE_DIR, 'Traces');
+  const downloadsPath = path.join(LOCAL_ROOT, 'Downloads');
+  const tracesDir = path.join(LOCAL_ROOT, 'Traces');
   return { downloadsPath, tracesDir };
 }
 
@@ -896,7 +896,7 @@ app.post('/exec', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'bad_request', message: 'command is required and must be a string.' });
   }
 
-  const workDir = cwd || UNITY_WORKSPACE_DIR;
+  const workDir = cwd || LOCAL_ROOT;
   const execTimeout = typeof timeout === 'number' && timeout > 0 ? timeout : DEFAULT_EXEC_TIMEOUT;
   const shellMode: ShellMode = shell_mode === 'cmd' ? 'cmd' : 'powershell';
 
@@ -946,7 +946,7 @@ async function handleFilesJson(req: Request, res: Response) {
     return res.status(400).json({ error: 'bad_request', message: 'action is required.' });
   }
 
-  const baseDir = UNITY_WORKSPACE_DIR;
+  const baseDir = LOCAL_ROOT;
 
   try {
     switch (action) {
@@ -1061,7 +1061,7 @@ async function handleFilesMultipart(req: Request, res: Response) {
     return res.status(400).json({ error: 'bad_request', message: 'No files uploaded.' });
   }
 
-  const baseDir = UNITY_WORKSPACE_DIR;
+  const baseDir = LOCAL_ROOT;
   const savedFiles: string[] = [];
   const errors: string[] = [];
 
