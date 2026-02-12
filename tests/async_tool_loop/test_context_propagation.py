@@ -239,14 +239,10 @@ async def test_ask_uses_parent_context(llm_config) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ask_inspection_loop_passes_real_parent_context(monkeypatch) -> None:
-    """Inspection ask passes the caller's parent chat context (not the loop
-    transcript) to start_async_tool_loop, and uses LLM_DECIDES propagation.
-
-    The inspected loop's transcript is only embedded in the hand-crafted system
-    message. The ``parent_chat_context`` kwarg carries the actual outer
-    conversation so the standard machinery can handle it.
-    """
+async def test_ask_inspection_loop_context_without_parent(monkeypatch) -> None:
+    """Without _parent_chat_context, the inspection loop uses NEVER propagation
+    and no parent_chat_context kwarg — the transcript already has the embedded
+    parent context header from when the loop was started."""
     from unity.common import async_tool_loop as atl
 
     captured_kwargs: dict = {}
@@ -277,11 +273,85 @@ async def test_ask_inspection_loop_passes_real_parent_context(monkeypatch) -> No
         loop_id="OuterLoop",
     )
 
-    outer_context = [{"role": "user", "content": "outer conversation message"}]
-    _helper = await handle.ask("What happened?", _parent_chat_context=outer_context)
+    _helper = await handle.ask("What happened?")
 
-    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
-    assert captured_kwargs["parent_chat_context"] == outer_context
+    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.NEVER
+    assert captured_kwargs["parent_chat_context"] is None
+
+
+@pytest.mark.asyncio
+async def test_ask_inspection_loop_with_parent_context(monkeypatch) -> None:
+    """With _parent_chat_context, the inspection loop uses LLM_DECIDES
+    propagation, passes the real parent context, and replaces the stale
+    runtime parent-context header in the transcript with a pointer."""
+    from unity.common import async_tool_loop as atl
+
+    captured: dict = {}
+
+    class _DummyInspectionHandle:
+        async def result(self):
+            return "ok"
+
+    def _fake_start_async_tool_loop(*args, **kwargs):
+        inspection_client = args[0]
+        captured["system_message"] = inspection_client.system_message
+        captured["kwargs"] = kwargs
+        return _DummyInspectionHandle()
+
+    monkeypatch.setattr(atl, "start_async_tool_loop", _fake_start_async_tool_loop)
+
+    stale_parent_ctx_content = (
+        "## Caller Context\nSome caller info.\n\n"
+        "## Parent Chat Context\n"
+        "You received this request from within a parent conversation. "
+        "The messages below show...\n\n"
+        '[{"role": "outer_user", "content": "stale parent message"}]'
+    )
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = [
+                {"role": "system", "content": "You are a helpful tool."},
+                {
+                    "role": "system",
+                    "_runtime_context": True,
+                    "_ctx_header": True,
+                    "_parent_chat_context": True,
+                    "content": stale_parent_ctx_content,
+                },
+                {"role": "user", "content": "do the thing"},
+                {"role": "assistant", "content": "doing it"},
+            ]
+
+    task = asyncio.Future()
+    task.set_result("done")
+
+    handle = atl.AsyncToolLoopHandle(
+        task=task,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
+        client=_DummyClient(),
+        loop_id="OuterLoop",
+    )
+
+    fresh_context = [{"role": "user", "content": "fresh parent message"}]
+    _helper = await handle.ask("What happened?", _parent_chat_context=fresh_context)
+
+    kwargs = captured["kwargs"]
+    assert kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
+    assert kwargs["parent_chat_context"] == fresh_context
+
+    # The system message should contain the pointer, not the stale dump.
+    # The pointer appears inside a JSON-serialized transcript, so newlines
+    # are escaped.  Check for the distinctive phrase instead.
+    sys_msg = captured["system_message"]
+    assert "stale parent message" not in sys_msg
+    assert "has been omitted from this transcript to avoid duplication" in sys_msg
+
+    # The Caller Context section before the parent context should be preserved
+    assert "Caller Context" in sys_msg
+    assert "Some caller info." in sys_msg
 
 
 @pytest.mark.asyncio
