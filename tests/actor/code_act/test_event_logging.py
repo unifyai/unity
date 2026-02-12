@@ -76,7 +76,6 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
             "venv_id": None,
             "session_created": False,
             "duration_ms": 1,
-            "computer_used": False,
         }
 
     monkeypatch.setattr(actor._session_executor, "execute", _fake_execute, raising=True)

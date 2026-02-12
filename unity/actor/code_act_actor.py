@@ -1196,11 +1196,6 @@ class CodeActActor(BaseCodeActActor):
             - **venv_id**: The virtual environment ID if applicable, otherwise None.
             - **session_created**: True if a new session was created by this call.
             - **duration_ms**: Execution duration in milliseconds.
-            - **computer_used**: True if computer primitives were invoked during execution.
-            - **computer_state** (optional): Only present when computer_used is True and a
-              computer environment is available. The textual metadata includes the URL
-              and any error details. A screenshot, when available, is returned as an
-              image block in the formatted tool output rather than embedded into JSON.
 
             For in-process Python execution with rich output, the result is wrapped in an
             ExecutionResult object (a Pydantic model implementing FormattedToolResult).
@@ -1219,7 +1214,6 @@ class CodeActActor(BaseCodeActActor):
                     "venv_id": venv_id,
                     "session_created": False,
                     "duration_ms": 0,
-                    "computer_used": False,
                 }
 
             # ──────────────────────────────────────────────────────────────
@@ -1397,7 +1391,6 @@ class CodeActActor(BaseCodeActActor):
                             "venv_id": venv_id,
                             "session_created": False,
                             "duration_ms": 0,
-                            "computer_used": False,
                         }
                 finally:
                     _PARENT_CHAT_CONTEXT.reset(_pcc_token)
@@ -1412,24 +1405,6 @@ class CodeActActor(BaseCodeActActor):
                 else:
                     out["session_name"] = None
 
-                # Attach computer state for Python runs when computer primitives were used.
-                if (
-                    str(out.get("language")) == "python"
-                    and out.get("computer_used")
-                    and self._computer_primitives is not None
-                ):
-                    try:
-                        url = await self._computer_primitives.computer.get_current_url()
-                        screenshot_b64 = (
-                            await self._computer_primitives.computer.get_screenshot()
-                        )
-                        out["computer_state"] = {
-                            "url": url,
-                            "screenshot": screenshot_b64,
-                        }
-                    except Exception as e:
-                        out["computer_state"] = {"error": str(e)}
-
                 if notification_q is not None and str(language) == "python":
                     try:
                         _status = "ok" if not out.get("error") else "error"
@@ -1441,7 +1416,6 @@ class CodeActActor(BaseCodeActActor):
                                 "message": f"execution_finished:{_status}",
                                 "stdout_len": len(out.get("stdout") or ""),
                                 "stderr_len": len(out.get("stderr") or ""),
-                                "computer_used": bool(out.get("computer_used")),
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             },
                         )

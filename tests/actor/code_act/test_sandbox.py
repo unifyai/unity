@@ -414,11 +414,11 @@ print("text after image")
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_execute_code_surfaces_computer_state_when_computer_used():
+async def test_get_screenshot_display_produces_image_in_stdout():
     """
-    When sandbox execution invokes computer primitives, the tool result should
-    include the current computer state so the model can reason about the page
-    without requiring an additional perception step.
+    When sandbox code calls ``get_screenshot()`` + ``display()``, the resulting
+    ExecutionResult should contain an image block in stdout — the standard
+    rich-output pipeline — rather than relying on post-hoc injection.
     """
     actor = CodeActActor(headless=True, computer_mode="mock", timeout=30)
     try:
@@ -426,14 +426,16 @@ async def test_execute_code_surfaces_computer_state_when_computer_used():
         execute_code = tools["execute_code"]
 
         res = await execute_code(
-            thought="Navigate so computer tools are exercised",
+            thought="Take a screenshot and display it",
             language="python",
             state_mode="stateful",
-            code="await computer_primitives.navigate('https://example.com')",
+            code=(
+                "screenshot = await computer_primitives.get_screenshot()\n"
+                "display(screenshot)"
+            ),
         )
 
         assert isinstance(res, ExecutionResult)
-        assert res.computer_used is True
 
         llm_content = serialize_tool_content(
             tool_name="execute_code",
@@ -442,27 +444,17 @@ async def test_execute_code_surfaces_computer_state_when_computer_used():
         )
         assert isinstance(llm_content, list)
 
-        text_blocks = [
-            b for b in llm_content if isinstance(b, dict) and b.get("type") == "text"
-        ]
         image_blocks = [
             b
             for b in llm_content
             if isinstance(b, dict) and b.get("type") == "image_url"
         ]
 
-        assert text_blocks, "Expected at least one text block with metadata"
-        meta_text = str(text_blocks[0].get("text") or "")
-        assert "computer_state" in meta_text
-        assert "url" in meta_text
-        assert '"screenshot"' not in meta_text
-        assert "data:image" not in meta_text
-        assert ";base64," not in meta_text
-
-        assert image_blocks, "Expected a computer screenshot image_url block"
+        assert image_blocks, "Expected a screenshot image_url block in stdout"
         assert all(
             isinstance(b.get("image_url"), dict)
             and isinstance(b["image_url"].get("url"), str)
+            and b["image_url"]["url"].startswith("data:image")
             for b in image_blocks
         )
     finally:

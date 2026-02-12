@@ -52,6 +52,7 @@ class ComputerEnvironment(BaseEnvironment):
             "query",
             "get_links",
             "get_content",
+            "get_screenshot",
         ]
 
         tools: Dict[str, ToolMetadata] = {}
@@ -85,12 +86,15 @@ class ComputerEnvironment(BaseEnvironment):
         parts: list[str] = []
 
         parts.append(
-            "### Computer State Feedback\n\n"
-            "After computer actions (`computer_primitives.act`, `.navigate`, `.observe`), "
-            "you automatically receive:\n"
-            "- The current computer state metadata (e.g., URL when available)\n"
-            "- A screenshot (as an image block) when available\n"
-            "- Any output from your code\n\n"
+            "### Viewing Computer State\n\n"
+            "To see the current screen state after a computer action, call "
+            "`get_screenshot()` and `display()` the result:\n\n"
+            "```python\n"
+            "screenshot = await computer_primitives.get_screenshot()\n"
+            "display(screenshot)\n"
+            "```\n\n"
+            "`get_screenshot()` returns a PIL Image. `display()` renders it as "
+            "visual output you can inspect on the next turn.\n\n"
             "Use **stateful sessions** for multi-step computer workflows "
             "(e.g., navigate then observe).",
         )
