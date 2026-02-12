@@ -12,6 +12,7 @@ Also tests incremental context propagation:
 
 from __future__ import annotations
 
+import asyncio
 from typing import List
 
 import pytest
@@ -235,6 +236,53 @@ async def test_ask_uses_parent_context(llm_config) -> None:
     assert (
         "apple" in ans.lower()
     ), "Answer did not reflect parent context (banana allergy)."
+
+
+@pytest.mark.asyncio
+async def test_ask_inspection_loop_disables_runtime_parent_header(monkeypatch) -> None:
+    """Regression: inspection ask must disable runtime parent-context propagation.
+
+    AsyncToolLoopHandle.ask already serializes the inspected transcript into the
+    inspection loop's system message. It should therefore start the helper loop
+    with ChatContextPropagation.NEVER to avoid re-attaching the same transcript
+    as an additional runtime parent-context header.
+    """
+    from unity.common import async_tool_loop as atl
+
+    captured_kwargs: dict = {}
+
+    class _DummyInspectionHandle:
+        async def result(self):
+            return "ok"
+
+    def _fake_start_async_tool_loop(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _DummyInspectionHandle()
+
+    monkeypatch.setattr(atl, "start_async_tool_loop", _fake_start_async_tool_loop)
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = [{"role": "user", "content": "outer transcript message"}]
+
+    task = asyncio.Future()
+    task.set_result("done")
+
+    handle = atl.AsyncToolLoopHandle(
+        task=task,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
+        client=_DummyClient(),
+        loop_id="OuterLoop",
+    )
+
+    _helper = await handle.ask("What happened?")
+
+    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.NEVER
+    assert captured_kwargs["parent_chat_context"] == [
+        {"role": "user", "content": "outer transcript message"},
+    ]
 
 
 @pytest.mark.asyncio
