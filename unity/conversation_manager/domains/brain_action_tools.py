@@ -980,6 +980,7 @@ class ConversationManagerBrainActionTools:
         query: str,
         response_format: Optional[dict] = None,
         persist: bool = False,
+        include_conversation_context: bool = True,
     ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
@@ -1050,16 +1051,26 @@ class ConversationManagerBrainActionTools:
 
                 The default (False) is a one-shot task: the actor works until
                 done and the result arrives as an ``ActorResult``.
+            include_conversation_context: Whether to pass the current conversation
+                state to the action. When ``true`` (default), the action receives
+                the full rendered conversation snapshot — messages, notifications,
+                and in-flight actions — helping it understand the broader context.
+                Set ``false`` when the action is self-contained and the query
+                alone provides all necessary information (e.g. simple lookups,
+                web searches, or factual questions). Subsequent steering calls
+                (interject, ask) on this action will also skip context forwarding.
         """
         global _next_handle_id
 
-        # Pass the fresh rendered state snapshot as context for the Actor.
-        # Filter to remove CM-internal elements (steering tools) that don't exist in Actor scope.
-        parent_context = (
-            [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
-            if self._cm._current_state_snapshot
-            else None
-        )
+        # Pass the fresh rendered state snapshot as context for the Actor,
+        # unless the LLM opted out.
+        parent_context = None
+        if include_conversation_context:
+            parent_context = (
+                [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
+                if self._cm._current_state_snapshot
+                else None
+            )
 
         # Convert the LLM-provided schema dict into a Pydantic model that the
         # Actor's async tool loop uses for structured output validation.
@@ -1100,6 +1111,7 @@ class ConversationManagerBrainActionTools:
                     },
                 ],
                 "initial_snapshot_state": initial_snapshot_state,
+                "context_opted_in": include_conversation_context,
             }
             asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
             asyncio.create_task(
@@ -1136,6 +1148,7 @@ class ConversationManagerBrainActionTools:
         text: str,
         action_type: str,
         response_format: Optional[dict] = None,
+        include_conversation_context: bool = True,
     ) -> dict[str, Any]:
         """Shared lifecycle for direct manager tools (contact and transcript actions).
 
@@ -1144,11 +1157,13 @@ class ConversationManagerBrainActionTools:
         """
         global _next_handle_id
 
-        parent_context = (
-            [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
-            if self._cm._current_state_snapshot
-            else None
-        )
+        parent_context = None
+        if include_conversation_context:
+            parent_context = (
+                [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
+                if self._cm._current_state_snapshot
+                else None
+            )
 
         pydantic_response_format = None
         if response_format is not None:
@@ -1181,6 +1196,7 @@ class ConversationManagerBrainActionTools:
                     },
                 ],
                 "initial_snapshot_state": initial_snapshot_state,
+                "context_opted_in": include_conversation_context,
             }
             asyncio.create_task(
                 managers_utils.actor_watch_result(handle_id, handle),
@@ -1672,14 +1688,18 @@ class ConversationManagerBrainActionTools:
 
                         # Capture values for the closure.
                         # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
+                        # Only pass context if the original action opted in.
                         _handle = handle
                         _param_value = param_value
                         _handle_id = handle_id
-                        _parent_context = (
-                            [cm._current_state_snapshot]
-                            if cm._current_state_snapshot
-                            else None
+                        _ctx_opted_in = (
+                            handle_data.get("context_opted_in", True)
+                            if handle_data
+                            else True
                         )
+                        _parent_context = None
+                        if _ctx_opted_in and cm._current_state_snapshot:
+                            _parent_context = [cm._current_state_snapshot]
 
                         # Spawn background task to perform ask and emit result
                         async def _perform_ask_and_emit():
@@ -1731,34 +1751,40 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
 
-                        # Compute incremental diff from initial snapshot to current state.
-                        # This avoids sending duplicate information that was already in the
-                        # initial _parent_chat_context when act() was called.
+                        # Only compute and send context diffs if the original
+                        # action opted into conversation context.
                         parent_context_cont = None
-                        initial_snapshot = (
-                            handle_data.get("initial_snapshot_state")
+                        _interject_ctx_opted_in = (
+                            handle_data.get("context_opted_in", True)
                             if handle_data
-                            else None
+                            else True
                         )
-                        current_snapshot = getattr(cm, "_current_snapshot_state", None)
 
-                        if current_snapshot is not None:
-                            # Compute diff between initial and current state
-                            diff_content = compute_snapshot_diff(
-                                initial_snapshot,
-                                current_snapshot,
+                        if _interject_ctx_opted_in:
+                            initial_snapshot = (
+                                handle_data.get("initial_snapshot_state")
+                                if handle_data
+                                else None
                             )
-                            if diff_content:
-                                parent_context_cont = [
-                                    {
-                                        "role": "user",
-                                        "content": diff_content,
-                                        "_cm_context_diff": True,
-                                    },
-                                ]
-                        elif cm._current_state_snapshot:
-                            # Fallback: if no snapshot tracking, use full snapshot (backward compat)
-                            parent_context_cont = [cm._current_state_snapshot]
+                            current_snapshot = getattr(
+                                cm, "_current_snapshot_state", None,
+                            )
+
+                            if current_snapshot is not None:
+                                diff_content = compute_snapshot_diff(
+                                    initial_snapshot,
+                                    current_snapshot,
+                                )
+                                if diff_content:
+                                    parent_context_cont = [
+                                        {
+                                            "role": "user",
+                                            "content": diff_content,
+                                            "_cm_context_diff": True,
+                                        },
+                                    ]
+                            elif cm._current_state_snapshot:
+                                parent_context_cont = [cm._current_state_snapshot]
 
                         await handle.interject(
                             param_value,
