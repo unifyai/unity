@@ -34,7 +34,6 @@ from unity.actor.execution import (
 )
 from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
-    ChatContextPropagation,
     SteerableToolHandle,
     start_async_tool_loop,
 )
@@ -2889,7 +2888,6 @@ class CodeActActor(BaseCodeActActor):
             request or initial_prompt,
             tools,
             loop_id=f"CodeActActor.act",
-            propagate_chat_context=ChatContextPropagation.ALWAYS,
             parent_chat_context=_parent_chat_context,
             interrupt_llm_with_interjections=True,
             log_steps=True,
