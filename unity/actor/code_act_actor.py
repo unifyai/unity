@@ -1166,6 +1166,17 @@ class CodeActActor(BaseCodeActActor):
                   answer = await handle.result()
                   print(f"Found: {answer}")
 
+            Decision guidance
+            -----------------
+            Prefer returning the handle when the operation is likely to be
+            long-running, externally dependent, or may require user steering
+            (status checks, corrections, pause/resume, or cancellation).
+            Prefer awaiting the result when you need that value immediately
+            for additional logic inside the same code block.
+            When the intent is neutral or ambiguous, default to returning
+            the handle so the outer loop preserves steering and progress
+            visibility.
+
             Output
             ------
             Returns either a dict or an ExecutionResult object with the following fields:

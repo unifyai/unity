@@ -169,6 +169,11 @@ in-flight control.
   You can either **await the result** for immediate use, or **return the handle \
 as the last expression** of `execute_code` to hand steering control back to the \
 outer loop (see `execute_code` docstring).
+  Prefer returning the handle when the operation may be long-running or likely \
+to need user steering (progress updates, corrections, cancellation). Prefer \
+awaiting when you need the result immediately for additional logic in the same \
+code block. If intent is neutral or uncertain, default to returning the handle \
+and only await when same-block composition truly requires it.
 
   **SteerableToolHandle API:**
 
