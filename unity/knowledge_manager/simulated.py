@@ -15,11 +15,6 @@ from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
 from ..common.simulated import (
     mirror_knowledge_manager_tools,
     SimulatedLineage,
@@ -316,14 +311,12 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
-        log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
         self._description = description
-        self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
@@ -411,32 +404,17 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
         """
         Simulated version of KnowledgeManager.refactor – no real DDL is run.
         The LLM simply invents a plausible migration plan and returns it.
         """
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedKnowledgeManager.refactor",
             "refactor",
             {"text": text if isinstance(text, str) else repr(text)},
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "KnowledgeManager",
-                "refactor",
-                phase="incoming",
-                display_label="Reorganizing Notes",
-                command=text,
-            )
 
         instruction = build_simulated_method_prompt(
             "refactor",
@@ -454,15 +432,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             response_format=response_format,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "KnowledgeManager",
-                "refactor",
-                display_label="Reorganizing Notes",
-            )
-
         return handle
 
     # ------------------------------------------------------------------ #
@@ -479,11 +448,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedKnowledgeManager.update",
@@ -493,17 +458,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "requests_clarification": _requests_clarification,
             },
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "KnowledgeManager",
-                "update",
-                phase="incoming",
-                display_label="Updating Notes",
-                request=text,
-            )
 
         instruction = build_simulated_method_prompt(
             "update",
@@ -527,15 +481,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             hold_completion=self._hold_completion,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "KnowledgeManager",
-                "update",
-                display_label="Updating Notes",
-            )
-
         return handle
 
     # ------------------------------------------------------------------ #
@@ -552,11 +497,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedKnowledgeManager.ask",
@@ -566,17 +507,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "requests_clarification": _requests_clarification,
             },
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "KnowledgeManager",
-                "ask",
-                phase="incoming",
-                display_label="Checking Notes",
-                question=text,
-            )
 
         instruction = build_simulated_method_prompt(
             "retrieve",
@@ -595,15 +525,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             hold_completion=self._hold_completion,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "KnowledgeManager",
-                "ask",
-                display_label="Checking Notes",
-            )
-
         return handle
 
     @functools.wraps(BaseKnowledgeManager.clear, updated=())
@@ -621,7 +542,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "_description",
                 "nothing fixed, make up some imaginary scenario",
             ),
-            log_events=getattr(self, "_log_events", False),
             rolling_summary_in_prompts=getattr(
                 self,
                 "_rolling_summary_in_prompts",
