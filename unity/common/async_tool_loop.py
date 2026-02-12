@@ -20,6 +20,7 @@ from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
+from .context_dump import make_messages_safe_for_context_dump
 from typing import Iterable
 
 
@@ -364,6 +365,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             if msgs is None:
                 msgs = []
             parent_ctx = list(msgs)
+        parent_ctx_safe = make_messages_safe_for_context_dump(parent_ctx)
+        parent_chat_context_safe = make_messages_safe_for_context_dump(
+            _parent_chat_context,
+        )
 
         # 1b. Snapshot ask_* tools available at invocation time so the
         #     inspection loop can propagate questions to inner handles.
@@ -393,11 +398,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "Use this to answer the user's question about the current state or progress."
             ),
             "",
-            json.dumps(parent_ctx, indent=2),
+            json.dumps(parent_ctx_safe, indent=2),
         ]
 
         # If parent context is provided, add it as a separate section
-        if _parent_chat_context:
+        if parent_chat_context_safe:
             sys_msg_parts.extend(
                 [
                     "",
@@ -409,7 +414,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "answering questions about."
                     ),
                     "",
-                    json.dumps(_parent_chat_context, indent=2),
+                    json.dumps(parent_chat_context_safe, indent=2),
                 ],
             )
 
@@ -466,7 +471,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=parent_ctx,  # ← nested context
+            parent_chat_context=parent_ctx_safe,
             propagate_chat_context=ChatContextPropagation.NEVER,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,

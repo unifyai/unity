@@ -18,7 +18,6 @@ from unity.demo_meta import (
     DemoProspectDetails,
     fetch_demo_meta,
     apply_prospect_to_boss_contact,
-    DEMO_META_FETCH_TIMEOUT,
 )
 
 
@@ -274,7 +273,7 @@ class TestUpdateSessionContactsDemoModeProtection:
     @pytest.mark.asyncio
     async def test_update_session_contacts_creates_demoer_in_demo_mode(self):
         """In demo mode, update_session_contacts should create demoer contact (id=2)."""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import MagicMock
         from unity.conversation_manager.domains.managers_utils import (
             update_session_contacts,
         )

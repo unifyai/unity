@@ -10,6 +10,7 @@ import unillm
 from .base import BaseSecretManager
 from .types import Secret
 from ..common.llm_client import new_llm_client
+from ..common.context_dump import make_messages_safe_for_context_dump
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.simulated import (
@@ -405,7 +406,7 @@ class SimulatedSecretManager(BaseSecretManager):
             "Never reveal any raw secret values; always refer to placeholders like ${name}.\n\n"
             f"User message: {text}\n\n"
             + (
-                f"Parent context: {json.dumps(_parent_chat_context)}\n\n"
+                f"Parent context: {json.dumps(make_messages_safe_for_context_dump(_parent_chat_context))}\n\n"
                 if _parent_chat_context
                 else ""
             )
@@ -540,7 +541,7 @@ class SimulatedSecretManager(BaseSecretManager):
             "Never reveal raw secret values; reference secrets via ${name}.\n\n"
             f"User request: {text}\n\n"
             + (
-                f"Parent context: {json.dumps(_parent_chat_context)}\n\n"
+                f"Parent context: {json.dumps(make_messages_safe_for_context_dump(_parent_chat_context))}\n\n"
                 if _parent_chat_context
                 else ""
             )

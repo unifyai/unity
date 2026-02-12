@@ -420,6 +420,7 @@ def build_simulated_method_prompt(
     The wording mirrors the style already used in :class:`SimulatedContactManager`.
     """
     import json  # local import to avoid polluting module namespace
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
@@ -438,7 +439,7 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
 
     return "\n".join(parts)
