@@ -30,6 +30,7 @@ from unity.function_manager.primitives.registry import (
 from unity.manager_registry import SingletonABCMeta
 
 if TYPE_CHECKING:
+    from PIL import Image
     from unity.function_manager.computer import Computer
     from unity.contact_manager.contact_manager import ContactManager
     from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -75,8 +76,9 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         "get_links",
         "get_content",
     )
-    # All primitive methods (used for discovery)
-    _PRIMITIVE_METHODS = _DYNAMIC_METHODS
+    # All primitive methods (used for discovery).
+    # Includes _DYNAMIC_METHODS plus hand-written methods like get_screenshot.
+    _PRIMITIVE_METHODS = _DYNAMIC_METHODS + ("get_screenshot",)
 
     @staticmethod
     def _resolve_agent_server_url(explicit_url: str | None) -> str:
@@ -218,6 +220,35 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 **self._computer_kwargs_map[self._computer_mode],
             )
         return self._computer
+
+    async def get_screenshot(self) -> "Image.Image":
+        """Capture a screenshot of the current screen and return it as a PIL Image.
+
+        Takes a visual snapshot of the current browser viewport (web mode) or
+        entire screen (desktop mode). Use ``display()`` to render the image as
+        visual output the model can inspect::
+
+            screenshot = await computer_primitives.get_screenshot()
+            display(screenshot)
+
+        Returns
+        -------
+        PIL.Image.Image
+            The current screen contents as an RGB image.
+        """
+        import base64
+        import io
+
+        from PIL import Image
+
+        if not _vm_ready.is_set():
+            ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            if not ready:
+                raise RuntimeError(
+                    "Managed VM did not become ready within 5 minutes",
+                )
+        b64 = await self.computer.get_screenshot()
+        return Image.open(io.BytesIO(base64.b64decode(b64)))
 
 
 # =============================================================================

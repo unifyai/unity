@@ -305,9 +305,9 @@ async def complete_checkout(cart_items: list) -> str:
 
 
 def get_computer_screenshot_driven_example() -> str:
-    """Example: screenshot-driven implementation (within a computer loop).
+    """Example: screenshot-driven implementation using get_screenshot() + display().
 
-    UI actions are guided by the current page state (captured as screenshots/evidence).
+    UI actions are guided by the current page state (captured via explicit screenshot calls).
     """
 
     return """
@@ -315,12 +315,15 @@ def get_computer_screenshot_driven_example() -> str:
 async def proceed_using_screenshot() -> str:
     await computer_primitives.navigate("https://example.com/setup")
 
-    # After computer actions, the loop surfaces a screenshot as an image block.
-    # Prefer acting directly from that context, and only use observe for structured extraction
-    # or when a precise, machine-checkable answer is required.
+    # Use get_screenshot() + display() to see the current screen state.
+    # Prefer acting directly from that visual context, and only use observe
+    # for structured extraction or when a precise, machine-checkable answer is required.
+    display(await computer_primitives.get_screenshot())
 
-    await computer_primitives.act("Using the screenshot, click the 'Continue' button.")
-    return await computer_primitives.observe("From the new screenshot, confirm we reached the next step.")
+    await computer_primitives.act("Click the 'Continue' button.")
+    display(await computer_primitives.get_screenshot())
+
+    return await computer_primitives.observe("Confirm we reached the next step.")
 """
 
 
@@ -332,15 +335,15 @@ def get_computer_session_execution_example() -> str:
 
 *User Request*: "What is the main heading and the text of the first paragraph on playwright.dev?"
 
-*Turn 1: Navigate to the website*
+*Turn 1: Navigate to the website and view the page*
 * **Tool Call**:
     ```json
     {
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev.",
-          "code": "await computer_primitives.navigate(\'https://playwright.dev/\')",
+          "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev. I\'ll take a screenshot to see the page.",
+          "code": "await computer_primitives.navigate(\'https://playwright.dev/\')\\ndisplay(await computer_primitives.get_screenshot())",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -349,9 +352,8 @@ def get_computer_session_execution_example() -> str:
     ```
 * **Observation**:
     ```text
-    --- COMPUTER STATE ---
-    URL: https://playwright.dev/
-    [A screenshot is available to you as an image block.]
+    --- stdout ---
+    [screenshot image of the playwright.dev homepage]
     ```
 
 *Turn 2: Observe the content using a Pydantic model*
@@ -361,7 +363,7 @@ def get_computer_session_execution_example() -> str:
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "Great, I\'m on the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
+          "thought": "Great, I can see the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
           "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await computer_primitives.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\n\\nprint(page_info.model_dump_json(indent=2))",
           "language": "python",
           "state_mode": "stateful"
@@ -371,14 +373,11 @@ def get_computer_session_execution_example() -> str:
     ```
 * **Observation**:
     ```text
-    --- STDOUT ---
+    --- stdout ---
     {
       "heading": "Playwright enables reliable end-to-end testing for modern web apps.",
       "first_paragraph": "Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API."
     }
-    --- COMPUTER STATE ---
-    URL: https://playwright.dev/
-    [A screenshot is available to you as an image block.]
     ```
 
 *Turn 3: Provide the final answer*
@@ -449,15 +448,15 @@ def get_computer_interactive_workflow_example() -> str:
 
 *User Request*: "Find the support email on example.com and save it to our knowledge base."
 
-*Turn 1: Navigate to the website*
+*Turn 1: Navigate to the website and view the page*
 * **Tool Call**:
     ```json
     {
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "I\'ll navigate to the website to find the support email.",
-          "code": "await computer_primitives.navigate(\'https://example.com/contact\')",
+          "thought": "I\'ll navigate to the website to find the support email and take a screenshot to see the page.",
+          "code": "await computer_primitives.navigate(\'https://example.com/contact\')\\ndisplay(await computer_primitives.get_screenshot())",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -466,9 +465,8 @@ def get_computer_interactive_workflow_example() -> str:
     ```
 * **Observation**:
     ```text
-    --- COMPUTER STATE ---
-    URL: https://example.com/contact
-    [A screenshot is available to you as an image block.]
+    --- stdout ---
+    [screenshot image of the example.com contact page]
     ```
 
 *Turn 2: Extract the support email using structured observation*

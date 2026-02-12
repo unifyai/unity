@@ -118,8 +118,6 @@ class ExecutionResult(BaseModel):
     stderr: List[Union[TextPart, ImagePart]] = Field(default_factory=list)
     result: Any = None
     error: Optional[str] = None
-    computer_used: bool = False
-    computer_state: Optional[Dict[str, Any]] = None
     language: Optional[str] = None
     state_mode: Optional[str] = None
     session_id: Optional[int] = None
@@ -140,7 +138,6 @@ class ExecutionResult(BaseModel):
 
         # Build metadata section (non-stdout/stderr fields)
         meta: Dict[str, Any] = {}
-        computer_screenshot_b64: Optional[str] = None
         if self.result is not None:
             meta["result"] = self.result
         if self.error is not None:
@@ -159,28 +156,6 @@ class ExecutionResult(BaseModel):
             meta["session_created"] = self.session_created
         if self.duration_ms is not None:
             meta["duration_ms"] = self.duration_ms
-        if self.computer_used:
-            meta["computer_used"] = True
-        if self.computer_state is not None:
-            # Keep computer state lightweight in the JSON text block.
-            # Large binary payloads (e.g., screenshots) are represented as image blocks
-            # rather than embedded directly into JSON.
-            if isinstance(self.computer_state, dict):
-                cs_url = self.computer_state.get("url")
-                cs_error = self.computer_state.get("error")
-                cs_screenshot = self.computer_state.get("screenshot")
-                if isinstance(cs_screenshot, str) and cs_screenshot.strip():
-                    computer_screenshot_b64 = cs_screenshot
-
-                cs_meta: Dict[str, Any] = {}
-                if cs_url is not None:
-                    cs_meta["url"] = cs_url
-                if cs_error is not None:
-                    cs_meta["error"] = cs_error
-                if cs_meta:
-                    meta["computer_state"] = cs_meta
-            else:
-                meta["computer_state"] = self.computer_state
 
         # Add metadata block if present
         if meta:
@@ -188,20 +163,6 @@ class ExecutionResult(BaseModel):
 
             meta_text = json.dumps(meta, indent=2, default=str)
             blocks.append({"type": "text", "text": meta_text})
-
-        # Add computer screenshot (if present) as an image block rather than JSON text.
-        if computer_screenshot_b64 is not None:
-            if blocks:
-                blocks.append(
-                    {"type": "text", "text": "\n--- computer screenshot ---\n"},
-                )
-            mime = _detect_image_mime_from_b64(computer_screenshot_b64)
-            blocks.append(
-                ImagePart(
-                    data=computer_screenshot_b64,
-                    mime=mime,
-                ).to_llm_content(),
-            )
 
         # Add stdout with preserved ordering (interleaved text/images)
         if self.stdout:

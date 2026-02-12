@@ -147,7 +147,6 @@ def _simplify_execute_code_result(result: Any) -> dict[str, Any]:
         "session_name",
         "venv_id",
         "duration_ms",
-        "computer_used",
     ):
         try:
             v = d.get(k)
