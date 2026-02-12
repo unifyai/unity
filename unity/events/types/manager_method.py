@@ -52,6 +52,12 @@ class ManagerMethodPayload(BaseModel):
         description="Human-readable hierarchy label",
     )
 
+    # User-facing display label for the action window (e.g., "Checking Contact Book").
+    display_label: Optional[str] = Field(
+        default=None,
+        description="User-friendly phrase describing this operation for non-technical users",
+    )
+
     # Status and error information (typically for phase='outgoing').
     status: str = Field(
         default="ok",

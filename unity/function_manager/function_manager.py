@@ -121,6 +121,7 @@ class _LineageTrackedFunction:
                     self._function_name,
                     hierarchy=hierarchy,
                     hierarchy_label=hierarchy_label,
+                    display_label=f"Running: {self._function_name}",
                     **payload,
                 )
             except Exception as e:

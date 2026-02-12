@@ -136,7 +136,7 @@ class GuidanceManager(BaseGuidanceManager):
 
     # ------------------------------- Public API -------------------------------
     @functools.wraps(BaseGuidanceManager.ask, updated=())
-    @log_manager_call("GuidanceManager", "ask", payload_key="question")
+    @log_manager_call("GuidanceManager", "ask", payload_key="question", display_label="Reviewing Guidelines")
     async def ask(
         self,
         text: str,
@@ -229,7 +229,7 @@ class GuidanceManager(BaseGuidanceManager):
         return handle
 
     @functools.wraps(BaseGuidanceManager.update, updated=())
-    @log_manager_call("GuidanceManager", "update", payload_key="request")
+    @log_manager_call("GuidanceManager", "update", payload_key="request", display_label="Updating Guidelines")
     async def update(
         self,
         text: str,
