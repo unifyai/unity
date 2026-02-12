@@ -239,13 +239,13 @@ async def test_ask_uses_parent_context(llm_config) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ask_inspection_loop_disables_runtime_parent_header(monkeypatch) -> None:
-    """Regression: inspection ask must disable runtime parent-context propagation.
+async def test_ask_inspection_loop_passes_real_parent_context(monkeypatch) -> None:
+    """Inspection ask passes the caller's parent chat context (not the loop
+    transcript) to start_async_tool_loop, and uses LLM_DECIDES propagation.
 
-    AsyncToolLoopHandle.ask already serializes the inspected transcript into the
-    inspection loop's system message. It should therefore start the helper loop
-    with ChatContextPropagation.NEVER to avoid re-attaching the same transcript
-    as an additional runtime parent-context header.
+    The inspected loop's transcript is only embedded in the hand-crafted system
+    message. The ``parent_chat_context`` kwarg carries the actual outer
+    conversation so the standard machinery can handle it.
     """
     from unity.common import async_tool_loop as atl
 
@@ -263,7 +263,7 @@ async def test_ask_inspection_loop_disables_runtime_parent_header(monkeypatch) -
 
     class _DummyClient:
         def __init__(self):
-            self.messages = [{"role": "user", "content": "outer transcript message"}]
+            self.messages = [{"role": "user", "content": "loop transcript message"}]
 
     task = asyncio.Future()
     task.set_result("done")
@@ -277,17 +277,17 @@ async def test_ask_inspection_loop_disables_runtime_parent_header(monkeypatch) -
         loop_id="OuterLoop",
     )
 
-    _helper = await handle.ask("What happened?")
+    outer_context = [{"role": "user", "content": "outer conversation message"}]
+    _helper = await handle.ask("What happened?", _parent_chat_context=outer_context)
 
-    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.NEVER
-    assert captured_kwargs["parent_chat_context"] == [
-        {"role": "user", "content": "outer transcript message"},
-    ]
+    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
+    assert captured_kwargs["parent_chat_context"] == outer_context
 
 
 @pytest.mark.asyncio
 async def test_ask_inspection_prompt_redacts_image_payloads(monkeypatch) -> None:
-    """Inspection ask should redact image blobs from dumped context."""
+    """Inspection ask should redact image blobs from both the system message
+    (inspected transcript) and the parent_chat_context kwarg."""
     from unity.common import async_tool_loop as atl
 
     captured: dict = {}
@@ -332,19 +332,23 @@ async def test_ask_inspection_prompt_redacts_image_payloads(monkeypatch) -> None
         loop_id="OuterLoop",
     )
 
+    parent_ctx_with_image = [
+        {"role": "user", "content": f"latest screenshot: {raw_data_url}"},
+    ]
     _helper = await handle.ask(
         "Summarize status",
-        _parent_chat_context=[
-            {"role": "user", "content": f"latest screenshot: {raw_data_url}"},
-        ],
+        _parent_chat_context=parent_ctx_with_image,
     )
 
     sys_msg = str(captured.get("system_message") or "")
     parent_ctx = str(captured.get("parent_chat_context") or "")
 
+    # Image blobs must be redacted in the system message (inspected transcript)
     assert raw_data_url not in sys_msg
-    assert raw_data_url not in parent_ctx
     assert "data:image/png;base64,<omitted>" in sys_msg
+
+    # Image blobs must be redacted in the parent_chat_context kwarg
+    assert raw_data_url not in parent_ctx
     assert "<omitted>" in parent_ctx
 
 

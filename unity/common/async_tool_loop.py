@@ -33,6 +33,26 @@ from ._async_tool.tagging import tag_message_with_request
 if TYPE_CHECKING:
     from unillm.types import PromptCacheParam
 
+
+def _transform_inner_roles(messages: list[dict]) -> list[dict]:
+    """Transform 'user'/'assistant' roles to 'inner_user'/'inner_assistant'.
+
+    Disambiguates the inspected loop's transcript from the inspection loop's
+    own conversation and from the outer parent context (which uses
+    'outer_user'/'outer_assistant').
+    """
+    transformed = []
+    for msg in messages:
+        new_msg = dict(msg)
+        role = new_msg.get("role", "")
+        if role == "user":
+            new_msg["role"] = "inner_user"
+        elif role == "assistant":
+            new_msg["role"] = "inner_assistant"
+        transformed.append(new_msg)
+    return transformed
+
+
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
 from abc import ABC, abstractmethod
@@ -388,35 +408,36 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         inspection_client = new_llm_client(parent_model)
 
-        # Build system message with transcript and optional parent context
+        # Build system message with the inspected loop's transcript.
+        # Transform roles to inner_user/inner_assistant so the inspection LLM
+        # can distinguish the inspected conversation from its own messages and
+        # from the outer parent context (which uses outer_user/outer_assistant).
+        loop_chat_context_transformed = _transform_inner_roles(
+            loop_chat_context_safe,
+        )
+
+        transcript_description = (
+            "This is the transcript of the tool/loop you are being asked about. "
+            "Messages use 'inner_user' and 'inner_assistant' roles to clearly "
+            "distinguish them from your current conversation. "
+            "Use this to answer the user's question about the current state or progress."
+        )
+        if _parent_chat_context:
+            transcript_description += (
+                " Note: this is separate from the Parent Chat Context that may "
+                "appear below — that context shows the broader conversation that "
+                "led to this request, while this transcript is what you are "
+                "answering questions about."
+            )
+
         sys_msg_parts = [
             "You are inspecting a running tool-use conversation to answer a question about it.",
             "",
             "## Inspected Loop Transcript",
-            (
-                "This is the transcript of the tool/loop you are being asked about. "
-                "Use this to answer the user's question about the current state or progress."
-            ),
+            transcript_description,
             "",
-            json.dumps(loop_chat_context_safe, indent=2),
+            json.dumps(loop_chat_context_transformed, indent=2),
         ]
-
-        # If parent context is provided, add it as a separate section
-        if parent_chat_context_safe:
-            sys_msg_parts.extend(
-                [
-                    "",
-                    "## Parent Chat Context",
-                    (
-                        "This is the broader conversation context from which this question originated. "
-                        "It may help explain why this question is being asked. Note: this is separate "
-                        "from the Inspected Loop Transcript above - that transcript is what you are "
-                        "answering questions about."
-                    ),
-                    "",
-                    json.dumps(parent_chat_context_safe, indent=2),
-                ],
-            )
 
         # If inner-handle ask_* tools are available, hint the LLM about them
         if ask_tools:
@@ -471,8 +492,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=loop_chat_context_safe,
-            propagate_chat_context=ChatContextPropagation.NEVER,
+            parent_chat_context=parent_chat_context_safe,
+            propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
