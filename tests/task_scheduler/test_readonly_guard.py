@@ -32,6 +32,15 @@ async def test_task_scheduler_ask_guard_triggers_when_enabled(monkeypatch):
 
     monkeypatch.setattr(ReadOnlyAskGuardHandle, "stop", _wrapped_stop, raising=True)
 
+    # Prevent the main loop's done callback from cancelling the classifier
+    # task before it completes. Without this, the main loop finishes first
+    # and the done callback kills the classifier, so stop() is never called.
+    # With cancellation disabled, ReadOnlyAskGuardHandle.result() awaits
+    # the classifier task as its synchronization point.
+    monkeypatch.setattr(
+        ReadOnlyAskGuardHandle, "_cancel_classifier", lambda self: None,
+    )
+
     # Mutation-intent phrasing to trigger the real classifier
     handle = await ts.ask(
         "Please change Bob Johnson's email to foo@bar.com; make the update now.",
