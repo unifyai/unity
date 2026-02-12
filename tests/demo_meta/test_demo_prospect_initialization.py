@@ -16,14 +16,12 @@ on the boss contact (contact_id=1) during demo session initialization:
 These tests mock the Orchestra API but use real Unity initialization flow.
 """
 
-import asyncio
 import os
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from tests.helpers import scenario_file_lock
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test Fixtures
@@ -182,7 +180,7 @@ class TestDemoProspectInitialization:
         print(
             f"✅ Boss contact is sparse as expected: "
             f"first_name={first_name!r}, surname={surname!r}, "
-            f"email={email!r}, phone={phone!r}"
+            f"email={email!r}, phone={phone!r}",
         )
 
     @pytest.mark.asyncio
@@ -233,7 +231,7 @@ class TestDemoProspectInitialization:
             f"first_name={boss_contact.get('first_name')!r}, "
             f"surname={boss_contact.get('surname')!r}, "
             f"email={boss_contact.get('email_address')!r}, "
-            f"phone={boss_contact.get('phone_number')!r}"
+            f"phone={boss_contact.get('phone_number')!r}",
         )
 
     @pytest.mark.asyncio
@@ -274,7 +272,7 @@ class TestDemoProspectInitialization:
             f"✅ Partial prospect details applied: "
             f"first_name={boss_contact.get('first_name')!r}, "
             f"surname={boss_contact.get('surname')!r}, "
-            f"email={email!r}, phone={phone!r}"
+            f"email={email!r}, phone={phone!r}",
         )
 
     @pytest.mark.asyncio
@@ -318,7 +316,7 @@ class TestDemoProspectInitialization:
             f"✅ Demo contact structure verified: "
             f"assistant={assistant_contact.get('first_name')!r}, "
             f"boss={boss_contact.get('first_name')!r}, "
-            f"demoer={demoer_contact.get('first_name')!r}"
+            f"demoer={demoer_contact.get('first_name')!r}",
         )
 
     @pytest.mark.asyncio
@@ -380,7 +378,7 @@ class TestDemoProspectInitialization:
 
             print(
                 f"✅ Graceful fallback: initialization succeeded despite API failure, "
-                f"boss contact is sparse"
+                f"boss contact is sparse",
             )
 
         finally:

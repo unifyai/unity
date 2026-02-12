@@ -105,9 +105,7 @@ def assert_contains(response: str, expected: str, context: str = "") -> None:
     )
 
 
-def assert_concise(
-    response: str, max_words: int = 50, context: str = ""
-) -> None:
+def assert_concise(response: str, max_words: int = 50, context: str = "") -> None:
     """Assert that the response is concise (phone-call brevity).
 
     Args:
@@ -424,4 +422,3 @@ class TestBrevity:
         response = await ask_fast_brain(prompt, "Hey, how's it going?")
 
         assert_concise(response, max_words=15, context="casual greeting")
-

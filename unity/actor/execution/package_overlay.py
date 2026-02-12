@@ -64,9 +64,7 @@ class PackageOverlay:
 
         if self._parent is not None:
             return os.path.join(self._parent._target_dir, self._agent_id)
-        return os.path.join(
-            tempfile.gettempdir(), "unity_act_pkgs", self._agent_id
-        )
+        return os.path.join(tempfile.gettempdir(), "unity_act_pkgs", self._agent_id)
 
     def install(self, packages: List[str], timeout: float = 120) -> dict:
         """Install *packages* into the overlay directory.

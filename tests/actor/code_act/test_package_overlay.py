@@ -20,7 +20,6 @@ from unity.actor.execution.package_overlay import (
     _CURRENT_PACKAGE_OVERLAY,
 )
 
-
 # ---------------------------------------------------------------------------
 # Direct PackageOverlay unit tests (no LLM, no actor)
 # ---------------------------------------------------------------------------
@@ -103,9 +102,9 @@ def test_child_overlay_cleanup_preserves_parent_packages():
 
     try:
         parent_result = parent_overlay.install(["cowsay"])
-        assert parent_result["success"], (
-            f"Parent install failed: {parent_result['stderr']}"
-        )
+        assert parent_result[
+            "success"
+        ], f"Parent install failed: {parent_result['stderr']}"
 
         # Child overlay discovers parent via the ContextVar.
         child_overlay = PackageOverlay(agent_id="child")
@@ -113,9 +112,9 @@ def test_child_overlay_cleanup_preserves_parent_packages():
 
         try:
             child_result = child_overlay.install(["pyfiglet"])
-            assert child_result["success"], (
-                f"Child install failed: {child_result['stderr']}"
-            )
+            assert child_result[
+                "success"
+            ], f"Child install failed: {child_result['stderr']}"
 
             # Both should be importable.
             importlib.import_module("cowsay")
@@ -217,6 +216,6 @@ async def test_packages_not_importable_after_act_completes():
         await actor.close()
 
     # After act() cleanup, cowsay should NOT be importable.
-    assert "cowsay" not in sys.modules, (
-        "cowsay should have been purged from sys.modules after act() cleanup"
-    )
+    assert (
+        "cowsay" not in sys.modules
+    ), "cowsay should have been purged from sys.modules after act() cleanup"

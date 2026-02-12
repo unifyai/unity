@@ -397,7 +397,7 @@ class ScenarioBuilder:
         # Build messages with explicit message_id for ordering
         messages = []
         for i, (s, r, ts, txt) in enumerate(msgs):
-            meta = (msg_metadata[i] if msg_metadata else None)
+            meta = msg_metadata[i] if msg_metadata else None
             messages.append(
                 Message(
                     medium=medium,
