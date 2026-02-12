@@ -166,6 +166,8 @@ def wrap_handle_with_logging(
     call_id: str,
     manager_name: str,
     method_name: str,
+    *,
+    display_label: str | None = None,
 ) -> SteerableToolHandle:
     """
     Return a proxy that logs every callable on the inner handle generically (pre-call action,
@@ -182,6 +184,8 @@ def wrap_handle_with_logging(
             self._inner = _h
 
         async def _publish(self, **payload):
+            if display_label is not None:
+                payload.setdefault("display_label", display_label)
             # Best-effort: attach tool loop label from the inner handle when available
             # so ManagerMethod events can reproduce the same label used in terminal logs.
             try:
@@ -298,6 +302,7 @@ def log_manager_call(
     payload_key: str,
     *,
     call_id_kw: str = "_call_id",
+    display_label: str | None = None,
 ):
     """Decorator factory that publishes an incoming ManagerMethod event and
     wraps the returned handle so subsequent interactions are logged.
@@ -307,6 +312,10 @@ def log_manager_call(
     into the method as a keyword argument named by ``call_id_kw`` so that the
     implementation can tag any sub-events (e.g. clarification requests) with
     the same identifier.
+
+    ``display_label`` is a user-friendly phrase (e.g. "Checking Contact Book")
+    that gets attached to every event in the lifecycle so the frontend can
+    render it directly without maintaining its own mapping.
     """
 
     def _decorator(func):
@@ -329,13 +338,16 @@ def log_manager_call(
                 manager_name,
                 method_name,
                 phase="incoming",
+                display_label=display_label,
                 **{payload_key: payload_value},
             )
 
             # Inject call_id for the inner method (for clarification events, etc.)
             kwargs[call_id_kw] = call_id
             handle = await func(self, *args, **kwargs)
-            return wrap_handle_with_logging(handle, call_id, manager_name, method_name)
+            return wrap_handle_with_logging(
+                handle, call_id, manager_name, method_name, display_label=display_label,
+            )
 
         return _wrapper
 

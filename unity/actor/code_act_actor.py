@@ -1237,6 +1237,7 @@ class CodeActActor(BaseCodeActActor):
                         "execute_code",
                         hierarchy=_hierarchy,
                         hierarchy_label=_hierarchy_label,
+                        display_label="Running Code",
                         **payload,
                     )
                 except Exception as e:
@@ -1712,6 +1713,7 @@ class CodeActActor(BaseCodeActActor):
                             "execute_function",
                             hierarchy=_ef_hierarchy,
                             hierarchy_label=_ef_hierarchy_label,
+                            display_label="Running Custom Action",
                             **payload,
                         )
                     except Exception as e:
@@ -2517,7 +2519,7 @@ class CodeActActor(BaseCodeActActor):
         return tools
 
     @functools.wraps(BaseCodeActActor.act, updated=())
-    @log_manager_call("CodeActActor", "act", payload_key="request")
+    @log_manager_call("CodeActActor", "act", payload_key="request", display_label="Taking Action")
     async def act(
         self,
         request: str | dict | list[str | dict],

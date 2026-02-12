@@ -316,6 +316,7 @@ class SecretManager(BaseSecretManager):
                 "SecretManager",
                 "from_placeholder",
                 phase="incoming",
+                display_label="Retrieving Credential",
                 query=text,
             )
         except Exception:
@@ -332,6 +333,7 @@ class SecretManager(BaseSecretManager):
                     "SecretManager",
                     "from_placeholder",
                     phase="outgoing",
+                    display_label="Retrieving Credential",
                     status="resolved",
                 )
         except Exception:
@@ -361,6 +363,7 @@ class SecretManager(BaseSecretManager):
                 "SecretManager",
                 "to_placeholder",
                 phase="incoming",
+                display_label="Securing Credential",
                 info="start",
             )
         except Exception:
@@ -415,6 +418,7 @@ class SecretManager(BaseSecretManager):
                     "SecretManager",
                     "to_placeholder",
                     phase="outgoing",
+                    display_label="Securing Credential",
                     status="converted",
                     replacements=total_replacements,
                     names=sorted(replaced_names),
@@ -425,7 +429,7 @@ class SecretManager(BaseSecretManager):
         return result
 
     @functools.wraps(BaseSecretManager.ask, updated=())
-    @log_manager_call("SecretManager", "ask", payload_key="question")
+    @log_manager_call("SecretManager", "ask", payload_key="question", display_label="Checking Credentials")
     async def ask(
         self,
         text: str,
@@ -515,7 +519,7 @@ class SecretManager(BaseSecretManager):
         return handle
 
     @functools.wraps(BaseSecretManager.update, updated=())
-    @log_manager_call("SecretManager", "update", payload_key="request")
+    @log_manager_call("SecretManager", "update", payload_key="request", display_label="Updating Credentials")
     async def update(
         self,
         text: str,

@@ -397,6 +397,7 @@ class SimulatedSecretManager(BaseSecretManager):
                 "SecretManager",
                 "ask",
                 phase="incoming",
+                display_label="Checking Credentials",
                 question=text,
             )
 
@@ -423,7 +424,9 @@ class SimulatedSecretManager(BaseSecretManager):
         )
 
         if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(handle, call_id, "SecretManager", "ask")
+            handle = wrap_handle_with_logging(
+                handle, call_id, "SecretManager", "ask", display_label="Checking Credentials",
+            )
 
         return handle
 
@@ -437,6 +440,7 @@ class SimulatedSecretManager(BaseSecretManager):
                 "SecretManager",
                 "from_placeholder",
                 phase="incoming",
+                display_label="Retrieving Credential",
                 query=text,
             )
         except Exception:
@@ -457,6 +461,7 @@ class SimulatedSecretManager(BaseSecretManager):
                     "SecretManager",
                     "from_placeholder",
                     phase="outgoing",
+                    display_label="Retrieving Credential",
                     status="resolved",
                 )
         except Exception:
@@ -474,6 +479,7 @@ class SimulatedSecretManager(BaseSecretManager):
                 "SecretManager",
                 "to_placeholder",
                 phase="incoming",
+                display_label="Securing Credential",
                 info="start",
             )
         except Exception:
@@ -495,6 +501,7 @@ class SimulatedSecretManager(BaseSecretManager):
                     "SecretManager",
                     "to_placeholder",
                     phase="outgoing",
+                    display_label="Securing Credential",
                     status="converted",
                     names=replaced,
                 )
@@ -533,6 +540,7 @@ class SimulatedSecretManager(BaseSecretManager):
                 "SecretManager",
                 "update",
                 phase="incoming",
+                display_label="Updating Credentials",
                 request=text,
             )
 
@@ -564,6 +572,7 @@ class SimulatedSecretManager(BaseSecretManager):
                 call_id,
                 "SecretManager",
                 "update",
+                display_label="Updating Credentials",
             )
 
         return handle

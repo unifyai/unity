@@ -194,7 +194,7 @@ class TranscriptManager(BaseTranscriptManager):
     # English-Text Question
     @functools.wraps(BaseTranscriptManager.ask, updated=())
     @manager_tool
-    @log_manager_call("TranscriptManager", "ask", payload_key="question")
+    @log_manager_call("TranscriptManager", "ask", payload_key="question", display_label="Reviewing Conversations")
     async def ask(
         self,
         text: str,

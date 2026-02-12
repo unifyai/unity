@@ -140,13 +140,16 @@ class TaskScheduler(BaseTaskScheduler):
     #  Decorator – uniform ManagerMethod logging                          #
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _log_manager_call(method_name: str, payload_key: str):
+    def _log_manager_call(method_name: str, payload_key: str, *, display_label: str | None = None):
         """Decorator factory to publish incoming ManagerMethod and wrap handle.
 
         Ensures a single call_id is used for both the incoming event and the
         logging wrapper around the returned handle. The payload value is taken
         from the positional/keyword argument named 'text' (the first arg after
         self), matching existing method signatures.
+
+        ``display_label`` is a user-friendly phrase (e.g. "Checking Tasks")
+        attached to every event in the lifecycle for frontend rendering.
         """
 
         def _decorator(func):
@@ -176,6 +179,7 @@ class TaskScheduler(BaseTaskScheduler):
                     "TaskScheduler",
                     method_name,
                     phase="incoming",
+                    display_label=display_label,
                     **{payload_key: payload_value},
                 )
 
@@ -185,6 +189,7 @@ class TaskScheduler(BaseTaskScheduler):
                     call_id,
                     "TaskScheduler",
                     method_name,
+                    display_label=display_label,
                 )
                 return handle
 
@@ -440,7 +445,7 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Question
 
     @functools.wraps(BaseTaskScheduler.ask, updated=())
-    @_log_manager_call.__func__("ask", "question")  # type: ignore[attr-defined]
+    @_log_manager_call.__func__("ask", "question", display_label="Checking Tasks")  # type: ignore[attr-defined]
     async def ask(
         self,
         text: str,
@@ -517,7 +522,7 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Update Request
 
     @functools.wraps(BaseTaskScheduler.update, updated=())
-    @_log_manager_call.__func__("update", "request")  # type: ignore[attr-defined]
+    @_log_manager_call.__func__("update", "request", display_label="Updating Tasks")  # type: ignore[attr-defined]
     async def update(
         self,
         text: str,
@@ -606,7 +611,7 @@ class TaskScheduler(BaseTaskScheduler):
     # Execute
 
     @functools.wraps(BaseTaskScheduler.execute, updated=())
-    @_log_manager_call.__func__("execute", "request")
+    @_log_manager_call.__func__("execute", "request", display_label="Working on Task")
     async def execute(
         self,
         task_id: int,

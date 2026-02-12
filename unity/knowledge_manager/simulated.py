@@ -434,6 +434,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "KnowledgeManager",
                 "refactor",
                 phase="incoming",
+                display_label="Reorganizing Notes",
                 command=text,
             )
 
@@ -459,6 +460,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 call_id,
                 "KnowledgeManager",
                 "refactor",
+                display_label="Reorganizing Notes",
             )
 
         return handle
@@ -499,6 +501,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "KnowledgeManager",
                 "update",
                 phase="incoming",
+                display_label="Updating Notes",
                 request=text,
             )
 
@@ -530,6 +533,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 call_id,
                 "KnowledgeManager",
                 "update",
+                display_label="Updating Notes",
             )
 
         return handle
@@ -570,6 +574,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "KnowledgeManager",
                 "ask",
                 phase="incoming",
+                display_label="Checking Notes",
                 question=text,
             )
 
@@ -596,6 +601,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 call_id,
                 "KnowledgeManager",
                 "ask",
+                display_label="Checking Notes",
             )
 
         return handle
