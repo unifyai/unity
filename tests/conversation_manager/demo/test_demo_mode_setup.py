@@ -216,4 +216,3 @@ async def test_demo_operator_exists(initialized_cm):
     assert operator is not None, "Demo operator should exist"
     assert operator["first_name"] == DEMO_OPERATOR["first_name"]
     assert operator["phone_number"] == DEMO_OPERATOR["phone_number"]
-

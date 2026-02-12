@@ -41,6 +41,7 @@ def _get_api_key() -> Optional[str]:
     """Get an API key for Orchestra calls."""
     try:
         from unity.conversation_manager.domains.managers_utils import SESSION_DETAILS
+
         return SESSION_DETAILS.unify_key
     except Exception:
         return None
@@ -49,6 +50,7 @@ def _get_api_key() -> Optional[str]:
 def _get_base_url() -> str:
     """Get the Orchestra API base URL."""
     from unity.settings import SETTINGS
+
     return SETTINGS.ORCHESTRA_URL
 
 
@@ -64,7 +66,9 @@ async def fetch_demo_meta(demo_id: int) -> Optional[DemoProspectDetails]:
     """
     api_key = _get_api_key()
     if not api_key:
-        logger.warning("No API key available (ORCHESTRA_ADMIN_KEY or session key), cannot fetch demo metadata")
+        logger.warning(
+            "No API key available (ORCHESTRA_ADMIN_KEY or session key), cannot fetch demo metadata",
+        )
         return None
 
     base_url = _get_base_url()
@@ -84,7 +88,7 @@ async def fetch_demo_meta(demo_id: int) -> Optional[DemoProspectDetails]:
 
             if response.status_code != 200:
                 logger.warning(
-                    f"Failed to fetch demo metadata: status={response.status_code}"
+                    f"Failed to fetch demo metadata: status={response.status_code}",
                 )
                 return None
 
@@ -144,7 +148,7 @@ def apply_prospect_to_boss_contact(
         logger.info(
             f"Applied prospect details to boss contact: "
             f"first_name={prospect.first_name}, surname={prospect.surname}, "
-            f"email={prospect.email is not None}, phone={prospect.phone is not None}"
+            f"email={prospect.email is not None}, phone={prospect.phone is not None}",
         )
         return True
     except Exception as e:

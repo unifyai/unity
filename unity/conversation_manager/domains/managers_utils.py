@@ -725,11 +725,15 @@ async def update_session_contacts(
     if SETTINGS.DEMO_MODE:
         print(
             "[ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
-            "updating demoer contact (contact_id=2)"
+            "updating demoer contact (contact_id=2)",
         )
         user_first_name, user_last_name = _get_name_parts(user_name)
         await _update_contact(
-            2, user_first_name, user_last_name, user_number, user_email
+            2,
+            user_first_name,
+            user_last_name,
+            user_number,
+            user_email,
         )
         return
 
@@ -958,17 +962,18 @@ def _init_managers(
 
                 # Run async fetch_demo_meta on the event loop from this sync context
                 future = asyncio.run_coroutine_threadsafe(
-                    fetch_demo_meta(SETTINGS.DEMO_ID), loop
+                    fetch_demo_meta(SETTINGS.DEMO_ID),
+                    loop,
                 )
                 prospect = future.result(timeout=10.0)  # 10 second timeout
                 if prospect and prospect.has_any_details():
                     apply_prospect_to_boss_contact(cm.contact_manager, prospect)
                     print(
-                        f"[ManagersWorker] Applied prospect details from demo_id={SETTINGS.DEMO_ID}"
+                        f"[ManagersWorker] Applied prospect details from demo_id={SETTINGS.DEMO_ID}",
                     )
             except Exception as e:
                 print(
-                    f"[ManagersWorker] Failed to fetch/apply demo prospect details: {e}"
+                    f"[ManagersWorker] Failed to fetch/apply demo prospect details: {e}",
                 )
 
         # Create demoer contact (contact_id=2) with the user's details
@@ -976,8 +981,16 @@ def _init_managers(
         # Note: We don't add to active_conversations as the demoer isn't someone
         # the assistant would typically interact with (call/email)
         try:
-            demoer_first = SESSION_DETAILS.user.name.split(" ")[0] if SESSION_DETAILS.user.name else ""
-            demoer_last = " ".join(SESSION_DETAILS.user.name.split(" ")[1:]) if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name else ""
+            demoer_first = (
+                SESSION_DETAILS.user.name.split(" ")[0]
+                if SESSION_DETAILS.user.name
+                else ""
+            )
+            demoer_last = (
+                " ".join(SESSION_DETAILS.user.name.split(" ")[1:])
+                if SESSION_DETAILS.user.name and " " in SESSION_DETAILS.user.name
+                else ""
+            )
             # Use _create_contact since contact_id=2 doesn't exist yet
             cm.contact_manager._create_contact(
                 first_name=demoer_first,
@@ -987,7 +1000,9 @@ def _init_managers(
                 should_respond=True,
                 is_system=True,
             )
-            print(f"[ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}")
+            print(
+                f"[ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}",
+            )
         except Exception as e:
             print(f"[ManagersWorker] Failed to create demoer contact: {e}")
     print(
