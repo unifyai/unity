@@ -1713,7 +1713,7 @@ class CodeActActor(BaseCodeActActor):
                             "execute_function",
                             hierarchy=_ef_hierarchy,
                             hierarchy_label=_ef_hierarchy_label,
-                            display_label="Running Custom Action",
+                            display_label=f"Running: {function_name}",
                             **payload,
                         )
                     except Exception as e:
