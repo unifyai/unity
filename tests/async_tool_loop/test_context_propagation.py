@@ -240,9 +240,9 @@ async def test_ask_uses_parent_context(llm_config) -> None:
 
 @pytest.mark.asyncio
 async def test_ask_inspection_loop_context_without_parent(monkeypatch) -> None:
-    """Without _parent_chat_context, the inspection loop uses NEVER propagation
-    and no parent_chat_context kwarg — the transcript already has the embedded
-    parent context header from when the loop was started."""
+    """Without _parent_chat_context, the inspection loop uses LLM_DECIDES
+    propagation with no parent_chat_context — the transcript already has the
+    embedded parent context header from when the loop was started."""
     from unity.common import async_tool_loop as atl
 
     captured_kwargs: dict = {}
@@ -275,7 +275,7 @@ async def test_ask_inspection_loop_context_without_parent(monkeypatch) -> None:
 
     _helper = await handle.ask("What happened?")
 
-    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.NEVER
+    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
     assert captured_kwargs["parent_chat_context"] is None
 
 
