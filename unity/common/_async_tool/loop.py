@@ -48,6 +48,7 @@ from .messages import (
 )
 from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
+from ..context_dump import make_messages_safe_for_context_dump
 
 if TYPE_CHECKING:
     from .multi_handle import MultiHandleCoordinator
@@ -430,12 +431,13 @@ async def async_tool_loop_inner(
         client=client,
     )
     _msg_dispatcher = LoopMessageDispatcher(client, cfg, timer)
+    parent_chat_context_safe = make_messages_safe_for_context_dump(parent_chat_context)
 
     if log_steps:
         if log_steps == "full":
-            if parent_chat_context:
+            if parent_chat_context_safe:
                 logger.info(
-                    f"Parent Context: {json.dumps(parent_chat_context, indent=4)}",
+                    f"Parent Context: {json.dumps(parent_chat_context_safe, indent=4)}",
                     prefix="⬇️",
                 )
             logger.info(f"System Message: {client.system_message}", prefix="📋")
@@ -496,7 +498,7 @@ async def async_tool_loop_inner(
     # sent via interjections can correctly reference "the initial Parent Chat Context
     # in your system message" without appearing to be fabricated/injected.
     if propagate_chat_context != ChatContextPropagation.NEVER:
-        ctx_content = parent_chat_context if parent_chat_context else []
+        ctx_content = parent_chat_context_safe if parent_chat_context_safe else []
         # Transform roles to outer_* to disambiguate from current conversation roles
         ctx_content_transformed = _transform_context_roles(ctx_content)
         runtime_context_parts.append(
@@ -529,7 +531,9 @@ async def async_tool_loop_inner(
     # Tracks initial parent context and any continued updates received via interjections.
     # Used to forward context incrementally to inner tools (no repetition).
     context_state = LoopContextState(
-        parent_chat_context=list(parent_chat_context) if parent_chat_context else [],
+        parent_chat_context=(
+            list(parent_chat_context_safe) if parent_chat_context_safe else []
+        ),
     )
 
     # ── 0-a+. Optional: append an initial batch of messages (list support) ──
@@ -1523,6 +1527,7 @@ async def async_tool_loop_inner(
 
                 # Record continued context in our state for incremental propagation
                 if _ctx_cont:
+                    _ctx_cont = make_messages_safe_for_context_dump(_ctx_cont)
                     context_state.receive_context_continuation(_ctx_cont)
                     # Forward to active inner tool handles that opted into context
                     # Tools that set include_parent_chat_context=False initially

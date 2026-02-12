@@ -10,6 +10,7 @@ from .utils import maybe_await
 from ...logger import LOGGER
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
+from ..context_dump import make_messages_safe_for_context_dump
 
 
 @contextmanager
@@ -376,13 +377,15 @@ def chat_context_repr(
     Strategy – keep the original list untouched and attach the new
     messages as ``children`` of the *last* element.
     """
+    safe_parent_ctx = make_messages_safe_for_context_dump(parent_ctx)
+    safe_current_msgs = make_messages_safe_for_context_dump(current_msgs)
     ctx_block = [
-        {"role": m.get("role"), "content": m.get("content")} for m in current_msgs
+        {"role": m.get("role"), "content": m.get("content")} for m in safe_current_msgs
     ]
-    if not parent_ctx:
+    if not safe_parent_ctx:
         return ctx_block
 
-    combined = copy.deepcopy(parent_ctx)
+    combined = copy.deepcopy(safe_parent_ctx)
     combined[-1].setdefault("children", []).extend(ctx_block)
     return combined
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from typing import Optional
+from ..context_dump import make_messages_safe_for_context_dump
 
 
 @dataclass
@@ -61,7 +62,8 @@ class LoopContextState:
             cont_items: List of new context messages to append.
         """
         if cont_items:
-            self._parent_chat_context_cont_received.extend(cont_items)
+            safe_cont_items = make_messages_safe_for_context_dump(cont_items)
+            self._parent_chat_context_cont_received.extend(safe_cont_items)
 
     def get_forwarding_state(self, call_id: str) -> ContextForwardingState:
         """Get or create forwarding state for an inner tool call.
@@ -158,6 +160,11 @@ class LoopContextState:
 
             if incremental_cont:
                 result_cont = incremental_cont
+
+        if result_parent_ctx is not None:
+            result_parent_ctx = make_messages_safe_for_context_dump(result_parent_ctx)
+        if result_cont is not None:
+            result_cont = make_messages_safe_for_context_dump(result_cont)
 
         return result_parent_ctx, result_cont
 

@@ -714,7 +714,8 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
             SETTINGS.DEMO_MODE = True
             SETTINGS.DEMO_ID = event.demo_id
             cm._session_logger.info(
-                "startup", f"Demo mode enabled (demo_id={event.demo_id})"
+                "startup",
+                f"Demo mode enabled (demo_id={event.demo_id})",
             )
 
         payload = event.to_dict()["payload"]
