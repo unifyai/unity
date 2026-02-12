@@ -34,12 +34,11 @@ def real_file_manager(tmp_path):
     """Create a real LocalFileManager rooted at a temporary directory.
 
     Uses enable_sync=False to avoid any VM sync configuration.
-    Patches the singleton so that ``LocalFileManager()`` inside
-    ``comms_utils`` returns this same instance.
+    Patches ManagerRegistry so ``comms_utils`` resolves this same instance.
     """
     fm = LocalFileManager(root=str(tmp_path), enable_sync=False)
     with patch(
-        "unity.file_manager.managers.local.LocalFileManager",
+        "unity.manager_registry.ManagerRegistry.get_file_manager",
         return_value=fm,
     ):
         yield fm

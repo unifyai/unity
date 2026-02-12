@@ -137,9 +137,12 @@ async def cm_with_eventbus():
     from unity.conversation_manager import start_async, stop_async
     from unity.conversation_manager.domains import managers_utils
 
-    # Only Actor is simulated - avoids computer environment dependencies
+    # Actor is simulated to avoid computer environment dependencies.
+    # Contact/Transcript must be real for direct transcript context assertions.
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
+    os.environ["UNITY_CONTACT_IMPL"] = "real"
+    os.environ["UNITY_TRANSCRIPT_IMPL"] = "real"
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
     os.environ["UNITY_GUIDANCE_ENABLED"] = "false"
