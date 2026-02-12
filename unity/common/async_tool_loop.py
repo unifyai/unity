@@ -530,23 +530,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # The question is sent as a plain user message (context is in system message)
         _ask_message = question
 
-        # Only thread parent context through the standard machinery when fresh
-        # context was explicitly provided.  Otherwise the inspected transcript
-        # already contains whatever parent context the loop received at start.
-        _propagation = ChatContextPropagation.NEVER
-        _pcc: list[dict] | None = None
-        if _parent_chat_context:
-            _propagation = ChatContextPropagation.LLM_DECIDES
-            _pcc = parent_chat_context_safe
-
         helper_handle = start_async_tool_loop(
             inspection_client,
             _ask_message,
             ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=_pcc,
-            propagate_chat_context=_propagation,
+            parent_chat_context=parent_chat_context_safe if _parent_chat_context else None,
+            propagate_chat_context=ChatContextPropagation.LLM_DECIDES,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
