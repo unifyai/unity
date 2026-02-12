@@ -286,6 +286,69 @@ async def test_ask_inspection_loop_disables_runtime_parent_header(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_ask_inspection_prompt_redacts_image_payloads(monkeypatch) -> None:
+    """Inspection ask should redact image blobs from dumped context."""
+    from unity.common import async_tool_loop as atl
+
+    captured: dict = {}
+
+    class _DummyInspectionHandle:
+        async def result(self):
+            return "ok"
+
+    def _fake_start_async_tool_loop(*args, **kwargs):
+        inspection_client = args[0]
+        captured["system_message"] = inspection_client.system_message
+        captured["parent_chat_context"] = kwargs.get("parent_chat_context")
+        return _DummyInspectionHandle()
+
+    monkeypatch.setattr(atl, "start_async_tool_loop", _fake_start_async_tool_loop)
+
+    big_b64 = "A" * 4000
+    raw_data_url = f"data:image/png;base64,{big_b64}"
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = [
+                {
+                    "role": "tool",
+                    "name": "execute_code",
+                    "content": [
+                        {"type": "text", "text": "screenshot captured"},
+                        {"type": "image_url", "image_url": {"url": raw_data_url}},
+                    ],
+                },
+            ]
+
+    task = asyncio.Future()
+    task.set_result("done")
+
+    handle = atl.AsyncToolLoopHandle(
+        task=task,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
+        client=_DummyClient(),
+        loop_id="OuterLoop",
+    )
+
+    _helper = await handle.ask(
+        "Summarize status",
+        _parent_chat_context=[
+            {"role": "user", "content": f"latest screenshot: {raw_data_url}"},
+        ],
+    )
+
+    sys_msg = str(captured.get("system_message") or "")
+    parent_ctx = str(captured.get("parent_chat_context") or "")
+
+    assert raw_data_url not in sys_msg
+    assert raw_data_url not in parent_ctx
+    assert "data:image/png;base64,<omitted>" in sys_msg
+    assert "<omitted>" in parent_ctx
+
+
+@pytest.mark.asyncio
 @_handle_project
 async def test_interject_with_continued_parent_context_influences_decision(
     llm_config,
