@@ -108,13 +108,13 @@ def apply_real_comms_safety(*, config: SafetyConfig) -> None:
             raise
 
     async def safe_send_email(
-        to_email: str,
+        to: list[str],
         subject: str,
         body: str,
-        email_id: str = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        email_id: str | None = None,
         attachment: dict | None = None,
-        *args,
-        **kwargs,
     ):
         _debug_env_snapshot(medium="Email")
         preview = f"Subject: {subject}\n\n{body}"
@@ -123,20 +123,20 @@ def apply_real_comms_safety(*, config: SafetyConfig) -> None:
         if not config.auto_confirm:
             ok = _yn_prompt(
                 medium="Email",
-                recipient=to_email,
+                recipient=", ".join(to),
                 content_preview=preview,
             )
             if not ok:
                 raise RealCommsSafetyError("Action blocked by user (real-comms safety)")
         try:
             res = await original_send_email(
-                to_email,
-                subject,
-                body,
+                to=to,
+                subject=subject,
+                body=body,
+                cc=cc,
+                bcc=bcc,
                 email_id=email_id,
                 attachment=attachment,
-                *args,
-                **kwargs,
             )
             if config.debug:
                 LG.info(
