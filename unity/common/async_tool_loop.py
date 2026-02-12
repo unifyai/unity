@@ -358,14 +358,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, _parent_chat_context)
 
-        # 1.  Gather a *read-only* snapshot of the parent chat.
-        parent_ctx = []
+        # 1.  Gather a *read-only* snapshot of the loop being asked about.
+        loop_chat_context = []
         with suppress(Exception):
             msgs = getattr(self._client, "messages", []) if self._client else []
             if msgs is None:
                 msgs = []
-            parent_ctx = list(msgs)
-        parent_ctx_safe = make_messages_safe_for_context_dump(parent_ctx)
+            loop_chat_context = list(msgs)
+        loop_chat_context_safe = make_messages_safe_for_context_dump(loop_chat_context)
         parent_chat_context_safe = make_messages_safe_for_context_dump(
             _parent_chat_context,
         )
@@ -398,7 +398,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "Use this to answer the user's question about the current state or progress."
             ),
             "",
-            json.dumps(parent_ctx_safe, indent=2),
+            json.dumps(loop_chat_context_safe, indent=2),
         ]
 
         # If parent context is provided, add it as a separate section
@@ -471,7 +471,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=parent_ctx_safe,
+            parent_chat_context=loop_chat_context_safe,
             propagate_chat_context=ChatContextPropagation.NEVER,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
