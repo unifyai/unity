@@ -82,6 +82,10 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return f"[Email → User] Subject: {event.subject}\n{event.body}"
     if isinstance(event, OutboundPhoneUtterance):
         return f"[Phone → User] {event.content}"
+    if isinstance(event, UnifyMeetStarted):
+        return "🎙️ Live voice ready — you can start speaking."
+    if isinstance(event, UnifyMeetEnded):
+        return "📞 Live voice call ended."
     if isinstance(event, CallGuidance):
         # In production this is consumed by the Voice Agent. In the sandbox, when
         # we are in a simulated call, treat it like the assistant's spoken reply.
