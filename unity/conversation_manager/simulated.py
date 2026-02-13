@@ -18,8 +18,8 @@ from ..common import SteerableToolHandle
 
 
 class SimulatedConversationManagerHandle(
-    BaseConversationManagerHandle,
     SimulatedHandleMixin,
+    BaseConversationManagerHandle,
 ):
     """
     Simulated conversation manager handle for testing and demos.
