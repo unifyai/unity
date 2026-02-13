@@ -874,6 +874,28 @@ app.post('/interrupt_action', isAgentReady, async (req: Request, res: Response) 
   }
 });
 
+app.post('/pause', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  try {
+    const session = activeSessions.get(sessionId)!;
+    session.agent.pause();
+    res.json({ status: 'paused', message: 'The agent has been paused.' });
+  } catch (err) {
+    handleAgentError(err, res, 'pause_failed');
+  }
+});
+
+app.post('/resume', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  try {
+    const session = activeSessions.get(sessionId)!;
+    session.agent.resume();
+    res.json({ status: 'resumed', message: 'The agent has been resumed.' });
+  } catch (err) {
+    handleAgentError(err, res, 'resume_failed');
+  }
+});
+
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
 // Pass user_session=true for commands that need interactive session (Excel, COM automation)
 app.post('/exec', async (req: Request, res: Response) => {

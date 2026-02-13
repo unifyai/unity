@@ -79,6 +79,14 @@ class Computer:
         """Shuts down the underlying backend."""
         self.backend.stop()
 
+    async def pause(self):
+        """Pauses the underlying backend's action loop."""
+        await self.backend.pause()
+
+    async def resume(self):
+        """Resumes the underlying backend's action loop."""
+        await self.backend.resume()
+
     # --- Placeholders for other planned methods ---
     async def multi_step(self, description: str) -> SteerableToolHandle:
         """

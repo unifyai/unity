@@ -2519,7 +2519,12 @@ class CodeActActor(BaseCodeActActor):
         return tools
 
     @functools.wraps(BaseCodeActActor.act, updated=())
-    @log_manager_call("CodeActActor", "act", payload_key="request", display_label="Taking Action")
+    @log_manager_call(
+        "CodeActActor",
+        "act",
+        payload_key="request",
+        display_label="Taking Action",
+    )
     async def act(
         self,
         request: str | dict | list[str | dict],
@@ -2912,6 +2917,23 @@ class CodeActActor(BaseCodeActActor):
                 await _cleanup()
 
         handle.result = _result_with_cleanup  # type: ignore[assignment]
+
+        # Wrap pause()/resume() to propagate to the browser agent
+        if self._computer_primitives is not None:
+            _cp: ComputerPrimitives = self._computer_primitives
+            _original_pause = handle.pause
+            _original_resume = handle.resume
+
+            async def _pause_with_propagation(**kwargs: Any) -> None:
+                await _original_pause(**kwargs)
+                await _cp.pause()
+
+            async def _resume_with_propagation(**kwargs: Any) -> None:
+                await _cp.resume()
+                await _original_resume(**kwargs)
+
+            handle.pause = _pause_with_propagation  # type: ignore[assignment]
+            handle.resume = _resume_with_propagation  # type: ignore[assignment]
 
         # Update agent context with handle reference
         new_ctx.handle = handle
