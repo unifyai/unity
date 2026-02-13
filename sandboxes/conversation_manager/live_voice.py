@@ -11,11 +11,14 @@ Requires: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET env vars
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import sys
+import time
 import uuid
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +26,8 @@ from livekit import api
 
 _VOICE_AGENT_LOG = Path(".logs_voice_agent.txt")
 _CONNECTION_FILE = Path(".live_voice_connect.json")
+_PLAYGROUND_URL = "https://agents-playground.livekit.io"
+_READINESS_POLL_INTERVAL_SECONDS = 0.25
 
 
 @dataclass
@@ -33,9 +38,16 @@ class LiveVoiceSession:
     agent_name: str
     user_token: str
     livekit_url: str
+    playground_url: str = _PLAYGROUND_URL
     log_file: str = ""
     connection_file: str = ""
     clipboard_ok: bool = False
+    browser_opened: bool = False
+    ready: bool = False
+    ready_source: str = ""
+    ready_wait_seconds: float = 0.0
+    ready_timeout_seconds: float = 0.0
+    agent_joined_room: bool = False
     _log_fh: object = field(default=None, repr=False)
 
 
@@ -153,7 +165,7 @@ def _write_connection_file(session: LiveVoiceSession) -> None:
     _CONNECTION_FILE.write_text(
         json.dumps(
             {
-                "playground": "https://agents-playground.livekit.io",
+                "playground": _PLAYGROUND_URL,
                 "url": session.livekit_url,
                 "token": session.user_token,
                 "room": session.room_name,
@@ -181,11 +193,99 @@ def _ensure_call_manager_config(cm) -> None:
         )
 
 
+def _open_playground() -> bool:
+    """Best-effort browser launch for the hosted LiveKit playground."""
+    try:
+        return bool(webbrowser.open(_PLAYGROUND_URL, new=2, autoraise=True))
+    except Exception:
+        return False
+
+
+def _cm_in_meet_mode(cm) -> bool:
+    """True when CM has processed UnifyMeetStarted and switched to meet mode."""
+    mode = getattr(cm, "mode", None)
+    mode_value = getattr(mode, "value", mode)
+    return str(mode_value or "").strip().lower() == "meet"
+
+
+async def _agent_joined_room(room_name: str) -> bool:
+    """
+    Check whether a non-developer participant has joined the room.
+
+    In sandbox live-voice sessions this is typically the production voice agent.
+    """
+    lk = api.LiveKitAPI()
+    try:
+        participants = await lk.room.list_participants(
+            api.ListParticipantsRequest(room=room_name),
+        )
+    finally:
+        await lk.aclose()
+
+    for participant in getattr(participants, "participants", []) or []:
+        identity = str(getattr(participant, "identity", "") or "").strip().lower()
+        name = str(getattr(participant, "name", "") or "").strip().lower()
+        if identity == "developer" or name == "developer":
+            continue
+        return True
+    return False
+
+
+async def _wait_for_readiness(
+    *,
+    cm,
+    room_name: str,
+    timeout_seconds: float,
+) -> tuple[bool, str, float, bool]:
+    """
+    Wait until live voice is truly ready or timeout is reached.
+
+    Primary signal:
+      - CM mode becomes `meet` (after UnifyMeetStarted is handled).
+    Secondary signal:
+      - A non-developer participant has joined the room.
+    """
+    timeout_seconds = max(0.0, float(timeout_seconds))
+    started_at = time.monotonic()
+    agent_joined_room = False
+    next_participant_check_at = 0.0
+
+    while True:
+        if _cm_in_meet_mode(cm):
+            return (
+                True,
+                "unify-meet-started",
+                max(0.0, time.monotonic() - started_at),
+                agent_joined_room,
+            )
+
+        elapsed = max(0.0, time.monotonic() - started_at)
+        if not agent_joined_room and elapsed >= next_participant_check_at:
+            try:
+                agent_joined_room = await _agent_joined_room(room_name)
+            except Exception:
+                pass
+            next_participant_check_at = elapsed + 1.0
+
+        if elapsed >= timeout_seconds:
+            source = "agent-joined-room" if agent_joined_room else "timeout"
+            return False, source, elapsed, agent_joined_room
+
+        await asyncio.sleep(_READINESS_POLL_INTERVAL_SECONDS)
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 
-async def start_session(cm, contact: dict, boss: dict) -> LiveVoiceSession:
-    """Create a LiveKit room, spawn the production voice agent, return session."""
+async def start_session(
+    cm,
+    contact: dict,
+    boss: dict,
+    *,
+    open_browser: bool = True,
+    ready_timeout_seconds: float = 20.0,
+) -> LiveVoiceSession:
+    """Create a LiveKit room, spawn voice agent, and wait for readiness."""
     livekit_url = _require_env("LIVEKIT_URL")
     _require_env("LIVEKIT_API_KEY")
     _require_env("LIVEKIT_API_SECRET")
@@ -222,6 +322,18 @@ async def start_session(cm, contact: dict, boss: dict) -> LiveVoiceSession:
     )
     _write_connection_file(session)
     session.clipboard_ok = _copy_to_clipboard(user_token)
+    session.browser_opened = _open_playground() if open_browser else False
+    session.ready_timeout_seconds = max(0.0, float(ready_timeout_seconds))
+    (
+        session.ready,
+        session.ready_source,
+        session.ready_wait_seconds,
+        session.agent_joined_room,
+    ) = await _wait_for_readiness(
+        cm=cm,
+        room_name=room_name,
+        timeout_seconds=session.ready_timeout_seconds,
+    )
     return session
 
 

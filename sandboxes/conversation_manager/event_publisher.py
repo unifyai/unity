@@ -132,7 +132,11 @@ class EventPublisher:
         except Exception:
             pass
 
-        session = await start_session(cm=self.cm, contact=contact, boss=boss)
+        session = await start_session(
+            cm=self.cm,
+            contact=contact,
+            boss=boss,
+        )
         self.state.live_voice_session = session
         self.state.in_call = True
         self.state.brain_run_in_flight = True
@@ -144,10 +148,37 @@ class EventPublisher:
             if clipboard_ok
             else "  (Could not copy token to clipboard.)"
         )
+        browser_line = (
+            "  Opened LiveKit playground in your browser."
+            if getattr(session, "browser_opened", False)
+            else "  (Could not open browser automatically.)"
+        )
+
+        waited = float(getattr(session, "ready_wait_seconds", 0.0) or 0.0)
+        timeout = float(getattr(session, "ready_timeout_seconds", 0.0) or 0.0)
+        source = str(getattr(session, "ready_source", "") or "").strip()
+        if bool(getattr(session, "ready", False)):
+            readiness_line = (
+                f"✅ Voice agent ready ({waited:.1f}s; signal: {source}). "
+                "You can speak immediately after connecting."
+            )
+        elif bool(getattr(session, "agent_joined_room", False)):
+            readiness_line = (
+                f"⏳ Agent joined room but CM is still waiting for "
+                f"`UnifyMeetStarted` ({waited:.1f}s / {timeout:.1f}s). "
+                "Connect now and wait for the greeting before speaking."
+            )
+        else:
+            readiness_line = (
+                f"⏳ Voice agent still booting ({waited:.1f}s / {timeout:.1f}s). "
+                "Connect now; audio starts once initialization completes."
+            )
 
         return [
             "",
             "🎙️  Live voice call started!",
+            "",
+            readiness_line,
             "",
             "Connect via the LiveKit Agents Playground:",
             "  1. Open  https://agents-playground.livekit.io",
@@ -156,6 +187,7 @@ class EventPublisher:
             f"  4. Paste Token (from clipboard or {session.connection_file})",
             '  5. Click "Connect"',
             "",
+            browser_line,
             clipboard_line,
             f"  Connection details saved to: {session.connection_file}",
             "",
