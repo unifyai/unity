@@ -612,6 +612,69 @@ class ActorResume(Event):
     reason: str = ""
 
 
+# --------------------------------------------------------------------------- #
+# Meet Interaction Events (screen share / remote control)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class AssistantScreenShareStarted(Event):
+    """User enabled assistant screen sharing during a Unify Meet session.
+
+    The assistant's desktop is now visible to the user.
+    """
+
+    reason: str = ""
+
+
+@dataclass
+class AssistantScreenShareStopped(Event):
+    """User disabled assistant screen sharing during a Unify Meet session.
+
+    The assistant's desktop is no longer visible to the user.
+    """
+
+    reason: str = ""
+
+
+@dataclass
+class UserScreenShareStarted(Event):
+    """User started sharing their screen during a Unify Meet session.
+
+    The user's screen is now being streamed to the assistant.
+    """
+
+    reason: str = ""
+
+
+@dataclass
+class UserScreenShareStopped(Event):
+    """User stopped sharing their screen during a Unify Meet session."""
+
+    reason: str = ""
+
+
+@dataclass
+class UserRemoteControlStarted(Event):
+    """User took remote control of the assistant's desktop.
+
+    The user now has mouse and keyboard control. The actor should pause
+    computer-related execution to avoid conflicting with user input.
+    """
+
+    reason: str = ""
+
+
+@dataclass
+class UserRemoteControlStopped(Event):
+    """User released remote control of the assistant's desktop.
+
+    The actor may resume computer-related execution.
+    """
+
+    reason: str = ""
+
+
 @dataclass
 class SyncContacts(Event):
     """Signal to re-sync system contacts from the API (assistant, user, org members)."""

@@ -951,6 +951,76 @@ async def _(
     await managers_utils.queue_operation(_sync_contacts)
 
 
+# --------------------------------------------------------------------------- #
+# Meet Interaction Events (screen share / remote control)
+# --------------------------------------------------------------------------- #
+
+# Mapping from event class to a human-readable notification for the LLM.
+_MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
+    AssistantScreenShareStarted: "The user enabled assistant screen sharing — they can now see your desktop.",
+    AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
+    UserScreenShareStarted: "The user started sharing their screen with you.",
+    UserScreenShareStopped: "The user stopped sharing their screen.",
+    UserRemoteControlStarted: "The user took remote control of your desktop — they now have mouse and keyboard control.",
+    UserRemoteControlStopped: "The user released remote control of your desktop — you may resume computer actions.",
+}
+
+# State attribute name on the CM for each toggle pair.
+_MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
+    AssistantScreenShareStarted: ("assistant_screen_share_active", True),
+    AssistantScreenShareStopped: ("assistant_screen_share_active", False),
+    UserScreenShareStarted: ("user_screen_share_active", True),
+    UserScreenShareStopped: ("user_screen_share_active", False),
+    UserRemoteControlStarted: ("user_remote_control_active", True),
+    UserRemoteControlStopped: ("user_remote_control_active", False),
+}
+
+
+@EventHandler.register(
+    (
+        AssistantScreenShareStarted,
+        AssistantScreenShareStopped,
+        UserScreenShareStarted,
+        UserScreenShareStopped,
+        UserRemoteControlStarted,
+        UserRemoteControlStopped,
+    )
+)
+async def _(
+    event: (
+        AssistantScreenShareStarted
+        | AssistantScreenShareStopped
+        | UserScreenShareStarted
+        | UserScreenShareStopped
+        | UserRemoteControlStarted
+        | UserRemoteControlStopped
+    ),
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    event_name = event.__class__.__name__
+    cm._session_logger.info("meet_interaction", f"{event_name}: {event.reason}")
+
+    # Update state flag on the CM.
+    attr, value = _MEET_STATE_FLAGS[event.__class__]
+    setattr(cm, attr, value)
+
+    # Push a notification so the LLM brain sees the state change.
+    notification_text = _MEET_INTERACTION_NOTIFICATIONS[event.__class__]
+    cm.notifications_bar.push_notif("Meet", notification_text, event.timestamp)
+
+    # Remote control implies actor pause/resume.
+    if isinstance(event, UserRemoteControlStarted):
+        pause_event = ActorPause(reason=event.reason)
+        await EventHandler.handle_event(pause_event, cm, *args, **kwargs)
+    elif isinstance(event, UserRemoteControlStopped):
+        resume_event = ActorResume(reason=event.reason)
+        await EventHandler.handle_event(resume_event, cm, *args, **kwargs)
+
+    await cm.request_llm_run()
+
+
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
     if (

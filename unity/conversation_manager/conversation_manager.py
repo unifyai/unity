@@ -164,6 +164,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.is_summarizing = None
         self.max_messages = 30
 
+        # meet interaction state (screen share / remote control)
+        self.assistant_screen_share_active: bool = False
+        self.user_screen_share_active: bool = False
+        self.user_remote_control_active: bool = False
+
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
@@ -562,6 +567,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self.in_flight_actions,
             self.completed_actions,
             self.last_snapshot,
+            assistant_screen_share_active=self.assistant_screen_share_active,
+            user_screen_share_active=self.user_screen_share_active,
+            user_remote_control_active=self.user_remote_control_active,
         )
 
         # Log LLM thinking start

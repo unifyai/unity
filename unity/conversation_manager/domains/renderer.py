@@ -455,6 +455,9 @@ class Renderer:
         max_action_history_events: int = 20,
         max_completed_actions: int = 20,
         max_completed_action_history_events: int = 5,
+        assistant_screen_share_active: bool = False,
+        user_screen_share_active: bool = False,
+        user_remote_control_active: bool = False,
     ) -> SnapshotState:
         """Render the full conversation state.
 
@@ -466,6 +469,14 @@ class Renderer:
         message_elements: list[MessageElement] = []
         notification_elements: list[NotificationElement] = []
         action_elements: list[ActionElement] = []
+
+        # Meet interaction state sections render at the top when active, and
+        # vanish entirely when inactive (no clutter for text-only sessions).
+        meet_render = self.render_meet_interaction_state(
+            assistant_screen_share_active=assistant_screen_share_active,
+            user_screen_share_active=user_screen_share_active,
+            user_remote_control_active=user_remote_control_active,
+        )
 
         notif_render = self.render_notification_bar(
             notification_bar,
@@ -490,7 +501,17 @@ class Renderer:
             elements_out=message_elements,
         )
 
-        full_render = f"{notif_render}\n\n{actions_render}\n\n{completed_render}\n\n{convs_render}"
+        sections = [
+            s for s in [
+                meet_render,
+                notif_render,
+                actions_render,
+                completed_render,
+                convs_render,
+            ]
+            if s
+        ]
+        full_render = "\n\n".join(sections)
 
         return SnapshotState(
             full_render=full_render,
@@ -499,6 +520,54 @@ class Renderer:
             actions=action_elements,
             snapshot_time=prompt_now(as_string=False),
         )
+
+    @staticmethod
+    def render_meet_interaction_state(
+        *,
+        assistant_screen_share_active: bool = False,
+        user_screen_share_active: bool = False,
+        user_remote_control_active: bool = False,
+    ) -> str:
+        """Render active meet interaction states as top-level sections.
+
+        Each active state gets its own prominent, self-contained XML section
+        with clear context explaining what is happening and what it means.
+        Inactive states produce no output — no clutter for text-only sessions.
+        """
+        parts: list[str] = []
+
+        if assistant_screen_share_active:
+            parts.append(
+                "<assistant_screen_share status='active'>\n"
+                "Your desktop is currently being shared with the user — they "
+                "can see everything on your screen in real time. Any actions "
+                "you take (navigation, typing, file operations) are visible "
+                "to the user as you perform them.\n"
+                "</assistant_screen_share>"
+            )
+
+        if user_screen_share_active:
+            parts.append(
+                "<user_screen_share status='active'>\n"
+                "The user is currently sharing their screen with you. You can "
+                "see what they are looking at. If they reference something on "
+                "their screen or ask for help with what they see, you have "
+                "visual context available.\n"
+                "</user_screen_share>"
+            )
+
+        if user_remote_control_active:
+            parts.append(
+                "<user_remote_control status='active'>\n"
+                "The user currently has remote control of your desktop — they "
+                "are operating your mouse and keyboard directly. Do not "
+                "perform any computer actions that would conflict with or "
+                "interrupt the user's input. Wait for them to release control "
+                "before resuming desktop operations.\n"
+                "</user_remote_control>"
+            )
+
+        return "\n\n".join(parts)
 
     def render_notification_bar(
         self,
