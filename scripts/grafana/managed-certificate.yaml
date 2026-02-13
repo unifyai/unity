@@ -5,4 +5,4 @@ metadata:
   namespace: staging
 spec:
   domains:
-    - grafana.staging.internal.saas.unify.ai
+  - grafana.staging.internal.saas.unify.ai

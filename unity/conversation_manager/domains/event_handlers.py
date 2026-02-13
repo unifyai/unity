@@ -930,7 +930,7 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
         "Screen sharing is now ON — the user can see your desktop. "
         "Screenshots are being captured and processed in the background. "
         "If the user references something on screen, acknowledge briefly "
-        "(\"Got it\", \"I see\", \"Okay\") and wait — visual context will "
+        '("Got it", "I see", "Okay") and wait — visual context will '
         "be processed shortly. Do NOT describe or guess screen contents."
     ),
     AssistantScreenShareStopped: (
@@ -942,9 +942,7 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
         "their screen, acknowledge naturally and wait for the processed "
         "details. Do NOT guess or fabricate what is on their screen."
     ),
-    UserScreenShareStopped: (
-        "The user stopped sharing their screen."
-    ),
+    UserScreenShareStopped: ("The user stopped sharing their screen."),
     UserRemoteControlStarted: (
         "The user now has remote control of your desktop. Do not perform "
         "any computer actions — wait for them to release control."

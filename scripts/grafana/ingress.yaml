@@ -7,13 +7,13 @@ metadata:
     networking.gke.io/managed-certificates: grafana-staging-cert
 spec:
   rules:
-    - host: grafana.staging.internal.saas.unify.ai
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: grafana-staging
-                port:
-                  number: 80
+  - host: grafana.staging.internal.saas.unify.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana-staging
+            port:
+              number: 80

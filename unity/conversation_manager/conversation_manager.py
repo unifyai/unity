@@ -234,9 +234,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         import aiohttp
         from datetime import datetime, timezone
 
-        desktop_url = (
-            SESSION_DETAILS.assistant.desktop_url or "http://localhost:3000"
-        )
+        desktop_url = SESSION_DETAILS.assistant.desktop_url or "http://localhost:3000"
         try:
             auth_key = SESSION_DETAILS.unify_key
             headers = {"authorization": f"Bearer {auth_key}"}

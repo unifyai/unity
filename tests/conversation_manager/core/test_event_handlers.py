@@ -997,7 +997,6 @@ class TestActorEventHandlers:
         assert clarification["query"] == "What do you mean by 'documents'?"
 
 
-
 # =============================================================================
 # 10. Meet Interaction Event Handler Tests
 # =============================================================================
@@ -1200,9 +1199,7 @@ class TestMeetInteractionEventHandlers:
 
         # Verify CallGuidance was published to the fast brain channel
         calls = mock_cm.event_broker.publish.call_args_list
-        guidance_calls = [
-            c for c in calls if c.args[0] == "app:call:call_guidance"
-        ]
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
         assert len(guidance_calls) == 1
         # The guidance text should contain behavioral instructions
         import json as _json
@@ -1230,9 +1227,7 @@ class TestMeetInteractionEventHandlers:
 
         # No CallGuidance should be published
         calls = mock_cm.event_broker.publish.call_args_list
-        guidance_calls = [
-            c for c in calls if c.args[0] == "app:call:call_guidance"
-        ]
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
         assert len(guidance_calls) == 0
 
     @pytest.mark.asyncio
@@ -1252,9 +1247,9 @@ class TestMeetInteractionEventHandlers:
             UserRemoteControlStopped,
         ]
         for cls in event_classes:
-            assert cls in _MEET_FAST_BRAIN_GUIDANCE, (
-                f"{cls.__name__} missing from _MEET_FAST_BRAIN_GUIDANCE"
-            )
+            assert (
+                cls in _MEET_FAST_BRAIN_GUIDANCE
+            ), f"{cls.__name__} missing from _MEET_FAST_BRAIN_GUIDANCE"
             assert len(_MEET_FAST_BRAIN_GUIDANCE[cls]) > 0
 
     # --------------------------------------------------------------------- #
