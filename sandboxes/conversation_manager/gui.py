@@ -5,7 +5,9 @@ import logging
 import queue as _queue
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from sandboxes.conversation_manager.commands import HELP_TEXT, parse_command
@@ -17,6 +19,11 @@ from sandboxes.conversation_manager.ipc_protocol import (
 )
 from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
 from sandboxes.conversation_manager.log_aggregator import LogAggregator
+from sandboxes.conversation_manager.state_snapshot import (
+    capture_snapshot,
+    render_snapshot_text,
+    save_snapshot,
+)
 from sandboxes.conversation_manager.trace_display import TraceDisplay
 from sandboxes.utils import steering_controls_hint
 
@@ -115,6 +122,7 @@ class GuiRuntime:
     trace_display: TraceDisplay = field(default_factory=TraceDisplay)
     event_tree_display: EventTreeDisplay = field(default_factory=EventTreeDisplay)
     log_aggregator: LogAggregator = field(default_factory=LogAggregator)
+    conversation_lines: list[str] = field(default_factory=list)
 
 
 if _TEXTUAL_AVAILABLE:
@@ -1151,6 +1159,10 @@ if _TEXTUAL_AVAILABLE:
             if cmd.kind in {"show_logs", "collapse_logs"}:
                 self._handle_logs_locally(kind=cmd.kind, args=cmd.args)
                 return
+            if cmd.kind == "save_state":
+                for line in self._save_state_from_ui(cmd.args):
+                    self.post_message(AppendLine(line))
+                return
 
             # Quit should stop both UI and worker (best-effort).
             if cmd.kind == "quit":
@@ -1210,6 +1222,10 @@ if _TEXTUAL_AVAILABLE:
                 self.post_message(AppendLine(f"❌ Failed to send to worker: {exc}"))
 
         async def on_append_line(self, msg: AppendLine) -> None:
+            try:
+                self.runtime.conversation_lines.append(str(msg.line))
+            except Exception:
+                pass
             # Write into the active screen's response log.
             try:
                 scr = self.screen
@@ -1814,6 +1830,52 @@ if _TEXTUAL_AVAILABLE:
                 rt.dirty_trace = True
             except Exception:
                 pass
+
+        def _save_state_from_ui(self, args: str) -> list[str]:
+            rt = self.runtime
+            snapshot = capture_snapshot(
+                log_aggregator=rt.log_aggregator,
+                event_tree_display=rt.event_tree_display,
+                trace_display=rt.trace_display,
+                conversation_lines=list(rt.conversation_lines),
+            )
+
+            repo_root = Path(__file__).resolve().parents[2]
+            if args and args.strip():
+                json_path = repo_root / args.strip()
+            else:
+                timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+                json_path = repo_root / f".sandbox_state_{timestamp}.json"
+
+            try:
+                save_snapshot(snapshot, json_path)
+            except Exception as exc:
+                return [f"❌ Failed to save state: {exc}"]
+
+            try:
+                text_path = json_path.with_suffix(".txt")
+                text_content = render_snapshot_text(snapshot)
+                with open(text_path, "w", encoding="utf-8") as f:
+                    f.write(text_content)
+            except Exception as exc:
+                return [
+                    f"💾 State saved to: {json_path}",
+                    f"⚠️ Failed to save text version: {exc}",
+                ]
+
+            return [
+                "💾 State saved:",
+                f"   JSON: {json_path}",
+                f"   Text: {text_path}",
+                (
+                    f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
+                    f"{snapshot.summary['total_cm_logs']} CM logs, "
+                    f"{snapshot.summary['total_actor_logs']} actor logs, "
+                    f"{snapshot.summary['total_manager_logs']} manager logs, "
+                    f"{snapshot.summary['total_traces']} traces, "
+                    f"{snapshot.summary['total_event_trees']} trees"
+                ),
+            ]
 
         async def _record_and_transcribe_best_effort(self) -> str:
             """
