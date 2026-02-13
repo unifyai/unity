@@ -1861,3 +1861,157 @@ class TestAssistantUpdateEventHandler:
         # Should print a message about missing contact_manager
         captured = capsys.readouterr()
         assert "contact_manager is None" in captured.out
+
+
+# =============================================================================
+# 19. _recent_conversation_snippet Helper Tests
+# =============================================================================
+
+
+class TestRecentConversationSnippet:
+    """Tests for the _recent_conversation_snippet helper used in remote-control broadcasts."""
+
+    def _get_snippet(self):
+        from unity.conversation_manager.domains.event_handlers import (
+            _recent_conversation_snippet,
+        )
+        return _recent_conversation_snippet
+
+    def test_returns_none_when_empty(self, mock_cm):
+        """Returns None when the global thread has no messages."""
+        snippet = self._get_snippet()
+        assert snippet(mock_cm) is None
+
+    def test_extracts_recent_messages(self, mock_cm):
+        """Extracts the last N user/assistant messages in chronological order."""
+        snippet = self._get_snippet()
+        mock_cm.contact_index.push_message(
+            contact_id=1, sender_name="Boss", thread_name=Medium.SMS,
+            message_content="Hey, open the browser", role="user",
+        )
+        mock_cm.contact_index.push_message(
+            contact_id=1, sender_name="You", thread_name=Medium.SMS,
+            message_content="Sure, opening it now", role="assistant",
+        )
+
+        result = snippet(mock_cm)
+        assert result is not None
+        lines = result.split("\n")
+        assert len(lines) == 2
+        assert lines[0] == "user: Hey, open the browser"
+        assert lines[1] == "assistant: Sure, opening it now"
+
+    def test_limits_to_n_messages(self, mock_cm):
+        """Only the last n messages are returned (default 4)."""
+        snippet = self._get_snippet()
+        for i in range(10):
+            mock_cm.contact_index.push_message(
+                contact_id=1, sender_name="Boss", thread_name=Medium.SMS,
+                message_content=f"Message {i}", role="user",
+            )
+
+        result = snippet(mock_cm, n=4)
+        assert result is not None
+        lines = result.split("\n")
+        assert len(lines) == 4
+        assert "Message 9" in lines[-1]
+        assert "Message 6" in lines[0]
+
+    def test_skips_system_markers(self, mock_cm):
+        """System markers like <Call Started> are excluded."""
+        snippet = self._get_snippet()
+        mock_cm.contact_index.push_message(
+            contact_id=1, sender_name="System", thread_name=Medium.PHONE_CALL,
+            message_content="<Call Started>", role="user",
+        )
+        mock_cm.contact_index.push_message(
+            contact_id=1, sender_name="Boss", thread_name=Medium.PHONE_CALL,
+            message_content="Hello there", role="user",
+        )
+
+        result = snippet(mock_cm)
+        assert result is not None
+        assert "<Call Started>" not in result
+        assert "Hello there" in result
+
+
+# =============================================================================
+# 20. Remote Control → ComputerPrimitives Integration Tests
+# =============================================================================
+
+
+class TestRemoteControlComputerPrimitivesIntegration:
+    """Verify the event handler calls ComputerPrimitives.set_user_remote_control."""
+
+    @pytest.mark.asyncio
+    async def test_started_calls_set_user_remote_control_true(self, mock_cm):
+        """UserRemoteControlStarted calls set_user_remote_control(True, ...)."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        mock_cp = MagicMock()
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
+        ) as mock_registry:
+            mock_registry.get_instance.return_value = mock_cp
+            event = UserRemoteControlStarted(reason="User took control")
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cp.set_user_remote_control.assert_called_once()
+        args, kwargs = mock_cp.set_user_remote_control.call_args
+        assert args[0] is True
+        assert "conversation_context" in kwargs
+
+    @pytest.mark.asyncio
+    async def test_stopped_calls_set_user_remote_control_false(self, mock_cm):
+        """UserRemoteControlStopped calls set_user_remote_control(False, ...)."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = True
+
+        mock_cp = MagicMock()
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
+        ) as mock_registry:
+            mock_registry.get_instance.return_value = mock_cp
+            event = UserRemoteControlStopped(reason="User released control")
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cp.set_user_remote_control.assert_called_once()
+        args, kwargs = mock_cp.set_user_remote_control.call_args
+        assert args[0] is False
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_computer_primitives_singleton(self, mock_cm):
+        """No error when ComputerPrimitives singleton doesn't exist."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
+        ) as mock_registry:
+            mock_registry.get_instance.return_value = None
+            event = UserRemoteControlStarted(reason="User took control")
+            # Should not raise
+            await EventHandler.handle_event(event, mock_cm)
+
+    @pytest.mark.asyncio
+    async def test_screen_share_events_do_not_call_set_user_remote_control(
+        self, mock_cm,
+    ):
+        """Non-remote-control meet events do not trigger set_user_remote_control."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        mock_cp = MagicMock()
+        with patch(
+            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
+        ) as mock_registry:
+            mock_registry.get_instance.return_value = mock_cp
+            event = AssistantScreenShareStarted(reason="Screen share started")
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cp.set_user_remote_control.assert_not_called()

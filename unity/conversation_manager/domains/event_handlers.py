@@ -908,6 +908,32 @@ async def _(
     await managers_utils.queue_operation(_sync_contacts)
 
 
+def _recent_conversation_snippet(cm: "ConversationManager", n: int = 4) -> str | None:
+    """Extract the last *n* user/assistant messages from the global thread.
+
+    Returns a compact multi-line string or None if no messages are available.
+    """
+    from unity.conversation_manager.domains.contact_index import CommsMessage
+
+    lines: list[str] = []
+    for entry in reversed(cm.contact_index.global_thread):
+        if not isinstance(entry.message, CommsMessage):
+            continue
+        msg = entry.message
+        content = getattr(msg, "content", None) or getattr(msg, "body", None) or ""
+        content = content.strip()
+        if not content or (content.startswith("<") and content.endswith(">")):
+            continue
+        role = getattr(msg, "role", "user")
+        lines.append(f"{role}: {content}")
+        if len(lines) >= n:
+            break
+    if not lines:
+        return None
+    lines.reverse()
+    return "\n".join(lines)
+
+
 # --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #
@@ -1009,6 +1035,22 @@ async def _(
                 "app:call:call_guidance",
                 guidance_event.to_json(),
             )
+
+    # Broadcast remote-control state change to all active CodeActActor loops
+    # via the ComputerPrimitives singleton interject queue registry.
+    if isinstance(event, (UserRemoteControlStarted, UserRemoteControlStopped)):
+        try:
+            from unity.function_manager.primitives.runtime import ComputerPrimitives
+            from unity.manager_registry import ManagerRegistry
+
+            cp = ManagerRegistry.get_instance(ComputerPrimitives)
+            if cp is not None:
+                cp.set_user_remote_control(
+                    isinstance(event, UserRemoteControlStarted),
+                    conversation_context=_recent_conversation_snippet(cm),
+                )
+        except Exception:
+            pass
 
     await cm.request_llm_run()
 
