@@ -1042,21 +1042,14 @@ class TestInactivityTimeout:
 
 
 # =============================================================================
-# Regression Tests: guidance context and adapter system messages
+# Guidance tests: chat context and system messages
 # =============================================================================
 
 
 @pytest.mark.asyncio
-class TestFastBrainGuidanceRegression:
-    """Regression coverage for guidance delivery in the TTS fast brain path."""
+class TestFastBrainGuidanceFlow:
+    """Coverage for guidance delivery in the TTS fast brain path."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "call.py writes guidance to session._chat_ctx, while generation reads "
-            "current_agent._chat_ctx."
-        ),
-    )
     async def test_tts_guidance_reaches_agent_generation_context(self, monkeypatch):
         """Guidance should be injected into the chat context used for generation."""
         from livekit.agents import llm
@@ -1064,17 +1057,17 @@ class TestFastBrainGuidanceRegression:
 
         contact = {
             "contact_id": 2,
-            "first_name": "Yusha",
-            "surname": "",
-            "phone_number": "+19294608302",
-            "email_address": "yusha@unify.ai",
+            "first_name": "Caller",
+            "surname": "Example",
+            "phone_number": "+15550100002",
+            "email_address": "caller@example.com",
         }
         boss = {
             "contact_id": 1,
-            "first_name": "Boss",
-            "surname": "User",
-            "phone_number": "+15555555555",
-            "email_address": "boss@unify.ai",
+            "first_name": "Manager",
+            "surname": "Example",
+            "phone_number": "+15550100001",
+            "email_address": "manager@example.com",
         }
 
         class _ImmediateAwaitable:
@@ -1213,13 +1206,6 @@ class TestFastBrainGuidanceRegression:
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "UnifyLLMStream keeps only the last system message and drops prior "
-            "instructions."
-        ),
-    )
     async def test_unify_llm_preserves_base_system_prompt_with_notification(
         self,
         monkeypatch,

@@ -277,12 +277,20 @@ async def entrypoint(ctx: agents.JobContext):
 
     def apply_guidance(content: str) -> None:
         """Apply guidance to chat context and optionally trigger reply."""
+        guidance_message = f"[notification] {content}"
+
+        # generate_reply() reads from the agent chat context in TTS mode.
+        assistant._chat_ctx.add_message(
+            role="system",
+            content=[guidance_message],
+        )
+        # Keep session history aligned for observability/debugging.
         session._chat_ctx.add_message(
             role="system",
-            content=[f"[notification] {content}"],
+            content=[guidance_message],
         )
         nonlocal user_is_speaking
-        if not user_is_speaking and session._chat_ctx.items[-1].role != "assistant":
+        if not user_is_speaking and assistant._chat_ctx.items[-1].role != "assistant":
             session.generate_reply(allow_interruptions=True)
 
     def on_guidance(data: dict) -> None:
