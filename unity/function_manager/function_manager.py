@@ -7,7 +7,6 @@ import functools
 import json
 import os
 import re
-import traceback
 import signal
 import socket
 import sys

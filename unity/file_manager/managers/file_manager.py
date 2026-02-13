@@ -1505,7 +1505,12 @@ class FileManager(BaseFileManager):
     # File-specific Q&A
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
     @manager_tool
-    @log_manager_call("FileManager", "ask_about_file", payload_key="question", display_label="Reading File")
+    @log_manager_call(
+        "FileManager",
+        "ask_about_file",
+        payload_key="question",
+        display_label="Reading File",
+    )
     async def ask_about_file(
         self,
         file_path: str,

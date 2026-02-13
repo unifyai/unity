@@ -3,7 +3,6 @@
 import os
 from pathlib import Path
 
-import pytest
 
 from unity.file_manager.settings import get_local_root
 

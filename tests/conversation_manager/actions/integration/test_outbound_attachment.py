@@ -155,7 +155,9 @@ async def test_generate_image_and_send_as_attachment(initialized_cm_codeact):
         max_tokens=100,
     )
     judge_text = judge_text.lower()
-    assert "red" in judge_text, f"LLM judge did not mention 'red'. Response: {judge_text}"
-    assert "square" in judge_text, (
-        f"LLM judge did not mention 'square'. Response: {judge_text}"
-    )
+    assert (
+        "red" in judge_text
+    ), f"LLM judge did not mention 'red'. Response: {judge_text}"
+    assert (
+        "square" in judge_text
+    ), f"LLM judge did not mention 'square'. Response: {judge_text}"

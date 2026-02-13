@@ -984,7 +984,7 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
         UserScreenShareStopped,
         UserRemoteControlStarted,
         UserRemoteControlStopped,
-    )
+    ),
 )
 async def _(
     event: (

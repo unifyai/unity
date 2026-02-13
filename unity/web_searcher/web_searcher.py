@@ -46,7 +46,12 @@ class WebSearcher(BaseWebSearcher):
         self._provision_storage()
 
     @functools.wraps(BaseWebSearcher.ask, updated=())
-    @log_manager_call("WebSearcher", "ask", payload_key="question", display_label="Searching the Web")
+    @log_manager_call(
+        "WebSearcher",
+        "ask",
+        payload_key="question",
+        display_label="Searching the Web",
+    )
     async def ask(
         self,
         text: str,

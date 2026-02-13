@@ -306,17 +306,17 @@ class CommsManager:
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
-                reason = (
-                    str(system_message) if system_message is not None else ""
-                )
+                reason = str(system_message) if system_message is not None else ""
 
                 # Map system event types to internal event classes.
                 _SYSTEM_EVENT_MAP = {
                     "pause_actor": lambda r: ActorPause(
-                        reason=r or "The user has just taken control of the desktop, we're pausing our own actions temporarily.",
+                        reason=r
+                        or "The user has just taken control of the desktop, we're pausing our own actions temporarily.",
                     ),
                     "resume_actor": lambda r: ActorResume(
-                        reason=r or "The user has just handed control of the desktop back to us, we're now continuing our control of the desktop.",
+                        reason=r
+                        or "The user has just handed control of the desktop back to us, we're now continuing our control of the desktop.",
                     ),
                     "sync_contacts": lambda r: SyncContacts(
                         reason=r or "Contact sync requested via system event.",
@@ -337,7 +337,8 @@ class CommsManager:
                         reason=r or "User took remote control of assistant desktop.",
                     ),
                     "user_remote_control_stopped": lambda r: UserRemoteControlStopped(
-                        reason=r or "User released remote control of assistant desktop.",
+                        reason=r
+                        or "User released remote control of assistant desktop.",
                     ),
                 }
 
@@ -348,7 +349,8 @@ class CommsManager:
                 if factory is not None:
                     evt = factory(reason)
                     channel_prefix = (
-                        "app:actor" if system_event_type in _ACTOR_EVENTS
+                        "app:actor"
+                        if system_event_type in _ACTOR_EVENTS
                         else "app:comms"
                     )
                     self._publish_from_callback(
