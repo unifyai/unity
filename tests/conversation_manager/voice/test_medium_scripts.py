@@ -39,6 +39,7 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -1038,3 +1039,236 @@ class TestInactivityTimeout:
 
         # Should not raise
         touch()
+
+
+# =============================================================================
+# Regression Tests: guidance context and adapter system messages
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestFastBrainGuidanceRegression:
+    """Regression coverage for guidance delivery in the TTS fast brain path."""
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "call.py writes guidance to session._chat_ctx, while generation reads "
+            "current_agent._chat_ctx."
+        ),
+    )
+    async def test_tts_guidance_reaches_agent_generation_context(self, monkeypatch):
+        """Guidance should be injected into the chat context used for generation."""
+        from livekit.agents import llm
+        from unity.conversation_manager.medium_scripts import call as call_script
+
+        contact = {
+            "contact_id": 2,
+            "first_name": "Yusha",
+            "surname": "",
+            "phone_number": "+19294608302",
+            "email_address": "yusha@unify.ai",
+        }
+        boss = {
+            "contact_id": 1,
+            "first_name": "Boss",
+            "surname": "User",
+            "phone_number": "+15555555555",
+            "email_address": "boss@unify.ai",
+        }
+
+        class _ImmediateAwaitable:
+            def __await__(self):
+                async def _done():
+                    return None
+
+                return _done().__await__()
+
+        class _FakeRoom:
+            def on(self, *args, **kwargs):
+                return None
+
+        class _FakeJobContext:
+            def __init__(self):
+                self.room = _FakeRoom()
+
+            async def connect(self):
+                return None
+
+        class _FakeEventBroker:
+            def __init__(self):
+                self.callbacks = {}
+
+            def register_callback(self, channel, handler):
+                self.callbacks[channel] = handler
+
+            async def publish(self, channel, message):
+                return 1
+
+        fake_session_holder = {}
+
+        class _FakeSession:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.current_agent = None
+                self._events = {}
+                self.generate_reply_calls = 0
+                fake_session_holder["session"] = self
+
+            def on(self, event_name):
+                def _decorator(fn):
+                    self._events[event_name] = fn
+                    return fn
+
+                return _decorator
+
+            async def start(self, room, agent, room_input_options=None):
+                self.current_agent = agent
+
+            def generate_reply(self, **kwargs):
+                self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+        class _FakeAssistant:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.call_received = True
+
+            def set_call_received(self):
+                self.call_received = True
+
+        async def _noop_async(*args, **kwargs):
+            return None
+
+        async def _noop_end_call():
+            return None
+
+        fake_broker = _FakeEventBroker()
+        fake_session_details = SimpleNamespace(
+            populate_from_env=lambda: None,
+            voice=SimpleNamespace(provider="cartesia", id=""),
+            voice_call=SimpleNamespace(
+                outbound=False,
+                channel="meet",
+                contact_json=json.dumps(contact),
+                boss_json=json.dumps(boss),
+            ),
+            assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+        )
+
+        monkeypatch.setattr(call_script, "event_broker", fake_broker)
+        monkeypatch.setattr(call_script, "SESSION_DETAILS", fake_session_details)
+        monkeypatch.setattr(call_script, "AgentSession", _FakeSession)
+        monkeypatch.setattr(call_script, "Assistant", _FakeAssistant)
+        monkeypatch.setattr(call_script, "UnifyLLM", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            call_script,
+            "build_voice_agent_prompt",
+            lambda **kwargs: SimpleNamespace(flatten=lambda: "system prompt"),
+        )
+        monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_started", _noop_async)
+        monkeypatch.setattr(
+            call_script,
+            "create_end_call",
+            lambda *args, **kwargs: _noop_end_call,
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_inactivity_timeout",
+            lambda end_call: (lambda: None),
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_participant_disconnect_handler",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(call_script, "RoomInputOptions", lambda **kwargs: object())
+        monkeypatch.setattr(call_script, "EnglishModel", lambda: object())
+        monkeypatch.setattr(call_script.cartesia, "TTS", lambda **kwargs: object())
+        monkeypatch.setattr(call_script.elevenlabs, "TTS", lambda **kwargs: object())
+        if hasattr(call_script, "noise_cancellation"):
+            monkeypatch.setattr(call_script.noise_cancellation, "BVC", lambda: object())
+
+        monkeypatch.setattr(call_script, "STT", object())
+        monkeypatch.setattr(call_script, "VAD", object())
+
+        await call_script.entrypoint(_FakeJobContext())
+
+        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb({"payload": {"content": "No, there is no contact named Bob."}})
+
+        session = fake_session_holder["session"]
+        mirror_texts = [
+            item.text_content or ""
+            for item in session._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        assert any("No, there is no contact named Bob." in txt for txt in mirror_texts)
+
+        agent_texts = [
+            item.text_content or ""
+            for item in session.current_agent._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "UnifyLLMStream keeps only the last system message and drops prior "
+            "instructions."
+        ),
+    )
+    async def test_unify_llm_preserves_base_system_prompt_with_notification(
+        self,
+        monkeypatch,
+    ):
+        """System instructions and notifications should both survive conversion."""
+        from livekit.agents import llm
+        from unity.conversation_manager import livekit_unify_adapter as adapter_module
+
+        captured = {}
+
+        class _DummyClient:
+            def set_stream(self, enabled):
+                captured["set_stream"] = enabled
+
+            async def generate(self, **kwargs):
+                captured["generate_kwargs"] = kwargs
+
+                async def _empty_stream():
+                    if False:
+                        yield ""
+
+                return _empty_stream()
+
+        def _fake_new_llm_client(model, **kwargs):
+            captured["client_model"] = model
+            captured["client_kwargs"] = kwargs
+            return _DummyClient()
+
+        monkeypatch.setattr(adapter_module, "new_llm_client", _fake_new_llm_client)
+
+        chat_ctx = llm.ChatContext()
+        chat_ctx.add_message(role="system", content="BASE_PROMPT")
+        chat_ctx.add_message(
+            role="user",
+            content="Do I have a contact named Bob?",
+        )
+        chat_ctx.add_message(
+            role="system",
+            content="[notification] No, there is no contact named Bob.",
+        )
+        chat_ctx.add_message(role="assistant", content="Let me check on that.")
+
+        stream = adapter_module.UnifyLLM(model="gpt-5-mini@openai").chat(
+            chat_ctx=chat_ctx,
+        )
+        await stream._run()
+
+        sent_system_message = captured["generate_kwargs"]["system_message"]
+        assert "BASE_PROMPT" in sent_system_message
+        assert (
+            "[notification] No, there is no contact named Bob." in sent_system_message
+        )
