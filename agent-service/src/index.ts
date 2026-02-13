@@ -511,8 +511,10 @@ const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null
 
 const startDesktop = async (): Promise<BrowserAgent> => {
   try {
+    const desktopUrl = `http://localhost:6080/custom.html?password=${process.env.UNIFY_KEY}`;
+    const desktopOrigin = new URL(desktopUrl).origin;
     const agent = await startBrowserAgent({
-      url: `http://localhost:6080/custom.html?password=${process.env.UNIFY_KEY}`,
+      url: desktopUrl,
       browser: getLaunchOptions(true),
       prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
       narrate: true,
@@ -530,6 +532,11 @@ const startDesktop = async (): Promise<BrowserAgent> => {
       }
     });
     agent.context.setDefaultNavigationTimeout(90000);
+    // Auto-grant clipboard permissions so the noVNC "Share clipboard?" popup is suppressed
+    await agent.context.grantPermissions(
+      ['clipboard-read', 'clipboard-write'],
+      { origin: desktopOrigin },
+    );
     console.log("✅ Desktop BrowserAgent started successfully.");
     return agent;
   } catch (err) {
