@@ -2752,7 +2752,14 @@ class CodeActActor(BaseCodeActActor):
         pkg_overlay = PackageOverlay(agent_id=new_ctx.agent_id)
         pkg_overlay_token = _CURRENT_PACKAGE_OVERLAY.set(pkg_overlay)
 
+        # Mutable ref populated after handle creation so _cleanup can deregister.
+        _registered_queue: list[asyncio.Queue | None] = [None]
+
         async def _cleanup() -> None:
+            if _registered_queue[0] is not None and self._computer_primitives is not None:
+                self._computer_primitives.deregister_interject_queue(
+                    _registered_queue[0],
+                )
             try:
                 pkg_overlay.cleanup()
             except Exception:
@@ -2998,6 +3005,11 @@ class CodeActActor(BaseCodeActActor):
 
             handle.pause = _pause_with_propagation  # type: ignore[assignment]
             handle.resume = _resume_with_propagation  # type: ignore[assignment]
+
+            # Register the loop's interject queue so environmental state
+            # changes (e.g. user remote control) are broadcast to this actor.
+            _cp.register_interject_queue(handle._queue)
+            _registered_queue[0] = handle._queue
 
         # Update agent context with handle reference
         new_ctx.handle = handle

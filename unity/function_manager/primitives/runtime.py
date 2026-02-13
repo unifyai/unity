@@ -136,6 +136,13 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         self._computer_mode = computer_mode
         self._computer_kwargs_map = computer_kwargs
 
+        # Interject queue registry: every active CodeActActor.act() loop
+        # registers its interject_queue here so that environmental state
+        # changes (e.g. user taking remote control) can be broadcast to
+        # all actors in the call stack simultaneously.
+        self._interject_queues: set[asyncio.Queue] = set()
+        self._user_remote_control_active: bool = False
+
         # No VM to wait for when using mock backend or co-located agent-service
         if computer_mode == "mock" or resolved_url == DEFAULT_AGENT_SERVER_URL:
             _vm_ready.set()
@@ -268,6 +275,74 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         CodeActActor is resumed.
         """
         await self.computer.resume()
+
+    # ── Interject queue registry ─────────────────────────────────────────
+
+    _REMOTE_CONTROL_STARTED_MSG = (
+        "The user has taken remote control of the desktop. They are now "
+        "able to operate the mouse and keyboard directly, so the screen "
+        "state may diverge from what you last observed. This is not cause "
+        "for alarm — the user may be collaborating, demonstrating "
+        "something, or performing a task themselves. Use your judgement: "
+        "if you are unsure whether to proceed with computer actions, "
+        "request clarification rather than guessing."
+    )
+    _REMOTE_CONTROL_STOPPED_MSG = (
+        "The user has released remote control of the desktop. The screen "
+        "state may have changed since your last observation. Before "
+        "continuing any computer-related work, take a fresh screenshot "
+        "to re-orient yourself."
+    )
+
+    @staticmethod
+    def _build_interjection(base_msg: str, context: str | None) -> dict:
+        msg = base_msg
+        if context:
+            msg = f"{base_msg}\n\nRecent conversation context:\n{context}"
+        return {"message": msg}
+
+    def register_interject_queue(self, queue: asyncio.Queue) -> None:
+        """Register an actor's interject queue for environmental broadcasts.
+
+        If the user currently has remote control, the queue immediately
+        receives the corresponding interjection so late-arriving actors
+        are informed of the current state.
+        """
+        self._interject_queues.add(queue)
+        if self._user_remote_control_active:
+            queue.put_nowait(
+                self._build_interjection(self._REMOTE_CONTROL_STARTED_MSG, None),
+            )
+
+    def deregister_interject_queue(self, queue: asyncio.Queue) -> None:
+        """Remove an actor's interject queue from the registry."""
+        self._interject_queues.discard(queue)
+
+    def set_user_remote_control(
+        self,
+        active: bool,
+        conversation_context: str | None = None,
+    ) -> None:
+        """Update remote-control state and broadcast to all registered actors.
+
+        Parameters
+        ----------
+        active:
+            Whether the user currently has remote control.
+        conversation_context:
+            Optional snippet of recent conversation to include in the
+            interjection, giving actors immediate context on *why* the
+            user is taking or releasing control.
+        """
+        self._user_remote_control_active = active
+        base = (
+            self._REMOTE_CONTROL_STARTED_MSG
+            if active
+            else self._REMOTE_CONTROL_STOPPED_MSG
+        )
+        payload = self._build_interjection(base, conversation_context)
+        for q in self._interject_queues:
+            q.put_nowait(payload)
 
 
 # =============================================================================
