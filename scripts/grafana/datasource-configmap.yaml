@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-staging-datasource-provisioning
+  namespace: staging
+  labels:
+    app: grafana-staging
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Google Cloud Monitoring
+        type: stackdriver
+        access: proxy
+        isDefault: true
+        jsonData:
+          authenticationType: jwt
+          defaultProject: responsive-city-458413-a2
+          tokenUri: https://oauth2.googleapis.com/token
+          clientEmail: ""
+        secureJsonFields:
+          serviceAccountKey: false
+        editable: true

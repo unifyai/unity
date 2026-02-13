@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-staging
+  namespace: staging
+  labels:
+    app: grafana-staging
+spec:
+  type: ClusterIP
+  selector:
+    app: grafana-staging
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http

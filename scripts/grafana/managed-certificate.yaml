@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: grafana-staging-cert
+  namespace: staging
+spec:
+  domains:
+    - grafana.staging.internal.saas.unify.ai
