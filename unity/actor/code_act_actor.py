@@ -2757,7 +2757,10 @@ class CodeActActor(BaseCodeActActor):
         _registered_queue: list[asyncio.Queue | None] = [None]
 
         async def _cleanup() -> None:
-            if _registered_queue[0] is not None and self._computer_primitives is not None:
+            if (
+                _registered_queue[0] is not None
+                and self._computer_primitives is not None
+            ):
                 self._computer_primitives.deregister_interject_queue(
                     _registered_queue[0],
                 )
