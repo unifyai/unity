@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, create_model
@@ -100,23 +101,72 @@ class BrainSpec:
     system_prompt: PromptParts
     state_prompt: str
     response_model: type["BaseModel"]
+    # Buffered screenshots captured during screen sharing, aligned with user turns.
+    # Each entry: (base64_png, user_utterance_text, timestamp).
+    screenshots: list[tuple[str, str, datetime]] = field(default_factory=list)
 
     def state_message(self) -> dict:
         # Mark this as a state snapshot so the async tool loop can treat it as
         # transient state (e.g., keep only the latest snapshot when generating).
+        if not self.screenshots:
+            return {
+                "role": "user",
+                "content": self.state_prompt,
+                "_cm_state_snapshot": True,
+            }
+
+        # Build multimodal content: text state + screenshot blocks aligned with
+        # the user utterances that triggered them.
+        content_parts: list[dict] = [
+            {"type": "text", "text": self.state_prompt},
+            {
+                "type": "text",
+                "text": (
+                    "\n\n<screen_share_snapshots>\n"
+                    "The following screenshots were captured from your desktop "
+                    "during screen sharing, each paired with what the user said "
+                    "at that moment. They are in chronological order.\n"
+                    "</screen_share_snapshots>"
+                ),
+            },
+        ]
+        for i, (b64, utterance, ts) in enumerate(self.screenshots, 1):
+            content_parts.append({
+                "type": "text",
+                "text": (
+                    f"\n[Screenshot {i}/{len(self.screenshots)}] "
+                    f"User said: \"{utterance}\""
+                ),
+            })
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+
         return {
             "role": "user",
-            "content": self.state_prompt,
+            "content": content_parts,
             "_cm_state_snapshot": True,
         }
 
 
-def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
+def build_brain_spec(
+    cm: "ConversationManager",
+    screenshots: list[tuple[str, str, datetime]] | None = None,
+) -> BrainSpec:
     """
     Build the prompt + response model inputs for a single Main CM Brain run.
 
     The returned spec is *pure* (no side effects) and can be used by either the
     legacy single-shot generate path or the async tool loop path.
+
+    Parameters
+    ----------
+    cm : ConversationManager
+        The conversation manager instance.
+    screenshots : list[tuple[str, str, datetime]] | None
+        Buffered screenshots from assistant screen sharing, each paired with the
+        user utterance that triggered capture and a timestamp.
     """
     from unity.settings import SETTINGS
 
@@ -153,4 +203,5 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
         system_prompt=system_prompt,
         state_prompt=prompt,
         response_model=response_model,
+        screenshots=screenshots or [],
     )

@@ -300,6 +300,14 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     )
 
     if role == "user":
+        # Capture assistant's screen when screen sharing is active.
+        # The screenshot is buffered and attached to the next slow brain turn,
+        # giving it visual context aligned with the user's spoken instruction.
+        if cm.assistant_screen_share_active:
+            asyncio.create_task(
+                cm.capture_assistant_screenshot(event.content),
+            )
+
         await cm.cancel_proactive_speech()
         await cm.interject_or_run(event.content)
 
@@ -955,7 +963,7 @@ async def _(
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #
 
-# Mapping from event class to a human-readable notification for the LLM.
+# Mapping from event class to a human-readable notification for the slow brain.
 _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStarted: "The user enabled assistant screen sharing — they can now see your desktop.",
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
@@ -963,6 +971,38 @@ _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     UserScreenShareStopped: "The user stopped sharing their screen.",
     UserRemoteControlStarted: "The user took remote control of your desktop — they now have mouse and keyboard control.",
     UserRemoteControlStopped: "The user released remote control of your desktop — you may resume computer actions.",
+}
+
+# Direct guidance sent to the fast brain when screen share modes change.
+# These carry behavioral instructions so the fast brain knows how to respond
+# to visual references immediately, without waiting for the slow brain.
+_MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
+    AssistantScreenShareStarted: (
+        "Screen sharing is now ON — the user can see your desktop. "
+        "Screenshots are being captured and processed in the background. "
+        "If the user references something on screen, acknowledge briefly "
+        "(\"Got it\", \"I see\", \"Okay\") and wait — visual context will "
+        "be processed shortly. Do NOT describe or guess screen contents."
+    ),
+    AssistantScreenShareStopped: (
+        "Screen sharing is now OFF — the user can no longer see your desktop."
+    ),
+    UserScreenShareStarted: (
+        "The user is now sharing their screen with you. Visual context is "
+        "being captured in the background. If they reference something on "
+        "their screen, acknowledge naturally and wait for the processed "
+        "details. Do NOT guess or fabricate what is on their screen."
+    ),
+    UserScreenShareStopped: (
+        "The user stopped sharing their screen."
+    ),
+    UserRemoteControlStarted: (
+        "The user now has remote control of your desktop. Do not perform "
+        "any computer actions — wait for them to release control."
+    ),
+    UserRemoteControlStopped: (
+        "The user released remote control. You may resume computer actions."
+    ),
 }
 
 # State attribute name on the CM for each toggle pair.
@@ -1006,9 +1046,22 @@ async def _(
     attr, value = _MEET_STATE_FLAGS[event.__class__]
     setattr(cm, attr, value)
 
-    # Push a notification so the LLM brain sees the state change.
+    # Push a notification so the slow brain sees the state change.
     notification_text = _MEET_INTERACTION_NOTIFICATIONS[event.__class__]
     cm.notifications_bar.push_notif("Meet", notification_text, event.timestamp)
+
+    # Send direct guidance to the fast brain so it can immediately adjust
+    # its conversational behavior (e.g., acknowledge visual references
+    # without hallucinating). This bypasses the slow brain for instant delivery.
+    fast_brain_text = _MEET_FAST_BRAIN_GUIDANCE.get(event.__class__)
+    if fast_brain_text and cm.mode.is_voice:
+        contact = cm.get_active_contact()
+        if contact:
+            guidance_event = CallGuidance(contact, fast_brain_text)
+            await cm.event_broker.publish(
+                "app:call:call_guidance",
+                guidance_event.to_json(),
+            )
 
     # Remote control implies actor pause/resume.
     if isinstance(event, UserRemoteControlStarted):

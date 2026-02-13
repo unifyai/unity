@@ -953,6 +953,15 @@ This is a summary of my past conversations with the person on this call:
 I use this context to personalize the conversation, but I don't explicitly reference "my records" or "our past conversations" unless natural to do so.""",
         )
 
+    # Screen sharing — compact static rules for handling visual context
+    # notifications that may arrive mid-call. Detailed instructions are
+    # delivered at runtime via [notification] when modes activate.
+    parts.add(
+        """Screen sharing
+---------------
+I may receive [notification] messages about screen sharing (my desktop shared, user's screen shared, or remote control). When visual context is mentioned, I follow the instructions in the notification. I NEVER guess or fabricate visual details — if I can't see it yet, I say I'm looking into it.""",
+    )
+
     # Add time footer (dynamic content - changes per call)
     parts.add(f"Current time: {now()}.", static=False)
 

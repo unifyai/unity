@@ -169,6 +169,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_screen_share_active: bool = False
         self.user_remote_control_active: bool = False
 
+        # screenshot buffer for slow brain visual context
+        # Each entry: (base64_png, user_utterance_text, timestamp)
+        self._screenshot_buffer: list[tuple[str, str, "datetime"]] = []
+
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
@@ -219,6 +223,58 @@ class ConversationManager(metaclass=SingletonABCMeta):
         return self.call_manager.call_contact or self.contact_index.get_contact(
             contact_id=1,
         )
+
+    async def capture_assistant_screenshot(self, user_utterance: str) -> None:
+        """Capture the assistant's screen and buffer it for the next slow brain turn.
+
+        Called when an inbound utterance arrives while assistant screen sharing
+        is active. The screenshot is paired with the user's utterance text so
+        the slow brain can align visual context with spoken instructions.
+        """
+        import aiohttp
+        from datetime import datetime, timezone
+
+        desktop_url = (
+            SESSION_DETAILS.assistant.desktop_url or "http://localhost:3000"
+        )
+        try:
+            auth_key = SESSION_DETAILS.unify_key
+            headers = {"authorization": f"Bearer {auth_key}"}
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{desktop_url}/screenshot",
+                    json={},
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status >= 400:
+                        self._session_logger.warning(
+                            "screenshot_capture",
+                            f"Screenshot capture failed: HTTP {resp.status}",
+                        )
+                        return
+                    data = await resp.json()
+                    b64 = data.get("screenshot")
+                    if b64:
+                        self._screenshot_buffer.append(
+                            (b64, user_utterance, datetime.now(timezone.utc)),
+                        )
+                        self._session_logger.debug(
+                            "screenshot_capture",
+                            f"Buffered screenshot #{len(self._screenshot_buffer)} "
+                            f"for utterance: {user_utterance[:60]}...",
+                        )
+        except Exception as e:
+            self._session_logger.warning(
+                "screenshot_capture",
+                f"Screenshot capture error: {e}",
+            )
+
+    def drain_screenshot_buffer(self) -> list[tuple[str, str, "datetime"]]:
+        """Drain and return all buffered screenshots, clearing the buffer."""
+        screenshots = list(self._screenshot_buffer)
+        self._screenshot_buffer.clear()
+        return screenshots
 
     def get_recent_voice_transcript(
         self,
@@ -546,8 +602,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         slow_brain_start_time = datetime.now(timezone.utc)
 
+        # Drain buffered screenshots so the slow brain gets visual context
+        # from screen sharing. The buffer is cleared atomically — new screenshots
+        # captured while this turn is running will accumulate for the next turn.
+        screenshots = self.drain_screenshot_buffer()
+
         self.snapshot()
-        brain_spec = build_brain_spec(self)
+        brain_spec = build_brain_spec(self, screenshots=screenshots)
+        if screenshots:
+            self._session_logger.info(
+                "screen_share",
+                f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
+            )
         self._session_logger.debug(
             "state_update",
             f"State prompt:\n{brain_spec.state_prompt}",

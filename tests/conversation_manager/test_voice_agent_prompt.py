@@ -422,3 +422,47 @@ class TestBrevity:
         response = await ask_fast_brain(prompt, "Hey, how's it going?")
 
         assert_concise(response, max_words=15, context="casual greeting")
+
+
+# =============================================================================
+# Test Class: Screen Sharing Prompt Section
+# =============================================================================
+
+
+class TestScreenSharingPromptSection:
+    """Tests that the fast brain prompt includes screen sharing rules."""
+
+    def test_prompt_contains_screen_sharing_section(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """The voice agent prompt includes a static screen sharing section
+        so the fast brain knows how to handle visual context notifications."""
+        prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        assert "Screen sharing" in prompt
+        assert "[notification]" in prompt
+        assert "fabricate" in prompt.lower()
+
+    def test_screen_sharing_section_present_in_all_modes(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Screen sharing section is present regardless of boss/contact mode."""
+        boss_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        contact_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=False,
+            contact_first_name="Alice",
+            contact_surname="Smith",
+        ).flatten()
+
+        for prompt in (boss_prompt, contact_prompt):
+            assert "Screen sharing" in prompt
