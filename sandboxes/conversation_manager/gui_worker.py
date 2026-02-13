@@ -20,6 +20,7 @@ Notes
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import queue as _queue
 import traceback as _traceback
@@ -849,7 +850,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
 
     # Build command plumbing.
     state = WorkerSandboxState()
-    publisher = EventPublisher(cm=cm, state=state)
+    publisher = EventPublisher(cm=cm, state=state, args=args)
 
     # Create display components for logs/traces/event-tree.
     # These are populated by subscribe_to_responses and used by save_state.
@@ -876,6 +877,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                 exec_fn = tools.get("execute_code")
             if callable(exec_fn):
 
+                @functools.wraps(exec_fn)
                 async def _wrapped_execute_code(*a: Any, **kw: Any) -> Any:
                     # Best-effort extraction of code for display.
                     code = ""

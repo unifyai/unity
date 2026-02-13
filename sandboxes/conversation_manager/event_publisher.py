@@ -43,6 +43,7 @@ def get_simulated_user_contact() -> dict:
 class EventPublisher:
     cm: object
     state: object
+    args: object | None = None
 
     async def publish_sms(self, message: str) -> None:
         contact = get_simulated_user_contact()

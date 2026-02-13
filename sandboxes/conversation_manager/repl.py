@@ -92,6 +92,7 @@ async def run_repl(*, args: Any, state: SandboxState | None = None) -> None:
         publisher = EventPublisher(
             cm=cm,
             state=st,
+            args=args,
         )
 
     router: CommandRouter | None = None
