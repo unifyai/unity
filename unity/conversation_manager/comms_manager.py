@@ -306,38 +306,53 @@ class CommsManager:
             elif thread == "unity_system_event":
                 system_event_type = event.get("event_type")
                 system_message = event.get("message")
-                if system_event_type in ["pause_actor", "resume_actor"]:
-                    evt = (
-                        ActorPause(
-                            reason=(
-                                str(system_message)
-                                if system_message is not None
-                                else "The user has just taken control of the desktop, we're pausing our own actions temporarily."
-                            ),
-                        )
-                        if system_event_type == "pause_actor"
-                        else ActorResume(
-                            reason=(
-                                str(system_message)
-                                if system_message is not None
-                                else "The user has just handed control of the desktop back to us, we're now continuing our control of the desktop."
-                            ),
-                        )
+                reason = (
+                    str(system_message) if system_message is not None else ""
+                )
+
+                # Map system event types to internal event classes.
+                _SYSTEM_EVENT_MAP = {
+                    "pause_actor": lambda r: ActorPause(
+                        reason=r or "The user has just taken control of the desktop, we're pausing our own actions temporarily.",
+                    ),
+                    "resume_actor": lambda r: ActorResume(
+                        reason=r or "The user has just handed control of the desktop back to us, we're now continuing our control of the desktop.",
+                    ),
+                    "sync_contacts": lambda r: SyncContacts(
+                        reason=r or "Contact sync requested via system event.",
+                    ),
+                    "assistant_screen_share_started": lambda r: AssistantScreenShareStarted(
+                        reason=r or "User enabled assistant screen sharing.",
+                    ),
+                    "assistant_screen_share_stopped": lambda r: AssistantScreenShareStopped(
+                        reason=r or "User disabled assistant screen sharing.",
+                    ),
+                    "user_screen_share_started": lambda r: UserScreenShareStarted(
+                        reason=r or "User started sharing their screen.",
+                    ),
+                    "user_screen_share_stopped": lambda r: UserScreenShareStopped(
+                        reason=r or "User stopped sharing their screen.",
+                    ),
+                    "user_remote_control_started": lambda r: UserRemoteControlStarted(
+                        reason=r or "User took remote control of assistant desktop.",
+                    ),
+                    "user_remote_control_stopped": lambda r: UserRemoteControlStopped(
+                        reason=r or "User released remote control of assistant desktop.",
+                    ),
+                }
+
+                # Channel routing: actor events go to app:actor:*, others to app:comms:*.
+                _ACTOR_EVENTS = {"pause_actor", "resume_actor"}
+
+                factory = _SYSTEM_EVENT_MAP.get(system_event_type)
+                if factory is not None:
+                    evt = factory(reason)
+                    channel_prefix = (
+                        "app:actor" if system_event_type in _ACTOR_EVENTS
+                        else "app:comms"
                     )
                     self._publish_from_callback(
-                        f"app:actor:{system_event_type}",
-                        evt.to_json(),
-                    )
-                elif system_event_type == "sync_contacts":
-                    evt = SyncContacts(
-                        reason=(
-                            str(system_message)
-                            if system_message is not None
-                            else "Contact sync requested via system event."
-                        ),
-                    )
-                    self._publish_from_callback(
-                        f"app:comms:{system_event_type}",
+                        f"{channel_prefix}:{system_event_type}",
                         evt.to_json(),
                     )
                 message.ack()

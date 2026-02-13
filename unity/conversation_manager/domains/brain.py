@@ -126,6 +126,9 @@ def build_brain_spec(cm: "ConversationManager") -> BrainSpec:
         cm.in_flight_actions,
         cm.completed_actions,
         cm.last_snapshot,
+        assistant_screen_share_active=cm.assistant_screen_share_active,
+        user_screen_share_active=cm.user_screen_share_active,
+        user_remote_control_active=cm.user_remote_control_active,
     ).full_render
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth

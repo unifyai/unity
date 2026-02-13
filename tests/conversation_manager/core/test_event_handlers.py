@@ -54,6 +54,12 @@ from unity.conversation_manager.events import (
     SummarizeContext,
     DirectMessageEvent,
     AssistantUpdateEvent,
+    AssistantScreenShareStarted,
+    AssistantScreenShareStopped,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
 )
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
@@ -1037,7 +1043,241 @@ class TestActorEventHandlers:
 
 
 # =============================================================================
-# 10. Notification Event Handler Tests
+# 10. Meet Interaction Event Handler Tests
+# =============================================================================
+
+
+class TestMeetInteractionEventHandlers:
+    """Tests for screen share and remote control event handlers."""
+
+    @pytest.mark.asyncio
+    async def test_assistant_screen_share_started_sets_flag(self, mock_cm):
+        """AssistantScreenShareStarted sets assistant_screen_share_active to True."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled assistant screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.assistant_screen_share_active is True
+
+    @pytest.mark.asyncio
+    async def test_assistant_screen_share_stopped_clears_flag(self, mock_cm):
+        """AssistantScreenShareStopped sets assistant_screen_share_active to False."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = AssistantScreenShareStopped(
+            reason="User disabled assistant screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.assistant_screen_share_active is False
+
+    @pytest.mark.asyncio
+    async def test_user_screen_share_started_sets_flag(self, mock_cm):
+        """UserScreenShareStarted sets user_screen_share_active to True."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = UserScreenShareStarted(
+            reason="User started sharing their screen",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_screen_share_active is True
+
+    @pytest.mark.asyncio
+    async def test_user_screen_share_stopped_clears_flag(self, mock_cm):
+        """UserScreenShareStopped sets user_screen_share_active to False."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = True
+        mock_cm.user_remote_control_active = False
+
+        event = UserScreenShareStopped(
+            reason="User stopped sharing their screen",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_screen_share_active is False
+
+    @pytest.mark.asyncio
+    async def test_user_remote_control_started_sets_flag_and_pauses_actor(
+        self,
+        mock_cm,
+    ):
+        """UserRemoteControlStarted sets flag and pauses in-flight actions."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        mock_handle = MagicMock()
+        mock_handle.pause = MagicMock(return_value=None)
+        mock_cm.in_flight_actions = {
+            1: {"query": "Task", "handle": mock_handle, "handle_actions": []},
+        }
+
+        event = UserRemoteControlStarted(
+            reason="User took remote control of assistant desktop",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_remote_control_active is True
+        mock_handle.pause.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_user_remote_control_stopped_clears_flag_and_resumes_actor(
+        self,
+        mock_cm,
+    ):
+        """UserRemoteControlStopped clears flag and resumes in-flight actions."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = True
+
+        mock_handle = MagicMock()
+        mock_handle.resume = MagicMock(return_value=None)
+        mock_cm.in_flight_actions = {
+            1: {"query": "Task", "handle": mock_handle, "handle_actions": []},
+        }
+
+        event = UserRemoteControlStopped(
+            reason="User released remote control of assistant desktop",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_remote_control_active is False
+        mock_handle.resume.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_meet_interaction_pushes_notification(self, mock_cm):
+        """All meet interaction events push a notification to the bar."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        initial_count = len(mock_cm.notifications_bar.notifications)
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled assistant screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert len(mock_cm.notifications_bar.notifications) == initial_count + 1
+        notification = mock_cm.notifications_bar.notifications[-1]
+        assert notification.type == "Meet"
+        assert "screen sharing" in notification.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_meet_interaction_triggers_llm_run(self, mock_cm):
+        """Meet interaction events trigger an LLM run."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = UserScreenShareStarted(
+            reason="User started sharing their screen",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.request_llm_run.assert_called()
+
+    def test_render_meet_state_empty_when_all_off(self):
+        """render_meet_interaction_state returns empty when nothing is active."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=False,
+            user_screen_share_active=False,
+            user_remote_control_active=False,
+        )
+        assert result == ""
+
+    def test_render_meet_state_assistant_screen_share_only(self):
+        """Only assistant screen share active produces a single section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=True,
+            user_screen_share_active=False,
+            user_remote_control_active=False,
+        )
+        assert "<assistant_screen_share status='active'>" in result
+        assert "</assistant_screen_share>" in result
+        assert "visible to the user" in result
+        # Other sections absent.
+        assert "<user_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_user_screen_share_only(self):
+        """Only user screen share active produces a single section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=False,
+            user_screen_share_active=True,
+            user_remote_control_active=False,
+        )
+        assert "<user_screen_share status='active'>" in result
+        assert "</user_screen_share>" in result
+        assert "sharing their screen with you" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_user_remote_control_only(self):
+        """Only user remote control active produces a single section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=False,
+            user_screen_share_active=False,
+            user_remote_control_active=True,
+        )
+        assert "<user_remote_control status='active'>" in result
+        assert "</user_remote_control>" in result
+        assert "mouse and keyboard" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_screen_share" not in result
+
+    def test_render_meet_state_all_three_active(self):
+        """All three active produces three independent sections."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=True,
+            user_screen_share_active=True,
+            user_remote_control_active=True,
+        )
+        assert "<assistant_screen_share status='active'>" in result
+        assert "<user_screen_share status='active'>" in result
+        assert "<user_remote_control status='active'>" in result
+
+    def test_render_meet_state_appears_at_top_of_full_render(self):
+        """Active meet sections appear before notifications in the full render."""
+        from unity.conversation_manager.domains.renderer import Renderer
+        from unity.conversation_manager.domains.notifications import NotificationBar
+
+        renderer = Renderer()
+        result = renderer.render_state(
+            contact_index=ContactIndex(),
+            notification_bar=NotificationBar(),
+            assistant_screen_share_active=True,
+            user_screen_share_active=False,
+            user_remote_control_active=False,
+        ).full_render
+
+        screen_share_pos = result.index("<assistant_screen_share")
+        notifications_pos = result.index("<notifications>")
+        assert screen_share_pos < notifications_pos
+
+
+# =============================================================================
+# 11. Notification Event Handler Tests
 # =============================================================================
 
 
