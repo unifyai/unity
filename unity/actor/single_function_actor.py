@@ -174,8 +174,18 @@ class SingleFunctionActorHandle(BaseActorHandle):
                 # completion and result() forwards to it.
                 return
 
-            # Non-steerable: run verification if enabled
-            if self._verify and self._actor is not None:
+            # Non-steerable: run verification if enabled.
+            # Skip verification when the function already raised an exception —
+            # the traceback is more useful than an LLM opinion about a None
+            # return value, and we must not overwrite it.
+            if execution_result.error:
+                logger.warning(
+                    "Function '%s' raised an exception, skipping verification. "
+                    "Error:\n%s",
+                    self._function_name,
+                    execution_result.error,
+                )
+            elif self._verify and self._actor is not None:
                 try:
                     verification = await self._actor._verify_execution(
                         function_name=self._function_name,
