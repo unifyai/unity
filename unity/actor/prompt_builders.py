@@ -102,9 +102,19 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
 """).strip()
 
 def _build_filesystem_context() -> str:
+    from pathlib import Path, PurePosixPath
+
     from unity.file_manager.settings import get_local_root
 
-    local_root = get_local_root()
+    resolved = get_local_root()
+    # Display as ~/... when the path is inside the user's home directory.
+    # This keeps the prompt stable across environments (critical for LLM
+    # response caching) while still being accurate.
+    try:
+        relative = PurePosixPath(resolved).relative_to(Path.home())
+        local_root = f"~/{relative}"
+    except ValueError:
+        local_root = resolved
     return textwrap.dedent(f"""
         ### Filesystem Context
 
