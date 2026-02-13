@@ -101,6 +101,44 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     - You do not have storage tools available, and you do not need them.
 """).strip()
 
+_FILESYSTEM_CONTEXT = textwrap.dedent("""
+    ### Filesystem Context
+
+    Your working directory is `~/Unity/Local`.  This directory **persists
+    across every interaction** with the user — files you create today will
+    still be here weeks or months from now.  All relative paths resolve
+    from this directory.
+
+    | Location | Purpose |
+    |----------|---------|
+    | `Downloads/` | **Inbound** — user-sent attachments are auto-saved here. |
+    | `Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
+    | `.env` | Environment secrets managed by SecretManager. |
+    | Everything else | Your own persistent workspace — organize however makes sense for the work. |
+
+    **File conventions:**
+    - **Inbound**: Attachments arrive at `Downloads/<filename>`.  Reference
+      them with relative paths (e.g. `Downloads/report.pdf`).
+    - **Outbound**: Save files for the user to `Outputs/` and include the
+      relative path in your final answer (e.g. `Outputs/summary.csv`).
+    - **Stay inside the workspace**: Always use relative paths. Do not
+      reference absolute paths outside `~/Unity/Local` (e.g. `/tmp`,
+      `/var`).  Everything you need is inside this workspace.
+
+    **When to use the filesystem vs. primitives:**
+    Most tasks will not require reading or writing local files.  The
+    state manager primitives are the primary way to persist information:
+    contacts, knowledge, tasks, skills, guidance, and so on — each with
+    purpose-built storage, retrieval, and search.  Do not duplicate what
+    primitives already handle (e.g. saving contact details to a .txt
+    file, or writing Python functions to local scripts).  The local
+    filesystem is better suited for working artifacts: data files being
+    processed, intermediate results, or anything that benefits from
+    conventional file-based organization.  When you do use it for
+    longer-lived material, keep it organized — this workspace will
+    accumulate across many interactions.
+""").strip()
+
 _SUB_AGENT_GUIDANCE = textwrap.dedent("""
     ### Sub-Agent Delegation
 
@@ -361,6 +399,8 @@ def build_code_act_prompt(
 ### Your Role: Code-First Automation Agent
 {role_line} {capabilities_line}
 {guidelines_block}
+{_FILESYSTEM_CONTEXT}
+
 {critical_rules}
 
 ### Primary Execution & Session Tools
