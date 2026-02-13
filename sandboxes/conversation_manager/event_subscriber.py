@@ -18,9 +18,7 @@ from unity.conversation_manager.events import (
     ActorClarificationResponse,
     ActorHandleStarted,
     ActorNotification,
-    ActorPause,
     ActorResult,
-    ActorResume,
     CallGuidance,
     DirectMessageEvent,
     EmailReceived,
@@ -474,24 +472,6 @@ async def subscribe_to_responses(
                                         ).strip()
                                         if r:
                                             msg = f"ActorResult: {r}"
-                                    elif isinstance(event, ActorPause):
-                                        reason = str(
-                                            getattr(event, "reason", "") or "",
-                                        ).strip()
-                                        msg = (
-                                            f"ActorPause: {reason}"
-                                            if reason
-                                            else "ActorPause"
-                                        )
-                                    elif isinstance(event, ActorResume):
-                                        reason = str(
-                                            getattr(event, "reason", "") or "",
-                                        ).strip()
-                                        msg = (
-                                            f"ActorResume: {reason}"
-                                            if reason
-                                            else "ActorResume"
-                                        )
                                 except Exception:
                                     pass
                                 log_aggregator.handle_structured_event(

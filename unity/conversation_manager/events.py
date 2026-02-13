@@ -598,20 +598,6 @@ class ActorHandleStarted(Event):
     query: str
 
 
-@dataclass
-class ActorPause(Event):
-    """Signal to pause any in-flight Actor/TaskScheduler execution for the session."""
-
-    reason: str = ""
-
-
-@dataclass
-class ActorResume(Event):
-    """Signal to resume any previously paused Actor/TaskScheduler execution for the session."""
-
-    reason: str = ""
-
-
 # --------------------------------------------------------------------------- #
 # Meet Interaction Events (screen share / remote control)
 # --------------------------------------------------------------------------- #

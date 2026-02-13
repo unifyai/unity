@@ -1707,12 +1707,6 @@ if _TEXTUAL_AVAILABLE:
                             rt.event_tree_display.mark_handle_completed(actor_hid)
                         except Exception:
                             pass
-                elif name == "ActorPause":
-                    reason = str(payload.get("reason") or "").strip()
-                    msg = f"ActorPause: {reason}" if reason else "ActorPause"
-                elif name == "ActorResume":
-                    reason = str(payload.get("reason") or "").strip()
-                    msg = f"ActorResume: {reason}" if reason else "ActorResume"
             except Exception:
                 pass
 
