@@ -15,22 +15,21 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.domains.brain import BrainSpec
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _make_brain_spec(
     state_prompt: str = "<state>test</state>",
     screenshots: list[tuple[str, str, datetime]] | None = None,
 ) -> BrainSpec:
     """Create a minimal BrainSpec for testing."""
-    from pydantic import BaseModel, Field, create_model
+    from pydantic import Field, create_model
 
     DummyResponse = create_model(
         "DummyResponse",
@@ -92,12 +91,9 @@ class TestBrainSpecStateMessage:
         screenshots = [(FAKE_B64, "Do this", ts)]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
 
-        text_parts = [
-            p for p in msg["content"] if p.get("type") == "text"
-        ]
+        text_parts = [p for p in msg["content"] if p.get("type") == "text"]
         header_texts = [
-            p["text"] for p in text_parts
-            if "screen_share_snapshots" in p["text"]
+            p["text"] for p in text_parts if "screen_share_snapshots" in p["text"]
         ]
         assert len(header_texts) == 1
         assert "chronological order" in header_texts[0]
@@ -125,7 +121,9 @@ class TestBrainSpecStateMessage:
             assert preceding["type"] == "text"
 
         # Verify the utterance text alignment
-        assert 'User said: "First, click here"' in content[image_parts[0][0] - 1]["text"]
+        assert (
+            'User said: "First, click here"' in content[image_parts[0][0] - 1]["text"]
+        )
         assert 'User said: "Then scroll down"' in content[image_parts[1][0] - 1]["text"]
 
     def test_screenshot_numbering(self):
@@ -138,9 +136,7 @@ class TestBrainSpecStateMessage:
         ]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
 
-        text_parts = [
-            p["text"] for p in msg["content"] if p.get("type") == "text"
-        ]
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
         labels = [t for t in text_parts if t.strip().startswith("[Screenshot")]
         assert len(labels) == 3
         assert "[Screenshot 1/3]" in labels[0]
@@ -153,9 +149,7 @@ class TestBrainSpecStateMessage:
         screenshots = [(FAKE_B64, "Look at this", ts)]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
 
-        image_parts = [
-            p for p in msg["content"] if p.get("type") == "image_url"
-        ]
+        image_parts = [p for p in msg["content"] if p.get("type") == "image_url"]
         assert len(image_parts) == 1
         url = image_parts[0]["image_url"]["url"]
         assert url.startswith("data:image/png;base64,")

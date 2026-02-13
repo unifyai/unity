@@ -131,17 +131,21 @@ class BrainSpec:
             },
         ]
         for i, (b64, utterance, ts) in enumerate(self.screenshots, 1):
-            content_parts.append({
-                "type": "text",
-                "text": (
-                    f"\n[Screenshot {i}/{len(self.screenshots)}] "
-                    f"User said: \"{utterance}\""
-                ),
-            })
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{b64}"},
-            })
+            content_parts.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"\n[Screenshot {i}/{len(self.screenshots)}] "
+                        f'User said: "{utterance}"'
+                    ),
+                },
+            )
+            content_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                },
+            )
 
         return {
             "role": "user",
