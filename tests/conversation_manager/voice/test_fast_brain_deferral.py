@@ -1050,14 +1050,14 @@ class TestInProgressActionStatus:
                 "role": "system",
                 "content": (
                     "[notification] Got it - I'm creating a Bob contact now, and "
-                    "I'll set up an \"Apply to OpenAI\" task for the B2B Applications "
+                    'I\'ll set up an "Apply to OpenAI" task for the B2B Applications '
                     "frontend engineer role."
                 ),
             },
             {
                 "role": "assistant",
                 "content": (
-                    "Creating Bob contact and setting task \"Apply to OpenAI\" for "
+                    'Creating Bob contact and setting task "Apply to OpenAI" for '
                     "the B2B Applications frontend engineer role with the ~$174K salary."
                 ),
             },
@@ -1104,14 +1104,14 @@ class TestInProgressActionStatus:
                 "role": "system",
                 "content": (
                     "[notification] Got it - I'm creating a Bob contact now, and "
-                    "I'll set up an \"Apply to OpenAI\" task for the B2B Applications "
+                    'I\'ll set up an "Apply to OpenAI" task for the B2B Applications '
                     "frontend engineer role."
                 ),
             },
             {
                 "role": "assistant",
                 "content": (
-                    "Creating Bob contact and setting task \"Apply to OpenAI\" for "
+                    'Creating Bob contact and setting task "Apply to OpenAI" for '
                     "the B2B Applications frontend engineer role with the ~$174K salary."
                 ),
             },

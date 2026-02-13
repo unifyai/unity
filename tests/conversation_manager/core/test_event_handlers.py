@@ -1875,6 +1875,7 @@ class TestRecentConversationSnippet:
         from unity.conversation_manager.domains.event_handlers import (
             _recent_conversation_snippet,
         )
+
         return _recent_conversation_snippet
 
     def test_returns_none_when_empty(self, mock_cm):
@@ -1886,12 +1887,18 @@ class TestRecentConversationSnippet:
         """Extracts the last N user/assistant messages in chronological order."""
         snippet = self._get_snippet()
         mock_cm.contact_index.push_message(
-            contact_id=1, sender_name="Boss", thread_name=Medium.SMS_MESSAGE,
-            message_content="Hey, open the browser", role="user",
+            contact_id=1,
+            sender_name="Boss",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="Hey, open the browser",
+            role="user",
         )
         mock_cm.contact_index.push_message(
-            contact_id=1, sender_name="You", thread_name=Medium.SMS_MESSAGE,
-            message_content="Sure, opening it now", role="assistant",
+            contact_id=1,
+            sender_name="You",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="Sure, opening it now",
+            role="assistant",
         )
 
         result = snippet(mock_cm)
@@ -1906,8 +1913,11 @@ class TestRecentConversationSnippet:
         snippet = self._get_snippet()
         for i in range(10):
             mock_cm.contact_index.push_message(
-                contact_id=1, sender_name="Boss", thread_name=Medium.SMS_MESSAGE,
-                message_content=f"Message {i}", role="user",
+                contact_id=1,
+                sender_name="Boss",
+                thread_name=Medium.SMS_MESSAGE,
+                message_content=f"Message {i}",
+                role="user",
             )
 
         result = snippet(mock_cm, n=4)
@@ -1921,12 +1931,18 @@ class TestRecentConversationSnippet:
         """System markers like <Call Started> are excluded."""
         snippet = self._get_snippet()
         mock_cm.contact_index.push_message(
-            contact_id=1, sender_name="System", thread_name=Medium.PHONE_CALL,
-            message_content="<Call Started>", role="user",
+            contact_id=1,
+            sender_name="System",
+            thread_name=Medium.PHONE_CALL,
+            message_content="<Call Started>",
+            role="user",
         )
         mock_cm.contact_index.push_message(
-            contact_id=1, sender_name="Boss", thread_name=Medium.PHONE_CALL,
-            message_content="Hello there", role="user",
+            contact_id=1,
+            sender_name="Boss",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello there",
+            role="user",
         )
 
         result = snippet(mock_cm)
@@ -1999,7 +2015,8 @@ class TestRemoteControlComputerPrimitivesIntegration:
 
     @pytest.mark.asyncio
     async def test_screen_share_events_do_not_call_set_user_remote_control(
-        self, mock_cm,
+        self,
+        mock_cm,
     ):
         """Non-remote-control meet events do not trigger set_user_remote_control."""
         mock_cm.assistant_screen_share_active = False
