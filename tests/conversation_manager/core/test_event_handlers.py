@@ -38,6 +38,7 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
     UnifyMeetEnded,
     InboundPhoneUtterance,
+    InboundUnifyMeetUtterance,
     OutboundPhoneUtterance,
     CallGuidance,
     GetChatHistory,
@@ -1186,6 +1187,138 @@ class TestMeetInteractionEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         mock_cm.request_llm_run.assert_called()
+
+    # --------------------------------------------------------------------- #
+    # Screenshot capture on utterance
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_utterance_triggers_screenshot_capture_when_screen_sharing(
+        self,
+        mock_cm,
+    ):
+        """Inbound user utterance triggers screenshot capture when assistant
+        screen sharing is active."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.capture_assistant_screenshot = AsyncMock()
+
+        contact = {"contact_id": 1, "first_name": "Boss", "surname": "User"}
+        event = InboundUnifyMeetUtterance(
+            contact=contact,
+            content="So you need to click that button",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.capture_assistant_screenshot.assert_called_once_with(
+            "So you need to click that button",
+        )
+
+    @pytest.mark.asyncio
+    async def test_utterance_no_screenshot_capture_when_not_screen_sharing(
+        self,
+        mock_cm,
+    ):
+        """Inbound user utterance does NOT trigger screenshot capture when
+        assistant screen sharing is inactive."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.capture_assistant_screenshot = AsyncMock()
+
+        contact = {"contact_id": 1, "first_name": "Boss", "surname": "User"}
+        event = InboundUnifyMeetUtterance(
+            contact=contact,
+            content="Just some regular conversation",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.capture_assistant_screenshot.assert_not_called()
+
+    # --------------------------------------------------------------------- #
+    # Direct fast brain guidance on mode change
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_meet_event_sends_fast_brain_guidance_in_voice_mode(
+        self,
+        mock_cm,
+    ):
+        """Screen share events publish direct CallGuidance to the fast brain
+        when in voice mode, bypassing the slow brain for instant delivery."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.mode = Mode.MEET  # voice mode
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        # Verify CallGuidance was published to the fast brain channel
+        calls = mock_cm.event_broker.publish.call_args_list
+        guidance_calls = [
+            c for c in calls if c.args[0] == "app:call:call_guidance"
+        ]
+        assert len(guidance_calls) == 1
+        # The guidance text should contain behavioral instructions
+        import json as _json
+
+        data = _json.loads(guidance_calls[0].args[1])
+        content = data.get("payload", {}).get("content", "")
+        assert "screen sharing" in content.lower()
+
+    @pytest.mark.asyncio
+    async def test_meet_event_no_fast_brain_guidance_in_text_mode(
+        self,
+        mock_cm,
+    ):
+        """Screen share events do NOT publish fast brain guidance when in
+        text mode (no voice agent to receive it)."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.mode = Mode.TEXT
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        # No CallGuidance should be published
+        calls = mock_cm.event_broker.publish.call_args_list
+        guidance_calls = [
+            c for c in calls if c.args[0] == "app:call:call_guidance"
+        ]
+        assert len(guidance_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_all_six_meet_events_have_fast_brain_guidance(self, mock_cm):
+        """Each of the six meet interaction events has corresponding fast brain
+        guidance text defined."""
+        from unity.conversation_manager.domains.event_handlers import (
+            _MEET_FAST_BRAIN_GUIDANCE,
+        )
+
+        event_classes = [
+            AssistantScreenShareStarted,
+            AssistantScreenShareStopped,
+            UserScreenShareStarted,
+            UserScreenShareStopped,
+            UserRemoteControlStarted,
+            UserRemoteControlStopped,
+        ]
+        for cls in event_classes:
+            assert cls in _MEET_FAST_BRAIN_GUIDANCE, (
+                f"{cls.__name__} missing from _MEET_FAST_BRAIN_GUIDANCE"
+            )
+            assert len(_MEET_FAST_BRAIN_GUIDANCE[cls]) > 0
+
+    # --------------------------------------------------------------------- #
+    # Renderer tests
+    # --------------------------------------------------------------------- #
 
     def test_render_meet_state_empty_when_all_off(self):
         """render_meet_interaction_state returns empty when nothing is active."""
