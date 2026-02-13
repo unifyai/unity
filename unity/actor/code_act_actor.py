@@ -16,6 +16,7 @@ from typing import (
     Dict,
     Optional,
     Type,
+    Union,
     TYPE_CHECKING,
 )
 from pydantic import BaseModel
@@ -59,6 +60,63 @@ if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
     from unillm.types import PromptCacheParam
+
+
+# ---------------------------------------------------------------------------
+# Tool-policy type alias and sentinel
+# ---------------------------------------------------------------------------
+
+ToolPolicyFn = Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]]
+"""Signature for a tool-policy callback.
+
+Receives ``(step_index, tools_dict)`` and returns ``(tool_choice_mode,
+filtered_tools_dict)`` where *tool_choice_mode* is ``"auto"`` or
+``"required"``.
+"""
+
+_USE_DEFAULT: object = object()
+"""Sentinel indicating 'use the built-in function-first tool policy'."""
+
+
+def _default_tool_policy(
+    has_fm_tools: bool,
+    filter_tools: Callable[[Dict[str, Any]], Dict[str, Any]],
+) -> ToolPolicyFn:
+    """Build the default *function-first* tool policy.
+
+    On step 0, if FunctionManager discovery tools exist, only those tools are
+    exposed and a tool call is *required*.  On all subsequent steps the full
+    (statically-filtered) tool set is returned with ``"auto"`` mode.
+
+    Parameters
+    ----------
+    has_fm_tools:
+        Whether the base tool set contains any ``FunctionManager_*`` tools.
+    filter_tools:
+        The static-filter callable (``_filter_tools``) that enforces
+        ``can_compose`` / ``can_store`` / ``can_spawn_sub_agents``.
+    """
+
+    def _policy(step: int, tools: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        filtered = filter_tools(tools)
+
+        # Function-first: on the first model turn, require a FunctionManager call
+        # (search/filter/list) when those tools exist.  This avoids the model
+        # skipping the function library and going straight to execution.
+        if step == 0 and has_fm_tools:
+            fm_only = {
+                k: v
+                for k, v in filtered.items()
+                if isinstance(k, str)
+                and k.startswith("FunctionManager_")
+                and k != "FunctionManager_add_functions"
+            }
+            if fm_only:
+                return "required", fm_only
+
+        return "auto", filtered
+
+    return _policy
 
 
 # ---------------------------------------------------------------------------
@@ -834,6 +892,7 @@ class CodeActActor(BaseCodeActActor):
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
         prompt_caching: Optional["PromptCacheParam"] = None,
+        tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
     ):
         """
         Initializes the CodeActActor.
@@ -858,6 +917,15 @@ class CodeActActor(BaseCodeActActor):
             prompt_caching: Optional list of cache targets (e.g. ["system", "messages"]).
                 Enables Anthropic prompt caching for the specified components to reduce
                 costs and latency. Valid values: "tools", "system", "messages".
+            tool_policy: Controls per-turn dynamic tool filtering and tool-choice mode.
+                - ``_USE_DEFAULT`` (default): uses the built-in "function-first" policy
+                  that requires a FunctionManager discovery call on step 0.
+                - A custom ``ToolPolicyFn`` callable: receives ``(step, tools)`` and
+                  returns ``(mode, filtered_tools)``.  Static filters (``can_compose``,
+                  ``can_store``, etc.) are always applied before the custom policy sees
+                  the tools.
+                - ``None``: no dynamic policy; only the static ``can_compose`` /
+                  ``can_store`` / ``can_spawn_sub_agents`` filters apply.
         """
         super().__init__(
             environments=environments,
@@ -924,6 +992,7 @@ class CodeActActor(BaseCodeActActor):
         self.can_store: bool = bool(can_store)
         self.can_spawn_sub_agents: bool = bool(can_spawn_sub_agents)
         self.storage_check_on_return: bool = bool(storage_check_on_return)
+        self.tool_policy: Union[ToolPolicyFn, None, object] = tool_policy
         self._model = model
         self._preprocess_msgs = preprocess_msgs
         self._prompt_caching = prompt_caching
@@ -2838,36 +2907,31 @@ class CodeActActor(BaseCodeActActor):
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
-        # tool call is required. Concerns:
-        # 1) Static filters (can_compose, can_store, storage_check_on_return) --
-        #    applied via _filter_tools.
-        # 2) Function-first: on the first model turn, require a FunctionManager
-        #    discovery call (search/filter/list) when those tools exist.
-        _has_fm_tools = any(
-            isinstance(k, str) and k.startswith("FunctionManager_")
-            for k in base_tools.keys()
-        )
+        # tool call is required.  The static _filter_tools (can_compose,
+        # can_store, can_spawn_sub_agents) is always applied regardless of
+        # the dynamic policy.
+        if self.tool_policy is None:
+            # No dynamic policy -- only static filtering on every turn.
+            def _static_only_policy(step: int, tools: Dict[str, Any]):
+                return "auto", _filter_tools(tools)
 
-        def _tool_policy(step: int, tools: Dict[str, Any]):
-            filtered = _filter_tools(tools)
+            tool_policy: Optional[ToolPolicyFn] = _static_only_policy
+        elif self.tool_policy is _USE_DEFAULT:
+            # Default function-first policy.
+            _has_fm_tools = any(
+                isinstance(k, str) and k.startswith("FunctionManager_")
+                for k in base_tools.keys()
+            )
+            tool_policy = _default_tool_policy(_has_fm_tools, _filter_tools)
+        else:
+            # Custom caller-provided policy.  Wrap it so that _filter_tools
+            # is always applied first (static filters are never bypassed).
+            _user_policy = self.tool_policy
 
-            # Function-first: on the first model turn, require a FunctionManager call
-            # (search/filter/list) when those tools exist. This avoids the model skipping
-            # the function library and going straight to execution.
-            if step == 0 and _has_fm_tools:
-                fm_only = {
-                    k: v
-                    for k, v in filtered.items()
-                    if isinstance(k, str)
-                    and k.startswith("FunctionManager_")
-                    and k != "FunctionManager_add_functions"
-                }
-                if fm_only:
-                    return "required", fm_only
+            def _wrapped_policy(step: int, tools: Dict[str, Any]):
+                return _user_policy(step, _filter_tools(tools))
 
-            return "auto", filtered
-
-        tool_policy = _tool_policy
+            tool_policy = _wrapped_policy
 
         # Build an LLM client for this act() call
         client = new_llm_client(
