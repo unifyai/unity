@@ -36,9 +36,9 @@ class PackageOverlay:
         /tmp/unity_act_pkgs/<root_agent_id>/<child_agent_id>/<grandchild>/
 
     Each overlay only manages its own leaf directory.  Children always clean
-    up before parents (because ``run_sub_agent`` awaits completion), so the
-    parent's ``shutil.rmtree`` acts as a safety net for any orphaned
-    subdirectories.
+    up before parents (inner actor cleanup is attached to the handle's
+    lifecycle), so the parent's ``shutil.rmtree`` acts as a safety net for
+    any orphaned subdirectories.
 
     Thread-/task-safety: each act() call creates its own overlay with a
     unique agent_id, so concurrent overlays do not interfere.

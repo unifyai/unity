@@ -14,6 +14,7 @@ import pytest
 
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.prompt_builders import build_code_act_prompt
+from unity.common.async_tool_loop import SteerableToolHandle
 
 # ---------------------------------------------------------------------------
 # Symbolic tests — tool registration and gating
@@ -129,6 +130,7 @@ def test_prompt_includes_sub_agent_guidance_when_tool_present():
     assert "run_sub_agent" in prompt
     assert "When to delegate" in prompt
     assert "When NOT to delegate" in prompt
+    assert "steerable" in prompt.lower()
 
 
 @pytest.mark.timeout(30)
@@ -252,7 +254,8 @@ def test_run_sub_agent_discovery_scope_narrows_not_replaces():
 async def test_run_sub_agent_forwards_capability_flags():
     """
     Calling run_sub_agent with non-default capability flags should produce a
-    working handle (not crash). We start and immediately stop to verify wiring.
+    working steerable handle (not crash). We start and immediately stop to
+    verify wiring.
     """
     actor = CodeActActor(
         headless=True,
@@ -263,10 +266,8 @@ async def test_run_sub_agent_forwards_capability_flags():
     try:
         tools = actor.get_tools("act")
         # Call with all flags explicitly set to non-defaults where safe.
-        # can_compose=True (default), can_store=True, can_spawn_sub_agents=True,
-        # storage_check_on_return=True.
-        # We just verify the call doesn't raise — stop immediately.
-        coro = tools["run_sub_agent"](
+        # run_sub_agent returns a steerable handle; stop it immediately.
+        handle = await tools["run_sub_agent"](
             task="What is 1+1?",
             timeout=10,
             can_compose=True,
@@ -274,15 +275,49 @@ async def test_run_sub_agent_forwards_capability_flags():
             can_spawn_sub_agents=True,
             storage_check_on_return=True,
         )
-        # run_sub_agent awaits handle.result() internally, so we need to
-        # let the event loop start the inner act() and then cancel.
-        sub_task = asyncio.create_task(coro)
-        # Give it a moment to start then cancel.
-        await asyncio.sleep(0.5)
-        sub_task.cancel()
+        await handle.stop()
         try:
-            await sub_task
-        except asyncio.CancelledError:
+            await handle.result()
+        except Exception:
+            pass
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Symbolic test — run_sub_agent returns a steerable handle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_run_sub_agent_returns_steerable_handle():
+    """run_sub_agent should return a SteerableToolHandle, not a plain string."""
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+        can_spawn_sub_agents=True,
+    )
+    try:
+        tools = actor.get_tools("act")
+        handle = await tools["run_sub_agent"](
+            task="What is 1+1?",
+            timeout=10,
+        )
+        assert isinstance(handle, SteerableToolHandle)
+        assert callable(handle.result)
+        assert callable(handle.stop)
+        assert callable(handle.pause)
+        assert callable(handle.resume)
+        # Clean up
+        await handle.stop()
+        try:
+            await handle.result()
+        except Exception:
             pass
     finally:
         try:

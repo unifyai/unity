@@ -2406,14 +2406,15 @@ class CodeActActor(BaseCodeActActor):
             _parent_chat_context: list[dict] | None = None,
             _clarification_up_q: Optional[asyncio.Queue[str]] = None,
             _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        ) -> str:
+        ) -> "SteerableToolHandle":
             """
             Spawn a sub-agent to work on a focused sub-task.
 
             The sub-agent is an independent CodeActActor with its own sandbox,
             prompt, and (optionally) a curated set of directly callable
-            functions.  It runs the given task to completion and returns the
-            final result as a string.
+            functions.  It returns a steerable handle, allowing the outer loop
+            to monitor progress and steer (stop, pause, resume, interject) the
+            sub-agent mid-flight.
 
             When to use
             -----------
@@ -2500,8 +2501,11 @@ class CodeActActor(BaseCodeActActor):
 
             Returns
             -------
-            str
-                The sub-agent's final answer / result.
+            SteerableToolHandle
+                A live handle to the running sub-agent. The outer loop
+                automatically adopts it for mid-flight steering (stop, pause,
+                resume, interject). The final string result is surfaced when
+                the sub-agent completes.
             """
             effective_timeout = (
                 timeout if timeout is not None else min(self._timeout / 2, 300)
@@ -2558,30 +2562,27 @@ class CodeActActor(BaseCodeActActor):
                 prompt_caching=self._prompt_caching,
             )
 
-            try:
-                handle = await inner_actor.act(
-                    task,
-                    clarification_enabled=True,
-                    _parent_chat_context=_parent_chat_context,
-                    _clarification_up_q=_clarification_up_q,
-                    _clarification_down_q=_clarification_down_q,
-                )
+            handle = await inner_actor.act(
+                task,
+                clarification_enabled=True,
+                _parent_chat_context=_parent_chat_context,
+                _clarification_up_q=_clarification_up_q,
+                _clarification_down_q=_clarification_down_q,
+            )
 
+            # Attach inner actor cleanup to the handle's lifecycle so
+            # inner_actor.close() runs after the sub-agent completes.
+            _original_result = handle.result
+
+            async def _result_with_cleanup():
                 try:
-                    result = await asyncio.wait_for(
-                        handle.result(),
-                        timeout=effective_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    await handle.stop("Sub-agent timed out")
-                    result = (
-                        f"Sub-agent timed out after {effective_timeout}s. "
-                        f"The sub-task may have been too broad or complex."
-                    )
-            finally:
-                await inner_actor.close()
+                    return await _original_result()
+                finally:
+                    await inner_actor.close()
 
-            return result
+            handle.result = _result_with_cleanup  # type: ignore[assignment]
+
+            return handle
 
         tools["run_sub_agent"] = run_sub_agent
 

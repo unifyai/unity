@@ -162,6 +162,10 @@ _SUB_AGENT_GUIDANCE = textwrap.dedent("""
     Each sub-agent is a full CodeActActor with the same environment access (primitives,
     functions, etc.) but its own isolated sandbox and conversation context.
 
+    Sub-agents are **steerable** — once spawned, dynamic steering helpers appear
+    (stop, pause, resume, interject) so you can monitor progress and redirect
+    the sub-agent mid-flight, just like any other steerable handle.
+
     **When to delegate:**
     - The overall task decomposes into independent sub-problems that benefit from
       focused reasoning (e.g., "research X" and "research Y" are separate concerns).
@@ -180,7 +184,6 @@ _SUB_AGENT_GUIDANCE = textwrap.dedent("""
       see the parent's conversation or sandbox state. Include all relevant context
       in the task string.
     - Set an appropriate **timeout** for the expected complexity.
-    - Use the sub-agent's returned result to continue your own reasoning.
 """).strip()
 
 # ---------------------------------------------------------------------------
