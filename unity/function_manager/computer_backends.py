@@ -321,6 +321,14 @@ class ComputerBackend(ABC):
     def stop(self):
         """Cleanly shut down the backend."""
 
+    @abstractmethod
+    async def pause(self) -> None:
+        """Pause the agent's action loop at the next safe checkpoint."""
+
+    @abstractmethod
+    async def resume(self) -> None:
+        """Resume a paused agent's action loop."""
+
 
 # A valid 32x32 white PNG image encoded as base64 - used as default mock screenshot
 # This ensures screenshot values don't cause "invalid image format" errors when sent to LLMs
@@ -538,6 +546,22 @@ class MockComputerBackend(ComputerBackend):
 
         In MagnitudeBackend this interrupts the agent's action loop.
         In the mock, there's nothing to interrupt.
+        """
+
+    async def pause(self) -> None:
+        """
+        No-op pause for mock backend.
+
+        In MagnitudeBackend this pauses the agent's action loop.
+        In the mock, there's nothing to pause.
+        """
+
+    async def resume(self) -> None:
+        """
+        No-op resume for mock backend.
+
+        In MagnitudeBackend this resumes a paused agent's action loop.
+        In the mock, there's nothing to resume.
         """
 
     async def clear_pending_commands(self, run_id: int) -> None:
@@ -1017,6 +1041,24 @@ class MagnitudeBackend(ComputerBackend):
         except Exception as e:
             logger.info(
                 f"⚠️ Warning: Failed to send interrupt request. The action may continue in the background. Error: {e}",
+            )
+
+    async def pause(self) -> None:
+        """Pauses the agent's action loop at the next safe checkpoint."""
+        try:
+            await self._request("POST", "/pause")
+        except Exception as e:
+            logger.info(
+                f"⚠️ Warning: Failed to send pause request. Error: {e}",
+            )
+
+    async def resume(self) -> None:
+        """Resumes a paused agent's action loop."""
+        try:
+            await self._request("POST", "/resume")
+        except Exception as e:
+            logger.info(
+                f"⚠️ Warning: Failed to send resume request. Error: {e}",
             )
 
     async def observe(

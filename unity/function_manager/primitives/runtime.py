@@ -250,6 +250,25 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         b64 = await self.computer.get_screenshot()
         return Image.open(io.BytesIO(base64.b64decode(b64)))
 
+    # ── Steering control (not exposed as actor tools) ────────────────────
+
+    async def pause(self) -> None:
+        """Pause the underlying browser agent's action loop.
+
+        Called programmatically by the actor's steering mechanism when the
+        CodeActActor is paused.  This is not an actor tool — it is never
+        listed in ``_DYNAMIC_METHODS`` or ``_PRIMITIVE_METHODS``.
+        """
+        await self.computer.pause()
+
+    async def resume(self) -> None:
+        """Resume the underlying browser agent's action loop.
+
+        Called programmatically by the actor's steering mechanism when the
+        CodeActActor is resumed.
+        """
+        await self.computer.resume()
+
 
 # =============================================================================
 # Async Wrapper for Sync Managers
