@@ -59,8 +59,6 @@ from unity.conversation_manager.events import (
     UnifyMeetReceived,
     StartupEvent,
     AssistantUpdateEvent,
-    ActorPause,
-    ActorResume,
     SyncContacts,
     PreHireMessage,
     Ping,
@@ -951,111 +949,7 @@ class TestStartupEvents:
 
 
 class TestSystemEvents:
-    """Test handling of system events (pause_actor, resume_actor, sync_contacts)."""
-
-    @pytest.mark.asyncio
-    async def test_handle_pause_actor_event(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test handling of pause_actor system event."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:actor:*")
-
-            message = create_pubsub_message(
-                "unity_system_event",
-                {
-                    "event_type": "pause_actor",
-                    "message": "User took control of desktop",
-                },
-            )
-
-            cm.handle_message(message)
-            # Poll for message acknowledgment instead of fixed sleep
-            await _wait_for_condition(lambda: message._acked)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg is not None
-            assert msg["channel"] == "app:actor:pause_actor"
-
-            event = Event.from_json(msg["data"])
-            assert isinstance(event, ActorPause)
-            assert event.reason == "User took control of desktop"
-
-    @pytest.mark.asyncio
-    async def test_handle_pause_actor_default_message(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test pause_actor with default message when not provided."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:actor:*")
-
-            message = create_pubsub_message(
-                "unity_system_event",
-                {
-                    "event_type": "pause_actor",
-                    "message": None,  # No message provided
-                },
-            )
-
-            cm.handle_message(message)
-            # Poll for message acknowledgment instead of fixed sleep
-            await _wait_for_condition(lambda: message._acked)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            event = Event.from_json(msg["data"])
-            assert "taken control of the desktop" in event.reason
-
-    @pytest.mark.asyncio
-    async def test_handle_resume_actor_event(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test handling of resume_actor system event."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:actor:*")
-
-            message = create_pubsub_message(
-                "unity_system_event",
-                {
-                    "event_type": "resume_actor",
-                    "message": "User returned control",
-                },
-            )
-
-            cm.handle_message(message)
-            # Poll for message acknowledgment instead of fixed sleep
-            await _wait_for_condition(lambda: message._acked)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg is not None
-            assert msg["channel"] == "app:actor:resume_actor"
-
-            event = Event.from_json(msg["data"])
-            assert isinstance(event, ActorResume)
-            assert event.reason == "User returned control"
+    """Test handling of system events (sync_contacts, screen share, remote control)."""
 
     @pytest.mark.asyncio
     async def test_handle_sync_contacts_event(

@@ -310,14 +310,6 @@ class CommsManager:
 
                 # Map system event types to internal event classes.
                 _SYSTEM_EVENT_MAP = {
-                    "pause_actor": lambda r: ActorPause(
-                        reason=r
-                        or "The user has just taken control of the desktop, we're pausing our own actions temporarily.",
-                    ),
-                    "resume_actor": lambda r: ActorResume(
-                        reason=r
-                        or "The user has just handed control of the desktop back to us, we're now continuing our control of the desktop.",
-                    ),
                     "sync_contacts": lambda r: SyncContacts(
                         reason=r or "Contact sync requested via system event.",
                     ),
@@ -342,19 +334,11 @@ class CommsManager:
                     ),
                 }
 
-                # Channel routing: actor events go to app:actor:*, others to app:comms:*.
-                _ACTOR_EVENTS = {"pause_actor", "resume_actor"}
-
                 factory = _SYSTEM_EVENT_MAP.get(system_event_type)
                 if factory is not None:
                     evt = factory(reason)
-                    channel_prefix = (
-                        "app:actor"
-                        if system_event_type in _ACTOR_EVENTS
-                        else "app:comms"
-                    )
                     self._publish_from_callback(
-                        f"{channel_prefix}:{system_event_type}",
+                        f"app:comms:{system_event_type}",
                         evt.to_json(),
                     )
                 message.ack()

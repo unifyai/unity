@@ -881,57 +881,6 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     await cm.request_llm_run()
 
 
-@EventHandler.register((ActorPause, ActorResume))
-async def _(
-    event: ActorPause | ActorResume,
-    cm: "ConversationManager",
-    *args,
-    **kwargs,
-):
-    op = "pause" if isinstance(event, ActorPause) else "resume"
-    cm._session_logger.info("actor_request", f"Received action {op} event")
-    reason = getattr(event, "reason", "")
-    affected: list[int] = []
-    for hid, data in list(cm.in_flight_actions.items()):
-        handle = data.get("handle")
-        if handle is None:
-            continue
-
-        try:
-            if op == "pause":
-                pause_r = handle.pause()
-                if asyncio.iscoroutine(pause_r) or isinstance(pause_r, asyncio.Future):
-                    await pause_r
-            else:
-                resume_r = handle.resume()
-                if asyncio.iscoroutine(resume_r) or isinstance(
-                    resume_r,
-                    asyncio.Future,
-                ):
-                    await resume_r
-            affected.append(int(hid))
-        except Exception as e:
-            cm._session_logger.error(
-                "actor_request",
-                f"Failed to {op} action {hid}: {e}",
-            )
-
-    for hid in affected:
-        try:
-            await cm.event_broker.publish(
-                "app:actor:notification",
-                ActorNotification(
-                    handle_id=int(hid),
-                    response=f"Action {op}d: {reason}",
-                ).to_json(),
-            )
-        except Exception as e:
-            cm._session_logger.error(
-                "actor_request",
-                f"Failed to publish {op} notification for action {hid}: {e}",
-            )
-
-
 @EventHandler.register(SyncContacts)
 async def _(
     event: SyncContacts,
@@ -1062,14 +1011,6 @@ async def _(
                 "app:call:call_guidance",
                 guidance_event.to_json(),
             )
-
-    # Remote control implies actor pause/resume.
-    if isinstance(event, UserRemoteControlStarted):
-        pause_event = ActorPause(reason=event.reason)
-        await EventHandler.handle_event(pause_event, cm, *args, **kwargs)
-    elif isinstance(event, UserRemoteControlStopped):
-        resume_event = ActorResume(reason=event.reason)
-        await EventHandler.handle_event(resume_event, cm, *args, **kwargs)
 
     await cm.request_llm_run()
 

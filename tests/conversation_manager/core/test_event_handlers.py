@@ -46,8 +46,6 @@ from unity.conversation_manager.events import (
     ActorHandleResponse,
     ActorResult,
     ActorClarificationRequest,
-    ActorPause,
-    ActorResume,
     NotificationInjectedEvent,
     NotificationUnpinnedEvent,
     SyncContacts,
@@ -296,8 +294,6 @@ class TestEventTypeToLogKey:
     def test_actor_events(self):
         """Actor event names convert correctly."""
         assert _event_type_to_log_key(ActorResult) == "actor_result"
-        assert _event_type_to_log_key(ActorPause) == "actor_pause"
-        assert _event_type_to_log_key(ActorResume) == "actor_resume"
 
 
 # =============================================================================
@@ -1000,47 +996,6 @@ class TestActorEventHandlers:
         assert clarification["action_name"] == "clarification_request"
         assert clarification["query"] == "What do you mean by 'documents'?"
 
-    @pytest.mark.asyncio
-    async def test_actor_pause_pauses_action_handles(self, mock_cm):
-        """ActorPause pauses all in-flight action handles."""
-        mock_handle = MagicMock()
-        mock_handle.pause = MagicMock(return_value=None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorPause(reason="User requested pause")
-
-        await EventHandler.handle_event(event, mock_cm)
-
-        mock_handle.pause.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_actor_resume_resumes_action_handles(self, mock_cm):
-        """ActorResume resumes all paused action handles."""
-        mock_handle = MagicMock()
-        mock_handle.resume = MagicMock(return_value=None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorResume(reason="Continue execution")
-
-        await EventHandler.handle_event(event, mock_cm)
-
-        mock_handle.resume.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_actor_pause_handles_async_pause(self, mock_cm):
-        """ActorPause handles async pause methods."""
-        mock_handle = MagicMock()
-        mock_handle.pause = AsyncMock()
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorPause(reason="Async pause")
-
-        await EventHandler.handle_event(event, mock_cm)
-
-        mock_handle.pause.assert_called_once()
 
 
 # =============================================================================
@@ -1108,20 +1063,14 @@ class TestMeetInteractionEventHandlers:
         assert mock_cm.user_screen_share_active is False
 
     @pytest.mark.asyncio
-    async def test_user_remote_control_started_sets_flag_and_pauses_actor(
+    async def test_user_remote_control_started_sets_flag(
         self,
         mock_cm,
     ):
-        """UserRemoteControlStarted sets flag and pauses in-flight actions."""
+        """UserRemoteControlStarted sets user_remote_control_active to True."""
         mock_cm.assistant_screen_share_active = False
         mock_cm.user_screen_share_active = False
         mock_cm.user_remote_control_active = False
-
-        mock_handle = MagicMock()
-        mock_handle.pause = MagicMock(return_value=None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Task", "handle": mock_handle, "handle_actions": []},
-        }
 
         event = UserRemoteControlStarted(
             reason="User took remote control of assistant desktop",
@@ -1129,23 +1078,16 @@ class TestMeetInteractionEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_remote_control_active is True
-        mock_handle.pause.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_user_remote_control_stopped_clears_flag_and_resumes_actor(
+    async def test_user_remote_control_stopped_clears_flag(
         self,
         mock_cm,
     ):
-        """UserRemoteControlStopped clears flag and resumes in-flight actions."""
+        """UserRemoteControlStopped clears user_remote_control_active."""
         mock_cm.assistant_screen_share_active = False
         mock_cm.user_screen_share_active = False
         mock_cm.user_remote_control_active = True
-
-        mock_handle = MagicMock()
-        mock_handle.resume = MagicMock(return_value=None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Task", "handle": mock_handle, "handle_actions": []},
-        }
 
         event = UserRemoteControlStopped(
             reason="User released remote control of assistant desktop",
@@ -1153,7 +1095,6 @@ class TestMeetInteractionEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.user_remote_control_active is False
-        mock_handle.resume.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_meet_interaction_pushes_notification(self, mock_cm):
@@ -1627,34 +1568,6 @@ class TestDirectMessageEventHandler:
 
 class TestEventHandlerEdgeCases:
     """Tests for edge cases and error handling in event handlers."""
-
-    @pytest.mark.asyncio
-    async def test_actor_pause_handles_missing_handle(self, mock_cm):
-        """ActorPause handles actions without handles gracefully."""
-        # Action with no handle (None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action without handle", "handle": None, "handle_actions": []},
-        }
-        event = ActorPause(reason="Test pause")
-
-        # Should not raise
-        await EventHandler.handle_event(event, mock_cm)
-
-    @pytest.mark.asyncio
-    async def test_actor_pause_handles_exception_in_handle(self, mock_cm):
-        """ActorPause handles exceptions from handle.pause() gracefully."""
-        mock_handle = MagicMock()
-        mock_handle.pause = MagicMock(side_effect=Exception("Pause failed"))
-        mock_cm.in_flight_actions = {
-            1: {"query": "Do something", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorPause(reason="Test")
-
-        # Should not raise - exception is caught
-        await EventHandler.handle_event(event, mock_cm)
-
-        # Error should be logged
-        mock_cm._session_logger.error.assert_called()
 
     @pytest.mark.asyncio
     async def test_actor_clarification_for_nonexistent_action(self, mock_cm):
