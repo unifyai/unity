@@ -46,6 +46,14 @@ class ProductionSettings(BaseSettings):
     """
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Local Workspace
+    # ─────────────────────────────────────────────────────────────────────────
+    # Root directory for local file operations, CodeActActor working directory,
+    # virtual environments, and .env storage.  Defaults to ~/Unity/Local when
+    # empty.  Override via UNITY_LOCAL_ROOT env var.
+    UNITY_LOCAL_ROOT: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
     UNIFY_MODEL: str = "claude-4.6-opus@anthropic"

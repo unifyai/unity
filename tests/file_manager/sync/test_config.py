@@ -15,7 +15,7 @@ class TestSyncConfig:
         assert config.ssh_host == ""
         assert config.ssh_port == 2222
         assert config.ssh_user == ""
-        assert config.remote_root == "/root"
+        assert config.remote_root == "/Unity/Local"
         assert config.sync_on_write is True
         assert config.conflict_resolution == "latest"
         assert config.max_retries == 3
