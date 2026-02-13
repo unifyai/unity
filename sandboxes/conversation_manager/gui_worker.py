@@ -52,9 +52,8 @@ from sandboxes.conversation_manager.ipc_protocol import (
     MessageType,
     create_message,
     parse_message,
-    serialize_event,
 )
-from unity.events.event_bus import EVENT_BUS, Event as BusEvent
+from unity.events.types.manager_method import ManagerMethodPayload
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -463,94 +462,33 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
     return args
 
 
-async def _subscribe_event_bus(*, sender: _Sender, stop_event: asyncio.Event) -> None:
-    """
-    Subscribe to selected EventBus event types and forward to the UI.
-
-    We forward `ManagerMethod` only (high-signal, low-volume).
-    """
-
-    import time as _time
-
-    async def _forward(evts: list[BusEvent], *, bus_type: str) -> None:
-        # ManagerMethod events are low-volume and high-signal; prefer delivery.
-        critical = bus_type == "ManagerMethod"
-        for e in evts:
-            try:
-                sender.send_event(
-                    channel=f"eventbus:{bus_type}",
-                    event=serialize_event(e),
-                    critical=critical,
-                )
-            except Exception:
-                continue
-
-    def _mk_async_callback(bus_type: str):
-        async def _cb(evts: list[BusEvent]) -> None:
-            await _forward(evts, bus_type=bus_type)
-
-        return _cb
-
-    # Wait for EventBus initialization.
-    #
-    # In this sandbox, `unity.init()` is performed as part of ConversationManager's
-    # manager initialization (inside its own initialization workflow). If we try to
-    # register callbacks too early, EVENT_BUS is still a proxy and will raise.
-    import time as _time
-
-    started_at = _time.monotonic()
-    while not stop_event.is_set():
+def _forward_manager_method_event(
+    *,
+    sender: _Sender,
+    call_id: str,
+    payload: ManagerMethodPayload,
+) -> None:
+    """Forward one ManagerMethod payload to the UI as an EventBus-style event."""
+    try:
+        event = {
+            "calling_id": str(call_id or ""),
+            "payload": payload.model_dump(mode="json"),
+        }
+        sender.send_event(
+            channel="eventbus:ManagerMethod",
+            event=event,
+            critical=True,
+        )
+    except Exception as exc:
         try:
-            if bool(EVENT_BUS):
-                break
+            LG.warning(
+                "[runtime] failed forwarding ManagerMethod %s (%s: %s)",
+                str(call_id or ""),
+                type(exc).__name__,
+                exc,
+            )
         except Exception:
             pass
-        # After a while, warn the UI but keep waiting; initialization can be slow
-        # on fresh environments.
-        if (_time.monotonic() - started_at) > 30.0:
-            try:
-                sender.send_error(
-                    "EventBus not initialized yet (still waiting). "
-                    "Trace/Event Tree panes will remain empty until it becomes available.",
-                    tb="",
-                )
-            except Exception:
-                pass
-            started_at = _time.monotonic()  # rate-limit warnings
-        await asyncio.sleep(0.15)
-
-    if stop_event.is_set():
-        return
-
-    # Register callbacks (retry until success or shutdown).
-    registered = False
-    while (not stop_event.is_set()) and (not registered):
-        try:
-            await EVENT_BUS.register_callback(
-                event_type="ManagerMethod",
-                callback=_mk_async_callback("ManagerMethod"),
-                every_n=1,
-            )
-            registered = True
-            try:
-                LG.info("[runtime] EventBus callbacks registered")
-            except Exception:
-                pass
-        except Exception as exc:
-            # If EventBus isn't available yet, keep the worker running; the UI will
-            # still show conversation lines and broker-derived logs.
-            try:
-                LG.warning(
-                    "[runtime] EventBus subscription not ready (%s: %s); retrying...",
-                    type(exc).__name__,
-                    exc,
-                )
-            except Exception:
-                pass
-            await asyncio.sleep(0.5)
-
-    # Keep task alive until shutdown.
-    await stop_event.wait()
 
 
 async def _computer_status_streamer(
@@ -1025,12 +963,12 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             trace_display=trace_display,
             event_tree_display=event_tree_display,
             log_aggregator=log_aggregator,
+            manager_method_callback=lambda call_id, payload: _forward_manager_method_event(
+                sender=sender,
+                call_id=call_id,
+                payload=payload,
+            ),
         ),
-    )
-
-    # Start EventBus stream.
-    event_bus_task = asyncio.create_task(
-        _subscribe_event_bus(sender=sender, stop_event=stop_event),
     )
 
     computer_task = asyncio.create_task(
@@ -1084,7 +1022,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             return
 
     _supervise("subscriber_task", subscriber_task)
-    _supervise("event_bus_task", event_bus_task)
     _supervise("computer_task", computer_task)
     _supervise("ipc_task", ipc_task)
     _supervise("state_task", state_task)
@@ -1096,7 +1033,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         await stop_event.wait()
     finally:
         # Stop background tasks.
-        for t in (ipc_task, subscriber_task, event_bus_task, computer_task, state_task):
+        for t in (ipc_task, subscriber_task, computer_task, state_task):
             try:
                 t.cancel()
             except Exception:
@@ -1104,7 +1041,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         await asyncio.gather(
             ipc_task,
             subscriber_task,
-            event_bus_task,
             computer_task,
             state_task,
             return_exceptions=True,

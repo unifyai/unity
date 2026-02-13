@@ -60,6 +60,10 @@ EventCallback = (
     Callable[[str, dict[str, Any]], Awaitable[None]]
     | Callable[[str, dict[str, Any]], None]
 )
+ManagerMethodCallback = (
+    Callable[[str, ManagerMethodPayload], Awaitable[None]]
+    | Callable[[str, ManagerMethodPayload], None]
+)
 
 
 def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[str]:
@@ -127,6 +131,7 @@ async def subscribe_to_responses(
     sandbox_state: object,
     display_callback: DisplayCallback,
     event_callback: EventCallback | None = None,
+    manager_method_callback: ManagerMethodCallback | None = None,
     include_call_guidance: bool = False,
     voice_enabled: bool = False,
     stop_event: asyncio.Event | None = None,
@@ -170,10 +175,15 @@ async def subscribe_to_responses(
                 # Register (once) for ManagerMethod events on the in-process EventBus.
                 # This is the source of truth for manager call hierarchy emitted by the Actor
                 # and state managers.
-                if event_tree_display is not None or log_aggregator is not None:
+                if (
+                    event_tree_display is not None
+                    or log_aggregator is not None
+                    or manager_method_callback is not None
+                ):
                     await _ensure_manager_method_subscription(
                         event_tree_display=event_tree_display,
                         log_aggregator=log_aggregator,
+                        manager_method_callback=manager_method_callback,
                     )
                 # Best-effort UI refresh hook for the GUI.
                 _MM_SUB_STATE["refresh"] = ui_refresh_callback
@@ -680,6 +690,7 @@ _MM_SUB_STATE: dict[str, object | None] = {
     "task": None,
     "tree": None,
     "logs": None,
+    "manager_method_callback": None,
     "refresh": None,
 }
 
@@ -688,6 +699,7 @@ async def _ensure_manager_method_subscription(
     *,
     event_tree_display: EventTreeDisplay | None,
     log_aggregator: LogAggregator | None,
+    manager_method_callback: ManagerMethodCallback | None,
 ) -> None:
     """
     Register a single EventBus callback for ManagerMethod events.
@@ -697,6 +709,7 @@ async def _ensure_manager_method_subscription(
     """
     _MM_SUB_STATE["tree"] = event_tree_display
     _MM_SUB_STATE["logs"] = log_aggregator
+    _MM_SUB_STATE["manager_method_callback"] = manager_method_callback
 
     # Already registered.
     if _MM_SUB_STATE.get("registered") is True:
@@ -729,6 +742,14 @@ async def _ensure_manager_method_subscription(
                     if label:
                         msg += f" — {label}"
                     logs.handle_structured_event(category="manager", message=msg)
+            except Exception:
+                pass
+            try:
+                cb = _MM_SUB_STATE.get("manager_method_callback")
+                if callable(cb):
+                    ret = cb(e.calling_id, payload)
+                    if asyncio.iscoroutine(ret):
+                        await ret  # type: ignore[misc]
             except Exception:
                 pass
 
