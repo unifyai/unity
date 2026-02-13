@@ -120,10 +120,9 @@ class TestMockComputerBackendMethods:
         assert "url" in result
         assert result["format"] == "markdown"
 
-    @pytest.mark.asyncio
-    async def test_stop(self, backend):
+    def test_stop(self, backend):
         """stop() should be a no-op (not raise)."""
-        await backend.stop()  # Should not raise
+        backend.stop()  # Should not raise
 
 
 class TestMockComputerBackendExtras:
@@ -185,4 +184,4 @@ class TestComputerWithMockMode:
         """Computer with mock mode should return mock URL."""
         computer = Computer(mode="mock")
         url = await computer.get_current_url()
-        assert url == "https://mock.example.com"
+        assert url == "https://google.com"

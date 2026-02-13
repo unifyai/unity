@@ -53,14 +53,14 @@ class Computer:
             else secret_manager
         )
 
-    async def act(self, instruction: str, expectation: str = "") -> str:
+    async def act(self, instruction: str) -> str:
         """Executes a single, high-level action by delegating to the active backend."""
-        instruction = self._secret_manager.from_placeholder(instruction)
-        return await self.backend.act(instruction, expectation)
+        instruction = await self._secret_manager.from_placeholder(instruction)
+        return await self.backend.act(instruction)
 
     async def observe(self, query: str, response_format: Type = str) -> Any:
         """Asks a question by delegating to the active backend."""
-        query = self._secret_manager.from_placeholder(query)
+        query = await self._secret_manager.from_placeholder(query)
         return await self.backend.observe(query, response_format)
 
     async def navigate(self, url: str) -> str:

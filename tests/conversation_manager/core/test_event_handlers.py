@@ -138,7 +138,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm._session_logger = mock_session_logger
     cm.event_broker = mock_event_broker
     cm.call_manager = mock_call_manager
-    cm.mode = "text"
+    cm.mode = Mode.TEXT
     cm.chat_history = []
     cm.in_flight_actions = {}
     cm.completed_actions = {}
@@ -1886,11 +1886,11 @@ class TestRecentConversationSnippet:
         """Extracts the last N user/assistant messages in chronological order."""
         snippet = self._get_snippet()
         mock_cm.contact_index.push_message(
-            contact_id=1, sender_name="Boss", thread_name=Medium.SMS,
+            contact_id=1, sender_name="Boss", thread_name=Medium.SMS_MESSAGE,
             message_content="Hey, open the browser", role="user",
         )
         mock_cm.contact_index.push_message(
-            contact_id=1, sender_name="You", thread_name=Medium.SMS,
+            contact_id=1, sender_name="You", thread_name=Medium.SMS_MESSAGE,
             message_content="Sure, opening it now", role="assistant",
         )
 
@@ -1906,7 +1906,7 @@ class TestRecentConversationSnippet:
         snippet = self._get_snippet()
         for i in range(10):
             mock_cm.contact_index.push_message(
-                contact_id=1, sender_name="Boss", thread_name=Medium.SMS,
+                contact_id=1, sender_name="Boss", thread_name=Medium.SMS_MESSAGE,
                 message_content=f"Message {i}", role="user",
             )
 
@@ -1952,9 +1952,9 @@ class TestRemoteControlComputerPrimitivesIntegration:
 
         mock_cp = MagicMock()
         with patch(
-            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
-        ) as mock_registry:
-            mock_registry.get_instance.return_value = mock_cp
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=mock_cp,
+        ):
             event = UserRemoteControlStarted(reason="User took control")
             await EventHandler.handle_event(event, mock_cm)
 
@@ -1972,9 +1972,9 @@ class TestRemoteControlComputerPrimitivesIntegration:
 
         mock_cp = MagicMock()
         with patch(
-            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
-        ) as mock_registry:
-            mock_registry.get_instance.return_value = mock_cp
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=mock_cp,
+        ):
             event = UserRemoteControlStopped(reason="User released control")
             await EventHandler.handle_event(event, mock_cm)
 
@@ -1990,9 +1990,9 @@ class TestRemoteControlComputerPrimitivesIntegration:
         mock_cm.user_remote_control_active = False
 
         with patch(
-            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
-        ) as mock_registry:
-            mock_registry.get_instance.return_value = None
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=None,
+        ):
             event = UserRemoteControlStarted(reason="User took control")
             # Should not raise
             await EventHandler.handle_event(event, mock_cm)
@@ -2008,9 +2008,9 @@ class TestRemoteControlComputerPrimitivesIntegration:
 
         mock_cp = MagicMock()
         with patch(
-            "unity.conversation_manager.domains.event_handlers.ManagerRegistry"
-        ) as mock_registry:
-            mock_registry.get_instance.return_value = mock_cp
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=mock_cp,
+        ):
             event = AssistantScreenShareStarted(reason="Screen share started")
             await EventHandler.handle_event(event, mock_cm)
 
