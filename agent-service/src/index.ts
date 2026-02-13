@@ -21,23 +21,11 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- File System and Command Execution Utilities ---
 //
-// On cloud VMs the service runs as root and `/root` is the natural workspace.
-// Locally (macOS, Windows, non-root Linux) that path is either non-existent or
-// requires elevated privileges, so we fall back to `~/.unity-workspace`.
-// An explicit `UNITY_LOCAL_ROOT` env var always takes precedence.
-function _resolveLocalRoot(): string {
-  if (process.env.UNITY_LOCAL_ROOT) {
-    return process.env.UNITY_LOCAL_ROOT;
-  }
-  const candidate = path.join(path.parse(process.cwd()).root, 'root');
-  try {
-    fs.accessSync(candidate, fs.constants.W_OK);
-    return candidate;
-  } catch {
-    return path.join(os.homedir(), '.unity-workspace');
-  }
-}
-const LOCAL_ROOT = _resolveLocalRoot();
+// Workspace root for file operations, command execution, and browser downloads.
+// Matches Unity's get_local_root() default of ~/Unity/Local.
+// Override via UNITY_LOCAL_ROOT env var.
+const LOCAL_ROOT = process.env.UNITY_LOCAL_ROOT || path.join(os.homedir(), 'Unity', 'Local');
+try { fs.mkdirSync(LOCAL_ROOT, { recursive: true }); } catch (_e) { /* ignore */ }
 const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
 
 

@@ -4888,9 +4888,8 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
 
     # Remote Windows local root (matches LOCAL_ROOT in agent-service)
-    # agent-service resolves to /root on cloud VMs, ~/ locally
-    # On Windows: 'C:\root'
-    REMOTE_WINDOWS_LOCAL_ROOT = "C:\\root"
+    # Both default to ~/Unity/Local; on Windows VMs this is C:\Unity\Local
+    REMOTE_WINDOWS_LOCAL_ROOT = "C:\\Unity\\Local"
 
     # Shell mode for remote Windows command execution ('powershell' or 'cmd')
     REMOTE_WINDOWS_SHELL_MODE = "powershell"

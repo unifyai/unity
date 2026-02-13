@@ -22,7 +22,7 @@ def sync_config(tmp_path):
         ssh_user="testuser",
         ssh_key_path=str(tmp_path / "test_key"),
         local_root=str(tmp_path / "unity"),
-        remote_root="/root",
+        remote_root="/Unity/Local",
     )
 
 

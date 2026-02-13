@@ -570,9 +570,9 @@ _original_home: str | None = None
 def pytest_configure(config):
     # ------------------------------------------------------------------
     # Isolate HOME so that tests never touch the real home directory.
-    # get_local_root() defaults to Path.home(), and the process cwd is
-    # set to the same path at startup.  By pointing HOME at a temp dir
-    # we keep Downloads/, .env, snapshots, etc. sandboxed.
+    # get_local_root() defaults to ~/Unity/Local, and the process cwd
+    # is set to the same path at startup.  By pointing HOME at a temp
+    # dir we keep Downloads/, .env, snapshots, etc. sandboxed.
     # ------------------------------------------------------------------
     import tempfile
 

@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 class LocalFileSystemAdapter(BaseFileSystemAdapter):
     """Adapter for a local directory tree with optional VM sync.
 
-    This adapter operates on ~ (home directory) for user files. When sync is
+    This adapter operates on ~/Unity/Local for user files. When sync is
     enabled and a managed VM is configured (via SESSION_DETAILS.desktop_url),
-    the home directory is synchronized with the VM via rclone SFTP.
+    the workspace directory is synchronized with the VM via rclone SFTP.
 
     Sync lifecycle:
     - Job start: Bidirectional sync with --resync (start_sync → bisync)
@@ -39,7 +39,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         Parameters
         ----------
         root : str | None, default None
-            Root directory for file operations. Defaults to ~ (home).
+            Root directory for file operations. Defaults to ~/Unity/Local.
         enable_sync : bool, default False
             Whether to enable VM file sync. Actual sync only occurs if
             SESSION_DETAILS.desktop_url is configured.

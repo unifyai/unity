@@ -18,10 +18,11 @@ class SyncConfig:
     """Configuration for managed VM file sync via rclone SFTP.
 
     Paths:
-    - local_root: get_local_root() (defaults to ~ ; /root in production)
-    - remote_root: /root (VM)
+    - local_root: get_local_root() (defaults to ~/Unity/Local)
+    - remote_root: /Unity/Local (VM, set up by ubuntu-vm-startup.sh)
 
-    Syncs /root which contains user files (Downloads/, functions/, etc.).
+    Syncs the dedicated Unity workspace which contains user files
+    (Downloads/, functions/, etc.).
 
     Conflict resolution: Latest wins (by modification time)
     """
@@ -38,7 +39,7 @@ class SyncConfig:
     local_root: str = field(
         default_factory=lambda: _get_local_root(),
     )
-    remote_root: str = "/root"
+    remote_root: str = "/Unity/Local"
 
     # Sync behavior
     sync_on_write: bool = True
@@ -54,29 +55,6 @@ class SyncConfig:
             ".DS_Store",
             ".bisync/**",  # rclone's own state files
             "venvs/**",  # Virtual environments (managed via HTTP API)
-            # Shell config (overwriting breaks the VM)
-            ".ssh/**",
-            ".gnupg/**",
-            ".bash_history",
-            ".bashrc",
-            ".profile",
-            # Runtime / cache
-            ".cache/**",
-            ".local/**",
-            ".npm/**",
-            ".bun/**",
-            # Desktop environment artifacts
-            ".dbus/**",
-            ".ICEauthority",
-            ".vnc/**",
-            ".config/**",
-            # Non-relevant VM home directories
-            "Music/**",
-            "Pictures/**",
-            "Videos/**",
-            "Public/**",
-            "snap/**",
-            "Templates/**",
         ],
     )
 
@@ -115,7 +93,7 @@ class SyncConfig:
 
         print(
             f"[FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
-            f"local=~, remote=/root",
+            f"local=~/Unity/Local, remote=/Unity/Local",
         )
 
         return cls(
