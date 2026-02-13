@@ -322,9 +322,8 @@ def log_manager_call(
         import inspect as _inspect
 
         _sig = _inspect.signature(func)
-        _accepts_call_id = (
-            call_id_kw in _sig.parameters
-            or any(p.kind == p.VAR_KEYWORD for p in _sig.parameters.values())
+        _accepts_call_id = call_id_kw in _sig.parameters or any(
+            p.kind == p.VAR_KEYWORD for p in _sig.parameters.values()
         )
 
         @functools.wraps(func, updated=())
@@ -355,7 +354,11 @@ def log_manager_call(
                 kwargs[call_id_kw] = call_id
             handle = await func(self, *args, **kwargs)
             return wrap_handle_with_logging(
-                handle, call_id, manager_name, method_name, display_label=display_label,
+                handle,
+                call_id,
+                manager_name,
+                method_name,
+                display_label=display_label,
             )
 
         return _wrapper

@@ -193,7 +193,12 @@ class ContactManager(BaseContactManager):
     # ──────────────────────────────────────────────────────────────────────
     @functools.wraps(BaseContactManager.ask, updated=())
     @manager_tool
-    @log_manager_call("ContactManager", "ask", payload_key="question", display_label="Checking Contact Book")
+    @log_manager_call(
+        "ContactManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Contact Book",
+    )
     async def ask(
         self,
         text: str,
@@ -261,7 +266,12 @@ class ContactManager(BaseContactManager):
         return handle
 
     @functools.wraps(BaseContactManager.update, updated=())
-    @log_manager_call("ContactManager", "update", payload_key="request", display_label="Updating Contact Book")
+    @log_manager_call(
+        "ContactManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Contact Book",
+    )
     async def update(
         self,
         text: str,

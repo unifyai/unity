@@ -37,7 +37,9 @@ async def test_ask_guard_triggers_when_enabled(monkeypatch):
     # With cancellation disabled, ReadOnlyAskGuardHandle.result() awaits
     # the classifier task as its synchronization point.
     monkeypatch.setattr(
-        ReadOnlyAskGuardHandle, "_cancel_classifier", lambda self: None,
+        ReadOnlyAskGuardHandle,
+        "_cancel_classifier",
+        lambda self: None,
     )
 
     # Mutation-intent phrasing to trigger the guard classifier (real LLM classification)

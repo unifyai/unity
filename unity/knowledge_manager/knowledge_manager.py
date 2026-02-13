@@ -447,7 +447,12 @@ class KnowledgeManager(BaseKnowledgeManager):
     # English-Text Command
 
     @functools.wraps(BaseKnowledgeManager.refactor, updated=())
-    @log_manager_call("KnowledgeManager", "refactor", payload_key="request", display_label="Reorganizing Notes")
+    @log_manager_call(
+        "KnowledgeManager",
+        "refactor",
+        payload_key="request",
+        display_label="Reorganizing Notes",
+    )
     async def refactor(
         self,
         text: str,
@@ -545,7 +550,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.update, updated=())
-    @log_manager_call("KnowledgeManager", "update", payload_key="request", display_label="Updating Notes")
+    @log_manager_call(
+        "KnowledgeManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Notes",
+    )
     async def update(
         self,
         text: str,
@@ -647,7 +657,12 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
     @manager_tool
-    @log_manager_call("KnowledgeManager", "ask", payload_key="question", display_label="Checking Notes")
+    @log_manager_call(
+        "KnowledgeManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Notes",
+    )
     async def ask(
         self,
         text: str,

@@ -1767,7 +1767,9 @@ class ConversationManagerBrainActionTools:
                                 else None
                             )
                             current_snapshot = getattr(
-                                cm, "_current_snapshot_state", None,
+                                cm,
+                                "_current_snapshot_state",
+                                None,
                             )
 
                             if current_snapshot is not None:

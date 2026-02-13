@@ -353,7 +353,12 @@ class SecretManager(BaseSecretManager):
         return result
 
     @functools.wraps(BaseSecretManager.ask, updated=())
-    @log_manager_call("SecretManager", "ask", payload_key="question", display_label="Checking Credentials")
+    @log_manager_call(
+        "SecretManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Credentials",
+    )
     async def ask(
         self,
         text: str,
@@ -443,7 +448,12 @@ class SecretManager(BaseSecretManager):
         return handle
 
     @functools.wraps(BaseSecretManager.update, updated=())
-    @log_manager_call("SecretManager", "update", payload_key="request", display_label="Updating Credentials")
+    @log_manager_call(
+        "SecretManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Credentials",
+    )
     async def update(
         self,
         text: str,

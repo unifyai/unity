@@ -275,7 +275,9 @@ async def test_ask_inspection_loop_context_without_parent(monkeypatch) -> None:
 
     _helper = await handle.ask("What happened?")
 
-    assert captured_kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
+    assert (
+        captured_kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
+    )
     assert captured_kwargs["parent_chat_context"] is None
 
 

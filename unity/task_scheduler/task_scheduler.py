@@ -380,7 +380,12 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Question
 
     @functools.wraps(BaseTaskScheduler.ask, updated=())
-    @log_manager_call("TaskScheduler", "ask", payload_key="question", display_label="Checking Tasks")
+    @log_manager_call(
+        "TaskScheduler",
+        "ask",
+        payload_key="question",
+        display_label="Checking Tasks",
+    )
     async def ask(
         self,
         text: str,
@@ -457,7 +462,12 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Update Request
 
     @functools.wraps(BaseTaskScheduler.update, updated=())
-    @log_manager_call("TaskScheduler", "update", payload_key="request", display_label="Updating Tasks")
+    @log_manager_call(
+        "TaskScheduler",
+        "update",
+        payload_key="request",
+        display_label="Updating Tasks",
+    )
     async def update(
         self,
         text: str,
@@ -546,7 +556,12 @@ class TaskScheduler(BaseTaskScheduler):
     # Execute
 
     @functools.wraps(BaseTaskScheduler.execute, updated=())
-    @log_manager_call("TaskScheduler", "execute", payload_key="request", display_label="Working on Task")
+    @log_manager_call(
+        "TaskScheduler",
+        "execute",
+        payload_key="request",
+        display_label="Working on Task",
+    )
     async def execute(
         self,
         task_id: int,

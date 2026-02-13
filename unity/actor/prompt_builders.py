@@ -101,6 +101,7 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
     - You do not have storage tools available, and you do not need them.
 """).strip()
 
+
 def _build_filesystem_context() -> str:
     from pathlib import Path, PurePosixPath
 
@@ -152,6 +153,7 @@ def _build_filesystem_context() -> str:
         longer-lived material, keep it organized — this workspace will
         accumulate across many interactions.
     """).strip()
+
 
 _SUB_AGENT_GUIDANCE = textwrap.dedent("""
     ### Sub-Agent Delegation

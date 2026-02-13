@@ -537,7 +537,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             ask_tools,  # ask_* tools for inner handle propagation
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=parent_chat_context_safe if _parent_chat_context else None,
+            parent_chat_context=(
+                parent_chat_context_safe if _parent_chat_context else None
+            ),
             propagate_chat_context=_propagate_chat_context,
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,

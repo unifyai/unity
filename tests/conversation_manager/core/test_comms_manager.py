@@ -1108,12 +1108,36 @@ class TestMeetInteractionSystemEvents:
     """
 
     _EVENT_CASES = [
-        ("assistant_screen_share_started", AssistantScreenShareStarted, "User enabled assistant screen sharing"),
-        ("assistant_screen_share_stopped", AssistantScreenShareStopped, "User disabled assistant screen sharing"),
-        ("user_screen_share_started", UserScreenShareStarted, "User started sharing their screen"),
-        ("user_screen_share_stopped", UserScreenShareStopped, "User stopped sharing their screen"),
-        ("user_remote_control_started", UserRemoteControlStarted, "User took remote control of assistant desktop"),
-        ("user_remote_control_stopped", UserRemoteControlStopped, "User released remote control of assistant desktop"),
+        (
+            "assistant_screen_share_started",
+            AssistantScreenShareStarted,
+            "User enabled assistant screen sharing",
+        ),
+        (
+            "assistant_screen_share_stopped",
+            AssistantScreenShareStopped,
+            "User disabled assistant screen sharing",
+        ),
+        (
+            "user_screen_share_started",
+            UserScreenShareStarted,
+            "User started sharing their screen",
+        ),
+        (
+            "user_screen_share_stopped",
+            UserScreenShareStopped,
+            "User stopped sharing their screen",
+        ),
+        (
+            "user_remote_control_started",
+            UserRemoteControlStarted,
+            "User took remote control of assistant desktop",
+        ),
+        (
+            "user_remote_control_stopped",
+            UserRemoteControlStopped,
+            "User released remote control of assistant desktop",
+        ),
     ]
 
     @pytest.mark.asyncio

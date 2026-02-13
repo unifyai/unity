@@ -502,7 +502,8 @@ class Renderer:
         )
 
         sections = [
-            s for s in [
+            s
+            for s in [
                 meet_render,
                 notif_render,
                 actions_render,
@@ -543,7 +544,7 @@ class Renderer:
                 "can see everything on your screen in real time. Any actions "
                 "you take (navigation, typing, file operations) are visible "
                 "to the user as you perform them.\n"
-                "</assistant_screen_share>"
+                "</assistant_screen_share>",
             )
 
         if user_screen_share_active:
@@ -553,7 +554,7 @@ class Renderer:
                 "see what they are looking at. If they reference something on "
                 "their screen or ask for help with what they see, you have "
                 "visual context available.\n"
-                "</user_screen_share>"
+                "</user_screen_share>",
             )
 
         if user_remote_control_active:
@@ -564,7 +565,7 @@ class Renderer:
                 "perform any computer actions that would conflict with or "
                 "interrupt the user's input. Wait for them to release control "
                 "before resuming desktop operations.\n"
-                "</user_remote_control>"
+                "</user_remote_control>",
             )
 
         return "\n\n".join(parts)
