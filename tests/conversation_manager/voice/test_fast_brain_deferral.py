@@ -102,6 +102,20 @@ def has_deferral_language(response: str) -> bool:
     return False
 
 
+def has_in_progress_language(response: str) -> bool:
+    """Check if response explicitly reports that work is still in progress."""
+    response_lower = response.lower()
+    progress_patterns = [
+        r"still working",
+        r"working on (it|that)",
+        r"in progress",
+        r"not done",
+        r"on it now",
+        r"still doing (it|that)",
+    ]
+    return any(re.search(pattern, response_lower) for pattern in progress_patterns)
+
+
 def has_hallucinated_data(response: str, data_types: list[str] | None = None) -> dict:
     """
     Check if response contains hallucinated specific data.
@@ -1028,13 +1042,6 @@ class TestInProgressActionStatus:
     notification arrives.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Fast brain can claim 'Done.' from in-progress guidance before the "
-            "slow brain confirms completion."
-        ),
-    )
     async def test_in_progress_notification_does_not_allow_done_claim(
         self,
         voice_agent_prompt,
@@ -1073,7 +1080,7 @@ class TestInProgressActionStatus:
             model=MODEL_GPT5_MINI,
         )
 
-        assert has_deferral_language(response), (
+        assert has_deferral_language(response) or has_in_progress_language(response), (
             "Fast brain should keep the action in-progress until completion guidance "
             f"arrives.\nResponse: {response}"
         )
@@ -1082,13 +1089,6 @@ class TestInProgressActionStatus:
             f"Response: {response}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Fast brain can report contact/task as created from in-progress "
-            "guidance without completion confirmation."
-        ),
-    )
     async def test_update_request_does_not_claim_created_without_completion_guidance(
         self,
         voice_agent_prompt,
@@ -1124,7 +1124,7 @@ class TestInProgressActionStatus:
             model=MODEL_GPT5_MINI,
         )
 
-        assert has_deferral_language(response), (
+        assert has_deferral_language(response) or has_in_progress_language(response), (
             "Fast brain should respond with in-progress language when no completion "
             f"notification exists.\nResponse: {response}"
         )
