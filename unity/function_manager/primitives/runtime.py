@@ -510,14 +510,18 @@ class Primitives:
             raise AttributeError(f"Unknown manager alias: {alias}")
 
         if getter_name == "":
-            # Direct construction (no ManagerRegistry getter).
-            if alias == "computer":
-                manager = ComputerPrimitives()
-            elif alias == "actor":
-                from unity.actor.environments.actor import _ActorRunner
-                manager = _ActorRunner()
-            else:
-                raise AttributeError(f"No getter for alias: {alias}")
+            # Direct construction via primitive_class_path from the registry.
+            from unity.function_manager.primitives.registry import _MANAGER_BY_ALIAS
+            spec = _MANAGER_BY_ALIAS.get(alias)
+            if spec is None:
+                raise AttributeError(f"No ManagerSpec for alias: {alias}")
+            cls = get_registry()._load_manager_class(spec.primitive_class_path)
+            if cls is None:
+                raise AttributeError(
+                    f"Could not load class for alias {alias!r}: "
+                    f"{spec.primitive_class_path}",
+                )
+            manager = cls()
         else:
             from unity.manager_registry import ManagerRegistry
 
@@ -610,13 +614,14 @@ def get_primitive_callable(
     """
     Resolve a primitive metadata dict to its actual callable.
 
-    For ComputerPrimitives methods, uses the provided computer_primitives instance.
-    For state manager methods, uses the provided primitives instance or ManagerRegistry.
+    Uses the ``primitives`` instance (which handles all aliases uniformly)
+    when available, falling back to ManagerRegistry or direct construction.
 
     Args:
         primitive_data: Primitive metadata with primitive_class and primitive_method.
-        computer_primitives: ComputerPrimitives instance (for ComputerPrimitives primitives).
-        primitives: Optional scoped Primitives instance for state manager resolution.
+        computer_primitives: Deprecated — kept for backward compatibility.
+            Callers should pass a ``Primitives`` instance instead.
+        primitives: Scoped Primitives instance for resolution.
 
     Returns:
         The callable method, or None if resolution fails.
@@ -627,29 +632,37 @@ def get_primitive_callable(
     if not class_path or not method_name:
         return None
 
-    # ComputerPrimitives: use the provided instance, or fall back to the
-    # singleton (mirrors the ManagerRegistry fallback for state managers).
-    if "ComputerPrimitives" in class_path:
-        if computer_primitives is None:
-            computer_primitives = ComputerPrimitives()
-        return getattr(computer_primitives, method_name, None)
-
     # Derive manager_alias from primitive_class using the registry mapping
     manager_alias = _CLASS_PATH_TO_ALIAS.get(class_path)
 
-    # State managers: use provided primitives instance if available
+    # Use provided primitives instance (handles all aliases uniformly)
     if primitives is not None and manager_alias:
         try:
             manager = getattr(primitives, manager_alias)
             return getattr(manager, method_name, None)
         except AttributeError:
-            # Manager not in scope, fall through to ManagerRegistry
+            # Manager not in scope, fall through
             pass
 
-    # Fallback: use ManagerRegistry directly
+    # Backward compat: accept a bare ComputerPrimitives instance
+    if computer_primitives is not None and manager_alias == "computer":
+        return getattr(computer_primitives, method_name, None)
+
+    # Fallback: use ManagerRegistry or direct construction
     if manager_alias:
         getter_name = _ALIAS_TO_GETTER.get(manager_alias)
-        if getter_name:
+        if getter_name is None:
+            return None
+        if getter_name == "":
+            # Direct construction via registry class path
+            from unity.function_manager.primitives.registry import _MANAGER_BY_ALIAS
+            spec = _MANAGER_BY_ALIAS.get(manager_alias)
+            if spec:
+                cls = get_registry()._load_manager_class(spec.primitive_class_path)
+                if cls:
+                    instance = cls()
+                    return getattr(instance, method_name, None)
+        else:
             try:
                 from unity.manager_registry import ManagerRegistry
 
