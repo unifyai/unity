@@ -29,8 +29,8 @@ class ComputerBackend(ABC):
     """
     Abstract Base Class defining the interface for any computer use backend.
 
-    Supports both web automation (agent_mode="web") and general
-    desktop/computer control (agent_mode="desktop") via vision-based agents.
+    Supports both desktop/computer control (agent_mode="desktop") and
+    web-only automation (agent_mode="web") via vision-based agents.
     """
 
     @abstractmethod
@@ -581,7 +581,7 @@ class MagnitudeBackend(ComputerBackend):
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
-        agent_mode: str = "web",
+        agent_mode: str = "desktop",
         **kwargs,
     ):
         self.agent_mode = agent_mode

@@ -107,7 +107,7 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         self,
         headless: bool = False,
         computer_mode: str = "magnitude",
-        agent_mode: str = "web",
+        agent_mode: str = "desktop",
         agent_server_url: str | None = None,
         *,
         connect_now: bool = False,

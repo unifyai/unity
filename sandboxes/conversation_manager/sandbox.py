@@ -120,7 +120,7 @@ def _build_worker_config(*, args: Any, actor_config: ActorConfig) -> dict:
         "computer_backend_mode": actor_config.computer_backend_mode,
         # Computer backend / agent-service
         "agent_server_url": getattr(args, "agent_server_url", None),
-        "agent_mode": getattr(args, "agent_mode", "web"),
+        "agent_mode": getattr(args, "agent_mode", "desktop"),
         "headless": bool(getattr(args, "headless", False)),
         # UX
         "voice": bool(getattr(args, "voice", False)),
@@ -292,9 +292,9 @@ async def _main_async() -> None:
     parser.add_argument(
         "--agent-mode",
         dest="agent_mode",
-        default="web",
+        default="desktop",
         choices=["web", "desktop"],
-        help="agent-service mode (default: web)",
+        help="agent-service mode (default: desktop)",
     )
     parser.add_argument(
         "--headless",
