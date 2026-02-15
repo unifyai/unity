@@ -1228,6 +1228,59 @@ class CodeActActor(BaseCodeActActor):
             "observe": self._computer_primitives.observe,
         }
 
+    def _augment_ask_tools_with_computer_progress(
+        self,
+        handle: AsyncToolLoopHandle,
+    ) -> None:
+        """Augment handle.ask() inspection tools with browser-agent progress queries.
+
+        This is intentionally localized to CodeActActor because it depends on
+        ComputerPrimitives-specific memory introspection (`query`).
+        """
+        if self._computer_primitives is None:
+            return
+
+        task = getattr(handle, "_task", None)
+        if task is None:
+            return
+
+        base_get_ask_tools = getattr(task, "get_ask_tools", None)
+        if not callable(base_get_ask_tools):
+            return
+
+        computer_query = self._computer_primitives.query
+
+        async def ask_computer_progress(
+            question: str,
+            *,
+            _parent_chat_context: list[dict] | None = None,
+        ) -> str:
+            """Inspect the in-flight computer action loop via browser-agent memory.
+
+            Use this to check progress/state of ongoing ``computer_primitives.act(...)``
+            work when the inspected transcript lacks enough detail (for example,
+            placeholders or terse summaries). This is memory/history introspection,
+            not a fresh page read and not a way to trigger new actions.
+            """
+            _ = _parent_chat_context
+            return await computer_query(question)
+
+        def _merged_get_ask_tools() -> Dict[str, Callable]:
+            ask_tools: Dict[str, Callable] = {}
+            try:
+                snapshot = base_get_ask_tools()
+                if isinstance(snapshot, dict):
+                    ask_tools.update(snapshot)
+            except Exception:
+                pass
+            ask_tools.setdefault("ask_computer_progress", ask_computer_progress)
+            return ask_tools
+
+        try:
+            setattr(task, "get_ask_tools", _merged_get_ask_tools)
+        except Exception:
+            pass
+
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         """Builds the dictionary of tools available to the LLM."""
 
@@ -3039,6 +3092,8 @@ class CodeActActor(BaseCodeActActor):
             # changes (e.g. user remote control) are broadcast to this actor.
             _cp.register_interject_queue(handle._queue)
             _registered_queue[0] = handle._queue
+
+        self._augment_ask_tools_with_computer_progress(handle)
 
         # Update agent context with handle reference
         new_ctx.handle = handle
