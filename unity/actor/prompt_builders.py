@@ -155,37 +155,6 @@ def _build_filesystem_context() -> str:
     """).strip()
 
 
-_SUB_AGENT_GUIDANCE = textwrap.dedent("""
-    ### Sub-Agent Delegation
-
-    You can delegate focused sub-tasks to independent sub-agents via `run_sub_agent`.
-    Each sub-agent is a full CodeActActor with the same environment access (primitives,
-    functions, etc.) but its own isolated sandbox and conversation context.
-
-    Sub-agents are **steerable** — once spawned, dynamic steering helpers appear
-    (stop, pause, resume, interject) so you can monitor progress and redirect
-    the sub-agent mid-flight, just like any other steerable handle.
-
-    **When to delegate:**
-    - The overall task decomposes into independent sub-problems that benefit from
-      focused reasoning (e.g., "research X" and "research Y" are separate concerns).
-    - A sub-task requires multi-step work that would consume significant context
-      in the main agent and is largely self-contained.
-    - You want to keep the main agent's context clean for high-level orchestration.
-
-    **When NOT to delegate:**
-    - The task is simple enough to handle with a single `execute_code` call.
-    - You need the sub-task's intermediate state (variables, sessions) for
-      subsequent work — sub-agents have isolated sandboxes.
-    - The sub-task is trivial (one tool call) — the overhead is not worth it.
-
-    **Best practices:**
-    - Write a **clear, self-contained task description**. The sub-agent does not
-      see the parent's conversation or sandbox state. Include all relevant context
-      in the task string.
-    - Set an appropriate **timeout** for the expected complexity.
-""").strip()
-
 # ---------------------------------------------------------------------------
 # Private helpers with real logic
 # ---------------------------------------------------------------------------
@@ -365,8 +334,6 @@ def build_code_act_prompt(
     has_fm_tools = tools and any(
         str(k).startswith("FunctionManager_") for k in tools.keys()
     )
-    has_sub_agent = bool(tools and "run_sub_agent" in tools)
-
     if has_execute_code:
         primary_names = [
             "execute_code",
@@ -400,8 +367,6 @@ def build_code_act_prompt(
             render_tools_block=render_tools_block,
         )
 
-        sub_agent_block = _SUB_AGENT_GUIDANCE if has_sub_agent else ""
-
         storage_deferred_block = (
             _STORAGE_DEFERRED_NOTICE if storage_check_on_return else ""
         )
@@ -431,8 +396,6 @@ They are the only supported way to run Python/shell code and manage sessions.
 ```
 
 {additional_tools_block}
-
-{sub_agent_block}
 
 {storage_deferred_block}
 

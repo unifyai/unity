@@ -907,8 +907,9 @@ class CodeActActor(BaseCodeActActor):
                 The LLM can call these tools to discover and retrieve reusable function implementations.
             agent_server_url: URL for the agent server. For desktop mode, pass the
                 external VM's URL.
-            can_spawn_sub_agents: When True, exposes a ``run_sub_agent`` tool that
-                lets the LLM spawn inner CodeActActors to work on focused sub-tasks.
+            can_spawn_sub_agents: When True, installs a ``SubAgentEnvironment`` that
+                exposes ``sub_agent.run()`` in the sandbox, letting the LLM spawn
+                inner CodeActActors to work on focused sub-tasks.
             model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
                 If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
             preprocess_msgs: Optional callback to modify messages before each LLM call.
@@ -925,7 +926,7 @@ class CodeActActor(BaseCodeActActor):
                   ``can_store``, etc.) are always applied before the custom policy sees
                   the tools.
                 - ``None``: no dynamic policy; only the static ``can_compose`` /
-                  ``can_store`` / ``can_spawn_sub_agents`` filters apply.
+                  ``can_store`` filters apply.
         """
         super().__init__(
             environments=environments,
@@ -937,6 +938,24 @@ class CodeActActor(BaseCodeActActor):
             agent_mode=agent_mode,
             agent_server_url=agent_server_url,
         )
+
+        # Install SubAgentEnvironment when sub-agent spawning is enabled.
+        # Must happen before exclusion wiring and tool building so the
+        # environment participates in the standard lifecycle.
+        if can_spawn_sub_agents:
+            from unity.actor.environments.sub_agent import SubAgentEnvironment
+
+            sub_env = SubAgentEnvironment(
+                parent_environments=self.environments,
+                function_manager=self.function_manager,
+                parent_can_compose=bool(can_compose),
+                parent_can_store=bool(can_store),
+                model=model,
+                preprocess_msgs=preprocess_msgs,
+                prompt_caching=prompt_caching,
+                parent_timeout=timeout,
+            )
+            self.environments[sub_env.namespace] = sub_env
 
         # Collect function_ids from all environments, split by context, and set
         # them on the FunctionManager via setters. This prevents overlap between
@@ -2391,201 +2410,6 @@ class CodeActActor(BaseCodeActActor):
 
         tools["install_python_packages"] = install_python_packages
 
-        # ───────────────────────── Sub-agent delegation tool ─────────────── #
-
-        async def run_sub_agent(
-            task: str,
-            *,
-            prompt_functions: list[str] | None = None,
-            discovery_scope: str | None = None,
-            timeout: float | None = None,
-            can_compose: bool = True,
-            can_store: bool = False,
-            can_spawn_sub_agents: bool = False,
-            storage_check_on_return: bool = False,
-            _parent_chat_context: list[dict] | None = None,
-            _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-            _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        ) -> "SteerableToolHandle":
-            """
-            Spawn a sub-agent to work on a focused sub-task.
-
-            The sub-agent is an independent CodeActActor with its own sandbox,
-            prompt, and (optionally) a curated set of directly callable
-            functions.  It returns a steerable handle, allowing the outer loop
-            to monitor progress and steer (stop, pause, resume, interject) the
-            sub-agent mid-flight.
-
-            When to use
-            -----------
-            - The overall task decomposes naturally into independent sub-problems
-              that benefit from focused, isolated reasoning.
-            - A sub-task requires multi-step work that would clutter or distract
-              the main agent's context window.
-            - You want to isolate a sub-task's execution state (sessions,
-              variables) from the main agent's sandbox.
-
-            When NOT to use
-            ---------------
-            - The task is simple enough to handle directly with ``execute_code``.
-            - You need intermediate results from the sub-task to inform logic in
-              the same code block (use ``execute_code`` with stateful sessions).
-            - The sub-task is trivial (single tool call) — the overhead of a
-              sub-agent is not worth it.
-
-            Parameters
-            ----------
-            task : str
-                A clear, self-contained description of what the sub-agent should
-                accomplish. Be specific and include all necessary context, because
-                the sub-agent does **not** share the parent agent's conversation
-                history or session state.
-            prompt_functions : list[str], optional
-                Functions to place directly in the sub-agent's system prompt,
-                making them immediately callable without any discovery step.
-
-                Use this for the functions most critical to the sub-task —
-                the ones you actively want the sub-agent to reach for.
-                Because they appear directly in the prompt, they receive the
-                sub-agent's full attention and are the first tools it will
-                consider.
-
-                Prompt-injected functions are automatically excluded from the
-                sub-agent's FunctionManager search index, so they will not
-                appear as duplicate results during discovery.
-
-                Names use dotted-segment matching:
-
-                - ``"primitives"`` — all state manager primitives
-                - ``"primitives.contacts"`` — all contacts methods
-                - ``"primitives.contacts.ask"`` — just contacts.ask
-                - ``"alpha"`` — a specific stored function
-                - ``"my_service"`` — all methods from a custom environment
-                - ``"my_service.do_something"`` — a specific custom method
-
-                Any function you have seen (in your prompt, in search
-                results, or in your environment) can be listed here.
-                Functions not listed are still discoverable via
-                FunctionManager search (subject to ``discovery_scope``).
-
-                When omitted, the sub-agent receives no prompt-injected
-                functions and relies entirely on FunctionManager discovery.
-            discovery_scope : str, optional
-                A boolean filter expression that restricts which functions
-                the sub-agent can discover via FunctionManager
-                search/list/filter (e.g., ``"language == 'python'"`` or
-                ``"'data' in docstring"``).
-
-                The sub-agent automatically inherits the parent agent's
-                existing scope.  This parameter strictly narrows that
-                inherited scope further (ANDed with the parent's filter),
-                so the sub-agent's discoverable function library is always
-                a subset of the parent's.  Use this to keep the sub-agent
-                focused on only the functions relevant to its specific task.
-            timeout : float, optional
-                Maximum seconds for the sub-agent to complete. Defaults to half
-                the parent agent's timeout, capped at 300 seconds.
-            can_compose : bool, default True
-                Whether the sub-agent can write and execute arbitrary code via
-                ``execute_code``. Set to False to restrict the sub-agent to
-                only discovering and executing stored functions.
-            can_store : bool, default False
-                Whether the sub-agent can persist new functions to the
-                FunctionManager via ``FunctionManager_add_functions``.
-            can_spawn_sub_agents : bool, default False
-                Whether the sub-agent can itself spawn deeper sub-agents.
-                Use with caution to avoid excessive nesting.
-            storage_check_on_return : bool, default False
-                Whether a post-completion review loop should run to identify
-                and store reusable functions from the sub-agent's trajectory.
-
-            Returns
-            -------
-            SteerableToolHandle
-                A live handle to the running sub-agent. The outer loop
-                automatically adopts it for mid-flight steering (stop, pause,
-                resume, interject). The final string result is surfaced when
-                the sub-agent completes.
-            """
-            effective_timeout = (
-                timeout if timeout is not None else min(self._timeout / 2, 300)
-            )
-
-            # ── Create a fresh FunctionManager for the sub-agent ──
-            # Always create a new instance so that the inner CodeActActor's
-            # __init__ (which sets exclusions via setters) does not mutate the
-            # parent's FM.  The discovery_scope is ANDed with the parent's
-            # existing scope, strictly narrowing it.
-            inner_fm = None
-            if self.function_manager is not None:
-                from unity.function_manager.function_manager import (
-                    FunctionManager as _FM,
-                )
-
-                parent_scope = self.function_manager.filter_scope
-                if discovery_scope and parent_scope:
-                    combined_scope = f"({parent_scope}) and ({discovery_scope})"
-                elif discovery_scope:
-                    combined_scope = discovery_scope
-                else:
-                    combined_scope = parent_scope
-
-                inner_fm = _FM(
-                    primitive_scope=self.function_manager.primitive_scope,
-                    filter_scope=combined_scope,
-                    exclude_primitive_ids=self.function_manager.exclude_primitive_ids,
-                    exclude_compositional_ids=self.function_manager.exclude_compositional_ids,
-                    include_primitives=self.function_manager._include_primitives,
-                )
-
-            # ── Build inner actor environments from prompt_functions patterns ──
-            if prompt_functions:
-                inner_envs = _build_sub_agent_environments(
-                    environment=prompt_functions,
-                    parent_environments=self.environments,
-                    function_manager=inner_fm,
-                )
-            else:
-                inner_envs = []
-
-            # ── Create inner CodeActActor ──
-            inner_actor = CodeActActor(
-                environments=inner_envs or [],
-                function_manager=inner_fm,
-                can_compose=bool(can_compose),
-                can_store=bool(can_store),
-                can_spawn_sub_agents=bool(can_spawn_sub_agents),
-                storage_check_on_return=bool(storage_check_on_return),
-                timeout=effective_timeout,
-                model=self._model,
-                preprocess_msgs=self._preprocess_msgs,
-                prompt_caching=self._prompt_caching,
-            )
-
-            handle = await inner_actor.act(
-                task,
-                clarification_enabled=True,
-                _parent_chat_context=_parent_chat_context,
-                _clarification_up_q=_clarification_up_q,
-                _clarification_down_q=_clarification_down_q,
-            )
-
-            # Attach inner actor cleanup to the handle's lifecycle so
-            # inner_actor.close() runs after the sub-agent completes.
-            _original_result = handle.result
-
-            async def _result_with_cleanup():
-                try:
-                    return await _original_result()
-                finally:
-                    await inner_actor.close()
-
-            handle.result = _result_with_cleanup  # type: ignore[assignment]
-
-            return handle
-
-        tools["run_sub_agent"] = run_sub_agent
-
         return tools
 
     @functools.wraps(BaseCodeActActor.act, updated=())
@@ -2678,6 +2502,10 @@ class CodeActActor(BaseCodeActActor):
             _StateManagerEnvironment = None  # type: ignore
 
         for ns, env in self.environments.items():
+            # Skip sub_agent environment when sub-agent spawning is disabled for this call.
+            if ns == "sub_agent" and not effective_can_spawn_sub_agents:
+                continue
+
             # Prefer explicit reconstruction for known env types.
             try:
                 if _ComputerEnvironment is not None and isinstance(
@@ -2855,7 +2683,7 @@ class CodeActActor(BaseCodeActActor):
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply static per-call filters (can_compose, can_store, can_spawn_sub_agents)."""
+            """Apply static per-call filters (can_compose, can_store)."""
             out = dict(tool_dict)
             if not effective_can_compose:
                 for name in _code_and_session_tools:
@@ -2866,8 +2694,6 @@ class CodeActActor(BaseCodeActActor):
                 # when storage_check_on_return defers storage to the
                 # dedicated post-completion pass.
                 out.pop("FunctionManager_add_functions", None)
-            if not effective_can_spawn_sub_agents:
-                out.pop("run_sub_agent", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))
