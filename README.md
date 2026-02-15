@@ -302,20 +302,23 @@ python start.py
 
 ### Web Automation (Controller Mode)
 
-**Web Mode** (default):
+**Desktop Mode** (default — full desktop automation):
+
+```bash
+# See desktop/README.md for Docker-based virtual desktop setup
+# Start the agent service
+npx ts-node agent-service/src/index.ts
+
+# The Actor uses desktop mode by default (agent_mode="desktop")
+```
+
+**Web Mode** (browser-only):
 
 ```bash
 # Start the agent service
 npx ts-node agent-service/src/index.ts
 
-# The Actor will use web mode by default (agent_mode="web")
-```
-
-**Desktop Mode** (for full desktop automation):
-
-```bash
-# See desktop/README.md for Docker-based virtual desktop setup
-# Then use agent_mode="desktop" in the Actor
+# Use agent_mode="web" for browser-only automation
 ```
 
 ### Pre-commit Hooks

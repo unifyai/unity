@@ -188,7 +188,7 @@ class ActorFactory:
         cp = ComputerPrimitives(
             headless=bool(getattr(args, "headless", False)),
             computer_mode="magnitude",
-            agent_mode=getattr(args, "agent_mode", "web"),
+            agent_mode=getattr(args, "agent_mode", "desktop"),
             agent_server_url=str(agent_server_url),
             connect_now=True,
         )

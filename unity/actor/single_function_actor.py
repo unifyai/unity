@@ -396,7 +396,7 @@ class SingleFunctionActor(BaseActor):
         function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
         computer_mode: str = "magnitude",
-        agent_mode: str = "web",
+        agent_mode: str = "desktop",
         agent_server_url: str | None = None,
     ):
         """

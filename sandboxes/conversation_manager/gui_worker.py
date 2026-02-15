@@ -444,7 +444,7 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
     if not hasattr(args, "headless"):
         setattr(args, "headless", False)
     if not hasattr(args, "agent_mode"):
-        setattr(args, "agent_mode", "web")
+        setattr(args, "agent_mode", "desktop")
     if not hasattr(args, "real_comms"):
         setattr(args, "real_comms", False)
     if not hasattr(args, "auto_confirm"):
