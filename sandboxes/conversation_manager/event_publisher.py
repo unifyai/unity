@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from unity.conversation_manager.events import (
     EmailReceived,
+    Event,
     InboundPhoneUtterance,
     PhoneCallEnded,
     PhoneCallStarted,
@@ -45,74 +46,47 @@ class EventPublisher:
     state: object
     args: object | None = None
 
-    async def publish_sms(self, message: str) -> None:
+    async def publish_event(self, event: Event) -> None:
+        """Publish any Event instance to the broker using its ``topic`` ClassVar."""
+        topic = getattr(type(event), "topic", None)
+        if not topic:
+            raise ValueError(
+                f"Event {type(event).__name__} has no topic ClassVar set"
+            )
         contact = get_simulated_user_contact()
-        # Make boss contact available for prompt building even before ContactManager sync.
         try:
             self.cm.contact_index.set_fallback_contacts([contact])
         except Exception:
             pass
-
-        event = SMSReceived(contact=contact, content=message)
         self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
-        await self.cm.event_broker.publish("app:comms:msg_message", event.to_json())
+        await self.cm.event_broker.publish(topic, event.to_json())
+
+    async def publish_sms(self, message: str) -> None:
+        contact = get_simulated_user_contact()
+        await self.publish_event(SMSReceived(contact=contact, content=message))
 
     async def publish_email(self, subject: str, body: str) -> None:
         contact = get_simulated_user_contact()
-        try:
-            self.cm.contact_index.set_fallback_contacts([contact])
-        except Exception:
-            pass
-
-        event = EmailReceived(contact=contact, subject=subject, body=body)
-        self.state.brain_run_in_flight = True
-        self.state.last_event_published_at = time.monotonic()
-        await self.cm.event_broker.publish("app:comms:email_message", event.to_json())
+        await self.publish_event(
+            EmailReceived(contact=contact, subject=subject, body=body),
+        )
 
     async def publish_call_start(self) -> None:
-        contact = get_simulated_user_contact()
-        try:
-            self.cm.contact_index.set_fallback_contacts([contact])
-        except Exception:
-            pass
-
         self.state.in_call = True
-        event = PhoneCallStarted(contact=contact)
-        self.state.brain_run_in_flight = True
-        self.state.last_event_published_at = time.monotonic()
-        await self.cm.event_broker.publish(
-            "app:comms:phone_call_started",
-            event.to_json(),
-        )
+        contact = get_simulated_user_contact()
+        await self.publish_event(PhoneCallStarted(contact=contact))
 
     async def publish_phone_utterance(self, text: str) -> None:
         contact = get_simulated_user_contact()
-        try:
-            self.cm.contact_index.set_fallback_contacts([contact])
-        except Exception:
-            pass
-
-        event = InboundPhoneUtterance(contact=contact, content=text)
-        self.state.brain_run_in_flight = True
-        self.state.last_event_published_at = time.monotonic()
-        await self.cm.event_broker.publish("app:comms:phone_utterance", event.to_json())
+        await self.publish_event(
+            InboundPhoneUtterance(contact=contact, content=text),
+        )
 
     async def publish_call_end(self) -> None:
-        contact = get_simulated_user_contact()
-        try:
-            self.cm.contact_index.set_fallback_contacts([contact])
-        except Exception:
-            pass
-
         self.state.in_call = False
-        event = PhoneCallEnded(contact=contact)
-        self.state.brain_run_in_flight = True
-        self.state.last_event_published_at = time.monotonic()
-        await self.cm.event_broker.publish(
-            "app:comms:phone_call_ended",
-            event.to_json(),
-        )
+        contact = get_simulated_user_contact()
+        await self.publish_event(PhoneCallEnded(contact=contact))
 
     # ── Live voice ────────────────────────────────────────────────────────
 
