@@ -432,6 +432,18 @@ class SimulatedHandleMixin:
         """
         self._open_completion_gate()
 
+    # ── Clarifications ───────────────────────────────────────────────────
+
+    async def next_clarification(self) -> dict:
+        """Block until cancelled — default for handles that don't use clarifications.
+
+        Handles that support clarifications (``_needs_clar=True``) override
+        this to block on their ``_clar_up_q`` instead.  The watcher's
+        ``asyncio.wait_for(..., timeout=30)`` handles the timeout naturally.
+        """
+        await asyncio.Event().wait()
+        return {}  # unreachable; satisfies return type
+
     # ── Notifications ────────────────────────────────────────────────────
 
     async def next_notification(self) -> dict:
