@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
 
@@ -18,8 +18,6 @@ async def test_code_act_can_compose_false_requires_function_manager():
     because there would be no usable tools (no execute_code, no execute_function).
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     # The ManagerRegistry provides a default FM, so override it to None.
@@ -76,8 +74,6 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -115,7 +111,6 @@ async def test_code_act_can_compose_false_no_functions_match():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
         environments=[],
         timeout=60,
     )
@@ -156,13 +151,8 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     try:
         handle = await actor.act(
@@ -208,8 +198,6 @@ async def test_code_act_can_store_true_stores_function():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -270,8 +258,6 @@ async def test_storage_check_on_return_stores_discovered_function():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -330,8 +316,6 @@ async def test_storage_check_on_return_skipped_when_can_store_false():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:
@@ -406,8 +390,6 @@ async def test_storage_check_on_return_merges_redundant_functions():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -461,8 +443,6 @@ async def test_code_act_accepts_dict_description():
     CodeActActor.act should accept a dict description (passed to async tool loop).
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:
@@ -491,8 +471,6 @@ async def test_code_act_accepts_list_description():
     CodeActActor.act should accept a list description (passed to async tool loop).
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:

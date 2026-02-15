@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import textwrap
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
@@ -24,11 +23,22 @@ if TYPE_CHECKING:
 class _SubAgentRunner:
     """Runtime object injected into the sandbox as ``sub_agent``.
 
-    Captures parent actor context at construction time and exposes a single
-    ``run()`` method that spawns isolated inner CodeActActors.
+    Constructed without parent context; the owning ``CodeActActor`` back-fills
+    it via :meth:`_bind` after the environment dict is built.
     """
 
-    def __init__(
+    def __init__(self) -> None:
+        self._parent_environments: Optional[Dict[str, BaseEnvironment]] = None
+        self._function_manager: Optional["FunctionManager"] = None
+        self._parent_can_compose: bool = True
+        self._parent_can_store: bool = True
+        self._model: Optional[str] = None
+        self._preprocess_msgs: Any = None
+        self._prompt_caching: Any = None
+        self._parent_timeout: float = 1000
+        self._bound: bool = False
+
+    def _bind(
         self,
         *,
         parent_environments: Dict[str, BaseEnvironment],
@@ -40,6 +50,7 @@ class _SubAgentRunner:
         prompt_caching: Any,
         parent_timeout: float,
     ) -> None:
+        """Back-fill parent actor context after the environment dict is built."""
         self._parent_environments = parent_environments
         self._function_manager = function_manager
         self._parent_can_compose = parent_can_compose
@@ -48,6 +59,7 @@ class _SubAgentRunner:
         self._preprocess_msgs = preprocess_msgs
         self._prompt_caching = prompt_caching
         self._parent_timeout = parent_timeout
+        self._bound = True
 
     async def run(
         self,
@@ -176,6 +188,13 @@ class _SubAgentRunner:
             mid-flight steering (stop, pause, resume, interject).  The
             final string result is surfaced when the sub-agent completes.
         """
+        if not self._bound:
+            raise RuntimeError(
+                "SubAgentEnvironment has not been bound to a parent actor. "
+                "Pass it in the environments list to a CodeActActor so that "
+                "bind_parent_context() is called during initialization.",
+            )
+
         from unity.actor.code_act_actor import (
             CodeActActor,
             _build_sub_agent_environments,
@@ -192,10 +211,6 @@ class _SubAgentRunner:
         effective_timeout = timeout if timeout is not None else self._parent_timeout
 
         # ── Create a fresh FunctionManager for the sub-agent ──
-        # Always create a new instance so that the inner CodeActActor's
-        # __init__ (which sets exclusions via setters) does not mutate the
-        # parent's FM.  The discovery_scope is ANDed with the parent's
-        # existing scope, strictly narrowing it.
         inner_fm = None
         if self._function_manager is not None:
             from unity.function_manager.function_manager import (
@@ -220,6 +235,7 @@ class _SubAgentRunner:
 
         # ── Build inner actor environments from prompt_functions patterns ──
         # Filter out the sub_agent namespace to prevent circular matching.
+        assert self._parent_environments is not None
         filtered_parent_envs = {
             ns: env
             for ns, env in self._parent_environments.items()
@@ -235,13 +251,17 @@ class _SubAgentRunner:
         else:
             inner_envs = []
 
+        # If the caller wants nested sub-agent spawning, include a fresh
+        # SubAgentEnvironment in the inner actor's environments.
+        if can_spawn_sub_agents:
+            inner_envs.append(SubAgentEnvironment())
+
         # ── Create inner CodeActActor ──
         inner_actor = CodeActActor(
             environments=inner_envs or [],
             function_manager=inner_fm,
             can_compose=bool(effective_can_compose),
             can_store=bool(effective_can_store),
-            can_spawn_sub_agents=bool(can_spawn_sub_agents),
             storage_check_on_return=bool(storage_check_on_return),
             timeout=effective_timeout,
             model=self._model,
@@ -280,11 +300,29 @@ class SubAgentEnvironment(BaseEnvironment):
 
     Injects a ``sub_agent`` object into the sandbox with a single ``run()``
     method for spawning isolated inner CodeActActors.
+
+    Constructed without parent context; ``CodeActActor.__init__`` calls
+    :meth:`bind_parent_context` to back-fill the runner after the
+    environment dict is built.
     """
 
     NAMESPACE = "sub_agent"
 
     def __init__(
+        self,
+        *,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> None:
+        runner = _SubAgentRunner()
+        super().__init__(
+            instance=runner,
+            namespace=self.NAMESPACE,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    def bind_parent_context(
         self,
         *,
         parent_environments: Dict[str, BaseEnvironment],
@@ -295,10 +333,9 @@ class SubAgentEnvironment(BaseEnvironment):
         preprocess_msgs: Any,
         prompt_caching: Any,
         parent_timeout: float,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> None:
-        runner = _SubAgentRunner(
+        """Back-fill parent actor context after the environment dict is built."""
+        self.get_instance()._bind(
             parent_environments=parent_environments,
             function_manager=function_manager,
             parent_can_compose=parent_can_compose,
@@ -307,12 +344,6 @@ class SubAgentEnvironment(BaseEnvironment):
             preprocess_msgs=preprocess_msgs,
             prompt_caching=prompt_caching,
             parent_timeout=parent_timeout,
-        )
-        super().__init__(
-            instance=runner,
-            namespace=self.NAMESPACE,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
     def get_tools(self) -> Dict[str, ToolMetadata]:

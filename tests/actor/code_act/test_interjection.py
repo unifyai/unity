@@ -15,7 +15,7 @@ async def test_interjection_incremental_teaching_session():
     Test that CodeActActor can handle incremental interjections
     in an interactive teaching session.
     """
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")

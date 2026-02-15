@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
-    from unity.function_manager.primitives import ComputerPrimitives
 
 __all__ = [
     "BaseActor",
@@ -88,38 +87,18 @@ class BaseActor(ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
         function_manager: Optional["FunctionManager"] = None,
-        # Computer-use params for default environment creation
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
-        connect_now: bool = False,
-        # Clarification queue params for environment wiring
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> None:
         """
         Shared initialization for concrete actor implementations.
 
         This centralizes:
-        - Environment setup with sensible defaults (computer + state managers)
+        - Environment dict construction from the provided list
         - FunctionManager resolution (registry fallback)
         - Extraction of computer primitives for backward compatibility
         """
         self.environments: Dict[str, "BaseEnvironment"] = self._setup_environments(
             environments=environments,
-            computer_primitives=computer_primitives,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-            connect_now=connect_now,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
         # Resolve FunctionManager (used by multiple actors for memoized skills).
@@ -136,54 +115,15 @@ class BaseActor(ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]],
-        computer_primitives: Optional["ComputerPrimitives"],
-        session_connect_url: Optional[str],
-        headless: bool,
-        computer_mode: str,
-        agent_mode: str,
-        agent_server_url: str | None,
-        connect_now: bool,
-        clarification_up_q: Optional[asyncio.Queue[str]],
-        clarification_down_q: Optional[asyncio.Queue[str]],
     ) -> Dict[str, "BaseEnvironment"]:
         """
-        Setup execution environments with defaults and optional clarification queues.
+        Build the environment namespace dict from the provided list.
 
         Returns:
             Dict keyed by environment namespace.
         """
-        from unity.actor.environments import (
-            ComputerEnvironment,
-            StateManagerEnvironment,
-        )
-        from unity.function_manager.primitives import ComputerPrimitives
-
-        # If environments are explicitly provided, honor them and do not implicitly
-        # introduce a computer environment (domain-agnostic mode).
         if environments is None:
-            if computer_primitives is not None:
-                cp = computer_primitives
-            else:
-                cp = ComputerPrimitives(
-                    session_connect_url=session_connect_url,
-                    headless=headless,
-                    computer_mode=computer_mode,
-                    agent_mode=agent_mode,
-                    agent_server_url=agent_server_url,
-                    connect_now=connect_now,
-                )
-
-            environments = [
-                ComputerEnvironment(
-                    cp,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                ),
-                StateManagerEnvironment(
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                ),
-            ]
+            environments = []
 
         env_map: Dict[str, "BaseEnvironment"] = {}
         for env in environments:
@@ -292,30 +232,12 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
         function_manager: Optional["FunctionManager"] = None,
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
-        connect_now: bool = False,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> None:
         BaseActor.__init__(
             self,
             environments=environments,
-            computer_primitives=computer_primitives,
             function_manager=function_manager,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-            connect_now=connect_now,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
         BaseStateManager.__init__(self)
 

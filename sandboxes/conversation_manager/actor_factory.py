@@ -118,16 +118,8 @@ class ActorFactory:
         if computer_primitives is not None:
             envs.append(ComputerEnvironment(computer_primitives))
 
-        # Pass explicit environments to avoid implicit computer dependencies.
         actor = CodeActActor(
             environments=envs,
-            computer_primitives=computer_primitives,
-            # If we passed computer_primitives, other computer params are ignored.
-            computer_mode=(
-                "mock" if config.computer_backend_mode == "mock" else "magnitude"
-            ),
-            agent_server_url=getattr(args, "agent_server_url", None),
-            headless=bool(getattr(args, "headless", False)),
         )
 
         return ActorFactoryResult(

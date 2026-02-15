@@ -21,7 +21,7 @@ async def test_code_act_initial_parent_chat_context_is_used():
     """CodeActActor should append _parent_chat_context before the first LLM turn."""
     SecretModel.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
+    actor = CodeActActor(timeout=60)
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
@@ -77,8 +77,6 @@ async def test_execute_function_forwards_parent_chat_context():
 
     actor = CodeActActor(
         environments=[env],
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
 
@@ -183,8 +181,6 @@ async def test_execute_code_forwards_parent_chat_context():
 
     actor = CodeActActor(
         environments=[env],
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
 

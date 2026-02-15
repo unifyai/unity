@@ -67,8 +67,6 @@ def _result_stdout_text(res: Any) -> str:
 async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeypatch):
     actor = CodeActActor(
         environments=[],  # avoid default computer/state-manager envs in unit test
-        headless=True,
-        computer_mode="mock",
     )
 
     async def _fake_execute(**_kwargs):
@@ -123,8 +121,6 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
 async def test_execute_code_boundary_marks_error_when_executor_raises(monkeypatch):
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
     )
 
     async def _boom(**_kwargs):
@@ -209,8 +205,6 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
     """execute_function pushes execute_function({name}) onto lineage and restores it."""
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
         function_manager=_StubFunctionManager(),
     )
 
@@ -253,8 +247,6 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
     """
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
         function_manager=_BoomFunctionManager(),
     )
 
@@ -316,8 +308,6 @@ async def test_execute_function_propagates_lineage_to_nested_manager():
 
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
         function_manager=_LineageCapturingFM(),
     )
 
@@ -368,7 +358,7 @@ def _make_primitives() -> Any:
 @_handle_project
 async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy():
     """Full hierarchy list across execute_code + FM boundary + manager."""
-    actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
+    actor = CodeActActor(environments=[])
     execute_code = actor.get_tools("act")["execute_code"]
 
     sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
@@ -431,7 +421,7 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
     is that the inner manager calls (UnitStateManager.ask) each carry a
     hierarchy containing only their own function boundary, not the sibling's.
     """
-    actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
+    actor = CodeActActor(environments=[])
     execute_code = actor.get_tools("act")["execute_code"]
 
     sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
@@ -504,7 +494,7 @@ async def test_function_boundary_error_restores_lineage_and_surfaces_error():
     publish ManagerMethod events to the event bus.  The execute_code boundary
     captures the exception and reports it in the result dict.
     """
-    actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
+    actor = CodeActActor(environments=[])
     execute_code = actor.get_tools("act")["execute_code"]
 
     sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
@@ -561,8 +551,6 @@ async def test_execute_function_environments_accessible_in_sandbox():
 
     actor = CodeActActor(
         environments=[create_env("my_service", _DummyService())],
-        headless=True,
-        computer_mode="mock",
         function_manager=_StubFunctionManager(),
     )
 

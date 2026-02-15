@@ -17,7 +17,7 @@ async def test_code_act_response_format_roundtrip():
     """CodeActActor should return structured output when response_format is provided."""
     AnswerModel.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
+    actor = CodeActActor(timeout=60)
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")

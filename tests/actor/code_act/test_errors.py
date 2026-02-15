@@ -11,7 +11,7 @@ from unity.actor.execution import parts_to_text
 @pytest.mark.timeout(30)
 async def test_execute_code_can_run_without_bound_sandbox():
     """execute_code should work even if the sandbox ContextVar is missing."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
@@ -45,7 +45,7 @@ async def test_execute_code_can_run_without_bound_sandbox():
 @pytest.mark.timeout(30)
 async def test_act_capacity_timeout_is_fast_when_configured():
     """act() should raise a clear error when semaphore acquisition times out."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")

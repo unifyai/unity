@@ -44,7 +44,7 @@ def _real_envs_mixed() -> Mapping[str, Any]:
 
 @pytest.mark.timeout(30)
 def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legacy_name():
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     try:
         prompt = build_code_act_prompt(
             environments=_real_envs_mixed(),
@@ -70,7 +70,7 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
 
 @pytest.mark.timeout(30)
 def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_and_mixed():
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     try:
         prompt = build_code_act_prompt(
             environments=_real_envs_mixed(),
@@ -106,7 +106,7 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
 def test_custom_environment_prompt_context_included():
     """Custom environments (not computer_primitives/primitives) should have their
     prompt context included in the generated prompt."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
 
     custom_marker = "### Custom Widget Tools\n- `widget.create(name)` — create a widget"
     envs: Mapping[str, Any] = {
@@ -127,7 +127,7 @@ def test_custom_environment_prompt_context_included():
 @pytest.mark.timeout(30)
 def test_multiple_custom_environments_all_included():
     """Multiple custom environments should each have their prompt context included."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
 
     marker_a = "### Alpha Environment\nAlpha-specific guidance for the LLM."
     marker_b = "### Beta Environment\nBeta-specific guidance for the LLM."
@@ -148,7 +148,7 @@ def test_multiple_custom_environments_all_included():
 @pytest.mark.timeout(30)
 def test_custom_environment_empty_prompt_context_excluded():
     """Custom environments returning empty prompt context should not inject noise."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
 
     envs: Mapping[str, Any] = {
         "empty_env": _DummyEnv(""),

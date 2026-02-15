@@ -239,9 +239,6 @@ class ActorIntegrationManager:
         # Step 3: Create CodeActActor with both environments
         state_manager_env = StateManagerEnvironment(primitives)
         self.actor = CodeActActor(
-            headless=config.headless,
-            computer_mode=config.computer_mode,
-            connect_now=config.connect_now,
             enable_course_correction=config.enable_course_correction,
             environments=[
                 ComputerEnvironment(computer_primitives),
