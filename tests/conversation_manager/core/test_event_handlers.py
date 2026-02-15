@@ -144,6 +144,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.in_flight_actions = {}
     cm.completed_actions = {}
     cm.is_summarizing = False
+    cm.assistant_screen_share_active = False
     cm.memory_manager = None
 
     # Create a SimulatedContactManager and populate with sample contacts
