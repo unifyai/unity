@@ -434,6 +434,7 @@ _ALIAS_TO_GETTER: dict[str, str] = {
     "web": "get_web_searcher",
     "files": "get_file_manager",
     "computer": "",
+    "actor": "",
 }
 
 # Managers that need async wrapping (sync implementations)
@@ -509,9 +510,12 @@ class Primitives:
             raise AttributeError(f"Unknown manager alias: {alias}")
 
         if getter_name == "":
-            # Direct construction (singleton via metaclass).
+            # Direct construction (no ManagerRegistry getter).
             if alias == "computer":
                 manager = ComputerPrimitives()
+            elif alias == "actor":
+                from unity.actor.environments.actor import _ActorRunner
+                manager = _ActorRunner()
             else:
                 raise AttributeError(f"No getter for alias: {alias}")
         else:
@@ -586,6 +590,11 @@ class Primitives:
     def computer(self) -> "ComputerPrimitives":
         """Computer use primitives (act, navigate, observe, query, etc.)."""
         return self._get_manager("computer")
+
+    @property
+    def actor(self) -> Any:
+        """Actor delegation primitives (run)."""
+        return self._get_manager("actor")
 
 
 # =============================================================================
