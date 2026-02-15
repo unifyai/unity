@@ -69,6 +69,16 @@ class ActorFactory:
         """
         progress = progress_callback or (lambda _m: None)
 
+        # Configure manager IMPL selection for all modes (including simulated).
+        # Without this, ManagerRegistry defaults to "real" implementations,
+        # which require full Orchestra connectivity for system contact sync.
+        cls._apply_manager_impl_env(config.managers_mode)
+        # Ensure no stale singleton managers leak across sandbox restarts/switches.
+        try:
+            ManagerRegistry.clear()
+        except Exception:
+            pass
+
         if config.actor_type == "simulated":
             actor = SandboxSimulatedActor(
                 steps=None,
@@ -81,14 +91,6 @@ class ActorFactory:
                 primitives=None,
                 computer_primitives=None,
             )
-
-        # CodeAct configurations: configure manager implementations first.
-        cls._apply_manager_impl_env(config.managers_mode)
-        # Ensure no stale singleton managers leak across sandbox restarts/switches.
-        try:
-            ManagerRegistry.clear()
-        except Exception:
-            pass
 
         progress("[init] Loading configuration...")
         progress(f"✓ Actor selected: {config.actor_type}")
