@@ -44,7 +44,13 @@ class Function(BaseModel):
     )
     depends_on: List[str] = Field(
         [],
-        description="A list of other functions that this function depends on.",
+        description=(
+            "Functions this function depends on. Bare names (e.g. 'helper') "
+            "refer to other compositional functions. Dotted names (e.g. "
+            "'primitives.contacts.ask', 'sub_agent.run') refer to environment "
+            "primitives and are tracked for introspection but not injected at "
+            "execution time (they are provided by the execution environment)."
+        ),
     )
     embedding_text: str = Field(
         ...,

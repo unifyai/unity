@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from typing import Optional, Set
+from typing import FrozenSet, Optional, Set
 
 
 class DependencyVisitor(ast.NodeVisitor):
@@ -13,12 +13,33 @@ class DependencyVisitor(ast.NodeVisitor):
     - Indirect calls via variable assignment: `f = foo; f()`
     - Returned function references: `return foo` or `return f` (where f maps to foo)
     - Callables passed as arguments: `bar(callback=foo)` or `bar(foo)`
+    - Dotted environment calls: `primitives.contacts.ask(...)`,
+      `computer_primitives.screenshot(...)`, `sub_agent.run(...)`
     """
 
-    def __init__(self, known_function_names: Set[str]):
+    def __init__(
+        self,
+        known_function_names: Set[str],
+        *,
+        environment_namespaces: FrozenSet[str] = frozenset(),
+    ):
         self.known_function_names = known_function_names
+        self.environment_namespaces = environment_namespaces
         self.dependencies: Set[str] = set()
         self._assignment_map: dict[str, str] = {}
+
+    @staticmethod
+    def _resolve_dotted_name(node: ast.AST) -> Optional[str]:
+        """Resolve an ast.Attribute chain to a dotted string like 'primitives.contacts.ask'."""
+        parts: list[str] = []
+        current = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
+            return ".".join(reversed(parts))
+        return None
 
     def visit_Assign(self, node: ast.Assign):
         # Only track simple assignments: target_var = potential_func_name
@@ -47,6 +68,14 @@ class DependencyVisitor(ast.NodeVisitor):
                 called_name = func_name
             elif func_name in self._assignment_map:
                 called_name = self._assignment_map[func_name]
+
+        # Dotted call -> primitives.contacts.ask(), computer_primitives.act(), etc.
+        elif isinstance(func_node, ast.Attribute) and self.environment_namespaces:
+            dotted = self._resolve_dotted_name(func_node)
+            if dotted:
+                root = dotted.split(".")[0]
+                if root in self.environment_namespaces:
+                    called_name = dotted
 
         if called_name:
             self.dependencies.add(called_name)
@@ -99,6 +128,8 @@ def _collect_known_names(
 def collect_dependencies_from_function_node(
     fn_node: ast.FunctionDef | ast.AsyncFunctionDef,
     known_function_names: Set[str],
+    *,
+    environment_namespaces: FrozenSet[str] = frozenset(),
 ) -> Set[str]:
     """
     Collect dependencies for a single top-level function node.
@@ -107,8 +138,15 @@ def collect_dependencies_from_function_node(
     must resolve at *definition time*:
     - Decorators (e.g. `@my_decorator`)
     - Annotations (e.g. `x: typing.Annotated[int, validator]`)
+
+    When *environment_namespaces* is provided, dotted calls whose root segment matches
+    one of the namespaces (e.g. ``primitives.contacts.ask``, ``sub_agent.run``) are also
+    captured as dependencies.
     """
-    visitor = DependencyVisitor(known_function_names)
+    visitor = DependencyVisitor(
+        known_function_names,
+        environment_namespaces=environment_namespaces,
+    )
     visitor.visit(fn_node)
     deps: Set[str] = set(visitor.dependencies)
 
@@ -143,6 +181,8 @@ def collect_dependencies_from_function_node(
 def collect_dependencies_from_source(
     source: str,
     known_function_names: Set[str],
+    *,
+    environment_namespaces: FrozenSet[str] = frozenset(),
 ) -> Set[str]:
     """Parse a single-function source string and return its dependency names."""
     try:
@@ -155,4 +195,8 @@ def collect_dependencies_from_source(
     ):
         return set()
     node: ast.FunctionDef | ast.AsyncFunctionDef = tree.body[0]
-    return collect_dependencies_from_function_node(node, known_function_names)
+    return collect_dependencies_from_function_node(
+        node,
+        known_function_names,
+        environment_namespaces=environment_namespaces,
+    )
