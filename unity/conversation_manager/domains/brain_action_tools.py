@@ -306,6 +306,44 @@ class ConversationManagerBrainActionTools:
         self._cm = cm
         self._event_broker = get_event_broker()
 
+    async def _surface_comms_error(
+        self,
+        error_msg: str,
+        topic: str,
+        *,
+        contact_id: int | None = None,
+        medium: str | None = None,
+    ) -> dict[str, Any]:
+        """Push a comms error into the conversation thread and publish the Error event.
+
+        Ensures the brain sees the failure in ``active_conversations`` on the
+        next turn and can reason about recovery (retry with missing info,
+        fall back to a different channel, etc.).
+
+        Args:
+            error_msg: Human-readable error description.
+            topic: Event broker topic (e.g. ``"app:comms:sms_sent"``).
+            contact_id: Target contact (when known) — the error is pushed into
+                their conversation thread.
+            medium: Communication medium for the thread entry (e.g.
+                ``Medium.SMS_MESSAGE``).
+
+        Returns:
+            ``{"status": "error", "error": <error_msg>}`` for the tool return.
+        """
+        if contact_id is not None and medium is not None:
+            self._cm.contact_index.push_message(
+                contact_id=contact_id,
+                sender_name="System",
+                thread_name=medium,
+                message_content=f"[Send Failed] {error_msg}",
+                role="system",
+                timestamp=prompt_now(as_string=False),
+            )
+        event = Error(error_msg)
+        await self._event_broker.publish(topic, event.to_json())
+        return {"status": "error", "error": error_msg}
+
     async def send_sms(
         self,
         *,
@@ -342,9 +380,10 @@ class ConversationManagerBrainActionTools:
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
-            event = Error(outbound_error)
-            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-            return {"status": "error", "error": outbound_error}
+            return await self._surface_comms_error(
+                outbound_error, "app:comms:sms_sent",
+                contact_id=contact_id, medium=Medium.SMS_MESSAGE,
+            )
 
         detail_error, contact = _resolve_or_attach_detail(
             contact,
@@ -355,9 +394,10 @@ class ConversationManagerBrainActionTools:
             self._cm.contact_index,
         )
         if detail_error:
-            event = Error(detail_error)
-            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-            return {"status": "error", "error": detail_error}
+            return await self._surface_comms_error(
+                detail_error, "app:comms:sms_sent",
+                contact_id=contact_id, medium=Medium.SMS_MESSAGE,
+            )
 
         to_number = contact.get("phone_number")
         response = await comms_utils.send_sms_message_via_number(
@@ -371,14 +411,17 @@ class ConversationManagerBrainActionTools:
                 self._cm.contact_index.get_contact(phone_number=to_number) or contact
             )
             event = SMSSent(contact=fresh_contact, content=content)
+            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
+            return {"status": "ok"}
+
+        if not self._cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
         else:
-            if not self._cm.assistant_number:
-                error_msg = "You don't have a number, please provision one."
-            else:
-                error_msg = f"Failed to send sms to {to_number}"
-            event = Error(error_msg)
-        await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-        return {"status": "ok"}
+            error_msg = f"Failed to send sms to {to_number}"
+        return await self._surface_comms_error(
+            error_msg, "app:comms:sms_sent",
+            contact_id=contact_id, medium=Medium.SMS_MESSAGE,
+        )
 
     async def send_unify_message(
         self,
@@ -400,15 +443,15 @@ class ConversationManagerBrainActionTools:
 
         contact = self._cm.contact_index.get_contact(contact_id=contact_id)
 
+        _unify_topic = "app:comms:unify_message_sent"
+        _unify_err = dict(contact_id=contact_id, medium=Medium.UNIFY_MESSAGE)
+
         if contact:
             outbound_error = _check_outbound_allowed(contact)
             if outbound_error:
-                event = Error(outbound_error)
-                await self._event_broker.publish(
-                    "app:comms:unify_message_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    outbound_error, _unify_topic, **_unify_err,
                 )
-                return {"status": "error", "error": outbound_error}
 
         # Handle attachment
         attachment = None
@@ -428,13 +471,10 @@ class ConversationManagerBrainActionTools:
                 max_size_mb = 25
                 file_size_mb = len(file_contents) / (1024 * 1024)
                 if file_size_mb > max_size_mb:
-                    error_msg = f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit"
-                    event = Error(error_msg)
-                    await self._event_broker.publish(
-                        "app:comms:unify_message_sent",
-                        event.to_json(),
+                    return await self._surface_comms_error(
+                        f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
+                        _unify_topic, **_unify_err,
                     )
-                    return {"status": "error", "error": error_msg}
 
                 attachment_filename = os.path.basename(attachment_filepath)
                 upload_result = await comms_utils.upload_unify_attachment(
@@ -443,32 +483,23 @@ class ConversationManagerBrainActionTools:
                 )
 
                 if "error" in upload_result:
-                    error_msg = f"Failed to upload attachment: {upload_result['error']}"
-                    event = Error(error_msg)
-                    await self._event_broker.publish(
-                        "app:comms:unify_message_sent",
-                        event.to_json(),
+                    return await self._surface_comms_error(
+                        f"Failed to upload attachment: {upload_result['error']}",
+                        _unify_topic, **_unify_err,
                     )
-                    return {"status": "error", "error": error_msg}
 
                 attachment = upload_result
 
             except FileNotFoundError:
-                error_msg = f"File not found: {attachment_filepath}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:unify_message_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    _unify_topic, **_unify_err,
                 )
-                return {"status": "error", "error": error_msg}
             except Exception as e:
-                error_msg = f"Failed to read file: {e}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:unify_message_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"Failed to read file: {e}",
+                    _unify_topic, **_unify_err,
                 )
-                return {"status": "error", "error": error_msg}
 
         response = await comms_utils.send_unify_message(
             content=content,
@@ -488,13 +519,12 @@ class ConversationManagerBrainActionTools:
                 content=content,
                 attachments=attachments_for_event,
             )
-        else:
-            event = Error("Failed to send unify message")
-        await self._event_broker.publish(
-            "app:comms:unify_message_sent",
-            event.to_json(),
+            await self._event_broker.publish(_unify_topic, event.to_json())
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            "Failed to send unify message", _unify_topic, **_unify_err,
         )
-        return {"status": "ok"}
 
     async def send_email(
         self,
@@ -574,6 +604,15 @@ class ConversationManagerBrainActionTools:
         cc = _coerce_recipients(cc)
         bcc = _coerce_recipients(bcc)
 
+        _email_topic = "app:comms:email_sent"
+        # Best-effort contact_id for thread placement of email errors.
+        _email_cid = (
+            (to[0][0] if to else None)
+            or (cc[0][0] if cc else None)
+            or (bcc[0][0] if bcc else None)
+        )
+        _email_err = dict(contact_id=_email_cid, medium=Medium.EMAIL)
+
         # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
         if reply_all and (to or cc or bcc):
             error_msg = (
@@ -581,9 +620,9 @@ class ConversationManagerBrainActionTools:
                 "Either use reply_all to auto-populate recipients from the thread, "
                 "or specify recipients explicitly."
             )
-            event = Error(error_msg)
-            await self._event_broker.publish("app:comms:email_sent", event.to_json())
-            return {"status": "error", "error": error_msg}
+            return await self._surface_comms_error(
+                error_msg, _email_topic, **_email_err,
+            )
 
         # --- Helper: resolve recipients to unique (email, contact) pairs ---
         def _resolve_recipients(
@@ -657,17 +696,12 @@ class ConversationManagerBrainActionTools:
                             break
 
             if not original_email:
-                error_msg = (
+                return await self._surface_comms_error(
                     "reply_all=True but no email found to reply to. "
                     "Either provide email_id_to_reply_to or ensure there's a matching "
-                    "inbound email in the thread."
+                    "inbound email in the thread.",
+                    _email_topic, **_email_err,
                 )
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
-                )
-                return {"status": "error", "error": error_msg}
 
             # Standard reply-all behavior:
             # - Original sender -> to
@@ -707,30 +741,21 @@ class ConversationManagerBrainActionTools:
             # --- Resolve explicit recipients to email addresses ---
             to_err, to_resolved = _resolve_recipients(to)
             if to_err:
-                event = Error(to_err)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    to_err, _email_topic, **_email_err,
                 )
-                return {"status": "error", "error": to_err}
 
             cc_err, cc_resolved = _resolve_recipients(cc)
             if cc_err:
-                event = Error(cc_err)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    cc_err, _email_topic, **_email_err,
                 )
-                return {"status": "error", "error": cc_err}
 
             bcc_err, bcc_resolved = _resolve_recipients(bcc)
             if bcc_err:
-                event = Error(bcc_err)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    bcc_err, _email_topic, **_email_err,
                 )
-                return {"status": "error", "error": bcc_err}
 
             # Extract just the email addresses for sending
             final_to = [email for email, _ in to_resolved]
@@ -748,16 +773,11 @@ class ConversationManagerBrainActionTools:
 
             # --- Validation: at least one recipient required ---
             if not final_to and not final_cc and not final_bcc:
-                error_msg = (
+                return await self._surface_comms_error(
                     "At least one recipient is required. "
-                    "Provide to, cc, or bcc, or use reply_all=True."
+                    "Provide to, cc, or bcc, or use reply_all=True.",
+                    _email_topic, **_email_err,
                 )
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
-                )
-                return {"status": "error", "error": error_msg}
 
             # --- Infer reply ID from email thread if not provided ---
             if not reply_email_id:
@@ -801,13 +821,10 @@ class ConversationManagerBrainActionTools:
                 max_size_mb = 25
                 file_size_mb = len(file_contents) / (1024 * 1024)
                 if file_size_mb > max_size_mb:
-                    error_msg = f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit"
-                    event = Error(error_msg)
-                    await self._event_broker.publish(
-                        "app:comms:email_sent",
-                        event.to_json(),
+                    return await self._surface_comms_error(
+                        f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
+                        _email_topic, **_email_err,
                     )
-                    return {"status": "error", "error": error_msg}
 
                 attachment_filename = os.path.basename(attachment_filepath)
                 attachment = {
@@ -815,21 +832,15 @@ class ConversationManagerBrainActionTools:
                     "content_base64": base64.b64encode(file_contents).decode("utf-8"),
                 }
             except FileNotFoundError:
-                error_msg = f"File not found: {attachment_filepath}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    _email_topic, **_email_err,
                 )
-                return {"status": "error", "error": error_msg}
             except Exception as e:
-                error_msg = f"Failed to read file: {e}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"Failed to read file: {e}",
+                    _email_topic, **_email_err,
                 )
-                return {"status": "error", "error": error_msg}
 
         # --- Send the email ---
         response = await comms_utils.send_email_via_address(
@@ -854,18 +865,20 @@ class ConversationManagerBrainActionTools:
                 cc=final_cc,
                 bcc=final_bcc,
             )
+            await self._event_broker.publish(_email_topic, event.to_json())
+            return {"status": "ok"}
+
+        if not self._cm.assistant_email:
+            error_msg = "You don't have an email address, please provision one."
         else:
-            if not self._cm.assistant_email:
-                error_msg = "You don't have an email address, please provision one."
-            else:
-                recipients = final_to + final_cc + final_bcc
-                error_msg = response.get(
-                    "error",
-                    f"Failed to send email to {recipients}",
-                )
-            event = Error(error_msg)
-        await self._event_broker.publish("app:comms:email_sent", event.to_json())
-        return {"status": "ok"}
+            recipients = final_to + final_cc + final_bcc
+            error_msg = response.get(
+                "error",
+                f"Failed to send email to {recipients}",
+            )
+        return await self._surface_comms_error(
+            error_msg, _email_topic, **_email_err,
+        )
 
     async def make_call(
         self,
@@ -934,9 +947,10 @@ class ConversationManagerBrainActionTools:
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
-            event = Error(outbound_error)
-            await self._event_broker.publish("app:comms:make_call", event.to_json())
-            return {"status": "error", "error": outbound_error}
+            return await self._surface_comms_error(
+                outbound_error, "app:comms:make_call",
+                contact_id=contact_id, medium=Medium.PHONE_CALL,
+            )
 
         detail_error, contact = _resolve_or_attach_detail(
             contact,
@@ -947,9 +961,10 @@ class ConversationManagerBrainActionTools:
             self._cm.contact_index,
         )
         if detail_error:
-            event = Error(detail_error)
-            await self._event_broker.publish("app:comms:make_call", event.to_json())
-            return {"status": "error", "error": detail_error}
+            return await self._surface_comms_error(
+                detail_error, "app:comms:make_call",
+                contact_id=contact_id, medium=Medium.PHONE_CALL,
+            )
 
         to_number = contact.get("phone_number")
         print(f"[make_call] context: {context}, to_number: {to_number}")
@@ -965,14 +980,17 @@ class ConversationManagerBrainActionTools:
                 or {}
             )
             event = PhoneCallSent(contact=fresh_contact)
+            await self._event_broker.publish("app:comms:make_call", event.to_json())
+            return {"status": "ok"}
+
+        if not self._cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
         else:
-            if not self._cm.assistant_number:
-                error_msg = "You don't have a number, please provision one."
-            else:
-                error_msg = f"Failed to send call to {to_number}"
-            event = Error(error_msg)
-        await self._event_broker.publish("app:comms:make_call", event.to_json())
-        return {"status": "ok"}
+            error_msg = f"Failed to send call to {to_number}"
+        return await self._surface_comms_error(
+            error_msg, "app:comms:make_call",
+            contact_id=contact_id, medium=Medium.PHONE_CALL,
+        )
 
     async def act(
         self,

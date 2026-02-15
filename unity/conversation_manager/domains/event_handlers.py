@@ -627,6 +627,23 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     await cm.request_llm_run(delay=2)
 
 
+@EventHandler.register(Error)
+async def _(event: Error, cm: "ConversationManager", *args, **kwargs):
+    """Surface comms errors to the brain via the notification bar.
+
+    When an outbound comms tool fails (send_sms, send_email, make_call, etc.),
+    it publishes an Error event. Without a handler, the error is silently
+    dropped and the brain never learns about the failure.
+
+    The detailed error context is already pushed into the conversation thread
+    by the tool itself (via ``_surface_comms_error``). This handler adds a
+    lightweight notification and triggers a follow-up brain turn so the brain
+    can see the failure and decide how to recover.
+    """
+    cm.notifications_bar.push_notif("Error", event.message, event.timestamp)
+    await cm.request_llm_run(delay=0)
+
+
 @EventHandler.register(BackupContactsEvent)
 async def _(event: BackupContactsEvent, cm: "ConversationManager", *args, **kwargs):
     """
