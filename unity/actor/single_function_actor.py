@@ -485,7 +485,9 @@ class SingleFunctionActor(BaseActor):
         """Execute a primitive (state manager method) with stdout capture."""
         name = primitive_data.get("name")
 
-        fn = get_primitive_callable(primitive_data, self._computer_primitives)
+        from unity.function_manager.primitives import Primitives
+
+        fn = get_primitive_callable(primitive_data, primitives=Primitives())
         if fn is None:
             raise ValueError(f"Could not resolve primitive '{name}' to a callable")
 
