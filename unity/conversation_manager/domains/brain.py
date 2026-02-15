@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, create_model
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.prompt_builders import build_system_prompt
-from unity.conversation_manager.types import Mode
+from unity.conversation_manager.types import Mode, ScreenshotEntry
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -102,8 +102,7 @@ class BrainSpec:
     state_prompt: str
     response_model: type["BaseModel"]
     # Buffered screenshots captured during screen sharing, aligned with user turns.
-    # Each entry: (base64_png, user_utterance_text, timestamp).
-    screenshots: list[tuple[str, str, datetime]] = field(default_factory=list)
+    screenshots: list[ScreenshotEntry] = field(default_factory=list)
 
     def state_message(self) -> dict:
         # Mark this as a state snapshot so the async tool loop can treat it as
@@ -117,33 +116,56 @@ class BrainSpec:
 
         # Build multimodal content: text state + screenshot blocks aligned with
         # the user utterances that triggered them.
+        has_assistant = any(s.source == "assistant" for s in self.screenshots)
+        has_user = any(s.source == "user" for s in self.screenshots)
+        if has_assistant and has_user:
+            header = (
+                "The following screenshots were captured during screen sharing, "
+                "from both your desktop and the user's screen, each paired with "
+                "what the user said at that moment. They are in chronological order."
+            )
+        elif has_user:
+            header = (
+                "The following screenshots were captured from the user's screen "
+                "during screen sharing, each paired with what the user said "
+                "at that moment. They are in chronological order."
+            )
+        else:
+            header = (
+                "The following screenshots were captured from your desktop "
+                "during screen sharing, each paired with what the user said "
+                "at that moment. They are in chronological order."
+            )
+
         content_parts: list[dict] = [
             {"type": "text", "text": self.state_prompt},
             {
                 "type": "text",
                 "text": (
-                    "\n\n<screen_share_snapshots>\n"
-                    "The following screenshots were captured from your desktop "
-                    "during screen sharing, each paired with what the user said "
-                    "at that moment. They are in chronological order.\n"
+                    f"\n\n<screen_share_snapshots>\n{header}\n"
                     "</screen_share_snapshots>"
                 ),
             },
         ]
-        for i, (b64, utterance, ts) in enumerate(self.screenshots, 1):
+        source_labels = {
+            "assistant": "Assistant's Screen",
+            "user": "User's Screen",
+        }
+        for i, entry in enumerate(self.screenshots, 1):
+            label = source_labels.get(entry.source, "Screenshot")
             content_parts.append(
                 {
                     "type": "text",
                     "text": (
-                        f"\n[Screenshot {i}/{len(self.screenshots)}] "
-                        f'User said: "{utterance}"'
+                        f"\n[{label} - Screenshot {i}/{len(self.screenshots)}] "
+                        f'User said: "{entry.utterance}"'
                     ),
                 },
             )
             content_parts.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    "image_url": {"url": f"data:image/png;base64,{entry.b64}"},
                 },
             )
 
@@ -156,7 +178,7 @@ class BrainSpec:
 
 def build_brain_spec(
     cm: "ConversationManager",
-    screenshots: list[tuple[str, str, datetime]] | None = None,
+    screenshots: list[ScreenshotEntry] | None = None,
 ) -> BrainSpec:
     """
     Build the prompt + response model inputs for a single Main CM Brain run.
@@ -168,9 +190,9 @@ def build_brain_spec(
     ----------
     cm : ConversationManager
         The conversation manager instance.
-    screenshots : list[tuple[str, str, datetime]] | None
-        Buffered screenshots from assistant screen sharing, each paired with the
-        user utterance that triggered capture and a timestamp.
+    screenshots : list[ScreenshotEntry] | None
+        Buffered screenshots from screen sharing (assistant and/or user), each
+        paired with the user utterance that triggered capture and a timestamp.
     """
     from unity.settings import SETTINGS
 

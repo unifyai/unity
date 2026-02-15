@@ -34,7 +34,7 @@ from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 from unity.conversation_manager.domains.guidance_filter import (
@@ -130,6 +130,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
+        self.call_manager.on_user_screenshot = self._buffer_user_screenshot
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -170,8 +171,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.user_remote_control_active: bool = False
 
         # screenshot buffer for slow brain visual context
-        # Each entry: (base64_png, user_utterance_text, timestamp)
-        self._screenshot_buffer: list[tuple[str, str, "datetime"]] = []
+        self._screenshot_buffer: list[ScreenshotEntry] = []
 
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
@@ -255,7 +255,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     b64 = data.get("screenshot")
                     if b64:
                         self._screenshot_buffer.append(
-                            (b64, user_utterance, datetime.now(timezone.utc)),
+                            ScreenshotEntry(b64, user_utterance, datetime.now(timezone.utc), "assistant"),
                         )
                         self._session_logger.debug(
                             "screenshot_capture",
@@ -268,11 +268,39 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"Screenshot capture error: {e}",
             )
 
-    def drain_screenshot_buffer(self) -> list[tuple[str, str, "datetime"]]:
+    def drain_screenshot_buffer(self) -> list[ScreenshotEntry]:
         """Drain and return all buffered screenshots, clearing the buffer."""
         screenshots = list(self._screenshot_buffer)
         self._screenshot_buffer.clear()
         return screenshots
+
+    def _buffer_user_screenshot(self, event_json: str) -> None:
+        """Buffer a user screen share screenshot received from the fast brain via IPC."""
+        import json as _json
+        from datetime import datetime, timezone
+
+        try:
+            data = _json.loads(event_json)
+            b64 = data.get("b64", "")
+            utterance = data.get("utterance", "")
+            ts_str = data.get("timestamp")
+            ts = (
+                datetime.fromisoformat(ts_str)
+                if ts_str
+                else datetime.now(timezone.utc)
+            )
+            if b64:
+                self._screenshot_buffer.append(ScreenshotEntry(b64, utterance, ts, "user"))
+                self._session_logger.debug(
+                    "screenshot_capture",
+                    f"Buffered user screenshot #{len(self._screenshot_buffer)} "
+                    f"for utterance: {utterance[:60]}...",
+                )
+        except Exception as e:
+            self._session_logger.warning(
+                "screenshot_capture",
+                f"Error buffering user screenshot: {e}",
+            )
 
     def get_recent_voice_transcript(
         self,

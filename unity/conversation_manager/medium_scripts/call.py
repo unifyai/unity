@@ -41,6 +41,7 @@ from unity.conversation_manager.medium_scripts.common import (
     configure_from_cli,
     should_dispatch_livekit_agent,
     start_event_broker_receive,
+    UserScreenCaptureManager,
 )
 
 # Globals initialized lazily or via prewarm to avoid duplicate heavy init
@@ -131,6 +132,9 @@ async def entrypoint(ctx: agents.JobContext):
     print("Connecting to room...")
     await ctx.connect()
     print("Connected to room")
+
+    # User screen share capture (subscribes to LiveKit room tracks automatically)
+    screen_capture = UserScreenCaptureManager(ctx.room)
 
     # Flag for call_answered that may arrive during initialization
     call_answered_flag = asyncio.Event()
@@ -232,6 +236,21 @@ async def entrypoint(ctx: agents.JobContext):
         text = ev.item.text_content or ""
         if role == "user":
             event = user_utterance_event(contact, content=text)
+            # Capture the user's screen if they are sharing it.
+            b64 = screen_capture.capture_screenshot()
+            if b64:
+                from datetime import datetime, timezone
+
+                asyncio.create_task(
+                    event_broker.publish(
+                        "app:comms:user_screen_screenshot",
+                        json.dumps({
+                            "b64": b64,
+                            "utterance": text,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }),
+                    ),
+                )
         else:
             event = assistant_utterance_event(contact, content=text)
 

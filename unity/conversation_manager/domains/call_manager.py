@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.events import *
@@ -54,6 +54,9 @@ class LivekitCallManager:
         # Initial guidance for outbound calls, set by make_call tool before the
         # call is placed, published to the fast brain after the subprocess spawns.
         self.initial_call_guidance: str = ""
+        # Callback for user screen share screenshots received via IPC.
+        # Set by the ConversationManager to route screenshots to its buffer.
+        self.on_user_screenshot: Callable[[str], None] | None = None
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -76,7 +79,20 @@ class LivekitCallManager:
             return None
 
         if self._socket_server is None:
-            self._socket_server = CallEventSocketServer(self._event_broker)
+
+            async def _on_ipc_event(channel: str, event_json: str) -> None:
+                if (
+                    channel == "app:comms:user_screen_screenshot"
+                    and self.on_user_screenshot is not None
+                ):
+                    self.on_user_screenshot(event_json)
+                else:
+                    await self._event_broker.publish(channel, event_json)
+
+            self._socket_server = CallEventSocketServer(
+                self._event_broker,
+                on_event=_on_ipc_event,
+            )
 
         if self._socket_server.socket_path is None:
             socket_path = await self._socket_server.start()

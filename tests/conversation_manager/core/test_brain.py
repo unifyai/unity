@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from unity.common.prompt_helpers import PromptParts
 from unity.conversation_manager.domains.brain import BrainSpec
+from unity.conversation_manager.types import ScreenshotEntry
 
 # =============================================================================
 # Helpers
@@ -26,7 +27,7 @@ from unity.conversation_manager.domains.brain import BrainSpec
 
 def _make_brain_spec(
     state_prompt: str = "<state>test</state>",
-    screenshots: list[tuple[str, str, datetime]] | None = None,
+    screenshots: list[ScreenshotEntry] | None = None,
 ) -> BrainSpec:
     """Create a minimal BrainSpec for testing."""
     from pydantic import Field, create_model
@@ -72,7 +73,7 @@ class TestBrainSpecStateMessage:
         """With screenshots the message content becomes a list of parts."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
         screenshots = [
-            (FAKE_B64, "Click that button please", ts),
+            ScreenshotEntry(FAKE_B64, "Click that button please", ts, "assistant"),
         ]
         spec = _make_brain_spec(screenshots=screenshots)
         msg = spec.state_message()
@@ -88,7 +89,7 @@ class TestBrainSpecStateMessage:
     def test_screenshot_header_present(self):
         """The multimodal message includes a header explaining the screenshots."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
-        screenshots = [(FAKE_B64, "Do this", ts)]
+        screenshots = [ScreenshotEntry(FAKE_B64, "Do this", ts, "assistant")]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
 
         text_parts = [p for p in msg["content"] if p.get("type") == "text"]
@@ -103,8 +104,8 @@ class TestBrainSpecStateMessage:
         ts1 = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
         ts2 = datetime(2026, 2, 13, 12, 0, 5, tzinfo=timezone.utc)
         screenshots = [
-            (FAKE_B64, "First, click here", ts1),
-            (FAKE_B64, "Then scroll down", ts2),
+            ScreenshotEntry(FAKE_B64, "First, click here", ts1, "assistant"),
+            ScreenshotEntry(FAKE_B64, "Then scroll down", ts2, "assistant"),
         ]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
         content = msg["content"]
@@ -130,23 +131,23 @@ class TestBrainSpecStateMessage:
         """Screenshot labels include N/total numbering."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
         screenshots = [
-            (FAKE_B64, "Step one", ts),
-            (FAKE_B64, "Step two", ts),
-            (FAKE_B64, "Step three", ts),
+            ScreenshotEntry(FAKE_B64, "Step one", ts, "assistant"),
+            ScreenshotEntry(FAKE_B64, "Step two", ts, "assistant"),
+            ScreenshotEntry(FAKE_B64, "Step three", ts, "assistant"),
         ]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
 
         text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
-        labels = [t for t in text_parts if t.strip().startswith("[Screenshot")]
+        labels = [t for t in text_parts if "Screenshot" in t and "User said" in t]
         assert len(labels) == 3
-        assert "[Screenshot 1/3]" in labels[0]
-        assert "[Screenshot 2/3]" in labels[1]
-        assert "[Screenshot 3/3]" in labels[2]
+        assert "Screenshot 1/3]" in labels[0]
+        assert "Screenshot 2/3]" in labels[1]
+        assert "Screenshot 3/3]" in labels[2]
 
     def test_image_url_format(self):
         """Image parts use the data URI scheme with image/png MIME type."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
-        screenshots = [(FAKE_B64, "Look at this", ts)]
+        screenshots = [ScreenshotEntry(FAKE_B64, "Look at this", ts, "assistant")]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
 
         image_parts = [p for p in msg["content"] if p.get("type") == "image_url"]
@@ -160,3 +161,51 @@ class TestBrainSpecStateMessage:
         spec = _make_brain_spec(screenshots=[])
         msg = spec.state_message()
         assert isinstance(msg["content"], str)
+
+    def test_user_screenshot_label(self):
+        """User-source screenshot produces a 'User's Screen' label."""
+        ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
+        screenshots = [ScreenshotEntry(FAKE_B64, "Look at my screen", ts, "user")]
+        msg = _make_brain_spec(screenshots=screenshots).state_message()
+
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
+        labels = [t for t in text_parts if "Screenshot" in t and "User said" in t]
+        assert len(labels) == 1
+        assert "User's Screen" in labels[0]
+        assert "Assistant's Screen" not in labels[0]
+
+    def test_mixed_sources_both_labels_present(self):
+        """Mixed assistant + user screenshots produce both labels and a mixed header."""
+        ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Click that button", ts, "assistant"),
+            ScreenshotEntry(FAKE_B64, "See my screen", ts, "user"),
+        ]
+        msg = _make_brain_spec(screenshots=screenshots).state_message()
+
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
+        labels = [t for t in text_parts if "Screenshot" in t and "User said" in t]
+        assert len(labels) == 2
+        assert "Assistant's Screen" in labels[0]
+        assert "User's Screen" in labels[1]
+
+        # Header mentions both sources
+        header_texts = [t for t in text_parts if "screen_share_snapshots" in t]
+        assert len(header_texts) == 1
+        assert "your desktop" in header_texts[0]
+        assert "user's screen" in header_texts[0]
+
+    def test_user_only_header(self):
+        """When all screenshots are user-sourced, the header references the user's screen."""
+        ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Step one", ts, "user"),
+            ScreenshotEntry(FAKE_B64, "Step two", ts, "user"),
+        ]
+        msg = _make_brain_spec(screenshots=screenshots).state_message()
+
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
+        header_texts = [t for t in text_parts if "screen_share_snapshots" in t]
+        assert len(header_texts) == 1
+        assert "user's screen" in header_texts[0]
+        assert "your desktop" not in header_texts[0]
