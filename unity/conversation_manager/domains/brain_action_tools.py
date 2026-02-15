@@ -1135,6 +1135,7 @@ class ConversationManagerBrainActionTools:
                 handle_id=handle_id,
                 action_name="act",
                 query=query,
+                response_format=response_format,
             ).to_json(),
         )
 
@@ -1222,6 +1223,7 @@ class ConversationManagerBrainActionTools:
                 handle_id=handle_id,
                 action_name=action_type,
                 query=text,
+                response_format=response_format,
             ).to_json(),
         )
 
