@@ -216,7 +216,7 @@ def test_actor_env_namespace():
 
 @pytest.mark.timeout(30)
 def test_actor_env_get_tools():
-    """get_tools() should return exactly one tool with correct metadata."""
+    """get_tools() should return exactly one tool with correct metadata including function_id."""
     env = ActorEnvironment()
     tools = env.get_tools()
 
@@ -225,7 +225,8 @@ def test_actor_env_get_tools():
     assert meta.name == "actor.run"
     assert meta.is_impure is True
     assert meta.is_steerable is True
-    assert meta.function_id is None
+    assert meta.function_id is not None
+    assert meta.function_context == "primitive"
 
 
 @pytest.mark.timeout(30)
@@ -253,6 +254,33 @@ async def test_actor_env_capture_state():
     env = ActorEnvironment()
     state = await env.capture_state()
     assert state == {"type": "actor"}
+
+
+@pytest.mark.timeout(30)
+def test_actor_in_collect_primitives():
+    """collect_primitives() should include primitives.actor.run with correct metadata."""
+    from unity.function_manager.primitives.registry import collect_primitives
+
+    primitives = collect_primitives()
+    assert "primitives.actor.run" in primitives
+    entry = primitives["primitives.actor.run"]
+    assert entry["is_primitive"] is True
+    assert entry["primitive_method"] == "run"
+    assert entry["function_id"] is not None
+
+
+@pytest.mark.timeout(30)
+def test_actor_accessible_via_primitives_class():
+    """Primitives().actor should return an _ActorRunner instance."""
+    from unity.function_manager.primitives import Primitives
+    from unity.function_manager.primitives.scope import PrimitiveScope
+
+    scope = PrimitiveScope(scoped_managers=frozenset({"actor"}))
+    prims = Primitives(primitive_scope=scope)
+    runner = prims.actor
+    assert hasattr(runner, "run")
+    assert hasattr(runner, "_PRIMITIVE_METHODS")
+    assert "run" in runner._PRIMITIVE_METHODS
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ VALID_MANAGER_ALIASES: frozenset[str] = frozenset(
         "data",
         "files",
         "computer",
+        "actor",
     },
 )
 

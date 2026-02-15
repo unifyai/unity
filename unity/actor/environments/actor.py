@@ -145,6 +145,8 @@ class _ActorRunner:
     the ``_ACTOR_CONTEXT`` ContextVar set by the enclosing CodeActActor.
     """
 
+    _PRIMITIVE_METHODS = ("run",)
+
     async def run(
         self,
         task: str,
@@ -362,11 +364,14 @@ class ActorEnvironment(BaseEnvironment):
         )
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
+        registry = get_registry()
         return {
             f"{self.NAMESPACE}.run": ToolMetadata(
                 name=f"{self.NAMESPACE}.run",
                 is_impure=True,
                 is_steerable=True,
+                function_id=registry.get_function_id("actor", "run"),
+                function_context="primitive",
             ),
         }
 

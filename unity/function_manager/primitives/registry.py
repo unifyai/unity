@@ -195,6 +195,17 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         use_when="Web automation, browser control, navigating websites, extracting web content",
         examples="'Navigate to example.com', 'Click the login button', 'Extract page content'",
     ),
+    ManagerSpec(
+        manager_alias="actor",
+        manager_registry_key="",  # No ManagerRegistry getter - stateless, constructed directly
+        primitive_class_path="unity.actor.environments.actor._ActorRunner",
+        excluded_methods=frozenset(),
+        priority=11,
+        domain="Actor Delegation",
+        description="Spawn focused sub-actors for isolated multi-step sub-tasks",
+        use_when="Task decomposition, isolated reasoning, parallel sub-tasks, context isolation",
+        examples="'Delegate research to a sub-actor', 'Spawn an actor to handle data processing'",
+    ),
 )
 
 # Build lookup dicts for fast access
@@ -499,10 +510,10 @@ class ToolSurfaceRegistry:
         # Combine common exclusions with per-manager exclusions
         exclude = _COMMON_EXCLUDED_METHODS | spec.excluded_methods
 
-        # Special case: ComputerPrimitives has dynamically-created methods
-        # that are added via setattr in __init__, so we can't discover them
-        # from the class itself. Use the class's _PRIMITIVE_METHODS constant.
-        if cls.__name__ == "ComputerPrimitives":
+        # Classes that declare _PRIMITIVE_METHODS explicitly (e.g. because
+        # methods are dynamically created or not discoverable via @abstractmethod)
+        # use that constant as the authoritative method list.
+        if hasattr(cls, "_PRIMITIVE_METHODS"):
             return sorted([m for m in cls._PRIMITIVE_METHODS if m not in exclude])
 
         methods = []
