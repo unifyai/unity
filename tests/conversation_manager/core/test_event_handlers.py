@@ -1185,7 +1185,7 @@ class TestMeetInteractionEventHandlers:
     def test_buffer_user_screenshot_parses_ipc_json(self, mock_cm):
         """_buffer_user_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from unity.conversation_manager.conversation_manager import ConversationManager
 
@@ -1194,11 +1194,13 @@ class TestMeetInteractionEventHandlers:
         mock_cm._session_logger = MagicMock()
         method = ConversationManager._buffer_user_screenshot.__get__(mock_cm)
 
-        payload = json.dumps({
-            "b64": "iVBORw0KGgoAAAANSUhEUg==",
-            "utterance": "Look at this part of my screen",
-            "timestamp": "2026-02-15T12:00:00+00:00",
-        })
+        payload = json.dumps(
+            {
+                "b64": "iVBORw0KGgoAAAANSUhEUg==",
+                "utterance": "Look at this part of my screen",
+                "timestamp": "2026-02-15T12:00:00+00:00",
+            },
+        )
         method(payload)
 
         assert len(mock_cm._screenshot_buffer) == 1

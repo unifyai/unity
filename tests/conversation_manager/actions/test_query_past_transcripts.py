@@ -42,9 +42,7 @@ def _assert_transcript_query_triggered(
     substring appears in the query text OR in the ``response_format`` keys.
     """
     events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    transcript_events = [
-        e for e in events if e.action_name == "query_past_transcripts"
-    ]
+    transcript_events = [e for e in events if e.action_name == "query_past_transcripts"]
     assert transcript_events, (
         f"Expected query_past_transcripts to be triggered, "
         f"but got action(s): {[e.action_name for e in events] or 'none'}"

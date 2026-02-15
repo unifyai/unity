@@ -182,11 +182,13 @@ async def entrypoint(ctx: JobContext) -> None:
                 asyncio.create_task(
                     event_broker.publish(
                         "app:comms:user_screen_screenshot",
-                        json.dumps({
-                            "b64": b64,
-                            "utterance": text,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }),
+                        json.dumps(
+                            {
+                                "b64": b64,
+                                "utterance": text,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        ),
                     ),
                 )
         else:

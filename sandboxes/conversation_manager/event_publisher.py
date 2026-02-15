@@ -51,7 +51,7 @@ class EventPublisher:
         topic = getattr(type(event), "topic", None)
         if not topic:
             raise ValueError(
-                f"Event {type(event).__name__} has no topic ClassVar set"
+                f"Event {type(event).__name__} has no topic ClassVar set",
             )
         contact = get_simulated_user_contact()
         try:

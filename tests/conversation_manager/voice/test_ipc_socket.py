@@ -138,11 +138,13 @@ class TestCallEventSocketServer:
         client = CallEventSocketClient(socket_path)
 
         # Send a screenshot event
-        screenshot_payload = json.dumps({
-            "b64": "iVBORw0KGgoAAAANSUhEUg==",
-            "utterance": "Look here",
-            "timestamp": "2026-02-15T12:00:00+00:00",
-        })
+        screenshot_payload = json.dumps(
+            {
+                "b64": "iVBORw0KGgoAAAANSUhEUg==",
+                "utterance": "Look here",
+                "timestamp": "2026-02-15T12:00:00+00:00",
+            },
+        )
         await client.send_event(
             "app:comms:user_screen_screenshot",
             screenshot_payload,

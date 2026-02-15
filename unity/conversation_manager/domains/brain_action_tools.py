@@ -381,8 +381,10 @@ class ConversationManagerBrainActionTools:
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
             return await self._surface_comms_error(
-                outbound_error, "app:comms:sms_sent",
-                contact_id=contact_id, medium=Medium.SMS_MESSAGE,
+                outbound_error,
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
             )
 
         detail_error, contact = _resolve_or_attach_detail(
@@ -395,8 +397,10 @@ class ConversationManagerBrainActionTools:
         )
         if detail_error:
             return await self._surface_comms_error(
-                detail_error, "app:comms:sms_sent",
-                contact_id=contact_id, medium=Medium.SMS_MESSAGE,
+                detail_error,
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
             )
 
         to_number = contact.get("phone_number")
@@ -419,8 +423,10 @@ class ConversationManagerBrainActionTools:
         else:
             error_msg = f"Failed to send sms to {to_number}"
         return await self._surface_comms_error(
-            error_msg, "app:comms:sms_sent",
-            contact_id=contact_id, medium=Medium.SMS_MESSAGE,
+            error_msg,
+            "app:comms:sms_sent",
+            contact_id=contact_id,
+            medium=Medium.SMS_MESSAGE,
         )
 
     async def send_unify_message(
@@ -450,7 +456,9 @@ class ConversationManagerBrainActionTools:
             outbound_error = _check_outbound_allowed(contact)
             if outbound_error:
                 return await self._surface_comms_error(
-                    outbound_error, _unify_topic, **_unify_err,
+                    outbound_error,
+                    _unify_topic,
+                    **_unify_err,
                 )
 
         # Handle attachment
@@ -473,7 +481,8 @@ class ConversationManagerBrainActionTools:
                 if file_size_mb > max_size_mb:
                     return await self._surface_comms_error(
                         f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
-                        _unify_topic, **_unify_err,
+                        _unify_topic,
+                        **_unify_err,
                     )
 
                 attachment_filename = os.path.basename(attachment_filepath)
@@ -485,7 +494,8 @@ class ConversationManagerBrainActionTools:
                 if "error" in upload_result:
                     return await self._surface_comms_error(
                         f"Failed to upload attachment: {upload_result['error']}",
-                        _unify_topic, **_unify_err,
+                        _unify_topic,
+                        **_unify_err,
                     )
 
                 attachment = upload_result
@@ -493,12 +503,14 @@ class ConversationManagerBrainActionTools:
             except FileNotFoundError:
                 return await self._surface_comms_error(
                     f"File not found: {attachment_filepath}",
-                    _unify_topic, **_unify_err,
+                    _unify_topic,
+                    **_unify_err,
                 )
             except Exception as e:
                 return await self._surface_comms_error(
                     f"Failed to read file: {e}",
-                    _unify_topic, **_unify_err,
+                    _unify_topic,
+                    **_unify_err,
                 )
 
         response = await comms_utils.send_unify_message(
@@ -523,7 +535,9 @@ class ConversationManagerBrainActionTools:
             return {"status": "ok"}
 
         return await self._surface_comms_error(
-            "Failed to send unify message", _unify_topic, **_unify_err,
+            "Failed to send unify message",
+            _unify_topic,
+            **_unify_err,
         )
 
     async def send_email(
@@ -621,7 +635,9 @@ class ConversationManagerBrainActionTools:
                 "or specify recipients explicitly."
             )
             return await self._surface_comms_error(
-                error_msg, _email_topic, **_email_err,
+                error_msg,
+                _email_topic,
+                **_email_err,
             )
 
         # --- Helper: resolve recipients to unique (email, contact) pairs ---
@@ -700,7 +716,8 @@ class ConversationManagerBrainActionTools:
                     "reply_all=True but no email found to reply to. "
                     "Either provide email_id_to_reply_to or ensure there's a matching "
                     "inbound email in the thread.",
-                    _email_topic, **_email_err,
+                    _email_topic,
+                    **_email_err,
                 )
 
             # Standard reply-all behavior:
@@ -742,19 +759,25 @@ class ConversationManagerBrainActionTools:
             to_err, to_resolved = _resolve_recipients(to)
             if to_err:
                 return await self._surface_comms_error(
-                    to_err, _email_topic, **_email_err,
+                    to_err,
+                    _email_topic,
+                    **_email_err,
                 )
 
             cc_err, cc_resolved = _resolve_recipients(cc)
             if cc_err:
                 return await self._surface_comms_error(
-                    cc_err, _email_topic, **_email_err,
+                    cc_err,
+                    _email_topic,
+                    **_email_err,
                 )
 
             bcc_err, bcc_resolved = _resolve_recipients(bcc)
             if bcc_err:
                 return await self._surface_comms_error(
-                    bcc_err, _email_topic, **_email_err,
+                    bcc_err,
+                    _email_topic,
+                    **_email_err,
                 )
 
             # Extract just the email addresses for sending
@@ -776,7 +799,8 @@ class ConversationManagerBrainActionTools:
                 return await self._surface_comms_error(
                     "At least one recipient is required. "
                     "Provide to, cc, or bcc, or use reply_all=True.",
-                    _email_topic, **_email_err,
+                    _email_topic,
+                    **_email_err,
                 )
 
             # --- Infer reply ID from email thread if not provided ---
@@ -823,7 +847,8 @@ class ConversationManagerBrainActionTools:
                 if file_size_mb > max_size_mb:
                     return await self._surface_comms_error(
                         f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
-                        _email_topic, **_email_err,
+                        _email_topic,
+                        **_email_err,
                     )
 
                 attachment_filename = os.path.basename(attachment_filepath)
@@ -834,12 +859,14 @@ class ConversationManagerBrainActionTools:
             except FileNotFoundError:
                 return await self._surface_comms_error(
                     f"File not found: {attachment_filepath}",
-                    _email_topic, **_email_err,
+                    _email_topic,
+                    **_email_err,
                 )
             except Exception as e:
                 return await self._surface_comms_error(
                     f"Failed to read file: {e}",
-                    _email_topic, **_email_err,
+                    _email_topic,
+                    **_email_err,
                 )
 
         # --- Send the email ---
@@ -877,7 +904,9 @@ class ConversationManagerBrainActionTools:
                 f"Failed to send email to {recipients}",
             )
         return await self._surface_comms_error(
-            error_msg, _email_topic, **_email_err,
+            error_msg,
+            _email_topic,
+            **_email_err,
         )
 
     async def make_call(
@@ -948,8 +977,10 @@ class ConversationManagerBrainActionTools:
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
             return await self._surface_comms_error(
-                outbound_error, "app:comms:make_call",
-                contact_id=contact_id, medium=Medium.PHONE_CALL,
+                outbound_error,
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
             )
 
         detail_error, contact = _resolve_or_attach_detail(
@@ -962,8 +993,10 @@ class ConversationManagerBrainActionTools:
         )
         if detail_error:
             return await self._surface_comms_error(
-                detail_error, "app:comms:make_call",
-                contact_id=contact_id, medium=Medium.PHONE_CALL,
+                detail_error,
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
             )
 
         to_number = contact.get("phone_number")
@@ -988,8 +1021,10 @@ class ConversationManagerBrainActionTools:
         else:
             error_msg = f"Failed to send call to {to_number}"
         return await self._surface_comms_error(
-            error_msg, "app:comms:make_call",
-            contact_id=contact_id, medium=Medium.PHONE_CALL,
+            error_msg,
+            "app:comms:make_call",
+            contact_id=contact_id,
+            medium=Medium.PHONE_CALL,
         )
 
     async def act(

@@ -84,11 +84,7 @@ def build_event_catalogue() -> str:
         for f in fields:
             if f.name == "timestamp":
                 continue
-            type_str = (
-                f.type.__name__
-                if isinstance(f.type, type)
-                else str(f.type)
-            )
+            type_str = f.type.__name__ if isinstance(f.type, type) else str(f.type)
             field_parts.append(f"{f.name}: {type_str}")
         field_desc = ", ".join(field_parts)
 

@@ -35,7 +35,6 @@ from tests.conversation_manager.conftest import (
 from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
-    Error,
     InboundPhoneUtterance,
     InboundUnifyMeetUtterance,
     PhoneCallEnded,
@@ -1052,9 +1051,9 @@ async def test_failed_sms_surfaces_error_in_conversation_thread(initialized_cm):
         comms_utils.send_sms_message_via_number = original_send_sms
 
     # The brain should have attempted send_sms at least once.
-    assert "send_sms" in cm.all_tool_calls, (
-        f"Expected brain to attempt send_sms, but tool calls were: {cm.all_tool_calls}"
-    )
+    assert (
+        "send_sms" in cm.all_tool_calls
+    ), f"Expected brain to attempt send_sms, but tool calls were: {cm.all_tool_calls}"
 
     # The failure should be visible in the conversation thread for this contact.
     # After the fix, the comms error will be pushed as a system message so the
@@ -1063,9 +1062,7 @@ async def test_failed_sms_surfaces_error_in_conversation_thread(initialized_cm):
         contact["contact_id"],
         medium=Medium.SMS_MESSAGE,
     )
-    thread_text = " ".join(
-        getattr(m, "content", "") for m in contact_messages
-    ).lower()
+    thread_text = " ".join(getattr(m, "content", "") for m in contact_messages).lower()
 
     assert "fail" in thread_text or "error" in thread_text, (
         "Failed outbound SMS should produce a visible error in the conversation "

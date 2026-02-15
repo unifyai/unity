@@ -512,6 +512,7 @@ class Primitives:
         if getter_name == "":
             # Direct construction via primitive_class_path from the registry.
             from unity.function_manager.primitives.registry import _MANAGER_BY_ALIAS
+
             spec = _MANAGER_BY_ALIAS.get(alias)
             if spec is None:
                 raise AttributeError(f"No ManagerSpec for alias: {alias}")

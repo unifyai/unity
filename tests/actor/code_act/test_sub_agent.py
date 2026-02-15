@@ -301,11 +301,13 @@ async def test_actor_run_returns_steerable_handle():
         runner = env.get_instance()
 
         # Set the ContextVar so actor.run can read parent context.
-        token = _ACTOR_CONTEXT.set(ActorContext(
-            function_manager=actor.function_manager,
-            can_compose=True,
-            can_store=True,
-        ))
+        token = _ACTOR_CONTEXT.set(
+            ActorContext(
+                function_manager=actor.function_manager,
+                can_compose=True,
+                can_store=True,
+            ),
+        )
         try:
             handle = await runner.run(
                 task="What is 1+1?",
@@ -347,11 +349,13 @@ async def test_actor_run_forwards_capability_flags():
         env = actor.environments["actor"]
         runner = env.get_instance()
 
-        token = _ACTOR_CONTEXT.set(ActorContext(
-            function_manager=actor.function_manager,
-            can_compose=True,
-            can_store=True,
-        ))
+        token = _ACTOR_CONTEXT.set(
+            ActorContext(
+                function_manager=actor.function_manager,
+                can_compose=True,
+                can_store=True,
+            ),
+        )
         try:
             # Call with all flags explicitly set to non-defaults where safe.
             handle = await runner.run(

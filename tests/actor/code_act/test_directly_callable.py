@@ -308,11 +308,13 @@ def test_build_envs_from_db_namespace_expansion():
     """Namespace pattern expands and creates correctly scoped environment."""
     from unity.actor.environments.actor import _build_environments_from_db
 
-    fm = _make_mock_fm({
-        "primitives.contacts.ask": {},
-        "primitives.contacts.update": {},
-        "primitives.tasks.ask": {},
-    })
+    fm = _make_mock_fm(
+        {
+            "primitives.contacts.ask": {},
+            "primitives.contacts.update": {},
+            "primitives.tasks.ask": {},
+        },
+    )
     envs = _build_environments_from_db(["primitives.contacts"], fm)
 
     assert len(envs) == 1
