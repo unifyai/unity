@@ -85,7 +85,7 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert '"language": "python"' in prompt
     assert '"name": "list_sessions"' in prompt or "list_sessions" in prompt
 
-    assert "Computer State Feedback" in prompt
+    assert "Viewing Computer State" in prompt
     # Computer method documentation (from environment's get_prompt_context)
     assert "computer_primitives" in prompt.lower()
     assert "navigate" in prompt
