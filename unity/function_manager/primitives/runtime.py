@@ -421,7 +421,8 @@ def _create_async_wrapper(manager: Any, manager_alias: str) -> _AsyncPrimitiveWr
 # Manager Registry Key Mapping
 # =============================================================================
 
-# Maps manager_alias to ManagerRegistry getter method name
+# Maps manager_alias to ManagerRegistry getter method name.
+# Empty string means direct construction (e.g. singleton via metaclass).
 _ALIAS_TO_GETTER: dict[str, str] = {
     "contacts": "get_contact_manager",
     "data": "get_data_manager",
@@ -432,6 +433,7 @@ _ALIAS_TO_GETTER: dict[str, str] = {
     "guidance": "get_guidance_manager",
     "web": "get_web_searcher",
     "files": "get_file_manager",
+    "computer": "",
 }
 
 # Managers that need async wrapping (sync implementations)
@@ -445,13 +447,14 @@ _SYNC_MANAGERS: frozenset[str] = frozenset({"data", "files"})
 
 class Primitives:
     """
-    Scoped runtime interface to state manager primitives.
+    Scoped runtime interface to all primitives (state managers and computer).
 
     Only managers in the provided `primitive_scope` are accessible.
     Attempting to access an out-of-scope manager raises AttributeError.
 
-    All state managers are obtained via ManagerRegistry typed methods
-    to respect IMPL settings (real vs simulated).
+    Most managers are obtained via ManagerRegistry typed methods to respect
+    IMPL settings (real vs simulated). ComputerPrimitives is constructed
+    directly (singleton via metaclass).
 
     Sync managers (DataManager, FileManager) are wrapped with async interfaces
     for consistency - the LLM can safely use `await` on all primitives.
@@ -479,8 +482,6 @@ class Primitives:
         self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
         # Lazy-initialized manager instances
         self._managers: dict[str, Any] = {}
-        # ComputerPrimitives handled separately (not in primitives registry)
-        self._computer: Optional[ComputerPrimitives] = None
 
     @property
     def primitive_scope(self) -> PrimitiveScope:
@@ -504,13 +505,20 @@ class Primitives:
             return self._managers[alias]
 
         getter_name = _ALIAS_TO_GETTER.get(alias)
-        if not getter_name:
+        if getter_name is None:
             raise AttributeError(f"Unknown manager alias: {alias}")
 
-        from unity.manager_registry import ManagerRegistry
+        if getter_name == "":
+            # Direct construction (singleton via metaclass).
+            if alias == "computer":
+                manager = ComputerPrimitives()
+            else:
+                raise AttributeError(f"No getter for alias: {alias}")
+        else:
+            from unity.manager_registry import ManagerRegistry
 
-        getter = getattr(ManagerRegistry, getter_name)
-        manager = getter()
+            getter = getattr(ManagerRegistry, getter_name)
+            manager = getter()
 
         # Wrap sync managers with async interface
         if alias in _SYNC_MANAGERS:
@@ -520,21 +528,7 @@ class Primitives:
         return manager
 
     def __getattr__(self, name: str) -> Any:
-        """
-        Attribute access for manager retrieval.
-
-        Special handling for 'computer' which is not part of the scoped registry.
-        All other names are treated as manager aliases.
-        """
-        # Computer primitives are not in the primitives registry.
-        # ComputerPrimitives uses SingletonABCMeta, so the constructor
-        # returns the shared instance automatically.
-        if name == "computer":
-            if self._computer is None:
-                self._computer = ComputerPrimitives()
-            return self._computer
-
-        # Check if it's a valid manager alias
+        """Attribute access for manager retrieval."""
         if name in VALID_MANAGER_ALIASES:
             return self._get_manager(name)
 
@@ -587,6 +581,11 @@ class Primitives:
     def files(self) -> "_AsyncPrimitiveWrapper":
         """File management primitives (describe, reduce, filter_files, etc.)."""
         return self._get_manager("files")
+
+    @property
+    def computer(self) -> "ComputerPrimitives":
+        """Computer use primitives (act, navigate, observe, query, etc.)."""
+        return self._get_manager("computer")
 
 
 # =============================================================================

@@ -24,11 +24,13 @@ from pydantic import BaseModel
 
 from unity.actor.base import BaseCodeActActor
 from unity.actor.execution import (
+    ActorContext,
     ExecutionResult,
     PackageOverlay,
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
+    _ACTOR_CONTEXT,
     _CURRENT_PACKAGE_OVERLAY,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
@@ -785,101 +787,6 @@ class _StorageCheckHandle(SteerableToolHandle):
         return self._inner.get_history()
 
 
-def _build_sub_agent_environments(
-    *,
-    environment: list[str],
-    parent_environments: Dict[str, "BaseEnvironment"],
-    function_manager: Optional["FunctionManager"],
-) -> list["BaseEnvironment"]:
-    """Build the environment list for an inner sub-agent.
-
-    Resolves ``environment`` patterns against the parent's environments
-    and the FunctionManager, then constructs the minimal set of environments
-    for the inner actor.
-
-    Resolution order for each matched canonical name:
-
-    1. **Parent environment tool** — if the name appears in any parent
-       environment's ``get_tools()`` output, the function is "locally
-       available" and is passed through via the source environment.
-    2. **FunctionManager lookup** — if the name is NOT in any parent
-       environment, it is looked up in the FunctionManager by bare name
-       and wrapped in a ``FunctionStoreEnvironment``.
-    """
-    from unity.actor.environments.base import resolve_directly_callable
-    from unity.actor.environments.function_store import FunctionStoreEnvironment
-    from unity.actor.environments.state_managers import StateManagerEnvironment
-    from unity.function_manager.primitives import Primitives, PrimitiveScope
-
-    if not environment:
-        return []
-
-    # ── Step 1: Build complete tool name → (namespace, metadata) mapping ──
-    all_env_tools: Dict[str, tuple[str, Any]] = {}
-    for ns, env in parent_environments.items():
-        for fq_name, meta in env.get_tools().items():
-            all_env_tools[fq_name] = (ns, meta)
-
-    # Also include bare FM function names (not in any env) for matching.
-    fm_only_names: set[str] = set()
-    if function_manager is not None:
-        try:
-            fm_listing = function_manager.list_functions()
-            fm_only_names = {name for name in fm_listing if name not in all_env_tools}
-        except Exception:
-            pass
-
-    all_known_names = set(all_env_tools.keys()) | fm_only_names
-
-    # ── Step 2: Resolve patterns to canonical names ──
-    matched_names = resolve_directly_callable(environment, all_known_names)
-
-    # ── Step 3: Bucket by source ──
-    primitive_methods: set[str] = set()
-    local_env_namespaces: set[str] = set()
-    fm_function_names: list[str] = []
-
-    for name in matched_names:
-        if name in all_env_tools:
-            env_ns, meta = all_env_tools[name]
-            if meta.function_context == "primitive":
-                primitive_methods.add(name)
-            else:
-                local_env_namespaces.add(env_ns)
-        else:
-            fm_function_names.append(name)
-
-    # ── Step 4: Build environments ──
-    envs: list["BaseEnvironment"] = []
-
-    if primitive_methods:
-        needed_managers: set[str] = set()
-        for fq in primitive_methods:
-            parts = fq.split(".")
-            if len(parts) >= 2:
-                needed_managers.add(parts[1])
-        scope = PrimitiveScope(scoped_managers=frozenset(needed_managers))
-        envs.append(
-            StateManagerEnvironment(
-                Primitives(primitive_scope=scope),
-                allowed_methods=primitive_methods,
-            ),
-        )
-
-    for ns in local_env_namespaces:
-        if ns in parent_environments:
-            envs.append(parent_environments[ns])
-
-    if fm_function_names and function_manager is not None:
-        envs.append(
-            FunctionStoreEnvironment(
-                function_manager,
-                function_names=fm_function_names,
-            ),
-        )
-
-    return envs
-
 
 # ---------------------------------------------------------------------------
 # Code synthesis helpers for execute_function
@@ -996,7 +903,7 @@ class CodeActActor(BaseCodeActActor):
         Args:
             environments: List of execution environments to install. Each environment
                 injects a namespace into the sandbox (e.g. ``primitives``,
-                ``computer_primitives``, ``sub_agent``). Pass ``None`` or ``[]``
+                ``computer_primitives``, ``actor``). Pass ``None`` or ``[]``
                 for a bare actor with no environments.
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
@@ -1030,23 +937,6 @@ class CodeActActor(BaseCodeActActor):
             environments=environments,
             function_manager=function_manager,
         )
-
-        # Back-fill SubAgentEnvironment with parent actor context so the
-        # runner can inherit environments, FM, permissions, and model config.
-        from unity.actor.environments.sub_agent import SubAgentEnvironment
-
-        _sub_env = self.environments.get("sub_agent")
-        if _sub_env is not None and isinstance(_sub_env, SubAgentEnvironment):
-            _sub_env.bind_parent_context(
-                parent_environments=self.environments,
-                function_manager=self.function_manager,
-                parent_can_compose=bool(can_compose),
-                parent_can_store=bool(can_store),
-                model=model,
-                preprocess_msgs=preprocess_msgs,
-                prompt_caching=prompt_caching,
-                parent_timeout=timeout,
-            )
 
         # Collect function_ids from all environments, split by context, and set
         # them on the FunctionManager via setters. This prevents overlap between
@@ -1564,6 +1454,11 @@ class CodeActActor(BaseCodeActActor):
                     pass
 
                 _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
+                _ac_token = _ACTOR_CONTEXT.set(ActorContext(
+                    function_manager=self.function_manager,
+                    can_compose=self.can_compose,
+                    can_store=self.can_store,
+                ))
                 try:
                     try:
                         out = await self._session_executor.execute(
@@ -1610,6 +1505,7 @@ class CodeActActor(BaseCodeActActor):
                         }
                 finally:
                     _PARENT_CHAT_CONTEXT.reset(_pcc_token)
+                    _ACTOR_CONTEXT.reset(_ac_token)
 
                 # Enrich with session name.
                 if out.get("session_id") is not None:
@@ -2041,6 +1937,11 @@ class CodeActActor(BaseCodeActActor):
                         pass
 
                     _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
+                    _ac_token = _ACTOR_CONTEXT.set(ActorContext(
+                        function_manager=self.function_manager,
+                        can_compose=self.can_compose,
+                        can_store=self.can_store,
+                    ))
                     try:
                         try:
                             out = await self._session_executor.execute(
@@ -2087,6 +1988,7 @@ class CodeActActor(BaseCodeActActor):
                             }
                     finally:
                         _PARENT_CHAT_CONTEXT.reset(_pcc_token)
+                        _ACTOR_CONTEXT.reset(_ac_token)
 
                     # Enrich with session name.
                     if out.get("session_id") is not None:

@@ -2730,7 +2730,7 @@ class FunctionManager(BaseFunctionManager):
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
 
-        env_namespaces = frozenset({"primitives", "computer_primitives", "sub_agent"})
+        env_namespaces = frozenset({"primitives", "computer_primitives", "actor"})
 
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:

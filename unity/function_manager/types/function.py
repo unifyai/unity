@@ -47,7 +47,7 @@ class Function(BaseModel):
         description=(
             "Functions this function depends on. Bare names (e.g. 'helper') "
             "refer to other compositional functions. Dotted names (e.g. "
-            "'primitives.contacts.ask', 'sub_agent.run') refer to environment "
+            "'primitives.contacts.ask', 'actor.run') refer to environment "
             "primitives and are tracked for introspection but not injected at "
             "execution time (they are provided by the execution environment)."
         ),
