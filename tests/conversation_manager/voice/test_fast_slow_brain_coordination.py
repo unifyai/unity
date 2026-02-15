@@ -67,6 +67,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -618,6 +620,87 @@ class TestRapidUtteranceHandling:
 # =============================================================================
 # Test: Stale guidance filtering - guidance should not be sent if topic changed
 # =============================================================================
+
+
+@pytest.mark.asyncio
+class TestGuidanceRelevanceGuardrails:
+    """Regression coverage for relevance-check guardrails before filtering."""
+
+    async def test_assistant_only_new_messages_do_not_trigger_relevance_filter(
+        self,
+        initialized_cm,
+        monkeypatch,
+    ):
+        """
+        New assistant chatter alone should not force a relevance-filter LLM decision.
+
+        If the user has not produced any new turns since slow-brain start, guidance
+        should pass through directly.
+        """
+        cm = initialized_cm.cm
+
+        await initialized_cm.step(PhoneCallStarted(contact=BOSS))
+        assert cm.mode == Mode.CALL
+
+        contact_id = BOSS["contact_id"]
+        voice_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
+        latest_ts = max(
+            (
+                msg.timestamp
+                for msg in voice_thread
+                if getattr(msg, "timestamp", None) is not None
+            ),
+        )
+
+        user_before_start = latest_ts + timedelta(seconds=1)
+        slow_brain_start_time = latest_ts + timedelta(seconds=2)
+        assistant_after_start = latest_ts + timedelta(seconds=3)
+
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=BOSS["first_name"],
+            thread_name=Medium.PHONE_CALL,
+            message_content="Do I have a contact named Bob?",
+            timestamp=user_before_start,
+            role="user",
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name="You",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Still checking.",
+            timestamp=assistant_after_start,
+            role="assistant",
+        )
+
+        from unity.conversation_manager import conversation_manager as cm_module
+
+        filter_calls = {"count": 0}
+
+        class _SentinelFilter:
+            async def should_send_guidance(self, guidance_content, conversation_messages):
+                filter_calls["count"] += 1
+                return SimpleNamespace(
+                    thoughts="sentinel",
+                    send_guidance=False,
+                )
+
+        monkeypatch.setattr(cm_module, "GuidanceFilter", lambda: _SentinelFilter())
+
+        should_send = await cm._check_guidance_relevance(
+            guidance_content="There is no contact named Bob.",
+            slow_brain_start_time=slow_brain_start_time,
+        )
+
+        assert should_send is True, (
+            "Assistant-only new messages should not block guidance delivery."
+        )
+        assert filter_calls["count"] == 0, (
+            "Relevance filter should not run when no new user turn has arrived."
+        )
 
 
 @pytest.mark.asyncio
