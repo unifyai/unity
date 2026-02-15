@@ -40,8 +40,8 @@ def _assert_contact_update_triggered(
     *,
     expected_substrings: list[str],
 ) -> None:
-    """Assert ``update_contacts`` was called and the query contains
-    each of the *expected_substrings* (case-insensitive).
+    """Assert ``update_contacts`` was called and each expected substring
+    appears in the query text OR in the ``response_format`` keys.
     """
     events = filter_events_by_type(result.output_events, ActorHandleStarted)
     contact_events = [
@@ -51,10 +51,14 @@ def _assert_contact_update_triggered(
         f"Expected update_contacts to be triggered, "
         f"but got action(s): {[e.action_name for e in events] or 'none'}"
     )
-    query = contact_events[0].query.lower()
+    evt = contact_events[0]
+    query = evt.query.lower()
+    rf_keys = " ".join((evt.response_format or {}).keys()).lower()
+    searchable = f"{query} {rf_keys}"
     for substr in expected_substrings:
-        assert substr.lower() in query, (
-            f"Expected '{substr}' in update_contacts query, got: {query}"
+        assert substr.lower() in searchable, (
+            f"Expected '{substr}' in update_contacts query or response_format keys, "
+            f"got query: {query}, response_format keys: {rf_keys}"
         )
 
 

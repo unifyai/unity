@@ -38,8 +38,8 @@ def _assert_transcript_query_triggered(
     expected_substrings: list[str],
     cm=None,
 ) -> None:
-    """Assert ``query_past_transcripts`` was called and the query contains
-    each of the *expected_substrings* (case-insensitive).
+    """Assert ``query_past_transcripts`` was called and each expected
+    substring appears in the query text OR in the ``response_format`` keys.
     """
     events = filter_events_by_type(result.output_events, ActorHandleStarted)
     transcript_events = [
@@ -49,10 +49,14 @@ def _assert_transcript_query_triggered(
         f"Expected query_past_transcripts to be triggered, "
         f"but got action(s): {[e.action_name for e in events] or 'none'}"
     )
-    query = transcript_events[0].query.lower()
+    evt = transcript_events[0]
+    query = evt.query.lower()
+    rf_keys = " ".join((evt.response_format or {}).keys()).lower()
+    searchable = f"{query} {rf_keys}"
     for substr in expected_substrings:
-        assert substr.lower() in query, (
-            f"Expected '{substr}' in query_past_transcripts query, got: {query}"
+        assert substr.lower() in searchable, (
+            f"Expected '{substr}' in query_past_transcripts query or response_format keys, "
+            f"got query: {query}, response_format keys: {rf_keys}"
         )
 
 

@@ -596,6 +596,7 @@ class ActorHandleStarted(Event):
     action_name: str
     handle_id: id
     query: str
+    response_format: dict | None = None
 
 
 # --------------------------------------------------------------------------- #
