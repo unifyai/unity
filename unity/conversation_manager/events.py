@@ -45,6 +45,7 @@ class Event:
 
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
+    topic: ClassVar[str | None] = None
 
     def to_json(self):
         return json.dumps(self.to_dict())
@@ -115,18 +116,24 @@ class Event:
 
 @dataclass
 class PhoneCallReceived(Event):
+    topic: ClassVar[str | None] = "app:comms:call_received"
+
     contact: dict
     conference_name: str = ""
 
 
 @dataclass
 class PhoneCallAnswered(Event):
+    topic: ClassVar[str | None] = "app:comms:call_answered"
+
     contact: dict
 
 
 @dataclass
 class PhoneCallNotAnswered(Event):
     """Outbound call was not answered (no-answer, busy, failed, etc.)."""
+
+    topic: ClassVar[str | None] = "app:comms:call_not_answered"
 
     contact: dict
     reason: str = "no-answer"  # Twilio status: no-answer, busy, canceled, failed
@@ -136,6 +143,8 @@ class PhoneCallNotAnswered(Event):
 class UnifyMeetReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
+    topic: ClassVar[str | None] = "app:comms:unify_meet_received"
+
     contact: dict
     livekit_agent_name: str | None = None
     room_name: str | None = None
@@ -143,6 +152,8 @@ class UnifyMeetReceived(Event):
 
 @dataclass
 class PhoneCallStarted(Event):
+    topic: ClassVar[str | None] = "app:comms:phone_call_started"
+
     contact: dict
 
 
@@ -153,12 +164,16 @@ class UnifyMeetStarted(Event):
     "contact" should reference the boss/user contact id (typically 1).
     """
 
+    topic: ClassVar[str | None] = "app:comms:unify_meet_started"
+
     contact: dict
 
 
 @dataclass
 class InboundPhoneUtterance(Event):
     """Utterance received from the other party during a phone call."""
+
+    topic: ClassVar[str | None] = "app:comms:phone_utterance"
 
     contact: dict
     content: str
@@ -168,6 +183,8 @@ class InboundPhoneUtterance(Event):
 class InboundUnifyMeetUtterance(Event):
     """Utterance received from the other party during a web-based voice/video meeting."""
 
+    topic: ClassVar[str | None] = "app:comms:unify_utterance"
+
     contact: dict
     content: str
 
@@ -176,11 +193,15 @@ class InboundUnifyMeetUtterance(Event):
 class VoiceInterrupt(Event):
     """User interrupted the assistant during a voice call."""
 
+    topic: ClassVar[str | None] = "app:comms:voice_interrupt"
+
     contact: dict
 
 
 @dataclass
 class PhoneCallEnded(Event):
+    topic: ClassVar[str | None] = "app:comms:phone_call_ended"
+
     contact: dict
 
 
@@ -188,11 +209,15 @@ class PhoneCallEnded(Event):
 class UnifyMeetEnded(Event):
     """The web-based voice/video meeting session has ended."""
 
+    topic: ClassVar[str | None] = "app:comms:unify_meet_ended"
+
     contact: dict
 
 
 @dataclass
 class SMSReceived(Event):
+    topic: ClassVar[str | None] = "app:comms:msg_message"
+
     contact: dict
     content: str
 
@@ -206,6 +231,8 @@ class UnifyMessageReceived(Event):
     The actual files are saved to Downloads/ and can be accessed via FileManager.
     """
 
+    topic: ClassVar[str | None] = "app:comms:unify_message_message"
+
     contact: dict
     content: str
     # List of attachment dicts with full metadata (files are saved to Downloads/).
@@ -214,12 +241,16 @@ class UnifyMessageReceived(Event):
 
 @dataclass
 class PhoneCallSent(Event):
+    topic: ClassVar[str | None] = "app:comms:make_call"
+
     contact: dict
 
 
 @dataclass
 class OutboundPhoneUtterance(Event):
     """Utterance sent by the assistant during a phone call."""
+
+    topic: ClassVar[str | None] = "app:comms:phone_utterance"
 
     contact: dict
     content: str
@@ -228,6 +259,8 @@ class OutboundPhoneUtterance(Event):
 @dataclass
 class OutboundUnifyMeetUtterance(Event):
     """Utterance sent by the assistant during a web-based voice/video meeting."""
+
+    topic: ClassVar[str | None] = "app:comms:unify_utterance"
 
     contact: dict
     content: str
@@ -243,6 +276,8 @@ class CallGuidance(Event):
     notifications, or requests that the Main CM Brain needs to communicate.
     """
 
+    topic: ClassVar[str | None] = "app:comms:assistant_call_guidance"
+
     contact: dict
     content: str
 
@@ -255,6 +290,8 @@ class EmailReceived(Event):
     ``attachments`` field contains only filenames (not paths or binary data) so
     the LLM can acknowledge them and, if needed, access them via FileManager.
     """
+
+    topic: ClassVar[str | None] = "app:comms:email_message"
 
     contact: dict
     subject: str
@@ -273,6 +310,8 @@ class EmailReceived(Event):
 # assistant events
 @dataclass
 class SMSSent(Event):
+    topic: ClassVar[str | None] = "app:comms:sms_sent"
+
     contact: dict
     content: str
 
@@ -284,6 +323,8 @@ class UnifyMessageSent(Event):
     Attachments are uploaded to GCS. Each attachment is a dict with keys:
     id, filename, gs_url, content_type, size_bytes.
     """
+
+    topic: ClassVar[str | None] = "app:comms:unify_message_sent"
 
     contact: dict
     content: str
@@ -298,6 +339,8 @@ class EmailSent(Event):
     Attachments are specified by filepath and uploaded with the email. The
     ``attachments`` field contains only filenames (not paths) for display.
     """
+
+    topic: ClassVar[str | None] = "app:comms:email_sent"
 
     contact: dict
     subject: str
@@ -328,6 +371,8 @@ class UnknownContactCreated(Event):
     The ConversationManager should use this event to potentially notify the
     boss and ask for guidance on how to handle this new contact.
     """
+
+    topic: ClassVar[str | None] = "app:comms:unknown_contact_created"
 
     contact: dict
     medium: str  # The communication medium (e.g., "sms_message", "email", "phone_call")
@@ -611,6 +656,8 @@ class AssistantScreenShareStarted(Event):
     The assistant's desktop is now visible to the user.
     """
 
+    topic: ClassVar[str | None] = "app:comms:assistant_screen_share_started"
+
     reason: str = ""
 
 
@@ -620,6 +667,8 @@ class AssistantScreenShareStopped(Event):
 
     The assistant's desktop is no longer visible to the user.
     """
+
+    topic: ClassVar[str | None] = "app:comms:assistant_screen_share_stopped"
 
     reason: str = ""
 
@@ -631,12 +680,16 @@ class UserScreenShareStarted(Event):
     The user's screen is now being streamed to the assistant.
     """
 
+    topic: ClassVar[str | None] = "app:comms:user_screen_share_started"
+
     reason: str = ""
 
 
 @dataclass
 class UserScreenShareStopped(Event):
     """User stopped sharing their screen during a Unify Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:user_screen_share_stopped"
 
     reason: str = ""
 
@@ -649,6 +702,8 @@ class UserRemoteControlStarted(Event):
     computer-related execution to avoid conflicting with user input.
     """
 
+    topic: ClassVar[str | None] = "app:comms:user_remote_control_started"
+
     reason: str = ""
 
 
@@ -658,6 +713,8 @@ class UserRemoteControlStopped(Event):
 
     The actor may resume computer-related execution.
     """
+
+    topic: ClassVar[str | None] = "app:comms:user_remote_control_stopped"
 
     reason: str = ""
 
