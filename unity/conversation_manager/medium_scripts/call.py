@@ -212,6 +212,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     user_is_speaking = False
+    guidance_reply_pending = False
     if channel == "phone":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
@@ -228,6 +229,8 @@ async def entrypoint(ctx: agents.JobContext):
     def _on_user_state_changed(ev):
         nonlocal user_is_speaking
         user_is_speaking = ev.new_state == "speaking"
+        if not user_is_speaking:
+            maybe_trigger_guidance_reply()
         touch_activity()
 
     @session.on("conversation_item_added")
@@ -311,9 +314,21 @@ async def entrypoint(ctx: agents.JobContext):
             role="system",
             content=[guidance_message],
         )
-        nonlocal user_is_speaking
-        if not user_is_speaking and assistant._chat_ctx.items[-1].role != "assistant":
+        nonlocal guidance_reply_pending
+        guidance_reply_pending = True
+        maybe_trigger_guidance_reply()
+
+    def maybe_trigger_guidance_reply() -> None:
+        """Trigger a guidance-driven reply when the user is not speaking."""
+        nonlocal guidance_reply_pending
+        if not guidance_reply_pending or user_is_speaking:
+            return
+        if (
+            assistant._chat_ctx.items
+            and assistant._chat_ctx.items[-1].role != "assistant"
+        ):
             session.generate_reply(allow_interruptions=True)
+            guidance_reply_pending = False
 
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
