@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import asyncio
 
 from unity.actor.environments.base import BaseEnvironment, ToolMetadata
-from unity.function_manager.primitives import ComputerPrimitives
+from unity.function_manager.primitives import ComputerPrimitives, get_registry
 
 
 class ComputerEnvironment(BaseEnvironment):
@@ -55,6 +55,7 @@ class ComputerEnvironment(BaseEnvironment):
             "get_screenshot",
         ]
 
+        registry = get_registry()
         tools: Dict[str, ToolMetadata] = {}
         for name in tool_names:
             if not hasattr(self._computer_primitives, name):
@@ -74,6 +75,8 @@ class ComputerEnvironment(BaseEnvironment):
                 is_steerable=name in steerable,
                 docstring=getattr(fn, "__doc__", None),
                 signature=signature,
+                function_id=registry.get_function_id("computer", name),
+                function_context="primitive",
             )
 
         return tools

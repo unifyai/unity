@@ -287,3 +287,64 @@ def test_scoped_primitive_filter_no_exclusion():
     result = fm._scoped_primitive_filter()
     expected = registry.primitive_row_filter(scope)
     assert result == expected
+
+
+# ── ComputerEnvironment function_id + function_context ───────────────────
+
+
+def test_computer_env_get_tools_has_function_ids():
+    """Every tool from ComputerEnvironment has function_id and function_context."""
+    from unity.actor.environments.computer import ComputerEnvironment
+    from unity.function_manager.primitives import ComputerPrimitives
+
+    cp = ComputerPrimitives(computer_mode="mock")
+    env = ComputerEnvironment(cp)
+    tools = env.get_tools()
+    assert len(tools) > 0, "Expected at least some tools"
+    for fq_name, meta in tools.items():
+        assert meta.function_id is not None, f"Tool {fq_name} should have a function_id"
+        assert isinstance(meta.function_id, int)
+        assert (
+            meta.function_context == "primitive"
+        ), f"Tool {fq_name} should have function_context='primitive'"
+
+
+def test_computer_env_function_ids_match_registry():
+    """function_ids from ComputerEnvironment.get_tools() match registry.get_function_id()."""
+    from unity.actor.environments.computer import ComputerEnvironment
+    from unity.function_manager.primitives import ComputerPrimitives
+
+    registry = get_registry()
+    cp = ComputerPrimitives(computer_mode="mock")
+    env = ComputerEnvironment(cp)
+    tools = env.get_tools()
+    for fq_name, meta in tools.items():
+        method_name = fq_name.split(".")[-1]
+        expected_id = registry.get_function_id("computer", method_name)
+        assert meta.function_id == expected_id, (
+            f"Tool {fq_name}: function_id {meta.function_id} != "
+            f"registry.get_function_id('computer', '{method_name}') = {expected_id}"
+        )
+
+
+def test_computer_env_function_ids_match_collect_primitives():
+    """function_ids from ComputerEnvironment match those in collect_primitives."""
+    from unity.actor.environments.computer import ComputerEnvironment
+    from unity.function_manager.primitives import ComputerPrimitives
+
+    registry = get_registry()
+    scope = PrimitiveScope.single("computer")
+    collected = registry.collect_primitives(scope)
+
+    cp = ComputerPrimitives(computer_mode="mock")
+    env = ComputerEnvironment(cp)
+    tools = env.get_tools()
+
+    for fq_name, meta in tools.items():
+        method_name = fq_name.split(".")[-1]
+        prim_name = f"primitives.computer.{method_name}"
+        assert prim_name in collected, (
+            f"ComputerEnvironment tool {fq_name} should have a corresponding "
+            f"entry '{prim_name}' in collect_primitives"
+        )
+        assert meta.function_id == collected[prim_name]["function_id"]

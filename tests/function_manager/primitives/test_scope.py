@@ -145,6 +145,7 @@ def test_valid_manager_aliases_contains_expected():
         "web",
         "data",
         "files",
+        "computer",
     }
     assert expected == VALID_MANAGER_ALIASES
 
@@ -154,13 +155,14 @@ def test_valid_manager_aliases_is_frozenset():
     assert isinstance(VALID_MANAGER_ALIASES, frozenset)
 
 
-def test_computer_not_in_valid_aliases():
-    """computer (ComputerPrimitives) is NOT in VALID_MANAGER_ALIASES.
+def test_computer_in_valid_aliases():
+    """computer (ComputerPrimitives) is in VALID_MANAGER_ALIASES.
 
-    ComputerPrimitives requires special handling and belongs to a separate
-    environment (computer_primitives), not the state managers.
+    ComputerPrimitives are indexed in Functions/Primitives alongside state
+    managers, enabling discovery via FunctionManager and proper masking
+    when promoted to an environment.
     """
-    assert "computer" not in VALID_MANAGER_ALIASES
+    assert "computer" in VALID_MANAGER_ALIASES
 
 
 def test_includes_returns_false_for_nonexistent():

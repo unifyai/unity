@@ -268,12 +268,17 @@ def test_collect_primitives_returns_expected_fields():
 
 
 def test_collect_primitives_matches_get_primitive_sources():
-    """collect_primitives() discovers same primitives as get_primitive_sources()."""
+    """collect_primitives() discovers a superset of get_primitive_sources().
+
+    get_primitive_sources() only returns state managers, while
+    collect_primitives() also includes ComputerPrimitives.  Every state
+    manager primitive from get_primitive_sources must appear in the
+    collected set.
+    """
     registry = get_registry()
     scope = PrimitiveScope.all_managers()
     primitives = registry.collect_primitives(scope)
 
-    # Verify primitives match what get_primitive_sources returns.
     # Build a reverse lookup: (primitive_class_suffix, method) -> name
     method_to_name = {
         (row["primitive_class"].rsplit(".", 1)[-1], row["primitive_method"]): name
@@ -286,6 +291,12 @@ def test_collect_primitives_matches_get_primitive_sources():
                 class_name,
                 method_name,
             ) in method_to_name, f"Expected auto-discovered primitive for {class_name}.{method_name} not found"
+
+    # Additionally, computer primitives should be present.
+    computer_entries = {
+        name for name in primitives if name.startswith("primitives.computer.")
+    }
+    assert len(computer_entries) > 0, "Expected ComputerPrimitives in collected primitives"
 
 
 def test_collect_primitives_respects_scope():
