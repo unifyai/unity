@@ -619,13 +619,11 @@ def get_primitive_callable(
     if not class_path or not method_name:
         return None
 
-    # Special case: ComputerPrimitives methods use the provided instance
+    # ComputerPrimitives: use the provided instance, or fall back to the
+    # singleton (mirrors the ManagerRegistry fallback for state managers).
     if "ComputerPrimitives" in class_path:
         if computer_primitives is None:
-            logger.warning(
-                "Cannot resolve ComputerPrimitives primitive without computer_primitives instance",
-            )
-            return None
+            computer_primitives = ComputerPrimitives()
         return getattr(computer_primitives, method_name, None)
 
     # Derive manager_alias from primitive_class using the registry mapping

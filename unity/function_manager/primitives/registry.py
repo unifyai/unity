@@ -1115,7 +1115,7 @@ class ToolSurfaceRegistry:
 
         Args:
             primitive_scope: Optional scope to filter managers. If None, collects all
-                           state manager primitives (excludes ComputerPrimitives).
+                           primitives (state managers and ComputerPrimitives).
 
         Returns:
             Dict mapping qualified_name (e.g. "primitives.contacts.ask") to primitive
@@ -1125,11 +1125,11 @@ class ToolSurfaceRegistry:
 
         # Determine which specs to process
         if primitive_scope is None:
-            specs_to_process = _STATE_MANAGER_SPECS
+            specs_to_process = _MANAGER_SPECS
         else:
             specs_to_process = [
                 spec
-                for spec in _STATE_MANAGER_SPECS
+                for spec in _MANAGER_SPECS
                 if spec.manager_alias in primitive_scope.scoped_managers
             ]
 
@@ -1212,11 +1212,11 @@ class ToolSurfaceRegistry:
         Returns:
             Filter expression using OR clauses for string equality.
         """
-        # Collect class paths for scoped state managers
+        # Collect class paths for scoped managers
         class_paths = []
         for alias in primitive_scope.scoped_managers:
             spec = _MANAGER_BY_ALIAS.get(alias)
-            if spec and spec.is_state_manager:
+            if spec:
                 class_paths.append(spec.primitive_class_path)
 
         # Use OR clauses for string filtering (in [] syntax may not work for strings)
