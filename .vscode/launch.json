@@ -73,11 +73,11 @@
           "justMyCode": false
         },
         {
-          "name": "Intranet Demo Sandbox",
+          "name": "Conversation Manager Sandbox",
           "type": "debugpy",
           "request": "launch",
-          "program": "${workspaceFolder}/sandboxes/knowledge_manager/intranet_sandbox.py",
-          "args": ["--project_name", "Intranet"],
+          "program": "${workspaceFolder}/sandboxes/conversation_manager/sandbox.py",
+          "args": ["--project_name", "ConversationManagerSandbox", "--overwrite"],
           "cwd": "${workspaceFolder}",
           "env": { "PYTHONPATH": "${workspaceFolder}" },
           "envFile": "${workspaceFolder}/.env",
