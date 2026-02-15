@@ -608,19 +608,17 @@ class Primitives:
 
 def get_primitive_callable(
     primitive_data: dict[str, Any],
-    computer_primitives: Optional[ComputerPrimitives] = None,
+    *,
     primitives: Optional[Primitives] = None,
 ) -> Optional[Callable]:
     """
     Resolve a primitive metadata dict to its actual callable.
 
     Uses the ``primitives`` instance (which handles all aliases uniformly)
-    when available, falling back to ManagerRegistry or direct construction.
+    when available, falling back to a default-scoped Primitives instance.
 
     Args:
         primitive_data: Primitive metadata with primitive_class and primitive_method.
-        computer_primitives: Deprecated — kept for backward compatibility.
-            Callers should pass a ``Primitives`` instance instead.
         primitives: Scoped Primitives instance for resolution.
 
     Returns:
@@ -632,44 +630,15 @@ def get_primitive_callable(
     if not class_path or not method_name:
         return None
 
-    # Derive manager_alias from primitive_class using the registry mapping
     manager_alias = _CLASS_PATH_TO_ALIAS.get(class_path)
+    if not manager_alias:
+        return None
 
-    # Use provided primitives instance (handles all aliases uniformly)
-    if primitives is not None and manager_alias:
-        try:
-            manager = getattr(primitives, manager_alias)
-            return getattr(manager, method_name, None)
-        except AttributeError:
-            # Manager not in scope, fall through
-            pass
+    # Use provided primitives instance, or construct a default-scoped one.
+    if primitives is None:
+        primitives = Primitives()
 
-    # Backward compat: accept a bare ComputerPrimitives instance
-    if computer_primitives is not None and manager_alias == "computer":
-        return getattr(computer_primitives, method_name, None)
-
-    # Fallback: use ManagerRegistry or direct construction
-    if manager_alias:
-        getter_name = _ALIAS_TO_GETTER.get(manager_alias)
-        if getter_name is None:
-            return None
-        if getter_name == "":
-            # Direct construction via registry class path
-            from unity.function_manager.primitives.registry import _MANAGER_BY_ALIAS
-            spec = _MANAGER_BY_ALIAS.get(manager_alias)
-            if spec:
-                cls = get_registry()._load_manager_class(spec.primitive_class_path)
-                if cls:
-                    instance = cls()
-                    return getattr(instance, method_name, None)
-        else:
-            try:
-                from unity.manager_registry import ManagerRegistry
-
-                getter = getattr(ManagerRegistry, getter_name)
-                instance = getter()
-                return getattr(instance, method_name, None)
-            except Exception as e:
-                logger.warning(f"Could not get manager via '{getter_name}': {e}")
-
-    return None
+    manager = getattr(primitives, manager_alias, None)
+    if manager is None:
+        return None
+    return getattr(manager, method_name, None)

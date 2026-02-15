@@ -3347,10 +3347,8 @@ class FunctionManager(BaseFunctionManager):
                 )
 
                 primitives_obj = namespace.get("primitives")
-                computer_prims = namespace.get("computer_primitives")
                 fn = get_primitive_callable(
                     func_data,
-                    computer_primitives=computer_prims,
                     primitives=primitives_obj,
                 )
                 if fn is not None:
@@ -4867,7 +4865,6 @@ class FunctionManager(BaseFunctionManager):
 
         callable_fn = get_primitive_callable(
             func_data,
-            computer_primitives=extra_namespaces.get("computer_primitives"),
             primitives=extra_namespaces.get("primitives"),
         )
         if callable_fn is None:
