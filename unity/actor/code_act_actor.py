@@ -787,10 +787,10 @@ class _StorageCheckHandle(SteerableToolHandle):
         return self._inner.get_history()
 
 
-
 # ---------------------------------------------------------------------------
 # Code synthesis helpers for execute_function
 # ---------------------------------------------------------------------------
+
 
 def _synthesize_python_call(
     *,
@@ -825,7 +825,11 @@ def _synthesize_python_call(
 
     if function_manager is not None:
         func_data = function_manager._get_function_data_by_name(name=function_name)
-        if func_data is None and getattr(function_manager, "_include_primitives", False):
+        if func_data is None and getattr(
+            function_manager,
+            "_include_primitives",
+            False,
+        ):
             func_data = function_manager._get_primitive_data_by_name(name=function_name)
 
         if func_data is not None:
@@ -836,6 +840,7 @@ def _synthesize_python_call(
                 from unity.function_manager.function_manager import (
                     _strip_custom_function_decorators,
                 )
+
                 preamble = _strip_custom_function_decorators(impl) + "\n\n"
             elif func_data.get("is_primitive"):
                 is_async = True
@@ -1454,11 +1459,13 @@ class CodeActActor(BaseCodeActActor):
                     pass
 
                 _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
-                _ac_token = _ACTOR_CONTEXT.set(ActorContext(
-                    function_manager=self.function_manager,
-                    can_compose=self.can_compose,
-                    can_store=self.can_store,
-                ))
+                _ac_token = _ACTOR_CONTEXT.set(
+                    ActorContext(
+                        function_manager=self.function_manager,
+                        can_compose=self.can_compose,
+                        can_store=self.can_store,
+                    ),
+                )
                 try:
                     try:
                         out = await self._session_executor.execute(
@@ -1547,10 +1554,14 @@ class CodeActActor(BaseCodeActActor):
             finally:
                 try:
                     _out_err = (
-                        out.get("error")
-                        if isinstance(out, dict)
-                        else getattr(out, "error", None)
-                    ) if out is not None else None
+                        (
+                            out.get("error")
+                            if isinstance(out, dict)
+                            else getattr(out, "error", None)
+                        )
+                        if out is not None
+                        else None
+                    )
                     if _out_err:
                         await _pub_safe(
                             phase="outgoing",
@@ -1937,11 +1948,13 @@ class CodeActActor(BaseCodeActActor):
                         pass
 
                     _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
-                    _ac_token = _ACTOR_CONTEXT.set(ActorContext(
-                        function_manager=self.function_manager,
-                        can_compose=self.can_compose,
-                        can_store=self.can_store,
-                    ))
+                    _ac_token = _ACTOR_CONTEXT.set(
+                        ActorContext(
+                            function_manager=self.function_manager,
+                            can_compose=self.can_compose,
+                            can_store=self.can_store,
+                        ),
+                    )
                     try:
                         try:
                             out = await self._session_executor.execute(
@@ -2030,10 +2043,14 @@ class CodeActActor(BaseCodeActActor):
                 finally:
                     try:
                         _out_err = (
-                            out.get("error")
-                            if isinstance(out, dict)
-                            else getattr(out, "error", None)
-                        ) if out is not None else None
+                            (
+                                out.get("error")
+                                if isinstance(out, dict)
+                                else getattr(out, "error", None)
+                            )
+                            if out is not None
+                            else None
+                        )
                         if _out_err:
                             await _ef_pub_safe(
                                 phase="outgoing",
@@ -2883,12 +2900,12 @@ class CodeActActor(BaseCodeActActor):
                 "\n"
                 "Key concepts\n"
                 "------------\n"
-                "- **language**: ``\"python\"`` | ``\"bash\"`` | ``\"zsh\"`` | "
-                "``\"sh\"`` | ``\"powershell\"``\n"
+                '- **language**: ``"python"`` | ``"bash"`` | ``"zsh"`` | '
+                '``"sh"`` | ``"powershell"``\n'
                 "- **state_mode**:\n"
-                "  - ``\"stateless\"``: no session; clean execution; no persistence\n"
-                "  - ``\"stateful\"``: persistent session; state accumulates\n"
-                "  - ``\"read_only\"``: reads from an existing session but does not\n"
+                '  - ``"stateless"``: no session; clean execution; no persistence\n'
+                '  - ``"stateful"``: persistent session; state accumulates\n'
+                '  - ``"read_only"``: reads from an existing session but does not\n'
                 "    persist changes\n"
                 "- **session_id / session_name**: only meaningful for\n"
                 "  stateful / read_only\n"
@@ -2899,9 +2916,9 @@ class CodeActActor(BaseCodeActActor):
                 "    Exact name of the function to execute.\n"
                 "call_kwargs : dict, optional\n"
                 "    Keyword arguments to pass to the function.\n"
-                "language : str, default ``\"python\"``\n"
+                'language : str, default ``"python"``\n'
                 "    Language of the function.\n"
-                "state_mode : str, default ``\"stateless\"``\n"
+                'state_mode : str, default ``"stateless"``\n'
                 "    Execution state mode.\n"
                 "session_id : int | None\n"
                 "    Session ID for stateful/read_only modes.\n"

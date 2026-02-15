@@ -39,9 +39,7 @@ def _assert_contact_ask_triggered(
     appears in the query text OR in the ``response_format`` keys.
     """
     events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    contact_events = [
-        e for e in events if e.action_name == "ask_about_contacts"
-    ]
+    contact_events = [e for e in events if e.action_name == "ask_about_contacts"]
     assert contact_events, (
         f"Expected ask_about_contacts to be triggered, "
         f"but got action(s): {[e.action_name for e in events] or 'none'}"

@@ -26,7 +26,6 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
 )
 
-
 pytestmark = pytest.mark.eval
 
 
@@ -44,9 +43,7 @@ def _assert_contact_update_triggered(
     appears in the query text OR in the ``response_format`` keys.
     """
     events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    contact_events = [
-        e for e in events if e.action_name == "update_contacts"
-    ]
+    contact_events = [e for e in events if e.action_name == "update_contacts"]
     assert contact_events, (
         f"Expected update_contacts to be triggered, "
         f"but got action(s): {[e.action_name for e in events] or 'none'}"

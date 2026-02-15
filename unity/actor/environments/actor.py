@@ -283,9 +283,7 @@ class _ActorRunner:
         effective_can_compose = can_compose and (
             actor_ctx.can_compose if actor_ctx else True
         )
-        effective_can_store = can_store and (
-            actor_ctx.can_store if actor_ctx else True
-        )
+        effective_can_store = can_store and (actor_ctx.can_store if actor_ctx else True)
 
         effective_timeout = timeout if timeout is not None else 1000
 

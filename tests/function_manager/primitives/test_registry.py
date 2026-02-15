@@ -295,7 +295,9 @@ def test_collect_primitives_matches_get_primitive_sources():
     computer_entries = {
         name for name in primitives if name.startswith("primitives.computer.")
     }
-    assert len(computer_entries) > 0, "Expected ComputerPrimitives in collected primitives"
+    assert (
+        len(computer_entries) > 0
+    ), "Expected ComputerPrimitives in collected primitives"
 
 
 def test_collect_primitives_respects_scope():
@@ -472,6 +474,7 @@ def test_all_primitive_methods_have_summary_and_parameters():
         if spec.manager_alias == "computer":
             try:
                 from unity.function_manager.computer_backends import ComputerBackend
+
                 fallback_cls = ComputerBackend
             except ImportError:
                 pass
@@ -493,6 +496,7 @@ def test_all_primitive_methods_have_summary_and_parameters():
             # Only require a Parameters block if the method actually has parameters
             # beyond `self`.
             import inspect as _inspect
+
             try:
                 sig = _inspect.signature(getattr(source_cls, method_name))
                 has_params = any(

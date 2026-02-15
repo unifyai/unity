@@ -255,7 +255,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     b64 = data.get("screenshot")
                     if b64:
                         self._screenshot_buffer.append(
-                            ScreenshotEntry(b64, user_utterance, datetime.now(timezone.utc), "assistant"),
+                            ScreenshotEntry(
+                                b64,
+                                user_utterance,
+                                datetime.now(timezone.utc),
+                                "assistant",
+                            ),
                         )
                         self._session_logger.debug(
                             "screenshot_capture",
@@ -285,12 +290,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
             utterance = data.get("utterance", "")
             ts_str = data.get("timestamp")
             ts = (
-                datetime.fromisoformat(ts_str)
-                if ts_str
-                else datetime.now(timezone.utc)
+                datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
             )
             if b64:
-                self._screenshot_buffer.append(ScreenshotEntry(b64, utterance, ts, "user"))
+                self._screenshot_buffer.append(
+                    ScreenshotEntry(b64, utterance, ts, "user"),
+                )
                 self._session_logger.debug(
                     "screenshot_capture",
                     f"Buffered user screenshot #{len(self._screenshot_buffer)} "
