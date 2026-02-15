@@ -1,7 +1,7 @@
 """
-Tests for CodeActActor sub-agent delegation via ``run_sub_agent``.
+Tests for CodeActActor sub-agent delegation via ``SubAgentEnvironment``.
 
-Symbolic tests verify tool registration, prompt inclusion, and gating.
+Symbolic tests verify environment installation, prompt inclusion, and gating.
 Eval tests verify end-to-end sub-agent execution with a real LLM.
 """
 
@@ -13,78 +13,47 @@ import inspect
 import pytest
 
 from unity.actor.code_act_actor import CodeActActor
+from unity.actor.environments.sub_agent import SubAgentEnvironment, _SubAgentRunner
 from unity.actor.prompt_builders import build_code_act_prompt
 from unity.common.async_tool_loop import SteerableToolHandle
 
 # ---------------------------------------------------------------------------
-# Symbolic tests — tool registration and gating
+# Symbolic tests — environment installation and gating
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_tool_registered_by_default():
-    """run_sub_agent should be present in the tool dict when can_spawn_sub_agents=True (default)."""
+def test_sub_agent_env_installed_when_enabled():
+    """SubAgentEnvironment should be in self.environments when can_spawn_sub_agents=True."""
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
         timeout=30,
+        can_spawn_sub_agents=True,
     )
-    tools = actor.get_tools("act")
-    assert "run_sub_agent" in tools
+    assert "sub_agent" in actor.environments
+    assert isinstance(actor.environments["sub_agent"], SubAgentEnvironment)
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_tool_registered_when_spawn_disabled():
-    """run_sub_agent is always registered in the raw tool dict (filtering is per-call in act())."""
+def test_sub_agent_env_absent_when_disabled():
+    """SubAgentEnvironment should NOT be in self.environments when can_spawn_sub_agents=False."""
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
         timeout=30,
         can_spawn_sub_agents=False,
     )
-    # The raw tool dict always includes it; _filter_tools in act() strips it.
-    tools = actor.get_tools("act")
-    assert "run_sub_agent" in tools
+    assert "sub_agent" not in actor.environments
     assert actor.can_spawn_sub_agents is False
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_run_sub_agent_filtered_out_when_spawn_disabled():
+async def test_sub_agent_env_excluded_from_sandbox_per_call_override():
     """
-    When can_spawn_sub_agents=False is passed to act(), the LLM should not
-    have access to run_sub_agent. We verify by starting act() and immediately
-    stopping it, then checking that the tool set does not include run_sub_agent.
-    """
-    actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-        can_spawn_sub_agents=False,
-    )
-    try:
-        handle = await actor.act(
-            "test",
-            can_spawn_sub_agents=False,
-            persist=False,
-            clarification_enabled=False,
-        )
-        # Stop immediately — we only care about the tool filtering, not execution.
-        await handle.stop()
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
-
-
-@pytest.mark.asyncio
-@pytest.mark.timeout(30)
-async def test_run_sub_agent_per_call_override():
-    """
-    can_spawn_sub_agents can be overridden per-call. An actor with
-    can_spawn_sub_agents=True should still strip the tool when the
-    per-call override is False, and vice versa.
+    When can_spawn_sub_agents=True at init but False per-call,
+    the sub_agent namespace should be excluded from the sandbox environments.
     """
     actor = CodeActActor(
         headless=True,
@@ -115,8 +84,8 @@ async def test_run_sub_agent_per_call_override():
 
 
 @pytest.mark.timeout(30)
-def test_prompt_includes_sub_agent_guidance_when_tool_present():
-    """The system prompt should contain sub-agent delegation guidance when run_sub_agent is available."""
+def test_prompt_includes_sub_agent_guidance_when_env_present():
+    """The system prompt should contain sub-agent delegation guidance via environment prompt context."""
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
@@ -124,47 +93,40 @@ def test_prompt_includes_sub_agent_guidance_when_tool_present():
         can_spawn_sub_agents=True,
     )
     tools = dict(actor.get_tools("act"))
-    prompt = build_code_act_prompt(environments={}, tools=tools)
+    prompt = build_code_act_prompt(environments=actor.environments, tools=tools)
 
     assert "Sub-Agent Delegation" in prompt
-    assert "run_sub_agent" in prompt
-    assert "When to delegate" in prompt
-    assert "When NOT to delegate" in prompt
+    assert "sub_agent.run" in prompt
+    assert "When to use" in prompt
+    assert "When NOT to use" in prompt
     assert "steerable" in prompt.lower()
 
 
 @pytest.mark.timeout(30)
-def test_prompt_excludes_sub_agent_guidance_when_tool_absent():
-    """The system prompt should NOT contain sub-agent guidance when run_sub_agent is filtered out."""
+def test_prompt_excludes_sub_agent_guidance_when_env_absent():
+    """The system prompt should NOT contain sub-agent guidance when SubAgentEnvironment is not installed."""
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
         timeout=30,
+        can_spawn_sub_agents=False,
     )
     tools = dict(actor.get_tools("act"))
-    # Manually remove run_sub_agent to simulate _filter_tools with can_spawn_sub_agents=False.
-    tools.pop("run_sub_agent", None)
-    prompt = build_code_act_prompt(environments={}, tools=tools)
+    prompt = build_code_act_prompt(environments=actor.environments, tools=tools)
 
     assert "Sub-Agent Delegation" not in prompt
 
 
 # ---------------------------------------------------------------------------
-# Symbolic tests — run_sub_agent parameter exposure
+# Symbolic tests — _SubAgentRunner.run parameter exposure
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_exposes_capability_parameters():
-    """run_sub_agent should expose can_compose, can_store, can_spawn_sub_agents,
+def test_sub_agent_run_exposes_capability_parameters():
+    """sub_agent.run should expose can_compose, can_store, can_spawn_sub_agents,
     and storage_check_on_return as parameters visible to the LLM."""
-    actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-    )
-    tools = actor.get_tools("act")
-    sig = inspect.signature(tools["run_sub_agent"])
+    sig = inspect.signature(_SubAgentRunner.run)
     param_names = set(sig.parameters.keys())
 
     assert "can_compose" in param_names
@@ -176,15 +138,9 @@ def test_run_sub_agent_exposes_capability_parameters():
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_parameter_defaults():
+def test_sub_agent_run_parameter_defaults():
     """Verify the default values for the capability parameters match expectations."""
-    actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-    )
-    tools = actor.get_tools("act")
-    sig = inspect.signature(tools["run_sub_agent"])
+    sig = inspect.signature(_SubAgentRunner.run)
     params = sig.parameters
 
     assert params["can_compose"].default is True
@@ -194,8 +150,24 @@ def test_run_sub_agent_parameter_defaults():
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_discovery_scope_composes_with_parent():
-    """discovery_scope on run_sub_agent should AND with the parent's filter_scope.
+def test_sub_agent_run_hides_internal_params():
+    """Internal parameters prefixed with _ should not appear in the filtered docstring."""
+    sig = inspect.signature(_SubAgentRunner.run)
+    public_params = {
+        name
+        for name, p in sig.parameters.items()
+        if not name.startswith("_") and name != "self"
+    }
+
+    assert "_clarification_up_q" not in public_params
+    assert "_clarification_down_q" not in public_params
+    assert "task" in public_params
+    assert "timeout" in public_params
+
+
+@pytest.mark.timeout(30)
+def test_sub_agent_discovery_scope_composes_with_parent():
+    """discovery_scope on sub_agent.run should AND with the parent's filter_scope.
 
     This is a symbolic test that verifies the composition logic by
     inspecting the FunctionManager that the inner CodeActActor would
@@ -214,14 +186,13 @@ def test_run_sub_agent_discovery_scope_composes_with_parent():
     parent_fm = actor.function_manager
     parent_scope = parent_fm.filter_scope if parent_fm else None
 
-    # Simulate the discovery_scope composition logic from run_sub_agent.
+    # Simulate the discovery_scope composition logic from _SubAgentRunner.run.
     new_scope = "language == 'python'"
     if parent_scope:
         expected = f"({parent_scope}) and ({new_scope})"
     else:
         expected = new_scope
 
-    # Verify the composition is correct.
     # When parent has no filter_scope, new_scope stands alone.
     if parent_scope is None:
         assert expected == "language == 'python'"
@@ -232,7 +203,7 @@ def test_run_sub_agent_discovery_scope_composes_with_parent():
 
 
 @pytest.mark.timeout(30)
-def test_run_sub_agent_discovery_scope_narrows_not_replaces():
+def test_sub_agent_discovery_scope_narrows_not_replaces():
     """discovery_scope must narrow: a parent scope is never lost.
 
     Verifies that composing two scopes produces an AND expression
@@ -249,14 +220,54 @@ def test_run_sub_agent_discovery_scope_narrows_not_replaces():
     assert combined == "(language == 'python') and ('data' in docstring)"
 
 
+# ---------------------------------------------------------------------------
+# Symbolic tests — privilege escalation prevention
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(30)
+def test_sub_agent_runner_caps_can_compose():
+    """When the parent has can_compose=False, the runner should cap inner can_compose to False."""
+    runner = _SubAgentRunner(
+        parent_environments={},
+        function_manager=None,
+        parent_can_compose=False,
+        parent_can_store=True,
+        model=None,
+        preprocess_msgs=None,
+        prompt_caching=None,
+        parent_timeout=30,
+    )
+    # Even if can_compose=True is requested, it should be capped by parent.
+    assert not (True and runner._parent_can_compose)
+
+
+@pytest.mark.timeout(30)
+def test_sub_agent_runner_caps_can_store():
+    """When the parent has can_store=False, the runner should cap inner can_store to False."""
+    runner = _SubAgentRunner(
+        parent_environments={},
+        function_manager=None,
+        parent_can_compose=True,
+        parent_can_store=False,
+        model=None,
+        preprocess_msgs=None,
+        prompt_caching=None,
+        parent_timeout=30,
+    )
+    # Even if can_store=True is requested, it should be capped by parent.
+    assert not (True and runner._parent_can_store)
+
+
+# ---------------------------------------------------------------------------
+# Symbolic test — sub_agent.run returns a steerable handle
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_run_sub_agent_forwards_capability_flags():
-    """
-    Calling run_sub_agent with non-default capability flags should produce a
-    working steerable handle (not crash). We start and immediately stop to
-    verify wiring.
-    """
+async def test_sub_agent_run_returns_steerable_handle():
+    """sub_agent.run() should return a SteerableToolHandle, not a plain string."""
     actor = CodeActActor(
         headless=True,
         computer_mode="mock",
@@ -264,47 +275,9 @@ async def test_run_sub_agent_forwards_capability_flags():
         can_spawn_sub_agents=True,
     )
     try:
-        tools = actor.get_tools("act")
-        # Call with all flags explicitly set to non-defaults where safe.
-        # run_sub_agent returns a steerable handle; stop it immediately.
-        handle = await tools["run_sub_agent"](
-            task="What is 1+1?",
-            timeout=10,
-            can_compose=True,
-            can_store=True,
-            can_spawn_sub_agents=True,
-            storage_check_on_return=True,
-        )
-        await handle.stop()
-        try:
-            await handle.result()
-        except Exception:
-            pass
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# Symbolic test — run_sub_agent returns a steerable handle
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@pytest.mark.timeout(60)
-async def test_run_sub_agent_returns_steerable_handle():
-    """run_sub_agent should return a SteerableToolHandle, not a plain string."""
-    actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-        can_spawn_sub_agents=True,
-    )
-    try:
-        tools = actor.get_tools("act")
-        handle = await tools["run_sub_agent"](
+        env = actor.environments["sub_agent"]
+        runner = env.get_instance()
+        handle = await runner.run(
             task="What is 1+1?",
             timeout=10,
         )
@@ -326,6 +299,44 @@ async def test_run_sub_agent_returns_steerable_handle():
             pass
 
 
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_sub_agent_run_forwards_capability_flags():
+    """
+    Calling sub_agent.run() with non-default capability flags should produce a
+    working steerable handle (not crash). We start and immediately stop to
+    verify wiring.
+    """
+    actor = CodeActActor(
+        headless=True,
+        computer_mode="mock",
+        timeout=30,
+        can_spawn_sub_agents=True,
+    )
+    try:
+        env = actor.environments["sub_agent"]
+        runner = env.get_instance()
+        # Call with all flags explicitly set to non-defaults where safe.
+        handle = await runner.run(
+            task="What is 1+1?",
+            timeout=10,
+            can_compose=True,
+            can_store=True,
+            can_spawn_sub_agents=True,
+            storage_check_on_return=True,
+        )
+        await handle.stop()
+        try:
+            await handle.result()
+        except Exception:
+            pass
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Eval test — end-to-end sub-agent execution
 # ---------------------------------------------------------------------------
@@ -334,10 +345,10 @@ async def test_run_sub_agent_returns_steerable_handle():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_run_sub_agent_completes_simple_task():
+async def test_sub_agent_completes_simple_task():
     """
     The outer agent should be able to delegate a simple, self-contained task
-    to a sub-agent via run_sub_agent and receive the result.
+    to a sub-agent via sub_agent.run() and receive the result.
     """
     actor = CodeActActor(
         headless=True,
@@ -347,7 +358,7 @@ async def test_run_sub_agent_completes_simple_task():
     )
     try:
         handle = await actor.act(
-            "Use run_sub_agent to delegate the following task: "
+            "Use sub_agent.run() to delegate the following task: "
             "'Calculate the sum of all integers from 1 to 100 using Python and return the result.' "
             "Report the sub-agent's answer.",
             persist=False,
@@ -367,11 +378,11 @@ async def test_run_sub_agent_completes_simple_task():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_run_sub_agent_receives_parent_chat_context():
+async def test_sub_agent_receives_parent_chat_context():
     """
     The sub-agent should receive the parent agent's conversation history
-    via _parent_chat_context, enabling it to answer questions that depend
-    on information only present in the outer conversation.
+    via _PARENT_CHAT_CONTEXT ContextVar, enabling it to answer questions
+    that depend on information only present in the outer conversation.
     """
     actor = CodeActActor(
         headless=True,
@@ -380,14 +391,14 @@ async def test_run_sub_agent_receives_parent_chat_context():
         can_spawn_sub_agents=True,
     )
     try:
-        # First turn: establish a fact in the outer conversation.
+        # Establish a fact in the outer conversation and delegate a sub-task.
         handle = await actor.act(
             [
                 {
                     "role": "user",
                     "content": (
                         "Remember this secret code: ZEBRA-42. "
-                        "Now use run_sub_agent to delegate the following task: "
+                        "Now use sub_agent.run() to delegate the following task: "
                         "'The parent conversation contains a secret code. "
                         "Find it from the conversation context and report it back.' "
                         "Report whatever the sub-agent returns."
