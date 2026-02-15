@@ -31,12 +31,14 @@ from .callable import execute_callable
 from .package_overlay import PackageOverlay, _CURRENT_PACKAGE_OVERLAY
 
 from .session import (
+    ActorContext,
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
     StateMode,
     SupportedLanguage,
     SupportedShellLanguage,
+    _ACTOR_CONTEXT,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
     _execute_shell_stateless,
@@ -66,10 +68,12 @@ __all__ = [
     "PackageOverlay",
     "_CURRENT_PACKAGE_OVERLAY",
     # session
+    "ActorContext",
     "SupportedShellLanguage",
     "SupportedLanguage",
     "StateMode",
     "SessionKey",
+    "_ACTOR_CONTEXT",
     "_CURRENT_SANDBOX",
     "_PARENT_CHAT_CONTEXT",
     "_validate_execution_params",

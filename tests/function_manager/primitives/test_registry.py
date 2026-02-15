@@ -8,7 +8,7 @@ from unity.function_manager.primitives.registry import (
     get_primitive_sources,
     ManagerSpec,
     _COMMON_EXCLUDED_METHODS,
-    _STATE_MANAGER_SPECS,
+    _MANAGER_SPECS,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -60,14 +60,13 @@ def test_manager_specs_sorted_by_priority():
     assert priorities == sorted(priorities)
 
 
-def test_manager_specs_excludes_computer_primitives():
-    """manager_specs() always excludes ComputerPrimitives (is_state_manager=False)."""
+def test_manager_specs_includes_computer_primitives():
+    """manager_specs() includes ComputerPrimitives like any other manager."""
     registry = get_registry()
     scope = PrimitiveScope.all_managers()
     specs = registry.manager_specs(scope)
     aliases = {s.manager_alias for s in specs}
-    # ComputerPrimitives has manager_alias="computer" but should NOT appear
-    assert "computer" not in aliases
+    assert "computer" in aliases
 
 
 def test_get_manager_spec_valid():
@@ -87,11 +86,11 @@ def test_get_manager_spec_invalid():
 
 
 def test_get_manager_spec_includes_computer():
-    """get_manager_spec() CAN return ComputerPrimitives spec for introspection."""
+    """get_manager_spec() returns the ComputerPrimitives spec."""
     registry = get_registry()
     spec = registry.get_manager_spec("computer")
     assert spec is not None
-    assert spec.is_state_manager is False
+    assert spec.manager_alias == "computer"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -393,22 +392,16 @@ def test_compute_primitives_hash_accepts_precomputed():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# State manager specs exclusion tests
+# Manager specs parity tests
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def test_state_manager_specs_excludes_computer():
-    """_STATE_MANAGER_SPECS excludes ComputerPrimitives."""
-    aliases = {s.manager_alias for s in _STATE_MANAGER_SPECS}
-    assert "computer" not in aliases
+def test_manager_specs_includes_all_aliases():
+    """_MANAGER_SPECS covers every alias in VALID_MANAGER_ALIASES."""
+    from unity.function_manager.primitives.scope import VALID_MANAGER_ALIASES
 
-
-def test_all_state_managers_have_is_state_manager_true():
-    """All specs in _STATE_MANAGER_SPECS have is_state_manager=True."""
-    for spec in _STATE_MANAGER_SPECS:
-        assert (
-            spec.is_state_manager is True
-        ), f"{spec.manager_alias} should be a state manager"
+    spec_aliases = {s.manager_alias for s in _MANAGER_SPECS}
+    assert spec_aliases == VALID_MANAGER_ALIASES
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -468,22 +461,52 @@ def test_all_primitive_methods_have_summary_and_parameters():
     missing_summary = []
     missing_params = []
 
-    for spec in _STATE_MANAGER_SPECS:
+    for spec in _MANAGER_SPECS:
         cls = registry._load_manager_class(spec.primitive_class_path)
         if cls is None:
             continue
         methods = registry.primitive_methods(manager_alias=spec.manager_alias)
+
+        # For ComputerPrimitives, dynamic methods live on ComputerBackend.
+        fallback_cls = None
+        if spec.manager_alias == "computer":
+            try:
+                from unity.function_manager.computer_backends import ComputerBackend
+                fallback_cls = ComputerBackend
+            except ImportError:
+                pass
+
         for method_name in methods:
             fq = f"primitives.{spec.manager_alias}.{method_name}"
+
+            # Resolve the source class for docstring extraction.
+            source_cls = cls
             doc = registry._extract_method_docstring(cls, method_name)
+            if not doc and fallback_cls is not None:
+                doc = registry._extract_method_docstring(fallback_cls, method_name)
+                source_cls = fallback_cls
 
             summary = _first_paragraph(doc)
             if len(summary) < MIN_SUMMARY_CHARS:
                 missing_summary.append(f"{fq} (got {len(summary)} chars)")
 
-            params = _parameters_block(doc)
-            if len(params) < MIN_PARAMS_CHARS:
-                missing_params.append(f"{fq} (got {len(params)} chars)")
+            # Only require a Parameters block if the method actually has parameters
+            # beyond `self`.
+            import inspect as _inspect
+            try:
+                sig = _inspect.signature(getattr(source_cls, method_name))
+                has_params = any(
+                    p.name != "self"
+                    for p in sig.parameters.values()
+                    if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+                )
+            except (ValueError, TypeError):
+                has_params = True  # err on the side of requiring docs
+
+            if has_params:
+                params = _parameters_block(doc)
+                if len(params) < MIN_PARAMS_CHARS:
+                    missing_params.append(f"{fq} (got {len(params)} chars)")
 
     assert not missing_summary, (
         f"Methods with missing/short first-paragraph summary "

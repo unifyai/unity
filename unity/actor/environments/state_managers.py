@@ -117,11 +117,6 @@ class StateManagerEnvironment(BaseEnvironment):
         tools: Dict[str, ToolMetadata] = {}
 
         for alias in sorted(self._primitive_scope.scoped_managers):
-            # Skip ComputerPrimitives; those belong to the `computer_primitives` environment.
-            # Note: "computer" is not in VALID_MANAGER_ALIASES so this is a defensive check.
-            if alias == "computer":
-                continue
-
             method_names = self._registry.primitive_methods(manager_alias=alias)
             for method_name in method_names:
                 fq_name = f"{self.namespace}.{alias}.{method_name}"

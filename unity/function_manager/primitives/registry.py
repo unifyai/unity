@@ -38,8 +38,6 @@ class ManagerSpec:
     - Identity (alias, registry key, class path)
     - Method exclusions
     - Prompt metadata (domain, description, use_when, examples, priority)
-    For ComputerPrimitives, `is_state_manager=False` indicates it requires special
-    handling (dynamically-created methods, separate instantiation pattern).
     """
 
     manager_alias: str
@@ -52,8 +50,6 @@ class ManagerSpec:
     use_when: str = ""
     examples: str = ""
     special_note: str | None = None
-    # Distinguishes state managers from special primitives like ComputerPrimitives
-    is_state_manager: bool = True
 
 
 # =============================================================================
@@ -188,12 +184,9 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         use_when="Questions about specific files/documents, data operations, aggregations, visualizations",
         examples="'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
     ),
-    # ComputerPrimitives is NOT a state manager - it has dynamically-created methods
-    # and requires a separate instantiation pattern. It is included here for completeness
-    # but is_state_manager=False indicates it should not be processed like other managers.
     ManagerSpec(
         manager_alias="computer",
-        manager_registry_key="",  # No ManagerRegistry getter - instantiated directly
+        manager_registry_key="",  # No ManagerRegistry getter - singleton via metaclass
         primitive_class_path="unity.function_manager.primitives.runtime.ComputerPrimitives",
         excluded_methods=frozenset(),
         priority=10,
@@ -201,8 +194,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Browser automation, web navigation, computer use actions, reasoning",
         use_when="Web automation, browser control, navigating websites, extracting web content",
         examples="'Navigate to example.com', 'Click the login button', 'Extract page content'",
-        special_note="ComputerPrimitives has dynamically-created methods. Access via primitives.computer, not indexed in FunctionManager.",
-        is_state_manager=False,  # <-- Key differentiator
     ),
 )
 
@@ -215,11 +206,6 @@ _MANAGER_BY_ALIAS: Dict[str, ManagerSpec] = {
 _CLASS_PATH_TO_ALIAS: Dict[str, str] = {
     spec.primitive_class_path: spec.manager_alias for spec in _MANAGER_SPECS
 }
-
-# State managers only (excludes ComputerPrimitives)
-_STATE_MANAGER_SPECS: tuple[ManagerSpec, ...] = tuple(
-    spec for spec in _MANAGER_SPECS if spec.is_state_manager
-)
 
 
 # =============================================================================
@@ -416,7 +402,6 @@ class ToolSurfaceRegistry:
 
     # Class-level references to canonical data
     MANAGERS = _MANAGER_SPECS
-    STATE_MANAGERS = _STATE_MANAGER_SPECS
     ROUTING_GUIDANCE = _ROUTING_GUIDANCE
     EXAMPLE_GENERATORS = _EXAMPLE_GENERATORS
 
@@ -429,18 +414,15 @@ class ToolSurfaceRegistry:
         """
         Get manager specs for a given scope, sorted by priority.
 
-        Only returns state managers (is_state_manager=True). ComputerPrimitives
-        is excluded as it requires special handling.
-
         Args:
             primitive_scope: The scope defining which managers are exposed.
 
         Returns:
-            List of ManagerSpec for exposed state managers, sorted by priority.
+            List of ManagerSpec for exposed managers, sorted by priority.
         """
         specs = [
             spec
-            for spec in _STATE_MANAGER_SPECS
+            for spec in _MANAGER_SPECS
             if spec.manager_alias in primitive_scope.scoped_managers
         ]
         return sorted(specs, key=lambda s: s.priority)
@@ -558,10 +540,6 @@ class ToolSurfaceRegistry:
         """
         names = []
         for alias in sorted(primitive_scope.scoped_managers):
-            spec = _MANAGER_BY_ALIAS.get(alias)
-            # Skip non-state managers (like ComputerPrimitives)
-            if spec and not spec.is_state_manager:
-                continue
             for method in self.primitive_methods(manager_alias=alias):
                 names.append(f"primitives.{alias}.{method}")
         return names
@@ -1271,7 +1249,7 @@ def get_primitive_sources() -> List[tuple[Type, List[str]]]:
     """
     registry = get_registry()
     result = []
-    for spec in _STATE_MANAGER_SPECS:
+    for spec in _MANAGER_SPECS:
         cls = registry._load_manager_class(spec.primitive_class_path)
         if cls is not None:
             methods = registry.primitive_methods(manager_alias=spec.manager_alias)
