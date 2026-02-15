@@ -1784,15 +1784,21 @@ class FunctionManager(BaseFunctionManager):
         self,
         fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
         all_known_function_names: Set[str],
+        *,
+        environment_namespaces: FrozenSet[str] = frozenset(),
     ) -> Set[str]:
         """
         Uses the stateful _DependencyVisitor to find verified direct calls,
         indirect calls via variables, and returned function name references
         to other known library functions.
+
+        When *environment_namespaces* is provided, dotted calls whose root segment
+        matches one of the namespaces are also captured as dependencies.
         """
         return collect_dependencies_from_function_node(
             fn_node,
             all_known_function_names,
+            environment_namespaces=environment_namespaces,
         )
 
     def _collect_function_calls(
@@ -2724,6 +2730,8 @@ class FunctionManager(BaseFunctionManager):
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
 
+        env_namespaces = frozenset({"primitives", "computer_primitives", "sub_agent"})
+
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
                 continue
@@ -2732,6 +2740,7 @@ class FunctionManager(BaseFunctionManager):
                 dependencies = self._collect_verified_dependencies(
                     node,
                     all_known_function_names,
+                    environment_namespaces=env_namespaces,
                 )
                 dependencies_list = sorted(list(dependencies))
 
@@ -3253,7 +3262,7 @@ class FunctionManager(BaseFunctionManager):
         if not isinstance(deps, list):
             return
 
-        q = deque([d for d in deps if isinstance(d, str) and d])
+        q = deque([d for d in deps if isinstance(d, str) and d and "." not in d])
         while q:
             dep_name = q.popleft()
             if dep_name in visited:
