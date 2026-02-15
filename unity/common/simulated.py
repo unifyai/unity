@@ -385,6 +385,32 @@ class SimulatedHandleMixin:
 
     # Derived classes are expected to set: self._log_label : str
 
+    # ── Pause state proxy ────────────────────────────────────────────────
+
+    @property
+    def _pause_event(self):
+        """Proxy for pause state compatibility with ``get_handle_paused_state``.
+
+        Simulated manager handles track pause state via a ``_paused`` boolean
+        rather than a real ``threading.Event``.  This property exposes that
+        boolean through the ``is_set()`` interface that
+        ``get_handle_paused_state`` expects, following the async-tool-loop
+        convention (set = running, cleared = paused).
+
+        Returns ``None`` when the handle has no ``_paused`` attribute,
+        causing ``get_handle_paused_state`` to return ``None`` (unknown).
+        """
+        if not hasattr(self, "_paused"):
+            return None
+
+        handle = self
+
+        class _Proxy:
+            def is_set(self) -> bool:
+                return not handle._paused
+
+        return _Proxy()
+
     # ── Completion gate ──────────────────────────────────────────────────
     _completion_gate: "threading.Event | None" = None
 
