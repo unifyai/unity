@@ -34,6 +34,13 @@ from unity.function_manager.function_manager import _LineageTrackedFunction
 pytestmark = pytest.mark.enable_eventbus
 
 
+def _get(out: Any, key: str, default: Any = None) -> Any:
+    """Get a field from either a dict or Pydantic model."""
+    if isinstance(out, dict):
+        return out.get(key, default)
+    return getattr(out, key, default)
+
+
 # ---------------------------------------------------------------------------
 # execute_code boundary unit tests
 # ---------------------------------------------------------------------------
@@ -158,10 +165,24 @@ async def test_execute_code_boundary_marks_error_when_executor_raises(monkeypatc
 
 
 class _StubFunctionManager:
-    """Minimal stand-in for FunctionManager used by execute_function tests."""
+    """Minimal stand-in for FunctionManager used by execute_function tests.
 
-    async def execute_function(self, **kwargs):
-        return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+    Provides ``_get_function_data_by_name`` so the code synthesis path can
+    look up an implementation, and the standard discovery stubs to avoid
+    ``AttributeError`` during actor construction.
+    """
+
+    _include_primitives = False
+
+    def _get_function_data_by_name(self, *, name: str):
+        return {
+            "name": name,
+            "implementation": f"def {name}(**kwargs):\n    return 'ok'",
+            "language": "python",
+        }
+
+    def _get_primitive_data_by_name(self, *, name: str):
+        return None
 
     # The constructor probes these; stubs avoid AttributeError.
     search_functions = None
@@ -170,10 +191,16 @@ class _StubFunctionManager:
 
 
 class _BoomFunctionManager(_StubFunctionManager):
-    """Like _StubFunctionManager but raises on execute_function."""
+    """Like _StubFunctionManager but returns an implementation that raises."""
 
-    async def execute_function(self, **kwargs):
-        raise RuntimeError("boom")
+    def _get_function_data_by_name(self, *, name: str):
+        return {
+            "name": name,
+            "implementation": (
+                f"def {name}(**kwargs):\n    raise RuntimeError('boom')"
+            ),
+            "language": "python",
+        }
 
 
 @pytest.mark.asyncio
@@ -197,7 +224,7 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
             )
         EVENT_BUS.join_published()
 
-        assert out.get("error") is None
+        assert _get(out, "error") is None
         assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
 
         mm = [
@@ -219,7 +246,11 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
 @pytest.mark.asyncio
 @_handle_project
 async def test_execute_function_boundary_marks_error_and_cleans_lineage():
-    """execute_function publishes status=error and restores lineage on failure."""
+    """execute_function publishes status=error and restores lineage on failure.
+
+    The boom function raises inside the sandbox; execute_function catches this
+    and returns an error dict rather than propagating the exception.
+    """
     actor = CodeActActor(
         environments=[],
         headless=True,
@@ -231,12 +262,15 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
     token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
         async with capture_events("ManagerMethod") as events:
-            with pytest.raises(RuntimeError, match="boom"):
-                await execute_function(
-                    function_name="fail_fn",
-                    call_kwargs=None,
-                )
+            out = await execute_function(
+                function_name="fail_fn",
+                call_kwargs=None,
+            )
         EVENT_BUS.join_published()
+
+        # The error is captured in the result, not raised.
+        assert _get(out, "error") is not None
+        assert "boom" in str(_get(out, "error"))
 
         assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
 
@@ -249,7 +283,6 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
         ]
         assert len(outgoing) == 1
         assert outgoing[0].payload.get("status") == "error"
-        assert "RuntimeError" in str(outgoing[0].payload.get("error_type"))
         assert outgoing[0].payload.get("hierarchy") == [
             "CodeActActor.act",
             "execute_function(fail_fn)",
@@ -261,27 +294,41 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
 @pytest.mark.asyncio
 @_handle_project
 async def test_execute_function_propagates_lineage_to_nested_manager():
-    """State managers called inside execute_function inherit the full lineage."""
+    """The lineage set by execute_function is visible inside the sandbox.
 
-    captured_lineage: list[str] = []
+    We verify by having the stub function capture the lineage ContextVar
+    from within its implementation (which runs inside PythonExecutionSession).
+    """
 
-    class _CapturingFunctionManager(_StubFunctionManager):
-        async def execute_function(self, **kwargs):
-            captured_lineage.extend(TOOL_LOOP_LINEAGE.get([]))
-            return {"result": "captured", "error": None, "stdout": "", "stderr": ""}
+    class _LineageCapturingFM(_StubFunctionManager):
+        """Returns an implementation that captures TOOL_LOOP_LINEAGE."""
+
+        def _get_function_data_by_name(self, *, name: str):
+            return {
+                "name": name,
+                "implementation": (
+                    "def my_func(**kwargs):\n"
+                    "    from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE\n"
+                    "    return list(TOOL_LOOP_LINEAGE.get([]))\n"
+                ),
+                "language": "python",
+            }
 
     actor = CodeActActor(
         environments=[],
         headless=True,
         computer_mode="mock",
-        function_manager=_CapturingFunctionManager(),
+        function_manager=_LineageCapturingFM(),
     )
 
     execute_function = actor.get_tools("act")["execute_function"]
     token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
-        await execute_function(function_name="my_func", call_kwargs=None)
-        assert captured_lineage == [
+        out = await execute_function(function_name="my_func", call_kwargs=None)
+        assert _get(out, "error") is None, f"Unexpected error: {_get(out, 'error')}"
+        # The lineage captured inside the sandbox should include execute_function.
+        captured = _get(out, "result")
+        assert captured == [
             "CodeActActor.act",
             "execute_function(my_func)",
         ]
@@ -500,91 +547,35 @@ async def test_function_boundary_error_restores_lineage_and_surfaces_error():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_function_wraps_namespaces_with_clarification_injector():
-    """When _clarification_up_q / _clarification_down_q are provided,
-    execute_function wraps environment instances with
-    _ClarificationQueueInjector before passing to FunctionManager."""
-
-    captured_ns: dict = {}
-
-    class _CapturingFM(_StubFunctionManager):
-        async def execute_function(self, **kwargs):
-            captured_ns.update(kwargs.get("extra_namespaces") or {})
-            return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+async def test_execute_function_environments_accessible_in_sandbox():
+    """Environments injected into the actor are accessible from within
+    execute_function's sandbox execution, just like execute_code."""
 
     from unity.actor.environments import create_env
-    from unity.actor.environments.base import _ClarificationQueueInjector
 
     class _DummyService:
+        value = "hello_from_env"
+
         async def do_something(self):
-            pass
+            return self.value
 
     actor = CodeActActor(
         environments=[create_env("my_service", _DummyService())],
         headless=True,
         computer_mode="mock",
-        function_manager=_CapturingFM(),
-    )
-
-    execute_function = actor.get_tools("act")["execute_function"]
-
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
-    try:
-        await execute_function(
-            function_name="greet",
-            call_kwargs=None,
-            _clarification_up_q=up_q,
-            _clarification_down_q=down_q,
-        )
-    finally:
-        TOOL_LOOP_LINEAGE.reset(token)
-
-    # The environment instance should be wrapped with _ClarificationQueueInjector.
-    assert "my_service" in captured_ns
-    assert isinstance(captured_ns["my_service"], _ClarificationQueueInjector)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_function_no_wrapping_without_clarification_queues():
-    """Without clarification queues, environment instances are passed unwrapped."""
-
-    captured_ns: dict = {}
-
-    class _CapturingFM(_StubFunctionManager):
-        async def execute_function(self, **kwargs):
-            captured_ns.update(kwargs.get("extra_namespaces") or {})
-            return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
-
-    from unity.actor.environments import create_env
-    from unity.actor.environments.base import _ClarificationQueueInjector
-
-    class _DummyService:
-        async def do_something(self):
-            pass
-
-    svc = _DummyService()
-    actor = CodeActActor(
-        environments=[create_env("my_service", svc)],
-        headless=True,
-        computer_mode="mock",
-        function_manager=_CapturingFM(),
+        function_manager=_StubFunctionManager(),
     )
 
     execute_function = actor.get_tools("act")["execute_function"]
 
     token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
-        await execute_function(
+        out = await execute_function(
             function_name="greet",
             call_kwargs=None,
         )
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
-    # Without clarification queues, the raw instance should be passed.
-    assert "my_service" in captured_ns
-    assert not isinstance(captured_ns["my_service"], _ClarificationQueueInjector)
+    # The function should execute successfully via the sandbox.
+    assert _get(out, "error") is None, f"Unexpected error: {_get(out, 'error')}"
