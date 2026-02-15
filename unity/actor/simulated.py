@@ -662,6 +662,7 @@ class SimulatedActor(BaseActor):
                         next_notification(). When False, next_notification() blocks
                         until the action completes. Defaults to True.
         """
+        super().__init__()
         self._steps = steps
         self._duration = duration
         self._requests_clarification = _requests_clarification

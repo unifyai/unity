@@ -491,6 +491,7 @@ class SimulatedContactManager(BaseContactManager):
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._deterministic = deterministic
         self._log_events = log_events

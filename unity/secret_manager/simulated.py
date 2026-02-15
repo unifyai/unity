@@ -304,6 +304,7 @@ class SimulatedSecretManager(BaseSecretManager):
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._simulation_guidance = simulation_guidance
 
