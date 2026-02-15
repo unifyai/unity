@@ -310,6 +310,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._hold_completion = hold_completion
         self._log_events = log_events

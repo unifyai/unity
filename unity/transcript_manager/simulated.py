@@ -314,6 +314,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         contact_manager: Any = None,
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._log_events = log_events
         self._hold_completion = hold_completion
