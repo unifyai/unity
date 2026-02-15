@@ -179,9 +179,6 @@ class SimulatedConversationManagerHandle(
             async def ask(inner_self, *args, **kwargs):
                 return inner_self
 
-            async def next_clarification(inner_self) -> dict:
-                return {}
-
             async def answer_clarification(
                 inner_self,
                 call_id: str,
@@ -262,9 +259,6 @@ class SimulatedConversationManagerHandle(
         while not self._stopped:
             await asyncio.sleep(0.1)
         return self._final_result
-
-    async def next_clarification(self) -> dict:
-        return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         pass
