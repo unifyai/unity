@@ -24,8 +24,9 @@ try to create system contacts simultaneously.
 from __future__ import annotations
 
 import os
-import pytest
+from unittest.mock import patch
 
+import pytest
 import pytest_asyncio
 
 from tests.helpers import scenario_file_lock, get_or_create_contact
@@ -106,6 +107,40 @@ TEST_CONTACTS = [
         "response_policy": DEFAULT_RESPONSE_POLICY,
     },
 ]
+
+
+# =============================================================================
+# Universal comms isolation
+# =============================================================================
+
+_COMMS_MODULE = "unity.conversation_manager.domains.comms_utils"
+
+
+@pytest.fixture(autouse=True)
+def _stub_outbound_comms(request):
+    """Prevent real HTTP calls to the communication service.
+
+    Patches the four outbound ``comms_utils`` functions that make HTTP/Pub-Sub
+    calls to the communication service (SMS, email, phone calls, unify messages).
+    Every test in ``tests/conversation_manager/`` gets this automatically.
+
+    Tests that exercise the real ``comms_utils`` implementations (with their own
+    mocked aiohttp / SESSION_DETAILS) opt out via ``@pytest.mark.real_comms_functions``.
+    """
+    if "real_comms_functions" in request.keywords:
+        yield
+        return
+
+    async def _success(*args, **kwargs):
+        return {"success": True}
+
+    with (
+        patch(f"{_COMMS_MODULE}.send_sms_message_via_number", _success),
+        patch(f"{_COMMS_MODULE}.send_unify_message", _success),
+        patch(f"{_COMMS_MODULE}.send_email_via_address", _success),
+        patch(f"{_COMMS_MODULE}.start_call", _success),
+    ):
+        yield
 
 
 # =============================================================================
