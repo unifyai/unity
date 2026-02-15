@@ -22,6 +22,7 @@ from unity.conversation_manager.domains.event_handlers import (
     EventHandler,
     _event_type_to_log_key,
 )
+from unity.conversation_manager.types import ScreenshotEntry
 from unity.conversation_manager.events import (
     Event,
     Ping,
@@ -1175,6 +1176,37 @@ class TestMeetInteractionEventHandlers:
         await EventHandler.handle_event(event, mock_cm)
 
         mock_cm.capture_assistant_screenshot.assert_not_called()
+
+    # --------------------------------------------------------------------- #
+    # User screenshot buffer (IPC path)
+    # --------------------------------------------------------------------- #
+
+    def test_buffer_user_screenshot_parses_ipc_json(self, mock_cm):
+        """_buffer_user_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
+        import json
+        from datetime import datetime, timezone
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        # Use the real method on the mock CM by binding it
+        mock_cm._screenshot_buffer = []
+        mock_cm._session_logger = MagicMock()
+        method = ConversationManager._buffer_user_screenshot.__get__(mock_cm)
+
+        payload = json.dumps({
+            "b64": "iVBORw0KGgoAAAANSUhEUg==",
+            "utterance": "Look at this part of my screen",
+            "timestamp": "2026-02-15T12:00:00+00:00",
+        })
+        method(payload)
+
+        assert len(mock_cm._screenshot_buffer) == 1
+        entry = mock_cm._screenshot_buffer[0]
+        assert isinstance(entry, ScreenshotEntry)
+        assert entry.source == "user"
+        assert entry.b64 == "iVBORw0KGgoAAAANSUhEUg=="
+        assert entry.utterance == "Look at this part of my screen"
+        assert isinstance(entry.timestamp, datetime)
 
     # --------------------------------------------------------------------- #
     # Direct fast brain guidance on mode change

@@ -107,6 +107,72 @@ class TestCallEventSocketServer:
         await server.stop()
 
     @pytest.mark.asyncio
+    async def test_on_event_routes_user_screenshot_to_callback(
+        self,
+        mock_event_broker,
+    ):
+        """on_event intercepts user_screen_screenshot and routes it to a
+        dedicated callback, while forwarding other events to the broker."""
+        import json
+
+        screenshot_received = []
+
+        def on_user_screenshot(event_json):
+            screenshot_received.append(event_json)
+
+        async def on_ipc_event(channel, event_json):
+            if (
+                channel == "app:comms:user_screen_screenshot"
+                and on_user_screenshot is not None
+            ):
+                on_user_screenshot(event_json)
+            else:
+                await mock_event_broker.publish(channel, event_json)
+
+        server = CallEventSocketServer(
+            mock_event_broker,
+            on_event=on_ipc_event,
+            forward_channels=[],
+        )
+        socket_path = await server.start()
+        client = CallEventSocketClient(socket_path)
+
+        # Send a screenshot event
+        screenshot_payload = json.dumps({
+            "b64": "iVBORw0KGgoAAAANSUhEUg==",
+            "utterance": "Look here",
+            "timestamp": "2026-02-15T12:00:00+00:00",
+        })
+        await client.send_event(
+            "app:comms:user_screen_screenshot",
+            screenshot_payload,
+        )
+        await _wait_for_condition(lambda: len(screenshot_received) >= 1)
+
+        # Send a regular utterance event
+        utterance_payload = json.dumps({"content": "Hello there"})
+        await client.send_event(
+            "app:comms:unify_meet_utterance",
+            utterance_payload,
+        )
+        await _wait_for_condition(
+            lambda: mock_event_broker.publish.call_count >= 1,
+        )
+
+        # Screenshot went to the dedicated callback, not the broker
+        assert len(screenshot_received) == 1
+        assert screenshot_received[0] == screenshot_payload
+
+        # Utterance went to the broker, not the callback
+        mock_event_broker.publish.assert_called_once_with(
+            "app:comms:unify_meet_utterance",
+            utterance_payload,
+        )
+
+        await client.close()
+        await server.stop()
+
+    @pytest.mark.asyncio
     async def test_server_handles_malformed_json(self, mock_event_broker):
         """Server gracefully handles malformed JSON without crashing."""
         server = CallEventSocketServer(mock_event_broker, forward_channels=[])
