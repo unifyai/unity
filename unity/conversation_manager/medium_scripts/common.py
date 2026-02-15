@@ -329,3 +329,125 @@ def should_dispatch_livekit_agent() -> bool:
     True when we should actually call dispatch_livekit_agent() for this process.
     """
     return len(sys.argv) > 1 and sys.argv[1] != "download-files"
+
+
+# -------- User screen share capture -------- #
+
+
+class UserScreenCaptureManager:
+    """Captures frames from a remote participant's screen share track in a LiveKit room.
+
+    Registers track_subscribed/track_unsubscribed handlers on the room to
+    automatically start and stop frame capture when a screen share track
+    appears or disappears. Stores the latest frame as raw RGBA bytes and
+    converts to base64 PNG on demand (lazy conversion to avoid per-frame cost).
+
+    Usage::
+
+        capture_mgr = UserScreenCaptureManager(ctx.room)
+        # ... later, on user utterance ...
+        b64 = capture_mgr.capture_screenshot()  # None if no active share
+        # ... on cleanup ...
+        await capture_mgr.close()
+    """
+
+    def __init__(self, room) -> None:
+        self._latest_frame_data: tuple[bytes, int, int] | None = None
+        self._capture_task: asyncio.Task | None = None
+        self._stream = None
+
+        @room.on("track_subscribed")
+        def _on_track_subscribed(track, publication, participant):
+            self._handle_track_subscribed(track, publication)
+
+        @room.on("track_unsubscribed")
+        def _on_track_unsubscribed(track, publication, participant):
+            self._handle_track_unsubscribed(publication)
+
+    def _handle_track_subscribed(self, track, publication) -> None:
+        from livekit import rtc
+
+        if (
+            track.kind == rtc.TrackKind.KIND_VIDEO
+            and publication.source == rtc.TrackSource.SOURCE_SCREENSHARE
+        ):
+            print("[UserScreenCapture] Screen share track subscribed, starting capture")
+            stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
+            self._stream = stream
+            self._capture_task = asyncio.create_task(self._capture_loop(stream))
+
+    def _handle_track_unsubscribed(self, publication) -> None:
+        from livekit import rtc
+
+        if publication.source == rtc.TrackSource.SOURCE_SCREENSHARE:
+            print(
+                "[UserScreenCapture] Screen share track unsubscribed, stopping capture",
+            )
+            self._latest_frame_data = None
+            if self._capture_task and not self._capture_task.done():
+                self._capture_task.cancel()
+                self._capture_task = None
+            self._stream = None
+
+    async def _capture_loop(self, stream) -> None:
+        """Continuously capture frames, rate-limited to 1 per second."""
+        import time
+
+        last_capture = 0.0
+        try:
+            async for frame_event in stream:
+                now = time.monotonic()
+                if now - last_capture < 1.0:
+                    continue
+                last_capture = now
+                frame = frame_event.frame
+                from livekit import rtc
+
+                if frame.type != rtc.VideoBufferType.RGBA:
+                    frame = frame.convert(rtc.VideoBufferType.RGBA)
+                self._latest_frame_data = (
+                    bytes(frame.data),
+                    frame.width,
+                    frame.height,
+                )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[UserScreenCapture] Frame capture error: {e}")
+        finally:
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
+
+    def capture_screenshot(self) -> str | None:
+        """Convert the latest captured frame to a base64-encoded PNG string.
+
+        Returns None if no screen share track is active or no frame has
+        been captured yet.
+        """
+        if self._latest_frame_data is None:
+            return None
+
+        import base64
+        import io
+
+        from PIL import Image
+
+        rgba_bytes, width, height = self._latest_frame_data
+        img = Image.frombytes("RGBA", (width, height), rgba_bytes, "raw")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    async def close(self) -> None:
+        """Cancel the capture loop and release resources."""
+        if self._capture_task and not self._capture_task.done():
+            self._capture_task.cancel()
+            try:
+                await self._capture_task
+            except asyncio.CancelledError:
+                pass
+        self._capture_task = None
+        self._latest_frame_data = None
+        self._stream = None
