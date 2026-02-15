@@ -553,6 +553,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if not any(m.is_new for m in conversation_messages):
                 return True
 
+            # Assistant-only new chatter should not force filtering; only new
+            # user turns can make slow-brain guidance stale for the caller.
+            if not any(
+                m.is_new and (m.role or "").lower() == "user"
+                for m in conversation_messages
+            ):
+                return True
+
             # Use the GuidanceFilter to make the decision
             guidance_filter = GuidanceFilter()
             decision = await guidance_filter.should_send_guidance(
