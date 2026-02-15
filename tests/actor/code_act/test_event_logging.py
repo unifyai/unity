@@ -377,7 +377,13 @@ async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy
 @pytest.mark.asyncio
 @_handle_project
 async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calling_ids():
-    """Concurrent sibling boundaries must not nest under each other."""
+    """Concurrent sibling boundaries must not nest under each other.
+
+    _LineageTrackedFunction manages TOOL_LOOP_LINEAGE (ContextVar), not
+    event-bus events.  The observable proof that lineage didn't cross-talk
+    is that the inner manager calls (UnitStateManager.ask) each carry a
+    hierarchy containing only their own function boundary, not the sibling's.
+    """
     actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
     execute_code = actor.get_tools("act")["execute_code"]
 
@@ -415,21 +421,27 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
         EVENT_BUS.join_published()
         assert _result_error(res) is None
 
-        def _call_ids(name: str) -> set[str]:
-            evts = [
-                e
-                for e in events
-                if e.payload.get("manager") == "FunctionManager"
-                and e.payload.get("method") == name
-            ]
-            assert evts
-            return {e.calling_id for e in evts}
+        # Inner manager calls (UnitStateManager.ask) are the observable events.
+        # Each should carry a hierarchy that includes its own function boundary
+        # but NOT the sibling's.
+        ask_events = [
+            e
+            for e in events
+            if e.payload.get("manager") == "UnitStateManager"
+            and e.payload.get("method") == "ask"
+            and e.payload.get("phase") == "incoming"
+        ]
+        assert len(ask_events) == 2
 
-        f1_ids = _call_ids("f1")
-        f2_ids = _call_ids("f2")
-        assert len(f1_ids) == 1
-        assert len(f2_ids) == 1
-        assert next(iter(f1_ids)) != next(iter(f2_ids))
+        hierarchies = [e.payload.get("hierarchy", []) for e in ask_events]
+        f1_hierarchy = [h for h in hierarchies if "f1" in h]
+        f2_hierarchy = [h for h in hierarchies if "f2" in h]
+        assert len(f1_hierarchy) == 1, f"Expected one f1 hierarchy, got {f1_hierarchy}"
+        assert len(f2_hierarchy) == 1, f"Expected one f2 hierarchy, got {f2_hierarchy}"
+
+        # f1's hierarchy must NOT contain f2, and vice versa.
+        assert "f2" not in f1_hierarchy[0], f"f1 hierarchy leaked f2: {f1_hierarchy[0]}"
+        assert "f1" not in f2_hierarchy[0], f"f2 hierarchy leaked f1: {f2_hierarchy[0]}"
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
@@ -437,8 +449,14 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_lineage():
-    """FM boundary errors must publish status=error and always restore lineage."""
+async def test_function_boundary_error_restores_lineage_and_surfaces_error():
+    """_LineageTrackedFunction must restore TOOL_LOOP_LINEAGE when the
+    wrapped function raises, and the error must surface in execute_code's result.
+
+    _LineageTrackedFunction manages lineage (ContextVar) only — it does not
+    publish ManagerMethod events to the event bus.  The execute_code boundary
+    captures the exception and reports it in the result dict.
+    """
     actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
     execute_code = actor.get_tools("act")["execute_code"]
 
@@ -453,32 +471,23 @@ async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_li
     sb_token = _CURRENT_SANDBOX.set(sandbox)
     lineage_token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
-        async with capture_events("ManagerMethod") as events:
-            res = await execute_code(
-                thought="run",
-                code="await boom()\n",
-                language="python",
-                state_mode="stateful",
-                session_id=0,
-                session_name=None,
-                venv_id=None,
-                _notification_up_q=None,
-            )
-        EVENT_BUS.join_published()
+        res = await execute_code(
+            thought="run",
+            code="await boom()\n",
+            language="python",
+            state_mode="stateful",
+            session_id=0,
+            session_name=None,
+            venv_id=None,
+            _notification_up_q=None,
+        )
 
+        # The error should be captured in the result.
         assert _result_error(res)
-        assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
+        assert "RuntimeError" in str(_result_error(res))
 
-        outgoing = [
-            e
-            for e in events
-            if e.payload.get("manager") == "FunctionManager"
-            and e.payload.get("method") == "boom"
-            and e.payload.get("phase") == "outgoing"
-        ]
-        assert len(outgoing) == 1
-        assert outgoing[0].payload.get("status") == "error"
-        assert "RuntimeError" in str(outgoing[0].payload.get("error_type"))
+        # Lineage must be restored to the pre-call state.
+        assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
