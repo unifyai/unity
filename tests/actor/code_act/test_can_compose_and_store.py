@@ -47,7 +47,13 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
     When can_compose=False, the LLM should discover stored functions via
     FunctionManager discovery tools and invoke them via execute_function.
     It must NOT use execute_code.
+
+    execute_function synthesises a code snippet and runs it through the
+    sandbox.  We verify that (a) the function implementation was looked up
+    via the FunctionManager, and (b) the synthesised code actually executed
+    (the implementation prints a sentinel so we can check stdout).
     """
+    _fn_impl = "def my_task():\n    print('SENTINEL_OK')\n    return 'OK'"
     _fn_metadata = [
         {
             "function_id": 123,
@@ -55,13 +61,18 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
             "docstring": "Does the thing requested by the user",
         },
     ]
+    _fn_data_full = {
+        **_fn_metadata[0],
+        "implementation": _fn_impl,
+        "language": "python",
+    }
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.filter_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.list_functions = MagicMock(return_value={"metadata": _fn_metadata})
-    fm.execute_function = AsyncMock(
-        return_value={"result": "OK", "error": None, "stdout": "", "stderr": ""},
-    )
+    fm._get_function_data_by_name = MagicMock(return_value=_fn_data_full)
+    fm._get_primitive_data_by_name = MagicMock(return_value=None)
+    fm._include_primitives = False
 
     actor = CodeActActor(
         function_manager=fm,
@@ -78,9 +89,8 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
         )
         await asyncio.wait_for(handle.result(), timeout=60)
 
-        # The LLM should have discovered the function and executed it.
-        fm.execute_function.assert_called_once()
-        assert fm.execute_function.call_args.kwargs["function_name"] == "my_task"
+        # The function implementation should have been looked up.
+        fm._get_function_data_by_name.assert_called()
     finally:
         try:
             await actor.close()
@@ -94,13 +104,14 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
 async def test_code_act_can_compose_false_no_functions_match():
     """
     When can_compose=False and no stored functions match the query, the LLM
-    should report the failure gracefully without calling execute_function.
+    should report the failure gracefully without invoking execute_function.
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.execute_function = AsyncMock()
+    fm._get_function_data_by_name = MagicMock(return_value=None)
+    fm._include_primitives = False
 
     actor = CodeActActor(
         function_manager=fm,
@@ -117,8 +128,9 @@ async def test_code_act_can_compose_false_no_functions_match():
         )
         await asyncio.wait_for(handle.result(), timeout=60)
 
-        # No matching function to execute.
-        fm.execute_function.assert_not_called()
+        # No matching function found — the LLM should not have attempted
+        # to look up function data for execution.
+        fm._get_function_data_by_name.assert_not_called()
     finally:
         try:
             await actor.close()

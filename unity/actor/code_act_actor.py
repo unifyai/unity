@@ -14,6 +14,7 @@ from typing import (
     Callable,
     Awaitable,
     Dict,
+    NamedTuple,
     Optional,
     Type,
     Union,
@@ -117,6 +118,18 @@ def _default_tool_policy(
         return "auto", filtered
 
     return _policy
+
+
+# ---------------------------------------------------------------------------
+# Resolved session tuple returned by _resolve_session
+# ---------------------------------------------------------------------------
+
+
+class _ResolvedSession(NamedTuple):
+    language: str
+    venv_id: Optional[int]
+    session_id: Optional[int]
+    error: Optional[Dict[str, Any]]  # validation error dict, or None
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +881,95 @@ def _build_sub_agent_environments(
     return envs
 
 
+# ---------------------------------------------------------------------------
+# Code synthesis helpers for execute_function
+# ---------------------------------------------------------------------------
+
+def _synthesize_python_call(
+    *,
+    function_name: str,
+    call_kwargs: Dict[str, Any],
+    function_manager: Optional["FunctionManager"] = None,
+) -> str:
+    """Build a Python code snippet that calls *function_name* with *call_kwargs*.
+
+    Resolution order:
+    1. If ``function_name`` is a valid Python identifier, emit a call expression.
+       The sandbox namespace already contains environment-injected callables and
+       previously-discovered FunctionManager functions, so a plain call is the
+       common-case fast path.  If the name isn't actually present at runtime the
+       sandbox will raise ``NameError`` naturally.
+    2. If the FunctionManager has a stored implementation for the name, prepend
+       the implementation (defining the function) before the call expression so
+       the function is available even in a fresh/stateless session.
+
+    The call expression is always the **last expression** so that
+    ``PythonExecutionSession``'s REPL semantics return its value (including
+    steerable handles from primitives).
+    """
+    kwargs_repr = repr(call_kwargs) if call_kwargs else "{}"
+    # Determine whether the function is async by inspecting the stored impl.
+    # Default to ``await`` — environment-injected callables (primitives,
+    # manager methods) are async, and ``await`` on a sync return value
+    # produces a clear ``TypeError`` rather than silently discarding a
+    # coroutine.
+    is_async = True
+    preamble = ""
+
+    if function_manager is not None:
+        func_data = function_manager._get_function_data_by_name(name=function_name)
+        if func_data is None and getattr(function_manager, "_include_primitives", False):
+            func_data = function_manager._get_primitive_data_by_name(name=function_name)
+
+        if func_data is not None:
+            impl = func_data.get("implementation")
+            if impl and isinstance(impl, str) and impl.strip():
+                is_async = "async def" in impl
+                # Strip @custom_function decorators (not available in sandbox).
+                from unity.function_manager.function_manager import (
+                    _strip_custom_function_decorators,
+                )
+                preamble = _strip_custom_function_decorators(impl) + "\n\n"
+            elif func_data.get("is_primitive"):
+                is_async = True
+
+    call_expr = f"{'await ' if is_async else ''}{function_name}(**{kwargs_repr})"
+    return f"{preamble}{call_expr}"
+
+
+def _synthesize_shell_call(
+    *,
+    function_name: str,
+    call_kwargs: Dict[str, Any],
+    function_manager: Optional["FunctionManager"] = None,
+) -> str:
+    """Build a shell script that runs the stored function with *call_kwargs*.
+
+    Shell functions must have a stored implementation in the FunctionManager.
+    ``call_kwargs`` are exported as environment variables before sourcing the
+    implementation.
+    """
+    impl: str | None = None
+    if function_manager is not None:
+        func_data = function_manager._get_function_data_by_name(name=function_name)
+        if func_data is not None:
+            impl = func_data.get("implementation")
+
+    if not impl or not isinstance(impl, str) or not impl.strip():
+        raise ValueError(
+            f"Shell function '{function_name}' has no stored implementation.",
+        )
+
+    # Export kwargs as environment variables.
+    exports: list[str] = []
+    for k, v in (call_kwargs or {}).items():
+        escaped = str(v).replace("'", "'\\''")
+        exports.append(f"export {k}='{escaped}'")
+
+    parts = exports + [impl]
+    return "\n".join(parts)
+
+
 class CodeActActor(BaseCodeActActor):
     """
     An actor that uses a conversational tool loop and a stateful code execution
@@ -1162,6 +1264,77 @@ class CodeActActor(BaseCodeActActor):
             active_session_count=self._count_active_sessions_total(),
         )
 
+    def _resolve_session(
+        self,
+        *,
+        state_mode: str,
+        language: str,
+        session_id: int | None,
+        session_name: str | None,
+        venv_id: int | None,
+    ) -> _ResolvedSession:
+        """Resolve/allocate a session and validate execution params.
+
+        Handles the full session resolution flow used by both ``execute_code``
+        and ``execute_function``:
+
+        1. For stateful mode: resolve an existing session name, allocate a new
+           session id, or default to session 0.
+        2. Register session name aliases when both name and id are provided.
+        3. Validate the resulting execution parameters.
+
+        Returns a ``_ResolvedSession`` named tuple.  If ``error`` is not
+        ``None``, the caller should return it as the tool result immediately.
+        """
+        # Resolve / allocate sessions for stateful.
+        if state_mode == "stateful":
+            if session_name:
+                resolved = self._resolve_session_name(session_name)
+                if resolved is not None:
+                    language, venv_id, session_id = resolved
+                elif session_id is None:
+                    key = (
+                        str(language),
+                        int(venv_id) if venv_id is not None else None,
+                    )
+                    next_id = self._next_session_id.get(key, 1)
+                    session_id = next_id
+                    self._next_session_id[key] = next_id + 1
+                    self._register_session_name(
+                        name=session_name,
+                        language=str(language),
+                        venv_id=venv_id,
+                        session_id=int(session_id),
+                    )
+            elif session_id is None:
+                session_id = 0
+
+        # If name + id are both set but not registered yet, register alias.
+        if state_mode == "stateful" and session_name and session_id is not None:
+            if self._resolve_session_name(session_name) is None:
+                self._register_session_name(
+                    name=session_name,
+                    language=str(language),
+                    venv_id=venv_id,
+                    session_id=int(session_id),
+                )
+
+        # Validate.
+        err = self._validate_execution_params(
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=str(language),
+            venv_id=venv_id,
+        )
+
+        return _ResolvedSession(
+            language=str(language),
+            venv_id=venv_id,
+            session_id=session_id,
+            error=err,
+        )
+
     def _get_computer_tools(self) -> Dict[str, Callable]:
         """Extracts computer-related methods from the ComputerPrimitives."""
         if not self._computer_primitives:
@@ -1349,53 +1522,20 @@ class CodeActActor(BaseCodeActActor):
             notification_q = _notification_up_q
             sandbox_id = None
             try:
-                # Resolve / allocate sessions for stateful.
-                if state_mode == "stateful":
-                    if session_name:
-                        resolved = self._resolve_session_name(session_name)
-                        if resolved is not None:
-                            language, venv_id, session_id = resolved
-                        elif session_id is None:
-                            # Allocate a new session id (reserve 0 for default sandbox).
-                            key = (
-                                str(language),
-                                int(venv_id) if venv_id is not None else None,
-                            )
-                            next_id = self._next_session_id.get(key, 1)
-                            session_id = next_id
-                            self._next_session_id[key] = next_id + 1
-                            self._register_session_name(
-                                name=session_name,
-                                language=str(language),
-                                venv_id=venv_id,
-                                session_id=int(session_id),
-                            )
-                    elif session_id is None:
-                        # Default stateful session for each language/venv is session_id=0.
-                        # This is especially important for Python because FunctionManager-injected
-                        # callables are available in the default/bound Python sandbox (session 0).
-                        session_id = 0
-
-                # If name + id are both set but not registered yet, register alias.
-                if state_mode == "stateful" and session_name and session_id is not None:
-                    if self._resolve_session_name(session_name) is None:
-                        self._register_session_name(
-                            name=session_name,
-                            language=str(language),
-                            venv_id=venv_id,
-                            session_id=int(session_id),
-                        )
-
-                # Validate.
-                err = self._validate_execution_params(
+                _rs = self._resolve_session(
                     state_mode=state_mode,
+                    language=str(language),
                     session_id=session_id,
                     session_name=session_name,
-                    language=str(language),
                     venv_id=venv_id,
                 )
-                if err is not None:
-                    out = err
+                language, venv_id, session_id = (
+                    _rs.language,
+                    _rs.venv_id,
+                    _rs.session_id,
+                )
+                if _rs.error is not None:
+                    out = _rs.error
                     return out
 
                 # Inject per-tool notification queue into bound sandbox so notify() works.
@@ -1522,11 +1662,16 @@ class CodeActActor(BaseCodeActActor):
                 return out
             finally:
                 try:
-                    if out is not None and out.get("error"):
+                    _out_err = (
+                        out.get("error")
+                        if isinstance(out, dict)
+                        else getattr(out, "error", None)
+                    ) if out is not None else None
+                    if _out_err:
                         await _pub_safe(
                             phase="outgoing",
                             status="error",
-                            error=str(out.get("error")),
+                            error=str(_out_err),
                             error_type=(
                                 type(exec_exc).__name__
                                 if exec_exc is not None
@@ -1725,58 +1870,80 @@ class CodeActActor(BaseCodeActActor):
             async def execute_function(
                 function_name: str,
                 call_kwargs: Optional[Dict[str, Any]] = None,
+                *,
+                language: str = "python",
+                state_mode: str = "stateless",
+                session_id: int | None = None,
+                session_name: str | None = None,
+                venv_id: int | None = None,
+                _notification_up_q: asyncio.Queue[dict] | None = None,
                 _parent_chat_context: list[dict] | None = None,
-                _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-                _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-            ) -> Dict[str, Any]:
+            ) -> Any:
                 """
-                Execute a stored function by name and return its result.
+                Execute a known function by name and return its result.
 
-                This is the preferred way to run a known, pre-stored function
-                without writing any code. The function is looked up in the
-                FunctionManager by exact name and executed directly.
+                This is the preferred way to run a known function without
+                writing any code.  The function is resolved from:
 
-                When to use this vs execute_code
-                ---------------------------------
-                - Use **execute_function** when you know the exact function name
-                  (from a prior search/list/filter call) and want to run it as-is.
-                  This is simpler, faster, and avoids the overhead of a code sandbox.
-                - Use **execute_code** when you need to compose multiple functions,
-                  transform data between calls, or write any custom logic.
+                1. The current sandbox namespace (environment-injected callables,
+                   previously discovered FunctionManager functions, etc.).
+                2. The FunctionManager store (by exact name lookup).
+                3. If neither matches, a ``NameError`` is raised naturally.
 
                 Workflow
                 -------
-                1. Discover functions via `FunctionManager_search_functions`,
-                   `FunctionManager_filter_functions`, or
-                   `FunctionManager_list_functions`.
+                1. Discover functions via ``FunctionManager_search_functions``,
+                   ``FunctionManager_filter_functions``, or
+                   ``FunctionManager_list_functions``.
                 2. Pick the best match by name.
-                3. Call `execute_function(function_name=..., call_kwargs=...)`.
+                3. Call ``execute_function(function_name=..., call_kwargs=...)``.
+
+                Key concepts
+                ------------
+                - **language**: ``"python"`` | ``"bash"`` | ``"zsh"`` | ``"sh"`` | ``"powershell"``
+                - **state_mode**:
+                  - ``"stateless"``: no session; clean execution; no persistence
+                  - ``"stateful"``: persistent session; state accumulates
+                  - ``"read_only"``: reads from an existing session but does not
+                    persist changes
+                - **session_id / session_name**: only meaningful for
+                  stateful / read_only (same semantics as ``execute_code``)
 
                 Parameters
                 ----------
                 function_name : str
-                    Exact name of the stored function to execute (as returned by
-                    the FunctionManager discovery tools).
+                    Exact name of the function to execute.
                 call_kwargs : dict, optional
-                    Keyword arguments to pass to the function. Omit or pass None /
-                    an empty dict for functions that take no arguments.
+                    Keyword arguments to pass to the function.
 
                 Returns
                 -------
-                dict
-                    A dict with:
-                    - **result**: The function's return value (any JSON-serializable type).
-                    - **error**: Traceback string if the function raised, else None.
-                    - **stdout**: Captured standard output (string).
-                    - **stderr**: Captured standard error (string).
+                dict | ExecutionResult
+                    Same shape as ``execute_code`` output (stdout, stderr, result,
+                    error, language, state_mode, session_id, session_name, venv_id,
+                    session_created, duration_ms).
                 """
-                fm = self.function_manager
-                if fm is None:
-                    raise RuntimeError(
-                        "FunctionManager is not configured on this actor.",
+                call_kwargs = call_kwargs or {}
+
+                # ── Synthesize the code string ────────────────────────────
+                code: str | None = None
+
+                if str(language) == "python":
+                    code = _synthesize_python_call(
+                        function_name=function_name,
+                        call_kwargs=call_kwargs,
+                        function_manager=self.function_manager,
+                    )
+                else:
+                    # Shell: look up the stored implementation and append it
+                    # with kwargs serialised as environment variables.
+                    code = _synthesize_shell_call(
+                        function_name=function_name,
+                        call_kwargs=call_kwargs,
+                        function_manager=self.function_manager,
                     )
 
-                # ── Lineage boundary (mirrors execute_code) ──────────────
+                # ── Lineage boundary ─────────────────────────────────────
                 _ef_suffix = _token_hex(2)
                 _ef_call_id = new_call_id()
                 _ef_parent = TOOL_LOOP_LINEAGE.get([])
@@ -1822,57 +1989,177 @@ class CodeActActor(BaseCodeActActor):
                     icon="🛠️",
                 )
 
-                # Collect all environment instances for namespace injection.
-                # When clarification queues are available, wrap instances
-                # with _ClarificationQueueInjector so that environment
-                # methods called from stored functions receive the queues
-                # (mirroring the sandbox's get_sandbox_instance() pattern).
-                extra_namespaces: Dict[str, Any] = {}
-                for ns, env in self.environments.items():
-                    try:
-                        instance = env.get_instance()
-                        if _clarification_up_q is not None and instance is not None:
-                            from unity.actor.environments.base import (
-                                _ClarificationQueueInjector,
-                            )
+                # ── Session resolution + execution (shared with execute_code) ──
+                out: dict[str, Any] | None = None
+                tb_str: str | None = None
+                exec_exc: Exception | None = None
 
-                            instance = _ClarificationQueueInjector(
-                                target=instance,
-                                clarification_up_q=_clarification_up_q,
-                                clarification_down_q=_clarification_down_q,
+                notification_q = _notification_up_q
+                sandbox_id = None
+                try:
+                    _rs = self._resolve_session(
+                        state_mode=state_mode,
+                        language=str(language),
+                        session_id=session_id,
+                        session_name=session_name,
+                        venv_id=venv_id,
+                    )
+                    language, venv_id, session_id = (
+                        _rs.language,
+                        _rs.venv_id,
+                        _rs.session_id,
+                    )
+                    if _rs.error is not None:
+                        out = _rs.error
+                        return out
+
+                    # Inject per-tool notification queue into bound sandbox.
+                    try:
+                        sb_for_notifs = _CURRENT_SANDBOX.get()
+                        sandbox_id = getattr(sb_for_notifs, "id", None)
+                        if notification_q is not None:
+                            sb_for_notifs.global_state["__notification_up_q__"] = (
+                                notification_q
                             )
-                        extra_namespaces[ns] = instance
                     except Exception:
                         pass
 
-                try:
-                    result = await fm.execute_function(
-                        function_name=function_name,
-                        call_kwargs=call_kwargs,
-                        extra_namespaces=extra_namespaces,
-                        venv_pool=self._venv_pool,
-                        shell_pool=self._shell_pool,
-                        state_mode="stateless",
-                        _parent_chat_context=_parent_chat_context,
-                    )
-                except Exception as exc:
+                    if notification_q is not None and str(language) == "python":
+                        try:
+                            await notification_q.put(
+                                {
+                                    "type": "execution_started",
+                                    "message": "execution_started",
+                                    "sandbox_id": sandbox_id,
+                                    "timestamp": datetime.now(
+                                        timezone.utc,
+                                    ).isoformat(),
+                                },
+                            )
+                        except Exception:
+                            pass
+
+                    # Resolve primitives from current sandbox.
+                    primitives = None
+                    computer_primitives = self._computer_primitives
                     try:
-                        await _ef_pub_safe(
-                            phase="outgoing",
-                            status="error",
-                            error=str(exc),
-                            error_type=type(exc).__name__,
+                        sb = _CURRENT_SANDBOX.get()
+                        primitives = sb.global_state.get("primitives")
+                        computer_primitives = sb.global_state.get(
+                            "computer_primitives",
+                            computer_primitives,
                         )
                     except Exception:
                         pass
-                    raise
-                else:
+
+                    _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
                     try:
-                        await _ef_pub_safe(phase="outgoing", status="ok")
+                        try:
+                            out = await self._session_executor.execute(
+                                code=code,
+                                language=str(language),  # type: ignore[arg-type]
+                                state_mode=state_mode,  # type: ignore[arg-type]
+                                session_id=session_id,
+                                venv_id=venv_id,
+                                primitives=primitives,
+                                computer_primitives=computer_primitives,
+                            )
+                        except Exception as e:
+                            exec_exc = e
+                            tb = traceback.format_exc()
+                            tb_str = tb
+                            if notification_q is not None and str(language) == "python":
+                                try:
+                                    await notification_q.put(
+                                        {
+                                            "type": "execution_error",
+                                            "message": "execution_error",
+                                            "sandbox_id": sandbox_id,
+                                            "error_kind": "exception",
+                                            "traceback_preview": tb[:2000],
+                                            "timestamp": datetime.now(
+                                                timezone.utc,
+                                            ).isoformat(),
+                                        },
+                                    )
+                                except Exception:
+                                    pass
+                            out = {
+                                "stdout": "",
+                                "stderr": "",
+                                "result": None,
+                                "error": tb,
+                                "language": language,
+                                "state_mode": state_mode,
+                                "session_id": session_id,
+                                "session_name": session_name,
+                                "venv_id": venv_id,
+                                "session_created": False,
+                                "duration_ms": 0,
+                            }
+                    finally:
+                        _PARENT_CHAT_CONTEXT.reset(_pcc_token)
+
+                    # Enrich with session name.
+                    if out.get("session_id") is not None:
+                        out["session_name"] = self._get_session_name(
+                            language=str(out.get("language")),
+                            venv_id=out.get("venv_id"),
+                            session_id=int(out["session_id"]),
+                        )
+                    else:
+                        out["session_name"] = None
+
+                    if notification_q is not None and str(language) == "python":
+                        try:
+                            _status = "ok" if not out.get("error") else "error"
+                            await notification_q.put(
+                                {
+                                    "type": "execution_finished",
+                                    "sandbox_id": sandbox_id,
+                                    "status": _status,
+                                    "message": f"execution_finished:{_status}",
+                                    "stdout_len": len(out.get("stdout") or ""),
+                                    "stderr_len": len(out.get("stderr") or ""),
+                                    "timestamp": datetime.now(
+                                        timezone.utc,
+                                    ).isoformat(),
+                                },
+                            )
+                        except Exception:
+                            pass
+
+                    # Wrap in-process Python results in ExecutionResult.
+                    if out.get("language") == "python" and isinstance(
+                        out.get("stdout"),
+                        list,
+                    ):
+                        out = ExecutionResult(**out)
+
+                    return out
+                finally:
+                    try:
+                        _out_err = (
+                            out.get("error")
+                            if isinstance(out, dict)
+                            else getattr(out, "error", None)
+                        ) if out is not None else None
+                        if _out_err:
+                            await _ef_pub_safe(
+                                phase="outgoing",
+                                status="error",
+                                error=str(_out_err),
+                                error_type=(
+                                    type(exec_exc).__name__
+                                    if exec_exc is not None
+                                    else "Error"
+                                ),
+                                traceback=(tb_str or "")[:2000],
+                            )
+                        else:
+                            await _ef_pub_safe(phase="outgoing", status="ok")
                     except Exception:
                         pass
-                    return result
-                finally:
                     try:
                         TOOL_LOOP_LINEAGE.reset(_ef_lineage_token)
                     except Exception:
@@ -2671,22 +2958,19 @@ class CodeActActor(BaseCodeActActor):
             return entry_handle
 
         # Build the tool set for this call. When can_compose=False the LLM
-        # may only discover and execute stored functions -- no arbitrary code,
-        # no session management, no function persistence.
-        _code_and_session_tools = {
+        # may only discover and execute stored functions — no arbitrary code,
+        # no function persistence. Session tools are kept because
+        # execute_function supports the same session/state_mode semantics.
+        _compose_only_tools = {
             "execute_code",
             "install_python_packages",
-            "list_sessions",
-            "inspect_state",
-            "close_session",
-            "close_all_sessions",
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
             """Apply static per-call filters (can_compose, can_store)."""
             out = dict(tool_dict)
             if not effective_can_compose:
-                for name in _code_and_session_tools:
+                for name in _compose_only_tools:
                     out.pop(name, None)
                 out.pop("FunctionManager_add_functions", None)
             if not effective_can_store or effective_storage_check:
@@ -2698,42 +2982,60 @@ class CodeActActor(BaseCodeActActor):
 
         base_tools = _filter_tools(self.get_tools("act"))
 
-        # When execute_code is masked (can_compose=False), strip the
-        # execute_code comparison from execute_function's docstring so the
+        # When execute_code is masked (can_compose=False), strip any
+        # execute_code references from execute_function's docstring so the
         # LLM has no awareness that a code sandbox exists.
         if "execute_function" in base_tools and "execute_code" not in base_tools:
             base_tools["execute_function"].__doc__ = (
-                "Execute a stored function by name and return its result.\n"
+                "Execute a known function by name and return its result.\n"
                 "\n"
-                "The function is looked up in the FunctionManager by exact name\n"
-                "and executed directly. Only functions discovered via the\n"
-                "FunctionManager discovery tools can be invoked.\n"
+                "The function is resolved from the sandbox namespace or looked up\n"
+                "in the FunctionManager by exact name. Functions discovered via the\n"
+                "FunctionManager discovery tools are automatically available.\n"
                 "\n"
                 "Workflow\n"
                 "-------\n"
-                "1. Discover functions via `FunctionManager_search_functions`,\n"
-                "   `FunctionManager_filter_functions`, or\n"
-                "   `FunctionManager_list_functions`.\n"
+                "1. Discover functions via ``FunctionManager_search_functions``,\n"
+                "   ``FunctionManager_filter_functions``, or\n"
+                "   ``FunctionManager_list_functions``.\n"
                 "2. Pick the best match by name.\n"
-                "3. Call `execute_function(function_name=..., call_kwargs=...)`.\n"
+                "3. Call ``execute_function(function_name=..., call_kwargs=...)``.\n"
+                "\n"
+                "Key concepts\n"
+                "------------\n"
+                "- **language**: ``\"python\"`` | ``\"bash\"`` | ``\"zsh\"`` | "
+                "``\"sh\"`` | ``\"powershell\"``\n"
+                "- **state_mode**:\n"
+                "  - ``\"stateless\"``: no session; clean execution; no persistence\n"
+                "  - ``\"stateful\"``: persistent session; state accumulates\n"
+                "  - ``\"read_only\"``: reads from an existing session but does not\n"
+                "    persist changes\n"
+                "- **session_id / session_name**: only meaningful for\n"
+                "  stateful / read_only\n"
                 "\n"
                 "Parameters\n"
                 "----------\n"
                 "function_name : str\n"
-                "    Exact name of the stored function to execute (as returned by\n"
-                "    the FunctionManager discovery tools).\n"
+                "    Exact name of the function to execute.\n"
                 "call_kwargs : dict, optional\n"
-                "    Keyword arguments to pass to the function. Omit or pass None /\n"
-                "    an empty dict for functions that take no arguments.\n"
+                "    Keyword arguments to pass to the function.\n"
+                "language : str, default ``\"python\"``\n"
+                "    Language of the function.\n"
+                "state_mode : str, default ``\"stateless\"``\n"
+                "    Execution state mode.\n"
+                "session_id : int | None\n"
+                "    Session ID for stateful/read_only modes.\n"
+                "session_name : str | None\n"
+                "    Human-friendly session alias.\n"
+                "venv_id : int | None\n"
+                "    Virtual environment ID (Python only).\n"
                 "\n"
                 "Returns\n"
                 "-------\n"
-                "dict\n"
-                "    A dict with:\n"
-                "    - **result**: The function's return value (any JSON-serializable type).\n"
-                "    - **error**: Traceback string if the function raised, else None.\n"
-                "    - **stdout**: Captured standard output (string).\n"
-                "    - **stderr**: Captured standard error (string).\n"
+                "dict | ExecutionResult\n"
+                "    Same shape as code execution output (stdout, stderr, result,\n"
+                "    error, language, state_mode, session_id, session_name, venv_id,\n"
+                "    session_created, duration_ms).\n"
             )
 
         system_prompt = build_code_act_prompt(
