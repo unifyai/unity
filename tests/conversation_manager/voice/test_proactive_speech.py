@@ -125,6 +125,7 @@ def mock_cm(mock_session_logger, mock_event_broker, sample_contacts):
     cm.event_broker = mock_event_broker
     cm.mode = "call"  # Default to voice mode where proactive speech is active
     cm._proactive_speech_task = None
+    cm.assistant_screen_share_active = False
 
     # Create SimulatedContactManager and populate with sample contacts
     contact_manager = SimulatedContactManager()
