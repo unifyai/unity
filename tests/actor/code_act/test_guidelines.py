@@ -65,8 +65,6 @@ async def test_code_act_actor_accepts_guidelines_parameter():
     without raising TypeError, and return a valid handle.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:
@@ -93,8 +91,6 @@ async def test_code_act_actor_guidelines_none_by_default():
     operates normally.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:
@@ -126,8 +122,6 @@ async def test_code_act_guidelines_forbid_execute_code():
     directly without calling execute_code.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -170,8 +164,6 @@ async def test_code_act_guidelines_include_marker_in_response():
     LLM and influence its output.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -204,8 +196,6 @@ async def test_code_act_guidelines_response_format_constraint():
     Guidelines can guide how the result is formatted.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -265,8 +255,6 @@ async def test_single_function_actor_accepts_guidelines():
 
     actor = SingleFunctionActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
     )
     try:
         handle = await actor.act(

@@ -420,7 +420,7 @@ async def test_get_screenshot_display_produces_image_in_stdout():
     ExecutionResult should contain an image block in stdout — the standard
     rich-output pipeline — rather than relying on post-hoc injection.
     """
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=30)
+    actor = CodeActActor(timeout=30)
     try:
         tools = actor._build_tools()
         execute_code = tools["execute_code"]

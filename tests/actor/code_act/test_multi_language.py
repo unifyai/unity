@@ -30,7 +30,7 @@ async def test_repo_navigation_and_analysis_via_shell_then_python():
     """
     RepoNavSummary.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
+    actor = CodeActActor(timeout=60)
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
@@ -71,7 +71,7 @@ async def test_validation_error_self_correction():
     """
     ValidationRecoveryResult.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
+    actor = CodeActActor(timeout=60)
     actor._computer_primitives.navigate = AsyncMock(return_value=None)
     actor._computer_primitives.act = AsyncMock(return_value="Action completed")
     actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")

@@ -978,19 +978,13 @@ class CodeActActor(BaseCodeActActor):
 
     def __init__(
         self,
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        timeout: float = 1000,
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
+        *,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
-        can_spawn_sub_agents: bool = False,
         storage_check_on_return: bool = False,
+        timeout: float = 1000,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
         prompt_caching: Optional["PromptCacheParam"] = None,
@@ -1000,18 +994,20 @@ class CodeActActor(BaseCodeActActor):
         Initializes the CodeActActor.
 
         Args:
-            computer_primitives: Optional existing ComputerPrimitives instance to reuse.
-                           If provided, other computer-related params are ignored.
-            environments: Optional list of execution environments. If None, defaults to
-                [ComputerEnvironment, StateManagerEnvironment].
+            environments: List of execution environments to install. Each environment
+                injects a namespace into the sandbox (e.g. ``primitives``,
+                ``computer_primitives``, ``sub_agent``). Pass ``None`` or ``[]``
+                for a bare actor with no environments.
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
-            agent_server_url: URL for the agent server. For desktop mode, pass the
-                external VM's URL.
-            can_spawn_sub_agents: When True, installs a ``SubAgentEnvironment`` that
-                exposes ``sub_agent.run()`` in the sandbox, letting the LLM spawn
-                inner CodeActActors to work on focused sub-tasks.
+            can_compose: Whether the LLM can write and execute arbitrary code via
+                ``execute_code``. Set to False for function-execution-only mode.
+            can_store: Whether the LLM can persist new functions via
+                ``FunctionManager_add_functions``.
+            storage_check_on_return: Whether a post-completion review loop should run
+                to identify and store reusable functions from the trajectory.
+            timeout: Maximum seconds for the actor to complete.
             model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
                 If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
             preprocess_msgs: Optional callback to modify messages before each LLM call.
@@ -1032,22 +1028,16 @@ class CodeActActor(BaseCodeActActor):
         """
         super().__init__(
             environments=environments,
-            computer_primitives=computer_primitives,
             function_manager=function_manager,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
         )
 
-        # Install SubAgentEnvironment when sub-agent spawning is enabled.
-        # Must happen before exclusion wiring and tool building so the
-        # environment participates in the standard lifecycle.
-        if can_spawn_sub_agents:
-            from unity.actor.environments.sub_agent import SubAgentEnvironment
+        # Back-fill SubAgentEnvironment with parent actor context so the
+        # runner can inherit environments, FM, permissions, and model config.
+        from unity.actor.environments.sub_agent import SubAgentEnvironment
 
-            sub_env = SubAgentEnvironment(
+        _sub_env = self.environments.get("sub_agent")
+        if _sub_env is not None and isinstance(_sub_env, SubAgentEnvironment):
+            _sub_env.bind_parent_context(
                 parent_environments=self.environments,
                 function_manager=self.function_manager,
                 parent_can_compose=bool(can_compose),
@@ -1057,7 +1047,6 @@ class CodeActActor(BaseCodeActActor):
                 prompt_caching=prompt_caching,
                 parent_timeout=timeout,
             )
-            self.environments[sub_env.namespace] = sub_env
 
         # Collect function_ids from all environments, split by context, and set
         # them on the FunctionManager via setters. This prevents overlap between
@@ -1111,7 +1100,6 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
-        self.can_spawn_sub_agents: bool = bool(can_spawn_sub_agents)
         self.storage_check_on_return: bool = bool(storage_check_on_return)
         self.tool_policy: Union[ToolPolicyFn, None, object] = tool_policy
         self._model = model
@@ -2724,7 +2712,6 @@ class CodeActActor(BaseCodeActActor):
         persist: Optional[bool] = None,
         can_compose: Optional[bool] = None,
         can_store: Optional[bool] = None,
-        can_spawn_sub_agents: Optional[bool] = None,
         storage_check_on_return: Optional[bool] = None,
         **kwargs,
     ) -> SteerableToolHandle:
@@ -2735,11 +2722,6 @@ class CodeActActor(BaseCodeActActor):
             self.can_compose if can_compose is None else bool(can_compose)
         )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
-        effective_can_spawn_sub_agents = (
-            self.can_spawn_sub_agents
-            if can_spawn_sub_agents is None
-            else bool(can_spawn_sub_agents)
-        )
         effective_storage_check = (
             self.storage_check_on_return
             if storage_check_on_return is None
@@ -2789,10 +2771,6 @@ class CodeActActor(BaseCodeActActor):
             _StateManagerEnvironment = None  # type: ignore
 
         for ns, env in self.environments.items():
-            # Skip sub_agent environment when sub-agent spawning is disabled for this call.
-            if ns == "sub_agent" and not effective_can_spawn_sub_agents:
-                continue
-
             # Prefer explicit reconstruction for known env types.
             try:
                 if _ComputerEnvironment is not None and isinstance(

@@ -24,12 +24,10 @@ from unity.common.async_tool_loop import SteerableToolHandle
 
 @pytest.mark.timeout(30)
 def test_sub_agent_env_installed_when_enabled():
-    """SubAgentEnvironment should be in self.environments when can_spawn_sub_agents=True."""
+    """SubAgentEnvironment should be in self.environments when passed in environments list."""
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=30,
-        can_spawn_sub_agents=True,
     )
     assert "sub_agent" in actor.environments
     assert isinstance(actor.environments["sub_agent"], SubAgentEnvironment)
@@ -37,45 +35,11 @@ def test_sub_agent_env_installed_when_enabled():
 
 @pytest.mark.timeout(30)
 def test_sub_agent_env_absent_when_disabled():
-    """SubAgentEnvironment should NOT be in self.environments when can_spawn_sub_agents=False."""
+    """SubAgentEnvironment should NOT be in self.environments when not passed."""
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
-        can_spawn_sub_agents=False,
     )
     assert "sub_agent" not in actor.environments
-    assert actor.can_spawn_sub_agents is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.timeout(30)
-async def test_sub_agent_env_excluded_from_sandbox_per_call_override():
-    """
-    When can_spawn_sub_agents=True at init but False per-call,
-    the sub_agent namespace should be excluded from the sandbox environments.
-    """
-    actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-        can_spawn_sub_agents=True,
-    )
-    assert actor.can_spawn_sub_agents is True
-    try:
-        # Per-call override: disable sub-agents for this call.
-        handle = await actor.act(
-            "test",
-            can_spawn_sub_agents=False,
-            persist=False,
-            clarification_enabled=False,
-        )
-        await handle.stop()
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +51,8 @@ async def test_sub_agent_env_excluded_from_sandbox_per_call_override():
 def test_prompt_includes_sub_agent_guidance_when_env_present():
     """The system prompt should contain sub-agent delegation guidance via environment prompt context."""
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=30,
-        can_spawn_sub_agents=True,
     )
     tools = dict(actor.get_tools("act"))
     prompt = build_code_act_prompt(environments=actor.environments, tools=tools)
@@ -106,10 +68,7 @@ def test_prompt_includes_sub_agent_guidance_when_env_present():
 def test_prompt_excludes_sub_agent_guidance_when_env_absent():
     """The system prompt should NOT contain sub-agent guidance when SubAgentEnvironment is not installed."""
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
-        can_spawn_sub_agents=False,
     )
     tools = dict(actor.get_tools("act"))
     prompt = build_code_act_prompt(environments=actor.environments, tools=tools)
@@ -176,11 +135,8 @@ def test_sub_agent_discovery_scope_composes_with_parent():
 
     # Create an outer actor with a scoped FunctionManager.
     actor = CodeActActor(
-        environments=[],
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=30,
-        can_spawn_sub_agents=True,
     )
 
     parent_fm = actor.function_manager
@@ -228,7 +184,8 @@ def test_sub_agent_discovery_scope_narrows_not_replaces():
 @pytest.mark.timeout(30)
 def test_sub_agent_runner_caps_can_compose():
     """When the parent has can_compose=False, the runner should cap inner can_compose to False."""
-    runner = _SubAgentRunner(
+    runner = _SubAgentRunner()
+    runner._bind(
         parent_environments={},
         function_manager=None,
         parent_can_compose=False,
@@ -245,7 +202,8 @@ def test_sub_agent_runner_caps_can_compose():
 @pytest.mark.timeout(30)
 def test_sub_agent_runner_caps_can_store():
     """When the parent has can_store=False, the runner should cap inner can_store to False."""
-    runner = _SubAgentRunner(
+    runner = _SubAgentRunner()
+    runner._bind(
         parent_environments={},
         function_manager=None,
         parent_can_compose=True,
@@ -269,32 +227,14 @@ def test_sub_agent_env_namespace():
     """SubAgentEnvironment.NAMESPACE should be 'sub_agent' and match the instance property."""
     assert SubAgentEnvironment.NAMESPACE == "sub_agent"
 
-    env = SubAgentEnvironment(
-        parent_environments={},
-        function_manager=None,
-        parent_can_compose=True,
-        parent_can_store=True,
-        model=None,
-        preprocess_msgs=None,
-        prompt_caching=None,
-        parent_timeout=30,
-    )
+    env = SubAgentEnvironment()
     assert env.namespace == "sub_agent"
 
 
 @pytest.mark.timeout(30)
 def test_sub_agent_env_get_tools():
     """get_tools() should return exactly one tool with correct metadata."""
-    env = SubAgentEnvironment(
-        parent_environments={},
-        function_manager=None,
-        parent_can_compose=True,
-        parent_can_store=True,
-        model=None,
-        preprocess_msgs=None,
-        prompt_caching=None,
-        parent_timeout=30,
-    )
+    env = SubAgentEnvironment()
     tools = env.get_tools()
 
     assert set(tools.keys()) == {"sub_agent.run"}
@@ -308,16 +248,7 @@ def test_sub_agent_env_get_tools():
 @pytest.mark.timeout(30)
 def test_sub_agent_env_get_prompt_context():
     """get_prompt_context() should include the heading, signature, and docstring content."""
-    env = SubAgentEnvironment(
-        parent_environments={},
-        function_manager=None,
-        parent_can_compose=True,
-        parent_can_store=True,
-        model=None,
-        preprocess_msgs=None,
-        prompt_caching=None,
-        parent_timeout=30,
-    )
+    env = SubAgentEnvironment()
     ctx = env.get_prompt_context()
 
     assert "Sub-Agent Delegation" in ctx
@@ -336,16 +267,7 @@ def test_sub_agent_env_get_prompt_context():
 @pytest.mark.timeout(30)
 async def test_sub_agent_env_capture_state():
     """capture_state() should return the expected type marker."""
-    env = SubAgentEnvironment(
-        parent_environments={},
-        function_manager=None,
-        parent_can_compose=True,
-        parent_can_store=True,
-        model=None,
-        preprocess_msgs=None,
-        prompt_caching=None,
-        parent_timeout=30,
-    )
+    env = SubAgentEnvironment()
     state = await env.capture_state()
     assert state == {"type": "sub_agent"}
 
@@ -360,7 +282,8 @@ def test_sub_agent_runner_filters_sub_agent_from_parent_envs():
     mock_sub_agent_env = MagicMock(spec=SubAgentEnvironment)
     mock_other_env = MagicMock()
 
-    runner = _SubAgentRunner(
+    runner = _SubAgentRunner()
+    runner._bind(
         parent_environments={
             "primitives": mock_other_env,
             "sub_agent": mock_sub_agent_env,
@@ -399,10 +322,8 @@ def test_sub_agent_runner_filters_sub_agent_from_parent_envs():
 async def test_sub_agent_run_returns_steerable_handle():
     """sub_agent.run() should return a SteerableToolHandle, not a plain string."""
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=30,
-        can_spawn_sub_agents=True,
     )
     try:
         env = actor.environments["sub_agent"]
@@ -438,10 +359,8 @@ async def test_sub_agent_run_forwards_capability_flags():
     verify wiring.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=30,
-        can_spawn_sub_agents=True,
     )
     try:
         env = actor.environments["sub_agent"]
@@ -481,10 +400,8 @@ async def test_sub_agent_completes_simple_task():
     to a sub-agent via sub_agent.run() and receive the result.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=300,
-        can_spawn_sub_agents=True,
     )
     try:
         handle = await actor.act(
@@ -515,10 +432,8 @@ async def test_sub_agent_receives_parent_chat_context():
     that depend on information only present in the outer conversation.
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
+        environments=[SubAgentEnvironment()],
         timeout=300,
-        can_spawn_sub_agents=True,
     )
     try:
         # Establish a fact in the outer conversation and delegate a sub-task.

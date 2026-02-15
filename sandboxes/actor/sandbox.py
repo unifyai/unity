@@ -98,10 +98,25 @@ def _create_actor(args) -> BaseActor:
             )
         else:
             # Full computer mode (web/desktop)
-            return CodeActActor(
+            from unity.actor.environments import (
+                ComputerEnvironment,
+                StateManagerEnvironment,
+            )
+            from unity.function_manager.primitives import (
+                ComputerPrimitives,
+                Primitives,
+            )
+
+            cp = ComputerPrimitives(
                 headless=args.headless,
                 agent_server_url=args.agent_url,
                 computer_mode="magnitude",
+            )
+            return CodeActActor(
+                environments=[
+                    ComputerEnvironment(cp),
+                    StateManagerEnvironment(),
+                ],
             )
     else:
         raise ValueError(f"Unknown actor type: {actor_choice}")
