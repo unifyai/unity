@@ -375,6 +375,35 @@ def _strip_hidden_params_from_doc(
         out.append(ln)
         i += 1
 
+    # ───────────────────────────────────────────────────────────────────── #
+    # Second pass: strip lines in Returns / Raises / other sections that
+    # reference hidden param names (e.g. "When ``_return_callable=False``").
+    # Also strip more-indented continuation lines that follow them.
+    # ───────────────────────────────────────────────────────────────────── #
+    if hidden:
+        out2: list[str] = []
+        j = 0
+        ref_skip_indent = -1
+        while j < len(out):
+            ln2 = out[j]
+            stripped2 = ln2.lstrip()
+            indent2 = len(ln2) - len(stripped2)
+
+            if ref_skip_indent >= 0:
+                if stripped2 and indent2 > ref_skip_indent:
+                    j += 1
+                    continue
+                ref_skip_indent = -1
+
+            if any(h in ln2 for h in hidden):
+                ref_skip_indent = indent2
+                j += 1
+                continue
+
+            out2.append(ln2)
+            j += 1
+        out = out2
+
     # Collapse runs of >2 blank lines that the removals may have created
     doc_clean = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).rstrip()
     return doc_clean
