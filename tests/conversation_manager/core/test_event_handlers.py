@@ -51,7 +51,6 @@ from unity.conversation_manager.events import (
     NotificationUnpinnedEvent,
     SyncContacts,
     LogMessageResponse,
-    SummarizeContext,
     DirectMessageEvent,
     AssistantUpdateEvent,
     AssistantScreenShareStarted,
@@ -143,7 +142,6 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm.chat_history = []
     cm.in_flight_actions = {}
     cm.completed_actions = {}
-    cm.is_summarizing = False
     cm.assistant_screen_share_active = False
     cm.memory_manager = None
 
@@ -1518,38 +1516,6 @@ class TestLogMessageResponseHandler:
         await EventHandler.handle_event(event, mock_cm)
 
         assert mock_cm.call_manager.unify_meet_exchange_id == 99
-
-
-# =============================================================================
-# 13. SummarizeContext Event Handler Tests
-# =============================================================================
-
-
-class TestSummarizeContextHandler:
-    """Tests for SummarizeContext event handler."""
-
-    @pytest.mark.asyncio
-    async def test_summarize_context_skips_without_memory_manager(self, mock_cm):
-        """SummarizeContext is skipped when memory_manager is None."""
-        mock_cm.memory_manager = None
-        mock_cm.is_summarizing = True
-
-        event = SummarizeContext()
-
-        # Mock queue_operation to execute the function immediately
-        async def immediate_queue_operation(func, *args, **kwargs):
-            await func(*args, **kwargs)
-
-        with patch(
-            "unity.conversation_manager.domains.event_handlers.managers_utils.queue_operation",
-            side_effect=immediate_queue_operation,
-        ):
-            await EventHandler.handle_event(event, mock_cm)
-
-        # is_summarizing should be reset to False
-        assert mock_cm.is_summarizing is False
-        # chat_history should be cleared
-        assert mock_cm.chat_history == []
 
 
 # =============================================================================

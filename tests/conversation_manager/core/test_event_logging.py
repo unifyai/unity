@@ -78,8 +78,6 @@ def _apply_comms_only_mocks(cm) -> None:
     """
     from unity.conversation_manager.domains import comms_utils
     from unity.conversation_manager import debug_logger
-    from unity.conversation_manager.domains.event_handlers import EventHandler
-    from unity.conversation_manager.events import SummarizeContext
 
     def _sync_mock_success(*args, **kwargs):
         return {"success": True}
@@ -97,9 +95,6 @@ def _apply_comms_only_mocks(cm) -> None:
     cm.schedule_proactive_speech = _async_mock_success
     debug_logger.log_job_startup = _sync_mock_success
     debug_logger.mark_job_done = _sync_mock_success
-    # NOTE: We do NOT mock managers_utils.publish_bus_events - we want events published
-    # NOTE: We do NOT mock managers_utils.log_message - that's TranscriptManager logging
-    EventHandler._registry[SummarizeContext] = _async_mock_success
 
 
 # Test contacts
