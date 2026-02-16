@@ -122,20 +122,33 @@ def test_state_manager_env_get_tools_respects_scope():
 
 
 def test_state_manager_env_excludes_computer_primitives():
-    """StateManagerEnvironment should never expose ComputerPrimitives.
+    """StateManagerEnvironment respects the scope it is given.
 
-    ComputerPrimitives belongs to a separate environment (computer_primitives),
-    not the state managers environment.
+    When the scope excludes computer, no computer primitives appear.
+    When the scope includes computer, they flow through like any other manager.
     """
-    scope = PrimitiveScope.all_managers()
+    # Scope without computer → no computer primitives.
+    sm_only = frozenset(VALID_MANAGER_ALIASES - {"computer", "actor"})
+    scope = PrimitiveScope(scoped_managers=sm_only)
     env = StateManagerEnvironment(Primitives(primitive_scope=scope))
     tools = env.get_tools()
 
-    # No tool should start with primitives.computer
     for tool_name in tools:
         assert not tool_name.startswith(
             "primitives.computer",
-        ), "ComputerPrimitives should never appear in StateManagerEnvironment"
+        ), "ComputerPrimitives should not appear when excluded from scope"
+        assert not tool_name.startswith(
+            "primitives.actor",
+        ), "ActorPrimitives should not appear when excluded from scope"
+
+    # Scope with computer → computer primitives included.
+    full_scope = PrimitiveScope.all_managers()
+    full_env = StateManagerEnvironment(Primitives(primitive_scope=full_scope))
+    full_tools = full_env.get_tools()
+    computer_tools = [t for t in full_tools if t.startswith("primitives.computer")]
+    assert len(computer_tools) > 0, (
+        "Computer primitives should appear when included in scope"
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
