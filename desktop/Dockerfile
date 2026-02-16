@@ -50,8 +50,9 @@ WORKDIR /app/agent-service
 COPY agent-service/ ./
 RUN npm ci
 
-# Install Playwright web runtimes and rebuild native modules (sharp)
-RUN npx playwright@1.52.0 install --with-deps chromium
+# Install browser runtimes using magnitude-core's patchright (Playwright fork)
+# so the browser build matches what magnitude-core expects at runtime.
+RUN cd /app/magnitude/packages/magnitude-core && npx patchright install --with-deps chromium
 
 WORKDIR /app
 
