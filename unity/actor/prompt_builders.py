@@ -89,8 +89,9 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
 
     A dedicated skill-consolidation process will run automatically after you
     return your result. It will review your full execution trajectory and
-    decide which functions, patterns, or workflows are worth storing for
-    future reuse.
+    decide which functions, compositional guidance, or workflows are worth
+    storing for future reuse — both as concrete function implementations
+    and as high-level guidance on how to compose them.
 
     This means:
     - **Ignore** any language in the request about "remembering",

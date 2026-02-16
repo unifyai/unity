@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
+    from unity.guidance_manager.guidance_manager import GuidanceManager
 
 __all__ = [
     "BaseActor",
@@ -88,6 +89,7 @@ class BaseActor(ABC):
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
     ) -> None:
         """
         Shared initialization for concrete actor implementations.
@@ -95,17 +97,20 @@ class BaseActor(ABC):
         This centralizes:
         - Environment dict construction from the provided list
         - FunctionManager resolution (registry fallback)
+        - GuidanceManager resolution (registry fallback)
         - Extraction of computer primitives for backward compatibility
         """
         self.environments: Dict[str, "BaseEnvironment"] = self._setup_environments(
             environments=environments,
         )
 
-        # Resolve FunctionManager (used by multiple actors for memoized skills).
         from unity.manager_registry import ManagerRegistry
 
         self.function_manager = (
             function_manager or ManagerRegistry.get_function_manager()
+        )
+        self.guidance_manager = (
+            guidance_manager or ManagerRegistry.get_guidance_manager()
         )
 
         # Backward-compat: some call sites expect an actor-level computer primitives instance.
@@ -233,11 +238,13 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
     ) -> None:
         BaseActor.__init__(
             self,
             environments=environments,
             function_manager=function_manager,
+            guidance_manager=guidance_manager,
         )
         BaseStateManager.__init__(self)
 
