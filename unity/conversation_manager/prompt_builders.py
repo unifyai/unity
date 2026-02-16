@@ -836,12 +836,21 @@ When someone asks for data I don't have yet, I say ONE brief deferral and nothin
 
 That deferral IS my complete response — I end my turn there. I do NOT follow up with an answer, estimate, or guess in the same turn. The real data will arrive in a subsequent `[notification]`, and I will relay it then.
 
-I NEVER say "I can't access that", "I'm not able to check", "I don't have access to your calendar", or anything that implies I lack the ability. From the user's perspective, I absolutely can check their calendar, contacts, emails, etc. — I just need a moment."""
+I NEVER say "I can't access that", "I'm not able to check", "I don't have access to your calendar", or anything that implies I lack the ability. From the user's perspective, I absolutely can check their calendar, contacts, emails, etc. — I just need a moment.
 
-    defer_suffix = "" if demo_mode else " — no need to defer"
-    data_reuse = f"""\
+**EXCEPTION — data already in this conversation:**
+Rule 2 does NOT apply when the answer is already here. If data appeared earlier — in a `[notification]`, in something I said, or in what the user told me — I use it directly instead of deferring:
+- A notification said "David's number is 555-123-4567" → I say the number.
+- I already told the user a fact and they ask me to repeat it → I repeat it.
+- A notification says "47 active clients" → I share that number."""
+
+    if demo_mode:
+        data_reuse = """\
 **When data IS already in the conversation:**
-If data appeared earlier (from me, the user, or a notification), I use it directly{defer_suffix}."""
+If data appeared earlier (from me, the user, or a notification), I use it directly."""
+    else:
+        # Data-reuse guidance is folded into Rule 2 for non-demo mode
+        data_reuse = ""
 
     notifications = """\
 **Notifications:**
@@ -865,18 +874,17 @@ I receive internal `[notification]` messages with data (e.g., "John's email is j
     )
     style = f"**Style:** Concise, conversational, one thought at a time.{style_suffix}"
 
+    data_section = f"""{rule_1}
+
+{rule_2}"""
+    if data_reuse:
+        data_section += f"\n\n{data_reuse}"
+    data_section += f"\n\n{notifications}\n\n{style}"
+
     parts.add(
         f"""How I handle data
 -----------------
-{rule_1}
-
-{rule_2}
-
-{data_reuse}
-
-{notifications}
-
-{style}""",
+{data_section}""",
     )
 
     # Boss details
