@@ -157,11 +157,11 @@ async def main():
         )
         assert "computer_primitives.screenshot" in deps
 
-    def test_actor_run_detected(self):
-        """Awaited actor.run() is captured."""
+    def test_actor_act_detected(self):
+        """Awaited actor.act() is captured."""
         source = """
 async def main():
-    handle = await actor.run("do the thing")
+    handle = await actor.act("do the thing")
     return await handle.result()
 """
         deps = collect_dependencies_from_source(
@@ -169,7 +169,7 @@ async def main():
             set(),
             environment_namespaces=frozenset({"actor"}),
         )
-        assert "actor.run" in deps
+        assert "actor.act" in deps
 
     def test_mixed_dependencies(self):
         """Both bare compositional and dotted environment deps are captured."""
@@ -215,7 +215,7 @@ async def main():
 async def main():
     contacts = await primitives.contacts.ask("list all")
     await primitives.tasks.update("create task")
-    handle = await actor.run("subtask")
+    handle = await actor.act("subtask")
     return contacts
 """
         deps = collect_dependencies_from_source(
@@ -226,7 +226,7 @@ async def main():
         assert deps == {
             "primitives.contacts.ask",
             "primitives.tasks.update",
-            "actor.run",
+            "actor.act",
         }
 
     def test_non_awaited_environment_call(self):
