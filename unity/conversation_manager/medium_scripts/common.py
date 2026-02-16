@@ -340,7 +340,7 @@ class UserScreenCaptureManager:
     Registers track_subscribed/track_unsubscribed handlers on the room to
     automatically start and stop frame capture when a screen share track
     appears or disappears. Stores the latest frame as raw RGBA bytes and
-    converts to base64 PNG on demand (lazy conversion to avoid per-frame cost).
+    converts to base64 JPEG on demand (lazy conversion to avoid per-frame cost).
 
     Usage::
 
@@ -421,7 +421,7 @@ class UserScreenCaptureManager:
                 pass
 
     def capture_screenshot(self) -> str | None:
-        """Convert the latest captured frame to a base64-encoded PNG string.
+        """Convert the latest captured frame to a base64-encoded JPEG string.
 
         Returns None if no screen share track is active or no frame has
         been captured yet.
@@ -436,8 +436,9 @@ class UserScreenCaptureManager:
 
         rgba_bytes, width, height = self._latest_frame_data
         img = Image.frombytes("RGBA", (width, height), rgba_bytes, "raw")
+        rgb = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        rgb.save(buf, format="JPEG", quality=85)
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
     async def close(self) -> None:

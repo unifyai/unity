@@ -201,6 +201,18 @@ def _filter_cm_state_for_actor(state_snapshot: dict) -> dict:
     if not content:
         return state_snapshot
 
+    # When screenshots are attached, content is a list of multimodal parts
+    # rather than a plain string. Apply the regex to each text part.
+    if isinstance(content, list):
+        filtered_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                filtered_text = _IN_FLIGHT_ACTIONS_PATTERN.sub("", part["text"])
+                filtered_parts.append({**part, "text": filtered_text})
+            else:
+                filtered_parts.append(part)
+        return {**state_snapshot, "content": filtered_parts}
+
     filtered_content = _IN_FLIGHT_ACTIONS_PATTERN.sub("", content)
     return {**state_snapshot, "content": filtered_content}
 

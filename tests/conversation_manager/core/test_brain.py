@@ -145,7 +145,7 @@ class TestBrainSpecStateMessage:
         assert "Screenshot 3/3]" in labels[2]
 
     def test_image_url_format(self):
-        """Image parts use the data URI scheme with image/png MIME type."""
+        """Image parts use the data URI scheme with image/jpeg MIME type."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
         screenshots = [ScreenshotEntry(FAKE_B64, "Look at this", ts, "assistant")]
         msg = _make_brain_spec(screenshots=screenshots).state_message()
@@ -153,7 +153,7 @@ class TestBrainSpecStateMessage:
         image_parts = [p for p in msg["content"] if p.get("type") == "image_url"]
         assert len(image_parts) == 1
         url = image_parts[0]["image_url"]["url"]
-        assert url.startswith("data:image/png;base64,")
+        assert url.startswith("data:image/jpeg;base64,")
         assert url.endswith(FAKE_B64)
 
     def test_empty_screenshots_list_gives_plain_text(self):

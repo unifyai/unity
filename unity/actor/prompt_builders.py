@@ -152,10 +152,10 @@ def _build_filesystem_context() -> str:
           them with relative paths (e.g. `Downloads/report.pdf`).
         - **Outbound**: Save files for the user to `Outputs/` and include the
           relative path in your final answer (e.g. `Outputs/summary.csv`).
-        - **Screenshots**: Timestamped PNGs auto-saved during screen sharing.
+        - **Screenshots**: Timestamped JPEGs auto-saved during screen sharing.
           Reference them for programmatic access (image analysis, OCR,
           comparison, etc.) using relative paths
-          (e.g. `Screenshots/Assistant/2026-02-16T14-30-45.123456.png`).
+          (e.g. `Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg`).
         - **Stay inside the workspace**: Always use relative paths. Do not
           reference absolute paths outside `{local_root}` (e.g. `/tmp`,
           `/var`).  Everything you need is inside this workspace.

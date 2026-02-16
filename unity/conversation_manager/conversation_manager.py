@@ -69,10 +69,10 @@ def _save_screenshot(entry: ScreenshotEntry) -> str:
     subfolder = "Assistant" if entry.source == "assistant" else "User"
     directory = Path("Screenshots") / subfolder
     stem = entry.timestamp.strftime("%Y-%m-%dT%H-%M-%S.%f")
-    path = directory / f"{stem}.png"
+    path = directory / f"{stem}.jpg"
     suffix = 1
     while path.exists():
-        path = directory / f"{stem}_{suffix}.png"
+        path = directory / f"{stem}_{suffix}.jpg"
         suffix += 1
     path.write_bytes(base64.b64decode(entry.b64))
     return str(path)
