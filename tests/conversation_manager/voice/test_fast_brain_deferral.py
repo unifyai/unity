@@ -187,7 +187,7 @@ async def get_unify_llm_response(
     Uses the same UnifyLLM adapter that production call.py uses, with streaming
     to collect the full response (matching real-world behavior).
     """
-    llm_instance = UnifyLLM(model=model, reasoning_effort="minimal")
+    llm_instance = UnifyLLM(model=model, reasoning_effort="low")
 
     chat_ctx = llm.ChatContext()
     chat_ctx.add_message(role="system", content=system_prompt)

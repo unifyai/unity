@@ -99,7 +99,7 @@ async def _get_fast_brain_response_raw(
     from livekit.agents import llm
 
     llm_instance = UnifyLLM(
-        model=SETTINGS.conversation.FAST_BRAIN_MODEL, reasoning_effort="minimal",
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL, reasoning_effort="low",
     )
 
     chat_ctx = llm.ChatContext()
