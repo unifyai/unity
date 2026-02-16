@@ -63,7 +63,7 @@ async def ask_fast_brain(system_prompt: str, user_message: str) -> str:
     """
     client = new_llm_client(
         model=FAST_BRAIN_MODEL,
-        reasoning_effort="minimal",
+        reasoning_effort="low",
     )
     messages = [
         {"role": "system", "content": system_prompt},
