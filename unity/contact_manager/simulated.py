@@ -533,7 +533,10 @@ class SimulatedContactManager(BaseContactManager):
             new_llm_client as _new_llm_client,
         )  # local import to avoid cycles
 
-        self._llm = _new_llm_client(stateful=True)
+        self._llm = _new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedContactManager",
+        )
         # Mirror the real manager's tool exposure programmatically
         # and build the *exact* same prompts via the shared builders.
         ask_tools = mirror_contact_manager_tools("ask")
