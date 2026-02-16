@@ -48,7 +48,14 @@ class _TrackingGuidanceManager:
         )
         return {"details": {"guidance_id": len(self.add_calls)}}
 
-    def update_guidance(self, *, guidance_id, title=None, content=None, function_ids=None):
+    def update_guidance(
+        self,
+        *,
+        guidance_id,
+        title=None,
+        content=None,
+        function_ids=None,
+    ):
         """Update an existing guidance entry."""
         return {"details": {"guidance_id": guidance_id}}
 

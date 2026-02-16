@@ -3771,7 +3771,10 @@ class FunctionManager(BaseFunctionManager):
             return rows
 
         assert _namespace is not None  # validated above
-        callables_list = self._inject_callables_for_functions(rows, namespace=_namespace)
+        callables_list = self._inject_callables_for_functions(
+            rows,
+            namespace=_namespace,
+        )
         if _also_return_metadata:
             # Strip implementations from metadata if not requested
             metadata_rows = rows

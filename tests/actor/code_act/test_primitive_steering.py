@@ -121,7 +121,9 @@ async def test_execute_function_primitive_steering(monkeypatch):
 
         # Wait for the execute_function tool result in the transcript.
         await _wait_for_tool_result_in_transcript(
-            handle, "execute_function", timeout=120,
+            handle,
+            "execute_function",
+            timeout=120,
         )
 
         # Steer: interject additional context mid-flight.
@@ -170,7 +172,9 @@ async def test_execute_code_mode_selection_realistic_steerable_intent(monkeypatc
         )
 
         await _wait_for_tool_result_in_transcript(
-            handle, "execute_code", timeout=120,
+            handle,
+            "execute_code",
+            timeout=120,
         )
 
         snippets = extract_code_act_execute_code_snippets(handle)
@@ -275,7 +279,9 @@ async def test_execute_code_primitive_steering(monkeypatch):
 
         # Wait for the execute_code tool result in the transcript.
         await _wait_for_tool_result_in_transcript(
-            handle, "execute_code", timeout=120,
+            handle,
+            "execute_code",
+            timeout=120,
         )
 
         # Steer: interject additional context mid-flight.
@@ -340,7 +346,9 @@ async def test_execute_code_dual_primitive_steering(monkeypatch):
 
         # Wait for the execute_code tool result in the transcript.
         await _wait_for_tool_result_in_transcript(
-            handle, "execute_code", timeout=120,
+            handle,
+            "execute_code",
+            timeout=120,
         )
 
         # Steer the first handle (contacts) via an interjection.

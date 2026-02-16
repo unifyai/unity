@@ -681,7 +681,11 @@ class TestGuidanceRelevanceGuardrails:
         filter_calls = {"count": 0}
 
         class _SentinelFilter:
-            async def should_send_guidance(self, guidance_content, conversation_messages):
+            async def should_send_guidance(
+                self,
+                guidance_content,
+                conversation_messages,
+            ):
                 filter_calls["count"] += 1
                 return SimpleNamespace(
                     thoughts="sentinel",
@@ -695,12 +699,12 @@ class TestGuidanceRelevanceGuardrails:
             slow_brain_start_time=slow_brain_start_time,
         )
 
-        assert should_send is True, (
-            "Assistant-only new messages should not block guidance delivery."
-        )
-        assert filter_calls["count"] == 0, (
-            "Relevance filter should not run when no new user turn has arrived."
-        )
+        assert (
+            should_send is True
+        ), "Assistant-only new messages should not block guidance delivery."
+        assert (
+            filter_calls["count"] == 0
+        ), "Relevance filter should not run when no new user turn has arrived."
 
 
 @pytest.mark.asyncio

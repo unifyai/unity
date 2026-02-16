@@ -38,9 +38,7 @@ def test_filter_scope_composes_with_caller_filter():
     gm = GuidanceManager()
     ids = _seed(gm)
 
-    gm.filter_scope = (
-        f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
-    )
+    gm.filter_scope = f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
 
     rows = gm.filter(filter="title == 'Alpha'")
     assert len(rows) == 1
@@ -93,9 +91,7 @@ def test_scope_and_exclusion_combined():
     gm = GuidanceManager()
     ids = _seed(gm)
 
-    gm.filter_scope = (
-        f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
-    )
+    gm.filter_scope = f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
     gm.exclude_ids = frozenset({ids["Alpha"]})
 
     rows = gm.filter()
@@ -194,9 +190,7 @@ def test_limit_with_scope():
     gm = GuidanceManager()
     ids = _seed(gm)
 
-    gm.filter_scope = (
-        f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
-    )
+    gm.filter_scope = f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
 
     rows = gm.filter(limit=1)
     assert len(rows) == 1

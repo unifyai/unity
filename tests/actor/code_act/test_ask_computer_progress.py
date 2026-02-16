@@ -94,7 +94,8 @@ async def test_code_act_ask_includes_computer_progress_tool(monkeypatch):
 
         ask_tools = captured.get("tools")
         assert isinstance(
-            ask_tools, dict
+            ask_tools,
+            dict,
         ), "Expected inspection loop tools to be captured"
         assert "ask_inner_status" in ask_tools
         assert "ask_computer_progress" in ask_tools

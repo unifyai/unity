@@ -385,9 +385,7 @@ def build_code_act_prompt(
             render_tools_block=render_tools_block,
         )
 
-        storage_deferred_block = (
-            _STORAGE_DEFERRED_NOTICE if can_store else ""
-        )
+        storage_deferred_block = _STORAGE_DEFERRED_NOTICE if can_store else ""
 
         guidelines_block = (
             f"\n### Guidelines\n\n"

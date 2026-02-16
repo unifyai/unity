@@ -39,7 +39,12 @@ pytestmark = [pytest.mark.eval]
 # Note: BOSS (contact_id=1) is imported from conftest.py
 
 
-_ACTION_TOOLS = {"act", "ask_about_contacts", "update_contacts", "query_past_transcripts"}
+_ACTION_TOOLS = {
+    "act",
+    "ask_about_contacts",
+    "update_contacts",
+    "query_past_transcripts",
+}
 
 
 def _count_action_calls(cm):

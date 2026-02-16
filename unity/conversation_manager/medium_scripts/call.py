@@ -170,7 +170,8 @@ async def entrypoint(ctx: agents.JobContext):
     # Fast brain LLM - lightweight model for responsive conversation
     # Uses UnifyLLM adapter for local caching (CI) and usage tracking
     llm_model = UnifyLLM(
-        model=SETTINGS.conversation.FAST_BRAIN_MODEL, reasoning_effort="low",
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        reasoning_effort="low",
     )
 
     assistant_name = SESSION_DETAILS.assistant.name
