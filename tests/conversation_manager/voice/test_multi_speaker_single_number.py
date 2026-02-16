@@ -357,16 +357,24 @@ class TestFastBrainMultiSpeakerTracking:
             },
             {
                 "role": "user",
-                "content": "Hi! Can you try pronouncing my name?",
+                "content": "Hi! Great to meet you. Firstly, a lot of people have trouble saying it correctly. Can you try to pronounce my name?",
             },
         ]
 
         response = await _get_fast_brain_response_raw(boss_call_prompt, conversation)
 
-        # The only name the model can correctly use here is "Maria" —
-        # she never self-identified, but Dan introduced her explicitly.
-        # Saying "Dan" would mean the model confused the speaker.
-        assert _mentions_name(response, "Maria"), (
+        # The model should demonstrate it knows the speaker is Maria.
+        # It may say "Maria" directly, or jump straight to phonetic
+        # pronunciation variants (mah-REE-ah, muh-REE-uh, etc.).
+        resp_lower = response.lower()
+        knows_maria = (
+            "maria" in resp_lower
+            or "mah-ree" in resp_lower
+            or "muh-ree" in resp_lower
+            or "ma-ree" in resp_lower
+            or "mə-ree" in resp_lower
+        )
+        assert knows_maria, (
             f"Fast brain should know the speaker is Maria!\n"
             f"Response: {response}\n\n"
             f"Dan introduced Maria and told her to go ahead. The next speaker\n"
