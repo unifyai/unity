@@ -1091,12 +1091,6 @@ async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
     await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
 
-@EventHandler.register(SummarizeContext)
-async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
-    # Use queue_operation to ensure managers are initialized before running
-    await managers_utils.queue_operation(managers_utils.update_rolling_summaries, cm)
-
-
 @EventHandler.register(DirectMessageEvent)
 async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwargs):
     cm._session_logger.info(

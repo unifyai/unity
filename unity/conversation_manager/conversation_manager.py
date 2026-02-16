@@ -162,8 +162,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._current_snapshot_state = (
             None  # SnapshotState with element tracking for incremental diff computation
         )
-        self.is_summarizing = None
-        self.max_messages = 30
 
         # meet interaction state (screen share / remote control)
         self.assistant_screen_share_active: bool = False
@@ -763,17 +761,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": assistant_content})
 
-        if (
-            len(self.chat_history) >= int(0.7 * self.max_messages)
-            and not self.is_summarizing
-        ):
-            self._session_logger.info("summarize", "Summarizing conversation")
-            await self.event_broker.publish(
-                "app:comms:summarize",
-                SummarizeContext().to_json(),
-            )
-            self.is_summarizing = True
-
         return result.tool_name
 
     async def wait_for_events(self):
@@ -905,27 +892,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(2)
 
     async def cleanup(self):
-        """Clean up any running call processes and file sync.
-
-        Always updates rolling summaries before shutdown, regardless of message count,
-        to ensure conversation context is persisted for the next session.
-        """
-        # Import inline to avoid potential circular import issues with type checkers
-        from unity.conversation_manager.domains import managers_utils
-
-        # Always update rolling summaries before shutdown
-        self._session_logger.info(
-            "cleanup",
-            "Updating rolling summaries before shutdown",
-        )
-        try:
-            await managers_utils.update_rolling_summaries(self)
-        except Exception as e:
-            self._session_logger.error(
-                "cleanup",
-                f"Failed to update rolling summaries: {e}",
-            )
-
+        """Clean up any running call processes and file sync."""
         await self.store_chat_history()
         await self.call_manager.cleanup_call_proc()
 

@@ -654,16 +654,10 @@ class TestFullLifecycleIntegration:
             "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
             side_effect=lambda x: call_order.append("mark_job_done"),
         ):
-            with patch(
-                "unity.conversation_manager.domains.managers_utils.update_rolling_summaries",
-                new_callable=AsyncMock,
-                side_effect=lambda x: call_order.append("update_rolling_summaries"),
-            ):
-                await cm.cleanup()
+            await cm.cleanup()
 
         # Verify order
         expected_order = [
-            "update_rolling_summaries",
             "store_chat_history",
             "cleanup_call_proc",
             "mark_job_done",

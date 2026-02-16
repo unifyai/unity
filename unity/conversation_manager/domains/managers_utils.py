@@ -741,61 +741,6 @@ async def update_session_contacts(
     await _update_contact(1, user_first_name, user_last_name, user_number, user_email)
 
 
-async def update_rolling_summaries(cm: "ConversationManager") -> None:
-    """Update rolling summaries for all active conversations."""
-    if cm.memory_manager is None or not SETTINGS.memory.ROLLING_SUMMARIES:
-        print("[ManagersWorker] Rolling summary skipped (MemoryManager disabled)")
-        cm._session_logger.debug(
-            "summarize",
-            "Rolling summary skipped (MemoryManager disabled)",
-        )
-        cm.is_summarizing = False
-        cm.chat_history = []
-        return
-
-    # Build render data for each active conversation
-    grouped = cm.contact_index.get_messages_grouped_by_contact()
-    render_data = []
-    for contact_id, entries in grouped.items():
-        contact_info = cm.contact_index.get_contact(contact_id) or {}
-        conv_state = cm.contact_index.get_or_create_conversation(contact_id)
-        rendered = cm.prompt_renderer.render_contact(
-            contact_info=contact_info,
-            conv_state=conv_state,
-            entries=entries,
-            max_contact_medium_messages=25,
-            last_snapshot=cm.last_snapshot,
-        )
-        render_data.append((contact_id, rendered))
-
-    print(
-        f"[ManagersWorker] Updating rolling summary for {len(render_data)} contacts: "
-        f"{[cid for cid, _ in render_data]}",
-    )
-
-    tasks = [
-        asyncio.create_task(
-            cm.memory_manager.update_contact_rolling_summary(
-                rendered,
-                contact_id=cid,
-            ),
-        )
-        for cid, rendered in render_data
-    ]
-    try:
-        await asyncio.gather(*tasks)
-        cm.is_summarizing = False
-        cm.chat_history = []
-        print("[ManagersWorker] Rolling summary updated successfully")
-        cm._session_logger.info("summarize", "Contact rolling summary updated")
-    except Exception as e:
-        print(f"[ManagersWorker] Error updating rolling summary: {e}")
-        cm._session_logger.error(
-            "summarize",
-            f"Error updating rolling summary: {e}",
-        )
-
-
 # Queueing operations that need managers
 
 _operations_queue = asyncio.Queue()

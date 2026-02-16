@@ -29,10 +29,8 @@ from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
-from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
-from unity.conversation_manager.events import SummarizeContext
 from unity.helpers import cleanup_dangling_call_processes
 
 if TYPE_CHECKING:
@@ -80,7 +78,6 @@ def _apply_test_mocks(cm: ConversationManager) -> None:
     debug_logger.mark_job_done = _sync_mock_success
     managers_utils.log_message = _async_mock_success
     managers_utils.publish_bus_events = _async_mock_success
-    EventHandler._registry[SummarizeContext] = _async_mock_success
 
 
 def _populate_session_details_from_env() -> None:
