@@ -2730,6 +2730,12 @@ class FunctionManager(BaseFunctionManager):
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
 
+        # Sandbox namespace roots whose dotted calls should be recorded in
+        # depends_on (e.g. "actor.act" → depends_on includes "actor.act").
+        # At runtime, _inject_dependencies reads these entries and calls
+        # construct_sandbox_root() to materialise the root object.  This set
+        # must stay in sync with the sandbox_root values in _MANAGER_SPECS
+        # (see primitives/registry.py).
         env_namespaces = frozenset({"primitives", "computer_primitives", "actor"})
 
         for name, tree, node, source in parsed:
@@ -3252,14 +3258,23 @@ class FunctionManager(BaseFunctionManager):
     ) -> None:
         """Inject transitive dependencies into ``namespace`` (breadth-first).
 
-        Handles both bare names (other compositional functions) and dotted
-        names (environment-provided namespaces like ``actor.act`` or
-        ``primitives.contacts.ask``).
+        This is the runtime counterpart to the AST-based dependency detection
+        in ``dependency_analysis.py``.  Every name that ``add_functions``
+        recorded in ``depends_on`` is resolved here into a live object in the
+        execution namespace.  The two categories:
 
-        For bare names the function implementation is exec'd into the
-        namespace.  For dotted names the root namespace object (e.g. the
-        ``actor`` or ``primitives`` instance) is constructed on-demand via
-        the primitive registry when it is not already present.
+        **Bare names** (e.g. ``"helper"``) — other compositional functions.
+        The stored implementation is exec'd into the namespace so inter-
+        function calls resolve naturally.
+
+        **Dotted names** (e.g. ``"actor.act"``, ``"primitives.contacts.ask"``)
+        — environment-provided namespaces.  Only the *root* segment matters
+        for injection (``"actor"``, ``"primitives"``).  If the root is not
+        already present in the namespace, ``construct_sandbox_root()`` from
+        the primitive registry constructs a fresh instance on demand.  The
+        classes backing each root (``_ActorRunner``, ``Primitives``, etc.)
+        are fully stateless, so a freshly constructed instance works in
+        isolation without any ambient ContextVars or parent actor state.
         """
         from collections import deque
 

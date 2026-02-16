@@ -1,3 +1,23 @@
+"""AST-based dependency detection for stored functions.
+
+This module is the **storage-time** half of the dependency pipeline.  It
+analyses a function's AST to discover which other functions and environment
+namespaces the code calls, and records those names in the ``depends_on``
+field of the stored function record.
+
+The **runtime** counterpart is ``FunctionManager._inject_dependencies``,
+which reads ``depends_on`` and injects the corresponding objects into the
+execution namespace:
+
+* Bare names (``"helper"``) → the stored implementation is exec'd.
+* Dotted names (``"actor.act"``) → the root namespace object is constructed
+  via ``registry.construct_sandbox_root()``.
+
+The set of recognised environment namespace roots (``"primitives"``,
+``"computer_primitives"``, ``"actor"``) is passed in as
+*environment_namespaces* by the caller (``FunctionManager.add_functions``).
+"""
+
 from __future__ import annotations
 
 import ast
@@ -5,16 +25,20 @@ from typing import FrozenSet, Optional, Set
 
 
 class DependencyVisitor(ast.NodeVisitor):
-    """
-    Stateful dependency collector for FunctionManager functions.
+    """AST visitor that collects dependency names from a function body.
 
     Captures:
-    - Direct calls: `foo()`
-    - Indirect calls via variable assignment: `f = foo; f()`
-    - Returned function references: `return foo` or `return f` (where f maps to foo)
-    - Callables passed as arguments: `bar(callback=foo)` or `bar(foo)`
-    - Dotted environment calls: `primitives.contacts.ask(...)`,
-      `computer_primitives.screenshot(...)`, `actor.act(...)`
+    - Direct calls: ``foo()``
+    - Indirect calls via variable assignment: ``f = foo; f()``
+    - Returned function references: ``return foo``
+    - Callables passed as arguments: ``bar(callback=foo)``
+    - Dotted environment calls: ``primitives.contacts.ask(...)``,
+      ``computer_primitives.screenshot(...)``, ``actor.act(...)``
+
+    Dotted calls are only captured when the root segment matches one of the
+    *environment_namespaces* provided at construction time.  The full dotted
+    name (e.g. ``"actor.act"``) is recorded in ``depends_on`` so that
+    ``_inject_dependencies`` can resolve the root namespace at runtime.
     """
 
     def __init__(
