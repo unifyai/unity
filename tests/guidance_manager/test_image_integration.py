@@ -38,7 +38,7 @@ async def test_persistent_image_context_then_reason(static_now):
 
     # Create a guidance entry pointing to that image
     gm = GuidanceManager()
-    out = gm._add_guidance(
+    out = gm.add_guidance(
         title="Pixel Icon",
         content="Review the icon layout and color.",
         images=[
@@ -112,7 +112,7 @@ async def test_boot_option_and_fourth_item(static_now):
         "and click 'Install Ubuntu' to begin."
     )
 
-    out = gm._add_guidance(
+    out = gm.add_guidance(
         title="Ubuntu install from USB (boot + wizard)",
         content=guidance_text,
         images=[
@@ -193,7 +193,7 @@ async def test_compare_two_screens_requires_raw_context(static_now):
         "Guided install reference: when booting from USB you will first see the GRUB menu with several boot choices. "
         "After selecting the appropriate option, the Ubuntu installer wizard opens with language selection on the left and clear action buttons to continue installation."
     )
-    out = gm._add_guidance(
+    out = gm.add_guidance(
         title="Compare GRUB vs Installer screens",
         content=guidance_text,
         images=[

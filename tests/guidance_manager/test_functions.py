@@ -25,7 +25,7 @@ def test_function_ids_roundtrip_and_fetch():
 
     # Create guidance that references both functions
     gm = GuidanceManager()
-    out = gm._add_guidance(
+    out = gm.add_guidance(
         title="Math Ops",
         content="Guidance relevant to alpha and beta functions.",
         function_ids=[alpha_id, beta_id],
@@ -33,7 +33,7 @@ def test_function_ids_roundtrip_and_fetch():
     gid = out["details"]["guidance_id"]
 
     # Roundtrip: row stores function_ids
-    rows = gm._filter(filter=f"guidance_id == {gid}", limit=1)
+    rows = gm.filter(filter=f"guidance_id == {gid}", limit=1)
     assert rows and rows[0].function_ids == [alpha_id, beta_id]
 
     # Fetch related functions (without implementations)
@@ -65,7 +65,7 @@ def test_attach_functions_limit_and_update():
     dbl_id = listing["dbl"]["function_id"]
 
     gm = GuidanceManager()
-    out = gm._add_guidance(
+    out = gm.add_guidance(
         title="Calculations",
         content="Useful operations for math.",
         function_ids=[inc_id, dbl_id],
@@ -83,8 +83,8 @@ def test_attach_functions_limit_and_update():
     assert isinstance(payload.get("functions"), list) and len(payload["functions"]) == 1
 
     # Update to a single function id
-    gm._update_guidance(guidance_id=gid, function_ids=[inc_id])
-    rows = gm._filter(filter=f"guidance_id == {gid}", limit=1)
+    gm.update_guidance(guidance_id=gid, function_ids=[inc_id])
+    rows = gm.filter(filter=f"guidance_id == {gid}", limit=1)
     assert rows and rows[0].function_ids == [inc_id]
 
     funcs_after = gm._get_functions_for_guidance(guidance_id=gid)

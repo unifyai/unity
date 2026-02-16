@@ -58,7 +58,7 @@ def test_fk_images_valid_reference():
     img2_id = img_ids[1]
 
     # Create guidance with images
-    gm._add_guidance(
+    gm.add_guidance(
         title="Visual Guide",
         content="Guide with images",
         images=[
@@ -98,7 +98,7 @@ def test_fk_images_set_null_on_delete():
     img1_id, img2_id, img3_id = img_ids
 
     # Create guidance with all three images
-    gm._add_guidance(
+    gm.add_guidance(
         title="Multi-Image Guide",
         content="Guide with three images",
         images=[
@@ -168,7 +168,7 @@ def test_fk_images_multiple_deletes():
     image_ids = img_ids
 
     # Create guidance with all 5 images
-    gm._add_guidance(
+    gm.add_guidance(
         title="Gallery Guide",
         content="Many images",
         images=[
@@ -225,7 +225,7 @@ def test_fk_images_null_tolerance():
     assert img_ids[0] is not None, "Image creation failed"
     img_id = img_ids[0]
 
-    gm._add_guidance(
+    gm.add_guidance(
         title="Test Guide",
         content="Guide with image that will be deleted",
         images=[
@@ -299,7 +299,7 @@ def test_fk_function_ids_valid_reference():
     assert len(func_ids) == 2
 
     # Create guidance referencing both functions
-    gm._add_guidance(
+    gm.add_guidance(
         title="Function Guide",
         content="Guide for functions",
         function_ids=func_ids,
@@ -332,7 +332,7 @@ def test_fk_function_ids_set_null_on_delete():
     f1, f2, f3 = func_ids
 
     # Create guidance referencing all 3 functions
-    gm._add_guidance(
+    gm.add_guidance(
         title="Multi-Function Guide",
         content="Guide for multiple functions",
         function_ids=[f1, f2, f3],
@@ -358,7 +358,7 @@ def test_fk_function_ids_empty_array():
     gm = GuidanceManager()
 
     # Create guidance with no function references
-    gm._add_guidance(
+    gm.add_guidance(
         title="Standalone Guide",
         content="Guide without function references",
         function_ids=[],
@@ -395,7 +395,7 @@ def test_fk_combined_images_and_functions():
     func_id = int(funcs[0].entries["function_id"])
 
     # Create guidance with both
-    gm._add_guidance(
+    gm.add_guidance(
         title="Complete Guide",
         content="Guide with images and functions",
         images=[

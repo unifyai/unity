@@ -225,7 +225,7 @@ def test_delete_image_nullifies_refs():
     )
 
     # Use same image in guidance
-    gm._add_guidance(
+    gm.add_guidance(
         title="Setup Guide",
         content="Follow these steps",
         images=[
@@ -292,8 +292,8 @@ def test_function_guidance_bidirectional_cascade():
     gm = GuidanceManager()
 
     # Create guidance entries first
-    gm._add_guidance(title="Setup Guide", content="Setup instructions")
-    gm._add_guidance(title="Usage Guide", content="Usage instructions")
+    gm.add_guidance(title="Setup Guide", content="Setup instructions")
+    gm.add_guidance(title="Usage Guide", content="Usage instructions")
 
     guidance_list = unify.get_logs(
         context=gm._ctx,
@@ -362,7 +362,7 @@ def test_function_guidance_bidirectional_cascade():
         assert func_id in g.entries["function_ids"]
 
     # Delete one guidance entry (CASCADE should remove from function.guidance_ids array)
-    gm._delete_guidance(guidance_id=g_map["Setup Guide"])
+    gm.delete_guidance(guidance_id=g_map["Setup Guide"])
 
     # Verify removed from function's guidance_ids array (CASCADE behavior)
     func_after = unify.get_logs(
@@ -430,7 +430,7 @@ def test_delete_function_cascades_tasks_guidance():
     task_id = result["details"]["task_id"]
 
     # Create guidance referencing this function
-    gm._add_guidance(
+    gm.add_guidance(
         title="Function Guide",
         content="How to use worker()",
         function_ids=[func_id],
@@ -558,7 +558,7 @@ def test_complex_fk_workflow():
     func_id = int(funcs[0].entries["function_id"])
 
     # Step 4: Create guidance with images and function reference
-    gm._add_guidance(
+    gm.add_guidance(
         title="Processing Guide",
         content="How to process data",
         images=[{"raw_image_ref": {"image_id": img1_id}, "annotation": "Setup"}],
@@ -759,7 +759,7 @@ def test_circular_fk_deletion_safety():
     func_id = int(funcs[0].entries["function_id"])
 
     # Create guidance referencing function
-    gm._add_guidance(title="Circular Guide", content="Guide", function_ids=[func_id])
+    gm.add_guidance(title="Circular Guide", content="Guide", function_ids=[func_id])
     guidance_list = unify.get_logs(context=gm._ctx, from_fields=["guidance_id"])
     guidance_id = int(guidance_list[0].entries["guidance_id"])
 

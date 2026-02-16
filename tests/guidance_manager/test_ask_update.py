@@ -13,9 +13,9 @@ from tests.helpers import _handle_project
 async def test_ask_semantic_search_text_only():
     gm = GuidanceManager()
     # Seed some simple guidance entries
-    gm._add_guidance(title="Onboarding", content="How to onboard a user step by step")
-    gm._add_guidance(title="Billing", content="Explains invoices and payments")
-    gm._add_guidance(title="Support", content="Handling support tickets efficiently")
+    gm.add_guidance(title="Onboarding", content="How to onboard a user step by step")
+    gm.add_guidance(title="Billing", content="Explains invoices and payments")
+    gm.add_guidance(title="Support", content="Handling support tickets efficiently")
 
     handle = await gm.ask("Find the guidance that explains onboarding")
     answer = await handle.result()
@@ -44,7 +44,7 @@ async def test_update_then_ask():
 @_handle_project
 async def test_update_modify_then_filter():
     gm = GuidanceManager()
-    gid = gm._add_guidance(title="Ops Runbook", content="Legacy steps")["details"][
+    gid = gm.add_guidance(title="Ops Runbook", content="Legacy steps")["details"][
         "guidance_id"
     ]
 
@@ -54,5 +54,5 @@ async def test_update_modify_then_filter():
     )
     await h.result()
 
-    rows = gm._filter(filter=f"guidance_id == {gid}")
+    rows = gm.filter(filter=f"guidance_id == {gid}")
     assert rows and "modernised" in rows[0].content.lower()

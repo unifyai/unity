@@ -28,7 +28,7 @@ def test_get_images_returns_metadata_only():
     )
 
     gm = GuidanceManager()
-    gid = gm._add_guidance(
+    gid = gm.add_guidance(
         title="Layout Review",
         content="We need to review the image layout.",
         images=[
@@ -87,7 +87,7 @@ def test_get_images_includes_annotation():
 
     gm = GuidanceManager()
     content = "click this button to open the modal"
-    gid = gm._add_guidance(
+    gid = gm.add_guidance(
         title="Annotation Demo",
         content=content,
         images=[

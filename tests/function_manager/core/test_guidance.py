@@ -25,12 +25,12 @@ def test_fetch_guidance_for_function_and_limits():
 
     # Seed guidance that references alpha and beta
     gm = GuidanceManager()
-    g1 = gm._add_guidance(
+    g1 = gm.add_guidance(
         title="Alpha Notes",
         content="How to use alpha",
         function_ids=[alpha_id],
     )
-    g2 = gm._add_guidance(
+    g2 = gm.add_guidance(
         title="Beta Notes",
         content="How to use beta",
         function_ids=[beta_id],
@@ -69,7 +69,7 @@ def test_image_handles_and_attachment():
 
     # Guidance referencing the image and the function
     gm = GuidanceManager()
-    gid = gm._add_guidance(
+    gid = gm.add_guidance(
         title="Gamma Visual",
         content="Use gamma with visual aid.",
         images=[

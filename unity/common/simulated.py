@@ -1184,8 +1184,8 @@ def mirror_guidance_manager_tools(kind: str) -> Dict[str, Any]:
     if kind == "ask":
         return methods_to_tool_dict(
             GM._list_columns,
-            GM._filter,
-            GM._search,
+            GM.filter,
+            GM.search,
             GM._get_images_for_guidance,
             GM._ask_image,
             GM._attach_image_to_context,
@@ -1197,9 +1197,9 @@ def mirror_guidance_manager_tools(kind: str) -> Dict[str, Any]:
     else:
         return methods_to_tool_dict(
             GM.ask,
-            GM._add_guidance,
-            GM._update_guidance,
-            GM._delete_guidance,
+            GM.add_guidance,
+            GM.update_guidance,
+            GM.delete_guidance,
             GM._create_custom_column,
             GM._delete_custom_column,
             include_class_name=False,
