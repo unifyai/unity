@@ -103,8 +103,8 @@ def _get_callable_via_return_callable(
 ) -> _InProcessFunctionProxy:
     """Get a function proxy via list_functions with return_callable=True."""
     result = fm.list_functions(
-        return_callable=True,
-        namespace=namespace,
+        _return_callable=True,
+        _namespace=namespace,
     )
     return result[func_name]
 

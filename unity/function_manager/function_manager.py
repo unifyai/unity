@@ -3423,15 +3423,15 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         # Query compositional context, and optionally primitives.
         compositional_logs = unify.get_logs(
@@ -3478,13 +3478,13 @@ class FunctionManager(BaseFunctionManager):
                 data["implementation"] = ent.get("implementation")
             metadata[name] = data
 
-        if not return_callable:
+        if not _return_callable:
             return metadata
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
         callables_list = self._inject_callables_for_functions(
             func_rows,
-            namespace=namespace,
+            namespace=_namespace,
         )
         callables_map = {
             row["name"]: cb
@@ -3492,7 +3492,7 @@ class FunctionManager(BaseFunctionManager):
             if isinstance(row.get("name"), str)
         }
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_map, "metadata": metadata}  # type: ignore[return-value]
 
         return callables_map  # type: ignore[return-value]
@@ -3722,15 +3722,15 @@ class FunctionManager(BaseFunctionManager):
         offset: int = 0,
         limit: int = 100,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         normalized = self._scoped_filter(normalize_filter_expr(filter))
 
@@ -3761,7 +3761,7 @@ class FunctionManager(BaseFunctionManager):
         # Stack compositional first, primitives last, then apply offset+limit.
         rows = (compositional_rows + primitive_rows)[offset : offset + limit]
 
-        if not return_callable:
+        if not _return_callable:
             # Strip implementations if not requested (reduces payload size)
             if not include_implementations:
                 rows = [
@@ -3770,9 +3770,9 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return rows
 
-        assert namespace is not None  # validated above
-        callables_list = self._inject_callables_for_functions(rows, namespace=namespace)
-        if also_return_metadata:
+        assert _namespace is not None  # validated above
+        callables_list = self._inject_callables_for_functions(rows, namespace=_namespace)
+        if _also_return_metadata:
             # Strip implementations from metadata if not requested
             metadata_rows = rows
             if not include_implementations:
@@ -3791,29 +3791,15 @@ class FunctionManager(BaseFunctionManager):
         query: str,
         n: int = 5,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
-        """
-        Search for functions by semantic similarity to a natural-language query.
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        Searches both compositional (user-defined) and primitive (state manager)
-        functions, ranked purely by embedding distance.
-
-        Args:
-            query: Natural-language text describing the desired function(s).
-            n: Number of similar results to return.
-            include_implementations: If True (default), include full source code.
-
-        Returns:
-            Up to n results ordered by similarity across all function types.
-        """
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         allowed_fields = list(Function.model_fields.keys())
 
@@ -3855,7 +3841,7 @@ class FunctionManager(BaseFunctionManager):
             all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
         results = all_rows[:n]
 
-        if not return_callable:
+        if not _return_callable:
             # Strip implementations if not requested (reduces payload size)
             if not include_implementations:
                 results = [
@@ -3864,13 +3850,13 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return results
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
         callables_list = self._inject_callables_for_functions(
             results,
-            namespace=namespace,
+            namespace=_namespace,
         )
 
-        if also_return_metadata:
+        if _also_return_metadata:
             # Strip implementations from metadata if not requested
             metadata_rows = results
             if not include_implementations:

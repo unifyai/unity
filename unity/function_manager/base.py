@@ -125,22 +125,16 @@ class BaseFunctionManager(BaseStateManager):
         self,
         *,
         include_implementations: bool = False,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Return a mapping of function name to function metadata.
 
-        Signature
-        ---------
-        list_functions(
-            *,
-            include_implementations: bool = False,
-            return_callable: bool = False,
-            namespace: dict[str, Any] | None = None,
-            also_return_metadata: bool = False,
-        ) -> dict[str, dict[str, Any]] | dict[str, Callable[..., Any]] | dict[str, Any]
+        Each record conforms to the ``Function`` schema and includes a
+        ``guidance_ids`` field — a list of identifiers for related guidance
+        entries that describe compositional workflows using these functions.
 
         Parameters
         ----------
@@ -148,37 +142,37 @@ class BaseFunctionManager(BaseStateManager):
             When ``True``, values include the full source code in the
             ``implementation`` field. When ``False``, implementations may be
             omitted to reduce payload size.
-        return_callable : bool, default ``False``
+        _return_callable : bool, default ``False``
             When ``True``, return Python callables instead of metadata dicts.
             Implementations SHOULD inject the resulting callables (and any of their
-            transitive dependencies) into the provided ``namespace``.
-        namespace : dict[str, Any] | None, default ``None``
+            transitive dependencies) into the provided ``_namespace``.
+        _namespace : dict[str, Any] | None, default ``None``
             Target namespace dict for dependency injection when
-            ``return_callable=True``. Required when ``return_callable=True``.
-        also_return_metadata : bool, default ``False``
-            When ``True`` (and only valid with ``return_callable=True``), return a
+            ``_return_callable=True``. Required when ``_return_callable=True``.
+        _also_return_metadata : bool, default ``False``
+            When ``True`` (and only valid with ``_return_callable=True``), return a
             dict containing both callables and metadata:
             ``{"callables": <...>, "metadata": <...>}``.
 
         Returns
         -------
         dict[str, Function] | dict[str, Callable[..., Any]] | dict[str, Any]
-            - When ``return_callable=False``: mapping of function name → record
+            - When ``_return_callable=False``: mapping of function name → record
               conforming to the ``Function`` schema (as dicts or Function objects).
               When ``include_implementations=False``, the ``implementation`` field
               may be omitted.
-            - When ``return_callable=True``: mapping of function name → callable.
+            - When ``_return_callable=True``: mapping of function name → callable.
               Callables MAY be in-process functions or proxy callables for functions
               that must execute in an isolated virtual environment (implementation‑defined).
-            - When ``also_return_metadata=True``: a dict with keys ``callables`` and
+            - When ``_also_return_metadata=True``: a dict with keys ``callables`` and
               ``metadata`` containing the two corresponding mappings.
 
         Raises
         ------
         ValueError
-            If ``return_callable=True`` but ``namespace`` is ``None``.
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
         ValueError
-            If ``also_return_metadata=True`` but ``return_callable`` is ``False``.
+            If ``_also_return_metadata=True`` but ``_return_callable`` is ``False``.
         """
 
     @abstractmethod
@@ -242,25 +236,16 @@ class BaseFunctionManager(BaseStateManager):
         offset: int = 0,
         limit: int = 100,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
         """
-        Filter stored function metadata using a Python‑expression.
+        Filter stored function metadata using a Python expression.
 
-        Signature
-        ---------
-        filter_functions(
-            *,
-            filter: str | None = None,
-            offset: int = 0,
-            limit: int = 100,
-            include_implementations: bool = True,
-            return_callable: bool = False,
-            namespace: dict[str, Any] | None = None,
-            also_return_metadata: bool = False,
-        ) -> list[dict[str, Any]] | list[Callable[..., Any]] | dict[str, Any]
+        Each result conforms to the ``Function`` schema and includes a
+        ``guidance_ids`` field — a list of identifiers for related guidance
+        entries that describe compositional workflows using these functions.
 
         Parameters
         ----------
@@ -277,36 +262,36 @@ class BaseFunctionManager(BaseStateManager):
             When ``True``, results include the full source code in the
             ``implementation`` field. When ``False``, implementations are
             omitted to reduce payload size.
-        return_callable : bool, default ``False``
+        _return_callable : bool, default ``False``
             When ``True``, return Python callables instead of metadata dicts.
             Implementations SHOULD inject the resulting callables (and any of their
-            transitive dependencies) into the provided ``namespace``.
-        namespace : dict[str, Any] | None, default ``None``
+            transitive dependencies) into the provided ``_namespace``.
+        _namespace : dict[str, Any] | None, default ``None``
             Target namespace dict for dependency injection when
-            ``return_callable=True``. Required when ``return_callable=True``.
-        also_return_metadata : bool, default ``False``
-            When ``True`` (and only valid with ``return_callable=True``), return a
+            ``_return_callable=True``. Required when ``_return_callable=True``.
+        _also_return_metadata : bool, default ``False``
+            When ``True`` (and only valid with ``_return_callable=True``), return a
             dict containing both callables and metadata:
             ``{"callables": [...], "metadata": [...]}``.
 
         Returns
         -------
         list[Function] | list[Callable[..., Any]] | dict[str, Any]
-            - When ``return_callable=False``: list of records conforming to the
+            - When ``_return_callable=False``: list of records conforming to the
               ``Function`` schema (as dicts or Function objects). When
               ``include_implementations=False``, the ``implementation`` field
               is omitted.
-            - When ``return_callable=True``: list of callables corresponding to the
+            - When ``_return_callable=True``: list of callables corresponding to the
               returned records.
-            - When ``also_return_metadata=True``: a dict with keys ``callables`` and
+            - When ``_also_return_metadata=True``: a dict with keys ``callables`` and
               ``metadata`` containing the two corresponding lists.
 
         Raises
         ------
         ValueError
-            If ``return_callable=True`` but ``namespace`` is ``None``.
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
         ValueError
-            If ``also_return_metadata=True`` but ``return_callable`` is ``False``.
+            If ``_also_return_metadata=True`` but ``_return_callable`` is ``False``.
 
         Examples
         --------
@@ -321,24 +306,16 @@ class BaseFunctionManager(BaseStateManager):
         query: str,
         n: int = 5,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search for functions by semantic similarity to a natural‑language query.
 
-        Signature
-        ---------
-        search_functions(
-            *,
-            query: str,
-            n: int = 5,
-            include_implementations: bool = True,
-            return_callable: bool = False,
-            namespace: dict[str, Any] | None = None,
-            also_return_metadata: bool = False,
-        ) -> list[dict[str, Any]] | list[Callable[..., Any]] | dict[str, Any]
+        Each result conforms to the ``Function`` schema and includes a
+        ``guidance_ids`` field — a list of identifiers for related guidance
+        entries that describe compositional workflows using these functions.
 
         Parameters
         ----------
@@ -350,37 +327,37 @@ class BaseFunctionManager(BaseStateManager):
             When ``True``, results include the full source code in the
             ``implementation`` field. When ``False``, implementations are
             omitted to reduce payload size.
-        return_callable : bool, default ``False``
+        _return_callable : bool, default ``False``
             When ``True``, return Python callables instead of metadata dicts.
             Implementations SHOULD inject the resulting callables (and any of their
-            transitive dependencies) into the provided ``namespace``.
-        namespace : dict[str, Any] | None, default ``None``
+            transitive dependencies) into the provided ``_namespace``.
+        _namespace : dict[str, Any] | None, default ``None``
             Target namespace dict for dependency injection when
-            ``return_callable=True``. Required when ``return_callable=True``.
-        also_return_metadata : bool, default ``False``
-            When ``True`` (and only valid with ``return_callable=True``), return a
+            ``_return_callable=True``. Required when ``_return_callable=True``.
+        _also_return_metadata : bool, default ``False``
+            When ``True`` (and only valid with ``_return_callable=True``), return a
             dict containing both callables and metadata:
             ``{"callables": [...], "metadata": [...]}``.
 
         Returns
         -------
         list[dict[str, Any]] | list[Callable[..., Any]] | dict[str, Any]
-            - When ``return_callable=False``: up to ``n`` results ordered by similarity.
+            - When ``_return_callable=False``: up to ``n`` results ordered by similarity.
               Each element SHOULD include the fields of the ``Function`` model and MAY
               include an additional ``score`` field (``float``) representing similarity.
               When ``include_implementations=False``, the ``implementation`` field
               is omitted.
-            - When ``return_callable=True``: list of callables corresponding to the
+            - When ``_return_callable=True``: list of callables corresponding to the
               returned records.
-            - When ``also_return_metadata=True``: a dict with keys ``callables`` and
+            - When ``_also_return_metadata=True``: a dict with keys ``callables`` and
               ``metadata`` containing the two corresponding lists.
 
         Raises
         ------
         ValueError
-            If ``return_callable=True`` but ``namespace`` is ``None``.
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
         ValueError
-            If ``also_return_metadata=True`` but ``return_callable`` is ``False``.
+            If ``_also_return_metadata=True`` but ``_return_callable`` is ``False``.
         """
 
     @abstractmethod

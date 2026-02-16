@@ -57,6 +57,19 @@ _CRITICAL_RULES_FM = textwrap.dedent("""
     - For multi-step workflows building state, also use `state_mode="stateful"`
 """).strip()
 
+_FM_GUIDANCE_CROSS_REFERENCE = textwrap.dedent("""
+    #### 4. Functions and Guidance Are Cross-Referenced
+
+    Function results include a ``guidance_ids`` field — a list of IDs for
+    related guidance entries that describe compositional workflows using
+    those functions. To retrieve the corresponding guidance, call
+    ``primitives.guidance.ask(...)`` inside ``execute_code`` with the
+    relevant IDs.
+
+    Conversely, guidance entries include ``function_ids`` pointing back to
+    the concrete function implementations they describe.
+""").strip()
+
 _EXECUTION_RULES = textwrap.dedent("""
     ### Code Execution Rules
 
@@ -359,7 +372,11 @@ def build_code_act_prompt(
             "domains are available via injected environment globals (e.g. state managers, and optionally computer/desktop)."
         )
 
-        critical_rules = _CRITICAL_RULES_FM if has_fm_tools else ""
+        critical_rules = (
+            f"{_CRITICAL_RULES_FM}\n\n{_FM_GUIDANCE_CROSS_REFERENCE}"
+            if has_fm_tools
+            else ""
+        )
 
         additional_tools_block = _build_additional_tools_block(
             tools=tools,

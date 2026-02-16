@@ -132,9 +132,9 @@ class FunctionStoreEnvironment(BaseEnvironment):
 
         result = self._function_manager.filter_functions(
             filter=name_filter,
-            return_callable=True,
-            namespace=ns_dict,
-            also_return_metadata=True,
+            _return_callable=True,
+            _namespace=ns_dict,
+            _also_return_metadata=True,
         )
 
         callables_list = result.get("callables", []) if isinstance(result, dict) else []

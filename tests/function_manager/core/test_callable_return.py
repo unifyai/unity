@@ -22,17 +22,17 @@ dependencies = []
 def test_invalid_parameter_combinations_raise():
     fm = FunctionManager()
 
-    with pytest.raises(ValueError, match="also_return_metadata"):
-        fm.filter_functions(filter=None, also_return_metadata=True)
+    with pytest.raises(ValueError, match="_also_return_metadata"):
+        fm.filter_functions(filter=None, _also_return_metadata=True)
 
-    with pytest.raises(ValueError, match="namespace"):
-        fm.filter_functions(filter=None, return_callable=True)
+    with pytest.raises(ValueError, match="_namespace"):
+        fm.filter_functions(filter=None, _return_callable=True)
 
-    with pytest.raises(ValueError, match="also_return_metadata"):
-        fm.search_functions(query="anything", also_return_metadata=True)
+    with pytest.raises(ValueError, match="_also_return_metadata"):
+        fm.search_functions(query="anything", _also_return_metadata=True)
 
-    with pytest.raises(ValueError, match="namespace"):
-        fm.search_functions(query="anything", return_callable=True)
+    with pytest.raises(ValueError, match="_namespace"):
+        fm.search_functions(query="anything", _return_callable=True)
 
 
 @_handle_project
@@ -50,8 +50,8 @@ async def test_filter_return_callable_injects_dependency_chain():
     callables = fm.filter_functions(
         filter="name == 'a'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
 
     assert len(callables) == 1
@@ -89,8 +89,8 @@ async def test_dependency_injection_supports_indirect_calls_and_returned_functio
     callables = fm.filter_functions(
         filter="name == 'use'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
     assert len(callables) == 1
     assert "leaf" in ns and callable(ns["leaf"])
@@ -111,9 +111,9 @@ def test_search_return_callable_also_returns_metadata():
     res = fm.filter_functions(
         filter="name == 'add_numbers'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
-        also_return_metadata=True,
+        _return_callable=True,
+        _namespace=ns,
+        _also_return_metadata=True,
     )
 
     assert isinstance(res, dict)
@@ -137,8 +137,8 @@ def test_circular_dependency_injection_does_not_loop():
     callables = fm.filter_functions(
         filter="name == 'a'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
 
     assert len(callables) == 1
@@ -165,8 +165,8 @@ async def test_search_return_callable_venv_proxy_executes():
         callables = fm.filter_functions(
             filter="name == 'add_numbers'",
             limit=1,
-            return_callable=True,
-            namespace=ns,
+            _return_callable=True,
+            _namespace=ns,
         )
 
         assert len(callables) == 1
@@ -207,9 +207,9 @@ async def test_similarity_search_return_callable_monkeypatched(monkeypatch):
     res = fm.search_functions(
         query="irrelevant",
         n=1,
-        return_callable=True,
-        namespace=ns,
-        also_return_metadata=True,
+        _return_callable=True,
+        _namespace=ns,
+        _also_return_metadata=True,
     )
 
     assert isinstance(res, dict)
@@ -294,8 +294,8 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
     callables = fm.filter_functions(
         filter="name == 'decorated'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
     assert len(callables) == 1
     assert "my_decorator" in ns and callable(ns["my_decorator"])
@@ -306,8 +306,8 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
     callables = fm.filter_functions(
         filter="name == 'annotated'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
     assert len(callables) == 1
     assert "validator" in ns and callable(ns["validator"])
@@ -317,8 +317,8 @@ async def test_dependency_injection_handles_custom_decorators_and_annotations(
     callables = fm.filter_functions(
         filter="name == 'outer'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
     assert len(callables) == 1
     assert "inner" in ns and callable(ns["inner"])
@@ -378,8 +378,8 @@ async def test_dependency_injection_supports_user_defined_forward_ref_string_ann
     callables = fm.filter_functions(
         filter="name == 'metric'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
     assert len(callables) == 1
     assert "metric" in ns and callable(ns["metric"])
@@ -443,9 +443,9 @@ async def test_similarity_search_return_callable_forward_ref_annotations_just_wo
     res = fm.search_functions(
         query="irrelevant",
         n=1,
-        return_callable=True,
-        namespace=ns,
-        also_return_metadata=True,
+        _return_callable=True,
+        _namespace=ns,
+        _also_return_metadata=True,
     )
 
     assert isinstance(res, dict)
@@ -479,8 +479,8 @@ async def test_dep_added_after_root_does_not_backfill_depends_on():
     callables = fm.filter_functions(
         filter="name == 'a'",
         limit=1,
-        return_callable=True,
-        namespace=ns,
+        _return_callable=True,
+        _namespace=ns,
     )
     assert "b" not in ns
     with pytest.raises(NameError):
@@ -493,8 +493,8 @@ async def test_dep_added_after_root_does_not_backfill_depends_on():
     callables2 = fm.filter_functions(
         filter="name == 'a'",
         limit=1,
-        return_callable=True,
-        namespace=ns2,
+        _return_callable=True,
+        _namespace=ns2,
     )
     assert "b" in ns2
     assert await callables2[0](x=1) == 12
