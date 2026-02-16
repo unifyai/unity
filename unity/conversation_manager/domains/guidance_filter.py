@@ -84,6 +84,8 @@ You will receive:
 2. The CONVERSATION history, with messages marked as:
    - Regular messages: Were part of the conversation when slow brain STARTED thinking
    - **NEW** messages: Arrived AFTER slow brain started (slow brain didn't see these!)
+3. Optionally, RECENTLY SENT GUIDANCE — guidance already published by a previous
+   slow-brain run. When present, check for redundancy.
 
 ## Decision Criteria
 
@@ -91,6 +93,7 @@ You will receive:
 - The conversation is still about the SAME TOPIC (even if asking different questions about it)
 - The guidance provides useful context about that topic
 - The guidance is a notification that's still relevant
+- The guidance contains materially new information not covered by recently sent guidance
 - **CRITICAL**: If the user asks a follow-up question about the SAME SUBJECT, SEND the guidance!
   Example: User asks about meeting time, then asks about meeting attendees → SAME TOPIC (meeting)
 
@@ -98,7 +101,8 @@ You will receive:
 - The user explicitly changed to a DIFFERENT topic ("never mind", "forget that", "actually...")
 - The topic switched to something UNRELATED (e.g., meeting → weather = DIFFERENT topics)
 - The fast brain already said the same thing
-- **CRITICAL**: Only block for TOPIC CHANGE. Follow-up questions about the same subject are NOT topic changes!
+- The guidance conveys the same facts as recently sent guidance, even if worded differently
+- **CRITICAL**: Only block for TOPIC CHANGE or REDUNDANCY. Follow-up questions about the same subject are NOT topic changes!
   Example: User asks about meeting time, then asks about weather → DIFFERENT TOPICS (block)
 
 ## Examples
@@ -155,6 +159,22 @@ CONVERSATION:
 Decision: send_guidance=false
 Reason: User cancelled the request. The search result is no longer wanted.
 
+### Example 6: BLOCK - Redundant With Recently Sent Guidance
+GUIDANCE: "The appointment is confirmed for Tuesday at 2pm with Dr. Lee."
+RECENTLY SENT GUIDANCE:
+  - "Confirmed: Tuesday 2pm appointment with Dr. Lee at the downtown office."
+
+Decision: send_guidance=false
+Reason: The same appointment details were already sent. Different wording, same facts.
+
+### Example 7: SEND - Adds New Information Beyond Recently Sent Guidance
+GUIDANCE: "Dr. Lee's office also mentioned to bring your insurance card."
+RECENTLY SENT GUIDANCE:
+  - "Confirmed: Tuesday 2pm appointment with Dr. Lee at the downtown office."
+
+Decision: send_guidance=true
+Reason: The insurance card reminder is new information not in the previous guidance.
+
 ## Output
 Return a JSON object with:
 - thoughts: Brief reasoning (1-2 sentences)
@@ -171,12 +191,12 @@ class GuidanceFilter:
     itself becoming stale while processing.
     """
 
-    def __init__(self, model: str = "claude-4.5-opus@anthropic"):
+    def __init__(self, model: str = "claude-4.6-opus@anthropic"):
         """
         Initialize the guidance filter.
 
         Args:
-            model: The model to use. Defaults to opus-4.5 for quality decisions.
+            model: The model to use. Defaults to opus-4.6 for quality decisions.
                    Extended thinking is disabled via reasoning_effort=None.
         """
         self.model = model
@@ -185,6 +205,7 @@ class GuidanceFilter:
         self,
         guidance_content: str,
         conversation: list[ConversationMessage],
+        recent_guidance: list[str] | None = None,
     ) -> GuidanceRelevanceDecision:
         """
         Determine if guidance should be sent to the fast brain.
@@ -193,6 +214,8 @@ class GuidanceFilter:
             guidance_content: The slow brain's guidance to evaluate.
             conversation: The voice conversation messages. Messages with is_new=True
                           arrived AFTER the slow brain started thinking.
+            recent_guidance: Guidance strings already published by previous slow-brain
+                            runs. Used for redundancy detection.
 
         Returns:
             GuidanceRelevanceDecision with thoughts and send_guidance boolean.
@@ -205,11 +228,16 @@ class GuidanceFilter:
 
         conversation_str = "\n".join(conversation_lines)
 
+        recent_section = ""
+        if recent_guidance:
+            items = "\n".join(f"  - {g}" for g in recent_guidance)
+            recent_section = f"\n\n## RECENTLY SENT GUIDANCE\n{items}"
+
         user_prompt = f"""## GUIDANCE (from slow brain)
 {guidance_content}
 
 ## CONVERSATION
-{conversation_str}
+{conversation_str}{recent_section}
 
 ## Your Decision
 Is this guidance still relevant? Should it be sent to the Voice Agent?"""
@@ -246,7 +274,8 @@ Is this guidance still relevant? Should it be sent to the Voice Agent?"""
 async def should_send_guidance(
     guidance_content: str,
     conversation: list[ConversationMessage],
-    model: str = "claude-4.5-opus@anthropic",
+    recent_guidance: list[str] | None = None,
+    model: str = "claude-4.6-opus@anthropic",
 ) -> bool:
     """
     Quick check if guidance should be sent.
@@ -254,14 +283,16 @@ async def should_send_guidance(
     Args:
         guidance_content: The slow brain's guidance to evaluate.
         conversation: The voice conversation messages.
+        recent_guidance: Previously published guidance for redundancy checking.
         model: The model to use for the decision.
 
     Returns:
-        True if guidance should be sent, False if it's stale.
+        True if guidance should be sent, False if it's stale or redundant.
     """
     filter_instance = GuidanceFilter(model=model)
     decision = await filter_instance.should_send_guidance(
         guidance_content,
         conversation,
+        recent_guidance=recent_guidance,
     )
     return decision.send_guidance

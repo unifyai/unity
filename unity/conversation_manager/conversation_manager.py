@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections import deque
 
 import json
 from typing import Optional
@@ -170,6 +171,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
+
+        # recently-published guidance content for redundancy detection
+        self._recent_guidance: deque[str] = deque(maxlen=5)
 
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
@@ -547,23 +551,31 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     ),
                 )
 
-            # If no new messages, guidance is definitely still relevant
-            if not any(m.is_new for m in conversation_messages):
-                return True
-
-            # Assistant-only new chatter should not force filtering; only new
-            # user turns can make slow-brain guidance stale for the caller.
-            if not any(
+            has_new_messages = any(m.is_new for m in conversation_messages)
+            has_new_user_turn = any(
                 m.is_new and (m.role or "").lower() == "user"
                 for m in conversation_messages
-            ):
+            )
+            has_recent_guidance = len(self._recent_guidance) > 0
+
+            # Early returns: skip the LLM filter when there is nothing to
+            # check against.  Two independent dimensions can trigger filtering:
+            #   1. Topic staleness — a new user turn may have changed the topic.
+            #   2. Redundancy — a previous slow-brain run already published
+            #      equivalent guidance (queue-of-2 overlap).
+            # If neither condition applies we can return immediately.
+            if not has_new_messages and not has_recent_guidance:
+                return True
+            if not has_new_user_turn and not has_recent_guidance:
                 return True
 
-            # Use the GuidanceFilter to make the decision
+            # Use the GuidanceFilter to make the decision (topic staleness
+            # and/or redundancy against recently-published guidance).
             guidance_filter = GuidanceFilter()
             decision = await guidance_filter.should_send_guidance(
                 guidance_content,
                 conversation_messages,
+                recent_guidance=list(self._recent_guidance),
             )
 
             self._session_logger.debug(
@@ -731,6 +743,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                             "app:comms:assistant_call_guidance",
                             event.to_json(),
                         )
+                        self._recent_guidance.append(call_guidance)
                     else:
                         self._session_logger.info(
                             "guidance_filtered",
