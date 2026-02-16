@@ -16,6 +16,7 @@ import asyncio
 import pytest
 
 from tests.actor.state_managers.utils import extract_code_act_execute_code_snippets
+from tests.async_helpers import _wait_for_condition
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.environments import StateManagerEnvironment
 from unity.function_manager.primitives import Primitives, PrimitiveScope
@@ -341,8 +342,19 @@ async def test_execute_code_dual_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for both inner handles to be adopted.
-        await _wait_for_inner_handle_adopted(handle, count=2, timeout=120)
+        # Wait for the execute_code tool result to appear in the transcript.
+        # This is inserted by adopt_multi_nested the moment both handles are
+        # adopted, making it a deterministic, append-only signal (no race with
+        # handle completion removing entries from task_info).
+        async def _execute_code_result_appeared():
+            return any(
+                m.get("role") == "tool" and m.get("name") == "execute_code"
+                for m in handle.get_history()
+            )
+
+        await _wait_for_condition(
+            _execute_code_result_appeared, poll=0.1, timeout=120,
+        )
 
         # Steer the first handle (contacts) via an interjection.
         await handle.interject("Also include contacts in Munich.")
