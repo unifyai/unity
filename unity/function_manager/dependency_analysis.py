@@ -14,7 +14,7 @@ class DependencyVisitor(ast.NodeVisitor):
     - Returned function references: `return foo` or `return f` (where f maps to foo)
     - Callables passed as arguments: `bar(callback=foo)` or `bar(foo)`
     - Dotted environment calls: `primitives.contacts.ask(...)`,
-      `computer_primitives.screenshot(...)`, `actor.run(...)`
+      `computer_primitives.screenshot(...)`, `actor.act(...)`
     """
 
     def __init__(
@@ -140,7 +140,7 @@ def collect_dependencies_from_function_node(
     - Annotations (e.g. `x: typing.Annotated[int, validator]`)
 
     When *environment_namespaces* is provided, dotted calls whose root segment matches
-    one of the namespaces (e.g. ``primitives.contacts.ask``, ``actor.run``) are also
+    one of the namespaces (e.g. ``primitives.contacts.ask``, ``actor.act``) are also
     captured as dependencies.
     """
     visitor = DependencyVisitor(

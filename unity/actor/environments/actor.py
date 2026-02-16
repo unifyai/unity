@@ -1,6 +1,6 @@
 """Actor execution environment for CodeActActor.
 
-Provides an ``actor`` namespace in the sandbox with a single ``run()``
+Provides an ``actor`` namespace in the sandbox with a single ``act()``
 method that spawns isolated inner CodeActActors for focused sub-tasks.
 Because actor invocations are regular sandbox code, they can be saved
 as compositional functions for reuse.
@@ -145,12 +145,13 @@ class _ActorRunner:
     the ``_ACTOR_CONTEXT`` ContextVar set by the enclosing CodeActActor.
     """
 
-    _PRIMITIVE_METHODS = ("run",)
+    _PRIMITIVE_METHODS = ("act",)
 
-    async def run(
+    async def act(
         self,
-        task: str,
+        request: str,
         *,
+        guidelines: str | None = None,
         prompt_functions: list[str] | None = None,
         discovery_scope: str | None = None,
         timeout: float | None = None,
@@ -193,18 +194,27 @@ class _ActorRunner:
 
         Best practices
         --------------
-        - Write a **clear, self-contained task description**. The actor
+        - Write a **clear, self-contained request description**. The actor
           does not see the parent's conversation or sandbox state. Include
-          all relevant context in the task string.
+          all relevant context in the request string.
+        - Use **guidelines** to inject persistent behavioral directives
+          (e.g., "Be extremely thorough", "Respond in JSON") that the
+          actor must follow throughout its session.
         - Set an appropriate **timeout** for the expected complexity.
 
         Parameters
         ----------
-        task : str
+        request : str
             A clear, self-contained description of what the actor should
             accomplish. Be specific and include all necessary context, because
             the actor does **not** share the parent agent's conversation
             history or session state.
+        guidelines : str, optional
+            Persistent behavioral directives injected into the actor's
+            system prompt. Unlike the request (which describes *what* to
+            do), guidelines describe *how* to behave throughout the
+            session — e.g., output format, thoroughness level, tone, or
+            constraints. When omitted, no additional guidelines are set.
         prompt_functions : list[str], optional
             Functions to place directly in the actor's system prompt,
             making them immediately callable without any discovery step.
@@ -305,7 +315,8 @@ class _ActorRunner:
         )
 
         handle = await inner_actor.act(
-            task,
+            request,
+            guidelines=guidelines,
             clarification_enabled=True,
             _parent_chat_context=_parent_chat_context,
             _clarification_up_q=_clarification_up_q,
@@ -338,7 +349,7 @@ class _ActorRunner:
 class ActorEnvironment(BaseEnvironment):
     """Environment that provides actor spawning via the ``actor`` namespace.
 
-    Injects an ``actor`` object into the sandbox with a single ``run()``
+    Injects an ``actor`` object into the sandbox with a single ``act()``
     method for spawning isolated inner CodeActActors.
     """
 
@@ -361,27 +372,27 @@ class ActorEnvironment(BaseEnvironment):
     def get_tools(self) -> Dict[str, ToolMetadata]:
         registry = get_registry()
         return {
-            f"{self.NAMESPACE}.run": ToolMetadata(
-                name=f"{self.NAMESPACE}.run",
+            f"{self.NAMESPACE}.act": ToolMetadata(
+                name=f"{self.NAMESPACE}.act",
                 is_impure=True,
                 is_steerable=True,
-                function_id=registry.get_function_id("actor", "run"),
+                function_id=registry.get_function_id("actor", "act"),
                 function_context="primitive",
             ),
         }
 
     def get_prompt_context(self) -> str:
-        """Generate prompt context from the ``run()`` method's docstring."""
+        """Generate prompt context from the ``act()`` method's docstring."""
         registry = get_registry()
         sig_str = registry._format_method_signature(
             _ActorRunner,
-            "run",
+            "act",
         )
-        full_doc = inspect.getdoc(_ActorRunner.run) or ""
+        full_doc = inspect.getdoc(_ActorRunner.act) or ""
         filtered_doc = registry._filter_internal_params_from_docstring(full_doc)
 
         lines = [f"### `{self.NAMESPACE}` — Actor Delegation\n"]
-        lines.append(f"**`{self.NAMESPACE}.run{sig_str}`**")
+        lines.append(f"**`{self.NAMESPACE}.act{sig_str}`**")
         if filtered_doc:
             for doc_line in filtered_doc.splitlines():
                 lines.append(f"  {doc_line}")

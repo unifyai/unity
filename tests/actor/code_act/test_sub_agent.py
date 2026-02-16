@@ -59,7 +59,7 @@ def test_prompt_includes_actor_guidance_when_env_present():
     prompt = build_code_act_prompt(environments=actor.environments, tools=tools)
 
     assert "Actor Delegation" in prompt
-    assert "actor.run" in prompt
+    assert "actor.act" in prompt
     assert "When to use" in prompt
     assert "When NOT to use" in prompt
     assert "steerable" in prompt.lower()
@@ -78,15 +78,15 @@ def test_prompt_excludes_actor_guidance_when_env_absent():
 
 
 # ---------------------------------------------------------------------------
-# Symbolic tests — _ActorRunner.run parameter exposure
+# Symbolic tests — _ActorRunner.act parameter exposure
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.timeout(30)
-def test_actor_run_exposes_capability_parameters():
-    """actor.run should expose can_compose, can_store, and can_spawn_sub_agents
-    as parameters visible to the LLM."""
-    sig = inspect.signature(_ActorRunner.run)
+def test_actor_act_exposes_capability_parameters():
+    """actor.act should expose can_compose, can_store, can_spawn_sub_agents,
+    and guidelines as parameters visible to the LLM."""
+    sig = inspect.signature(_ActorRunner.act)
     param_names = set(sig.parameters.keys())
 
     assert "can_compose" in param_names
@@ -94,23 +94,25 @@ def test_actor_run_exposes_capability_parameters():
     assert "can_spawn_sub_agents" in param_names
     assert "prompt_functions" in param_names
     assert "discovery_scope" in param_names
+    assert "guidelines" in param_names
 
 
 @pytest.mark.timeout(30)
-def test_actor_run_parameter_defaults():
+def test_actor_act_parameter_defaults():
     """Verify the default values for the capability parameters match expectations."""
-    sig = inspect.signature(_ActorRunner.run)
+    sig = inspect.signature(_ActorRunner.act)
     params = sig.parameters
 
     assert params["can_compose"].default is True
     assert params["can_store"].default is False
     assert params["can_spawn_sub_agents"].default is False
+    assert params["guidelines"].default is None
 
 
 @pytest.mark.timeout(30)
-def test_actor_run_hides_internal_params():
+def test_actor_act_hides_internal_params():
     """Internal parameters prefixed with _ should not appear in the filtered docstring."""
-    sig = inspect.signature(_ActorRunner.run)
+    sig = inspect.signature(_ActorRunner.act)
     public_params = {
         name
         for name, p in sig.parameters.items()
@@ -119,13 +121,13 @@ def test_actor_run_hides_internal_params():
 
     assert "_clarification_up_q" not in public_params
     assert "_clarification_down_q" not in public_params
-    assert "task" in public_params
+    assert "request" in public_params
     assert "timeout" in public_params
 
 
 @pytest.mark.timeout(30)
 def test_actor_discovery_scope_composes_with_parent():
-    """discovery_scope on actor.run should AND with the parent's filter_scope.
+    """discovery_scope on actor.act should AND with the parent's filter_scope.
 
     This is a symbolic test that verifies the composition logic by
     inspecting the FunctionManager that the inner CodeActActor would
@@ -141,7 +143,7 @@ def test_actor_discovery_scope_composes_with_parent():
     parent_fm = actor.function_manager
     parent_scope = parent_fm.filter_scope if parent_fm else None
 
-    # Simulate the discovery_scope composition logic from _ActorRunner.run.
+    # Simulate the discovery_scope composition logic from _ActorRunner.act.
     new_scope = "language == 'python'"
     if parent_scope:
         expected = f"({parent_scope}) and ({new_scope})"
@@ -184,7 +186,7 @@ def test_actor_discovery_scope_narrows_not_replaces():
 def test_actor_runner_caps_can_compose_via_contextvar():
     """When the parent sets can_compose=False in _ACTOR_CONTEXT, the runner should cap it."""
     ctx = ActorContext(function_manager=None, can_compose=False, can_store=True)
-    # Simulate the capping logic from _ActorRunner.run.
+    # Simulate the capping logic from _ActorRunner.act.
     effective = True and ctx.can_compose
     assert effective is False
 
@@ -193,7 +195,7 @@ def test_actor_runner_caps_can_compose_via_contextvar():
 def test_actor_runner_caps_can_store_via_contextvar():
     """When the parent sets can_store=False in _ACTOR_CONTEXT, the runner should cap it."""
     ctx = ActorContext(function_manager=None, can_compose=True, can_store=False)
-    # Simulate the capping logic from _ActorRunner.run.
+    # Simulate the capping logic from _ActorRunner.act.
     effective = True and ctx.can_store
     assert effective is False
 
@@ -218,9 +220,9 @@ def test_actor_env_get_tools():
     env = ActorEnvironment()
     tools = env.get_tools()
 
-    assert set(tools.keys()) == {"actor.run"}
-    meta = tools["actor.run"]
-    assert meta.name == "actor.run"
+    assert set(tools.keys()) == {"actor.act"}
+    meta = tools["actor.act"]
+    assert meta.name == "actor.act"
     assert meta.is_impure is True
     assert meta.is_steerable is True
     assert meta.function_id is not None
@@ -234,11 +236,12 @@ def test_actor_env_get_prompt_context():
     ctx = env.get_prompt_context()
 
     assert "Actor Delegation" in ctx
-    assert "actor.run" in ctx
+    assert "actor.act" in ctx
     # Signature should include key parameters.
-    assert "task" in ctx
+    assert "request" in ctx
     assert "prompt_functions" in ctx
     assert "timeout" in ctx
+    assert "guidelines" in ctx
     # Docstring content should be present.
     assert "When to use" in ctx
     assert "When NOT to use" in ctx
@@ -256,14 +259,14 @@ async def test_actor_env_capture_state():
 
 @pytest.mark.timeout(30)
 def test_actor_in_collect_primitives():
-    """collect_primitives() should include primitives.actor.run with correct metadata."""
+    """collect_primitives() should include primitives.actor.act with correct metadata."""
     from unity.function_manager.primitives.registry import collect_primitives
 
     primitives = collect_primitives()
-    assert "primitives.actor.run" in primitives
-    entry = primitives["primitives.actor.run"]
+    assert "primitives.actor.act" in primitives
+    entry = primitives["primitives.actor.act"]
     assert entry["is_primitive"] is True
-    assert entry["primitive_method"] == "run"
+    assert entry["primitive_method"] == "act"
     assert entry["function_id"] is not None
 
 
@@ -276,20 +279,20 @@ def test_actor_accessible_via_primitives_class():
     scope = PrimitiveScope(scoped_managers=frozenset({"actor"}))
     prims = Primitives(primitive_scope=scope)
     runner = prims.actor
-    assert hasattr(runner, "run")
+    assert hasattr(runner, "act")
     assert hasattr(runner, "_PRIMITIVE_METHODS")
-    assert "run" in runner._PRIMITIVE_METHODS
+    assert "act" in runner._PRIMITIVE_METHODS
 
 
 # ---------------------------------------------------------------------------
-# Symbolic test — actor.run returns a steerable handle
+# Symbolic test — actor.act returns a steerable handle
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_actor_run_returns_steerable_handle():
-    """actor.run() should return a SteerableToolHandle, not a plain string."""
+async def test_actor_act_returns_steerable_handle():
+    """actor.act() should return a SteerableToolHandle, not a plain string."""
     actor = CodeActActor(
         environments=[ActorEnvironment()],
         timeout=30,
@@ -298,7 +301,7 @@ async def test_actor_run_returns_steerable_handle():
         env = actor.environments["actor"]
         runner = env.get_instance()
 
-        # Set the ContextVar so actor.run can read parent context.
+        # Set the ContextVar so actor.act can read parent context.
         token = _ACTOR_CONTEXT.set(
             ActorContext(
                 function_manager=actor.function_manager,
@@ -307,8 +310,8 @@ async def test_actor_run_returns_steerable_handle():
             ),
         )
         try:
-            handle = await runner.run(
-                task="What is 1+1?",
+            handle = await runner.act(
+                request="What is 1+1?",
                 timeout=10,
             )
             assert isinstance(handle, SteerableToolHandle)
@@ -333,9 +336,9 @@ async def test_actor_run_returns_steerable_handle():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
-async def test_actor_run_forwards_capability_flags():
+async def test_actor_act_forwards_capability_flags():
     """
-    Calling actor.run() with non-default capability flags should produce a
+    Calling actor.act() with non-default capability flags should produce a
     working steerable handle (not crash). We start and immediately stop to
     verify wiring.
     """
@@ -356,8 +359,8 @@ async def test_actor_run_forwards_capability_flags():
         )
         try:
             # Call with all flags explicitly set to non-defaults where safe.
-            handle = await runner.run(
-                task="What is 1+1?",
+            handle = await runner.act(
+                request="What is 1+1?",
                 timeout=10,
                 can_compose=True,
                 can_store=True,
@@ -388,7 +391,7 @@ async def test_actor_run_forwards_capability_flags():
 async def test_actor_completes_simple_task():
     """
     The outer agent should be able to delegate a simple, self-contained task
-    to an actor via actor.run() and receive the result.
+    to an actor via actor.act() and receive the result.
     """
     actor = CodeActActor(
         environments=[ActorEnvironment()],
@@ -396,7 +399,7 @@ async def test_actor_completes_simple_task():
     )
     try:
         handle = await actor.act(
-            "Use actor.run() to delegate the following task: "
+            "Use actor.act() to delegate the following request: "
             "'Calculate the sum of all integers from 1 to 100 using Python and return the result.' "
             "Report the actor's answer.",
             persist=False,
@@ -434,7 +437,7 @@ async def test_actor_receives_parent_chat_context():
                     "role": "user",
                     "content": (
                         "Remember this secret code: ZEBRA-42. "
-                        "Now use actor.run() to delegate the following task: "
+                        "Now use actor.act() to delegate the following request: "
                         "'The parent conversation contains a secret code. "
                         "Find it from the conversation context and report it back.' "
                         "Report whatever the actor returns."

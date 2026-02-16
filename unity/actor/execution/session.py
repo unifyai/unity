@@ -66,7 +66,7 @@ _PARENT_CHAT_CONTEXT: contextvars.ContextVar[list | None] = contextvars.ContextV
 
 @dataclasses.dataclass(frozen=True)
 class ActorContext:
-    """Ambient context for actor.run() calls, set by the enclosing CodeActActor."""
+    """Ambient context for actor.act() calls, set by the enclosing CodeActActor."""
 
     function_manager: Any  # FunctionManager | None
     can_compose: bool = True
