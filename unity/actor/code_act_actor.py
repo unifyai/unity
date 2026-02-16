@@ -632,12 +632,19 @@ class _StorageCheckHandle(SteerableToolHandle):
     * **task** -- the inner tool loop is running.  All steering methods
       forward to the inner handle.  Notifications from the inner handle
       are relayed to consumers.
-    * **storage** -- the task has completed.  A notification carrying the
-      original result has been emitted.  A second loop reviews the
-      trajectory for reusable skills.  Steering operates on the storage
-      loop.
+    * **storage** -- the task has completed.  ``result()`` has already
+      resolved with the original task result.  A second loop reviews the
+      trajectory for reusable skills.  The handle remains live: steering
+      methods (ask, interject, stop, pause, resume) operate on the
+      storage loop, and ``done()`` returns ``False``.
     * **done** -- both phases have completed (or were stopped/skipped).
-      ``result()`` resolves with the original task result.
+      ``done()`` returns ``True``.
+
+    ``result()`` resolves at the end of Phase 1 — callers get the task
+    result without waiting for storage.  ``done()`` reflects full
+    lifecycle completion (including storage).  This means nested actor
+    loops propagate results immediately while storage runs concurrently
+    in the background.
     """
 
     def __init__(
@@ -649,6 +656,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         self._inner = inner
         self._actor = actor
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
+        self._task_done_event = asyncio.Event()
         self._completion_event = asyncio.Event()
         self._original_result: Optional[str] = None
         self._storage_handle: Optional["AsyncToolLoopHandle"] = None
@@ -707,6 +715,7 @@ class _StorageCheckHandle(SteerableToolHandle):
 
             self._original_result = await self._inner.result()
             await self._cancel_relay()
+            self._task_done_event.set()
 
             if self._stopped:
                 return
@@ -732,24 +741,8 @@ class _StorageCheckHandle(SteerableToolHandle):
             except Exception:
                 pass
 
-            # ── Transition: notify consumers ──────────────────────────
-            self._phase = "storage"
-            await self._notification_q.put(
-                {
-                    "type": "task_completed",
-                    "result": self._original_result,
-                    "message": (
-                        f"Task completed with result:\n\n"
-                        f"{self._original_result}\n\n"
-                        f"The agent is now reviewing its execution "
-                        f"trajectory to store reusable skills. This "
-                        f"handle will remain active until skill "
-                        f"consolidation finishes."
-                    ),
-                },
-            )
-
             # ── Phase 2: storage check ────────────────────────────────
+            self._phase = "storage"
             storage_handle = _start_storage_check_loop(
                 trajectory=trajectory,
                 ask_tools=ask_tools,
@@ -761,16 +754,11 @@ class _StorageCheckHandle(SteerableToolHandle):
                 return
 
             self._storage_handle = storage_handle
-            self._active_relay = asyncio.create_task(
-                self._relay_notifications_from(self._storage_handle),
-            )
 
             try:
                 await self._storage_handle.result()
             except Exception:
                 pass
-
-            await self._cancel_relay()
 
         except asyncio.CancelledError:
             pass
@@ -778,6 +766,7 @@ class _StorageCheckHandle(SteerableToolHandle):
             pass
         finally:
             self._phase = "done"
+            self._task_done_event.set()
             self._completion_event.set()
 
     # ── Steering: phase-aware forwarding ──────────────────────────────
@@ -902,7 +891,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         return self._completion_event.is_set()
 
     async def result(self) -> str:
-        await self._completion_event.wait()
+        await self._task_done_event.wait()
         return self._original_result or ""
 
     # ── Events ────────────────────────────────────────────────────────

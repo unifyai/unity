@@ -317,20 +317,30 @@ class _ActorRunner:
             _clarification_down_q=_clarification_down_q,
         )
 
-        # Attach inner actor cleanup to the handle's lifecycle so
-        # inner_actor.close() runs after the actor completes.
+        # Attach inner actor cleanup to the handle's lifecycle.
         # The handle may be wrapped by a logging proxy (_LoggedHandle)
-        # with __slots__, so patch the unwrapped inner handle directly.
+        # with __slots__, so inspect the unwrapped inner handle.
         _unwrapped = getattr(handle, "__wrapped__", handle)
-        _original_result = _unwrapped.result
 
-        async def _result_with_cleanup():
-            try:
-                return await _original_result()
-            finally:
-                await inner_actor.close()
+        if hasattr(_unwrapped, "_lifecycle_task"):
+            # can_store=True: handle is a _StorageCheckHandle.  result()
+            # resolves after the task phase; storage runs in the background.
+            # Tie cleanup to the full lifecycle so close() waits for storage.
+            def _cleanup_when_done(_task: asyncio.Task) -> None:
+                asyncio.ensure_future(inner_actor.close())
 
-        _unwrapped.result = _result_with_cleanup  # type: ignore[assignment]
+            _unwrapped._lifecycle_task.add_done_callback(_cleanup_when_done)
+        else:
+            # can_store=False: no storage phase — cleanup when result returns.
+            _original_result = _unwrapped.result
+
+            async def _result_with_cleanup():
+                try:
+                    return await _original_result()
+                finally:
+                    await inner_actor.close()
+
+            _unwrapped.result = _result_with_cleanup  # type: ignore[assignment]
 
         return handle
 
