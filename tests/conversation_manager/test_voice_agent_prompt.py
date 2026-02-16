@@ -135,8 +135,8 @@ def base_prompt_kwargs() -> dict:
         "boss_first_name": "Sarah",
         "boss_surname": "Chen",
         "boss_phone_number": "+15551234567",
-        "boss_email_address": "sarah@techstartup.com",
-        "boss_bio": "CEO of TechStartup Inc., focused on AI products.",
+        "boss_email_address": "sarah@meridianlabs.com",
+        "boss_bio": "CEO of Meridian Labs, focused on AI products.",
     }
 
 
@@ -173,7 +173,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
             {
                 "first_name": "Sarah",
                 "surname": "Chen",
-                "bio": "CEO of TechStartup Inc., focused on AI products.",
+                "bio": "CEO of Meridian Labs, focused on AI products.",
             },
             {
                 "first_name": "Marcus",
@@ -183,7 +183,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
             {
                 "first_name": "Priya",
                 "surname": "Sharma",
-                "bio": "Product Manager at TechStartup. Coordinates between engineering and clients.",
+                "bio": "Product Manager at Meridian Labs. Coordinates between engineering and clients.",
             },
         ],
     ).flatten()
@@ -278,7 +278,7 @@ class TestContactBio:
         assert_no_deferral(response, "Asked about boss's company from bio")
         assert_contains(
             response,
-            "TechStartup",
+            "Meridian",
             "Should mention company name from boss bio",
         )
 
