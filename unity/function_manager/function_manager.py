@@ -3252,23 +3252,51 @@ class FunctionManager(BaseFunctionManager):
     ) -> None:
         """Inject transitive dependencies into ``namespace`` (breadth-first).
 
-        For in-process functions, the raw function (from exec) remains in the
-        namespace for inter-function calls, decorators, and introspection.
-        For venv functions, the proxy is placed in namespace (no raw function exists).
+        Handles both bare names (other compositional functions) and dotted
+        names (environment-provided namespaces like ``actor.act`` or
+        ``primitives.contacts.ask``).
+
+        For bare names the function implementation is exec'd into the
+        namespace.  For dotted names the root namespace object (e.g. the
+        ``actor`` or ``primitives`` instance) is constructed on-demand via
+        the primitive registry when it is not already present.
         """
         from collections import deque
+
+        from unity.function_manager.primitives.registry import construct_sandbox_root
 
         deps = func_data.get("depends_on") or []
         if not isinstance(deps, list):
             return
 
-        q = deque([d for d in deps if isinstance(d, str) and d and "." not in d])
+        q = deque([d for d in deps if isinstance(d, str) and d])
         while q:
             dep_name = q.popleft()
             if dep_name in visited:
                 continue
             visited.add(dep_name)
 
+            # ── Dotted dependency (e.g. "actor.act", "primitives.contacts.ask") ──
+            if "." in dep_name:
+                root = dep_name.split(".")[0]
+                if root not in namespace:
+                    root_obj = construct_sandbox_root(
+                        root,
+                        primitive_scope=self._primitive_scope,
+                    )
+                    if root_obj is not None:
+                        namespace[root] = root_obj
+                    else:
+                        logger.warning(
+                            "Dotted dependency %r for %r: root %r could not "
+                            "be constructed and is not in namespace, skipping",
+                            dep_name,
+                            func_data.get("name"),
+                            root,
+                        )
+                continue
+
+            # ── Bare dependency (compositional function) ─────────────────────
             dep_data = self._get_function_data_by_name(name=dep_name)
             if not dep_data:
                 logger.warning(
