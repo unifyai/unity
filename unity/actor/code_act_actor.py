@@ -62,6 +62,7 @@ from unity.events.manager_event_logging import (
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
+    from unity.guidance_manager.guidance_manager import GuidanceManager
     from unillm.types import PromptCacheParam
 
 
@@ -317,16 +318,25 @@ def _start_storage_check_loop(
     actor: "CodeActActor",
     original_result: str,
 ) -> "AsyncToolLoopHandle | None":
-    """Start a loop that reviews a completed trajectory for reusable functions.
+    """Start a loop that reviews a completed trajectory for reusable knowledge.
 
-    Returns the loop handle so the caller can steer and await it, or
-    ``None`` when there is no ``FunctionManager`` configured.
+    The loop maintains two complementary stores:
+
+    * **FunctionManager** — stores the *what*: concrete, reusable function
+      implementations (the building blocks).
+    * **GuidanceManager** — stores the *how*: high-level guidance on
+      composing multiple functions together to accomplish broader tasks
+      (the recipes / playbooks).
+
+    Both stores are required. Returns ``None`` when either manager is
+    missing.
     """
     fm = actor.function_manager
-    if fm is None:
+    gm = actor.guidance_manager
+    if fm is None or gm is None:
         return None
 
-    # ── Build sandbox-free FunctionManager tools ──────────────────────
+    # ── FunctionManager tools ─────────────────────────────────────────
 
     async def FunctionManager_search_functions(
         query: str,
@@ -388,12 +398,126 @@ def _start_storage_check_loop(
         """
         return fm.delete_function(function_id=function_ids)
 
+    # ── GuidanceManager tools ─────────────────────────────────────────
+
+    async def GuidanceManager_search_guidance(
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> Any:
+        """Search existing guidance entries by semantic similarity.
+
+        Parameters
+        ----------
+        references : dict[str, str] | None
+            Mapping of source expressions to reference text for
+            semantic search (e.g. ``{"title": "data pipeline"}``).
+        k : int
+            Maximum number of results to return.
+        """
+        return gm._search(references=references, k=k)
+
+    async def GuidanceManager_filter_guidance(
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> Any:
+        """Filter existing guidance entries using a boolean expression.
+
+        Parameters
+        ----------
+        filter : str | None
+            Python boolean expression evaluated per row, with column
+            names in scope (e.g. ``"'pipeline' in title"``).
+            When None, returns all guidance entries.
+        offset : int
+            Zero-based index of the first result to include.
+        limit : int
+            Maximum number of records to return.
+        """
+        return gm._filter(filter=filter, offset=offset, limit=limit)
+
+    async def GuidanceManager_add_guidance(
+        *,
+        title: str,
+        content: str,
+        function_ids: Optional[list[int]] = None,
+    ) -> Any:
+        """Create a new guidance entry.
+
+        Use this to persist high-level guidance that explains *how* to
+        compose multiple functions together to accomplish a broader task.
+        A guidance entry is a recipe or playbook, not a function
+        implementation.
+
+        Parameters
+        ----------
+        title : str
+            Short descriptive title for the guidance entry.
+        content : str
+            The guidance text explaining the compositional workflow,
+            the order of steps, which functions to call, decision
+            points, and any caveats.
+        function_ids : list[int] | None
+            Optional ids of related functions stored in the
+            FunctionManager. Cross-referencing functions makes it
+            easy to navigate from guidance to the concrete
+            implementations it describes.
+        """
+        return gm._add_guidance(
+            title=title,
+            content=content,
+            function_ids=function_ids or [],
+        )
+
+    async def GuidanceManager_update_guidance(
+        *,
+        guidance_id: int,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        function_ids: Optional[list[int]] = None,
+    ) -> Any:
+        """Update fields of an existing guidance entry.
+
+        Parameters
+        ----------
+        guidance_id : int
+            Identifier of the guidance row to update.
+        title : str | None
+            New title (omit to keep existing value).
+        content : str | None
+            New content (omit to keep existing value).
+        function_ids : list[int] | None
+            Replacement list of related function ids.
+        """
+        return gm._update_guidance(
+            guidance_id=guidance_id,
+            title=title,
+            content=content,
+            function_ids=function_ids,
+        )
+
+    async def GuidanceManager_delete_guidance(
+        *,
+        guidance_id: int,
+    ) -> Any:
+        """Delete a guidance entry by id.
+
+        Use this to remove obsolete or superseded guidance.
+        Obtain ``guidance_id`` from search or filter results.
+        """
+        return gm._delete_guidance(guidance_id=guidance_id)
+
     tools: Dict[str, Callable] = {
         "FunctionManager_search_functions": FunctionManager_search_functions,
         "FunctionManager_filter_functions": FunctionManager_filter_functions,
         "FunctionManager_list_functions": FunctionManager_list_functions,
         "FunctionManager_add_functions": FunctionManager_add_functions,
         "FunctionManager_delete_functions": FunctionManager_delete_functions,
+        "GuidanceManager_search_guidance": GuidanceManager_search_guidance,
+        "GuidanceManager_filter_guidance": GuidanceManager_filter_guidance,
+        "GuidanceManager_add_guidance": GuidanceManager_add_guidance,
+        "GuidanceManager_update_guidance": GuidanceManager_update_guidance,
+        "GuidanceManager_delete_guidance": GuidanceManager_delete_guidance,
     }
 
     # ── Wire ask_about_completed_tool from snapshot ───────────────────
@@ -434,37 +558,79 @@ def _start_storage_check_loop(
     trajectory_json = json.dumps(trajectory, indent=2, default=str)
 
     system_prompt = (
-        "You are a function librarian. A CodeActActor has just completed a task. "
-        "Your job is to review the execution trajectory and maintain the function "
-        "library: store valuable new functions, improve existing ones, merge "
-        "redundant entries, and remove obsolete ones.\n\n"
+        "You are a skill librarian. A CodeActActor has just completed a task. "
+        "Your job is to review the execution trajectory and decide whether "
+        "anything is worth persisting for future reuse. Often nothing is — "
+        "that is perfectly fine.\n\n"
         "## Completed Trajectory\n\n"
         f"{trajectory_json}\n\n"
         "## Final Result\n\n"
         f"{original_result}\n\n"
-        "## Instructions\n\n"
-        "1. Review the trajectory for any Python functions that were composed "
-        "and executed during the task.\n"
-        "2. Search the existing function store "
-        "(via `FunctionManager_search_functions`) to understand what already "
-        "exists.\n"
-        "3. Decide what actions (if any) would improve the library. You can:\n"
-        "   - **Add** a genuinely new, reusable function "
+        "## Two Stores\n\n"
+        "You have access to two complementary stores:\n\n"
+        "### Function Store — the *what*\n\n"
+        "The FunctionManager stores concrete, self-contained function "
+        "implementations — the reusable building blocks. Each entry is a "
+        "single callable with a clear name, docstring, and implementation.\n\n"
+        "Actions:\n"
+        "- **Add** a genuinely new, reusable function "
         "(`FunctionManager_add_functions`).\n"
-        "   - **Update** an existing function with a better implementation "
+        "- **Update** an existing function with a better implementation "
         "(`FunctionManager_add_functions` with `overwrite=True`).\n"
-        "   - **Merge** two or more overlapping functions into a single, "
-        "more general one: add the merged version, then delete the old "
-        "entries (`FunctionManager_delete_functions`).\n"
-        "   - **Delete** functions that are now redundant or superseded "
+        "- **Merge** overlapping functions into one general-purpose function: "
+        "add the merged version, then delete the old entries "
         "(`FunctionManager_delete_functions`).\n"
-        "4. Prefer a clean, non-redundant library over a large one. Merging "
-        "two similar functions into one general-purpose function is better "
-        "than keeping both.\n"
-        "5. Do NOT store trivial one-liners, test scaffolding, or functions "
-        "that are too specific to this particular task to be reusable.\n"
-        "6. When done (or if there is nothing worth changing), respond with a "
-        "brief summary of what you did (or that nothing was needed)."
+        "- **Delete** functions that are redundant or superseded "
+        "(`FunctionManager_delete_functions`).\n\n"
+        "Do NOT store trivial one-liners, test scaffolding, or functions "
+        "that are too task-specific to be reusable.\n\n"
+        "### Guidance Store — the *how*\n\n"
+        "The GuidanceManager stores high-level guidance entries that "
+        "explain *how* to compose multiple functions (and primitives) "
+        "together to accomplish broader tasks. Think of guidance entries "
+        "as recipes or playbooks — they describe the orchestration "
+        "strategy, the order of steps, decision points, and caveats, "
+        "rather than containing executable code.\n\n"
+        "A guidance entry is analogous to a prompt that references "
+        "multiple tools: it explains *when* and *why* to use certain "
+        "functions in combination, while the functions themselves "
+        "(in the FunctionManager) contain the *what*.\n\n"
+        "Guidance is only warranted when a trajectory reveals a non-obvious "
+        "multi-step workflow that composes several functions in a way that "
+        "would be hard to rediscover. A single function call, a linear "
+        "sequence of obvious steps, or a workflow fully explained by the "
+        "individual function docstrings does NOT need guidance.\n\n"
+        "Actions:\n"
+        "- **Add** guidance for a genuinely non-trivial compositional "
+        "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
+        "to cross-reference the concrete functions it describes.\n"
+        "- **Update** existing guidance that is incomplete or "
+        "superseded (`GuidanceManager_update_guidance`).\n"
+        "- **Delete** guidance that is obsolete or redundant "
+        "(`GuidanceManager_delete_guidance`).\n\n"
+        "Do NOT duplicate information that already lives in a "
+        "function's docstring. Do NOT create guidance for simple or "
+        "self-explanatory workflows.\n\n"
+        "### Relationship between the two stores\n\n"
+        "| Aspect | FunctionManager | GuidanceManager |\n"
+        "|--------|----------------|----------------|\n"
+        "| Granularity | Single callable | Multi-step workflow |\n"
+        "| Content | Executable implementation | Natural-language recipe |\n"
+        "| Analogy | A tool's docstring | A prompt that references tools |\n\n"
+        "When a trajectory reveals both a useful function AND a non-trivial "
+        "workflow that uses it, store the function first, then create a "
+        "guidance entry referencing it via `function_ids`.\n\n"
+        "## Instructions\n\n"
+        "1. Review the trajectory for reusable patterns.\n"
+        "2. Search the existing stores to understand what already exists "
+        "(use the search/filter tools for each store).\n"
+        "3. Decide what actions (if any) would improve the library. "
+        "Prefer a clean, non-redundant library over a large one. "
+        "Most trajectories will only warrant function changes, if "
+        "anything at all. Add guidance only when a multi-step "
+        "composition is genuinely non-obvious.\n"
+        "4. When done (or if there is nothing worth changing), respond "
+        "with a brief summary of what you did (or that nothing was needed)."
     )
 
     client = new_llm_client(
@@ -476,7 +642,10 @@ def _start_storage_check_loop(
 
     return start_async_tool_loop(
         client=client,
-        message="Review the trajectory and store any reusable functions.",
+        message=(
+            "Review the trajectory and store any reusable functions "
+            "and compositional guidance."
+        ),
         tools=tools,
         loop_id="StorageCheck(CodeActActor.act)",
         max_steps=30,
@@ -893,6 +1062,7 @@ class CodeActActor(BaseCodeActActor):
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
         storage_check_on_return: bool = False,
@@ -913,6 +1083,9 @@ class CodeActActor(BaseCodeActActor):
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
+            guidance_manager: Manages high-level guidance entries that describe *how* to
+                compose functions together for tasks. Exposes read/write tools in the
+                post-completion storage check loop alongside FunctionManager tools.
             can_compose: Whether the LLM can write and execute arbitrary code via
                 ``execute_code``. Set to False for function-execution-only mode.
             can_store: Whether the LLM can persist new functions via
@@ -941,6 +1114,7 @@ class CodeActActor(BaseCodeActActor):
         super().__init__(
             environments=environments,
             function_manager=function_manager,
+            guidance_manager=guidance_manager,
         )
 
         # Collect function_ids from all environments, split by context, and set
