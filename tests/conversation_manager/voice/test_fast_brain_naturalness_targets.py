@@ -74,3 +74,36 @@ class TestNaturalnessTargets:
             "Expected a specific in-progress update tied to the active work item.\n"
             f"Response: {response}"
         )
+
+    @pytest.mark.xfail(
+        reason=(
+            "Naturalness target: semantically redundant guidance should avoid "
+            "repeating the same deferral line."
+        ),
+        strict=False,
+    )
+    @pytest.mark.asyncio
+    async def test_redundant_checking_guidance_avoids_same_deferral_phrase(self):
+        prompt = _build_target_prompt()
+        conversation = [
+            {
+                "role": "user",
+                "content": "Do I have a contact named Bob?",
+            },
+            {"role": "assistant", "content": "Let me check on that."},
+            {
+                "role": "assistant",
+                "content": (
+                    "[notification] Sure, let me check my records for a contact "
+                    "named Bob. One moment."
+                ),
+            },
+        ]
+
+        response = await get_fast_brain_response(prompt, conversation, model=MODEL_TTS)
+        response_lower = response.lower()
+
+        assert "let me check on that" not in response_lower, (
+            "Expected response to avoid repeating the exact prior deferral phrase.\n"
+            f"Response: {response}"
+        )
