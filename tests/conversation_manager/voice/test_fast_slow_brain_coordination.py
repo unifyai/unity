@@ -706,6 +706,135 @@ class TestGuidanceRelevanceGuardrails:
             filter_calls["count"] == 0
         ), "Relevance filter should not run when no new user turn has arrived."
 
+    @pytest.mark.xfail(
+        reason=(
+            "Guidance filter does not yet detect redundancy against "
+            "recently-published guidance from a previous slow-brain run."
+        ),
+        strict=False,
+    )
+    async def test_redundant_guidance_blocked_when_same_info_already_sent(
+        self,
+        initialized_cm,
+    ):
+        """
+        Duplicate guidance from overlapping slow-brain runs should be blocked.
+
+        When the debouncer queue-of-2 allows two slow-brain runs to complete
+        in sequence (e.g. ActorResult triggers Run 1, a user check-in triggers
+        Run 2), both runs see the same completed action and independently
+        produce guidance about it. Without redundancy detection the user hears
+        the same information spoken twice on the call.
+
+        _check_guidance_relevance currently only detects *topic changes*
+        (staleness). It has no mechanism to compare outgoing guidance against
+        guidance that was already published. When Run 2 has no new user
+        messages since its slow_brain_start_time, the early return bypasses
+        the LLM filter entirely and the duplicate passes through unchecked.
+        """
+        cm = initialized_cm.cm
+
+        await initialized_cm.step(PhoneCallStarted(contact=BOSS))
+        assert cm.mode == Mode.CALL
+
+        contact_id = BOSS["contact_id"]
+        voice_thread = cm.contact_index.get_messages_for_contact(
+            contact_id,
+            Medium.PHONE_CALL,
+        )
+        latest_ts = max(
+            msg.timestamp
+            for msg in voice_thread
+            if getattr(msg, "timestamp", None) is not None
+        )
+
+        # Timeline setup:
+        #   t+1s  user asks about salary
+        #   t+2s  assistant defers
+        #   t+3s  Run 1's guidance published (salary data)
+        #   t+4s  assistant speaks the salary info
+        #   t+5s  Run 2's slow_brain_start_time (after Run 1 finishes)
+        user_asks = latest_ts + timedelta(seconds=1)
+        assistant_defers = latest_ts + timedelta(seconds=2)
+        first_guidance_ts = latest_ts + timedelta(seconds=3)
+        assistant_speaks = latest_ts + timedelta(seconds=4)
+        run2_start_time = latest_ts + timedelta(seconds=5)
+
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name=BOSS["first_name"],
+            thread_name=Medium.PHONE_CALL,
+            message_content=(
+                "Do you have, like, know what the salary range is "
+                "for any of these roles?"
+            ),
+            timestamp=user_asks,
+            role="user",
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name="You",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Let me check on that.",
+            timestamp=assistant_defers,
+            role="assistant",
+        )
+
+        # Run 1's guidance — already published and pushed to thread
+        first_guidance_content = (
+            "I found the salary info. Here's the breakdown: OpenAI backend "
+            "engineer total compensation ranges from about $248K per year at "
+            "entry level up to over $1.2 million at the principal level. "
+            "Mid-senior is around $679K total — $279K base plus $400K in equity. "
+            "Senior/staff level is about $805K total. Base salaries range from "
+            "roughly $168K to $440K. Median total comp across all levels is "
+            "about $556K per year."
+        )
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name="You",
+            thread_name=Medium.PHONE_CALL,
+            message_content=first_guidance_content,
+            timestamp=first_guidance_ts,
+            role="guidance",
+        )
+
+        # Fast brain spoke the salary info
+        cm.contact_index.push_message(
+            contact_id=contact_id,
+            sender_name="You",
+            thread_name=Medium.PHONE_CALL,
+            message_content=(
+                "Yes — ranges vary a lot. Total comp runs roughly $248K at "
+                "entry to over $1.2M at principal; mid-senior is about $679K "
+                "total, base salaries roughly $168K–$440K."
+            ),
+            timestamp=assistant_speaks,
+            role="assistant",
+        )
+
+        # Run 2 produces semantically equivalent guidance (different wording,
+        # same salary facts) — this is the duplicate that should be blocked
+        second_guidance_content = (
+            "Got the salary info now! OpenAI backend engineer total comp "
+            "ranges from about $248K at entry level to over $1.2 million at "
+            "principal level. Mid-senior is around $679K total — $279K base "
+            "plus $400K in equity. Senior/staff level is about $805K total. "
+            "Base salaries range from roughly $168K to $440K. Median total "
+            "comp across all levels is about $556K per year."
+        )
+
+        should_send = await cm._check_guidance_relevance(
+            guidance_content=second_guidance_content,
+            slow_brain_start_time=run2_start_time,
+        )
+
+        assert should_send is False, (
+            "Redundant guidance was not blocked.\n"
+            f"First guidance (already sent): {first_guidance_content[:80]}...\n"
+            f"Second guidance (should block): {second_guidance_content[:80]}...\n"
+        )
+
 
 @pytest.mark.asyncio
 class TestStaleGuidanceFiltering:

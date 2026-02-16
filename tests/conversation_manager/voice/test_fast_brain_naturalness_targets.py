@@ -100,3 +100,4 @@ class TestNaturalnessTargets:
             "Expected response to avoid repeating the exact prior deferral phrase.\n"
             f"Response: {response}"
         )
+
