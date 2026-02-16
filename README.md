@@ -213,17 +213,26 @@ brew install direnv
 # Add hook to ~/.zshrc
 echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
 
-# Silence verbose output (direnv 2.36+)
+# Silence verbose output and whitelist unity directories (direnv 2.36+)
 mkdir -p ~/.config/direnv
-echo '[global]
-hide_env_diff = true' > ~/.config/direnv/direnv.toml
+cat > ~/.config/direnv/direnv.toml << 'EOF'
+[global]
+hide_env_diff = true
+
+[whitelist]
+prefix = [
+  "/PATH/TO/unity"
+]
+EOF
 
 direnv allow  # run once in the repo
 ```
 
+Replace `/PATH/TO/unity` with your actual repo path (e.g. `/Users/you/unity`). The prefix whitelist auto-allows `.envrc` in the main repo **and** any adjacent clones (`unity_*`) created by `clone_adjacent.sh`, so you never need to run `direnv allow` per clone.
+
 Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs.
 
-The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
+The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees and clones.
 
 ### Parallel Development with Clones
 
