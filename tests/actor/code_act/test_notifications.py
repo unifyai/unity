@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock
 
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.execution import PythonExecutionSession
@@ -21,9 +20,6 @@ async def test_execute_code_notifications_with_notification_queue():
     notification_q: asyncio.Queue[dict] = asyncio.Queue()
 
     actor = CodeActActor()
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     sandbox = PythonExecutionSession(
         computer_primitives=actor._computer_primitives,
