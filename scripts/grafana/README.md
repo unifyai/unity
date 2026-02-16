@@ -1,5 +1,7 @@
 # Grafana on GKE — Staging Deployment
 
+**THIS IS A ONE-TIME DEPLOYMENT. DO NOT RE-DEPLOY.**
+
 Deploys a Grafana instance to the `staging` namespace on the `unity` GKE cluster
 (project `responsive-city-458413-a2`). The instance is pre-configured with a
 Google Cloud Monitoring data source for viewing built-in metrics from Cloud Run,
