@@ -301,12 +301,14 @@ class SimulatedSecretManager(BaseSecretManager):
         description: str = "simulate secret storage and actions (no real database)",
         *,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
         super().__init__()
         self._description = description
         self._simulation_guidance = simulation_guidance
+        self._hold_completion = hold_completion
 
         # Shared, stateful async LLM
         self._llm = new_llm_client(stateful=True)

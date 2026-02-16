@@ -308,6 +308,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         *,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
@@ -315,6 +316,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         self._description = description
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        self._hold_completion = hold_completion
 
         # One shared, memory-retaining LLM (reuse common client for fast init/clear)
         self._llm = new_llm_client(stateful=True)
