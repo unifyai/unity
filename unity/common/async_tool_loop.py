@@ -680,7 +680,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
-        # Auto-pause base tools that are currently running
+        # Immediately toggle pause_event for base (non-steerable) tools.
+        # Steerable handles (h is not None) are intentionally skipped here;
+        # they are paused via the mirror path below, which synthesizes
+        # helper tool_calls in the transcript so the outer LLM has full
+        # visibility that the inner tool was paused. Base tools have no
+        # handle — only a raw pause_event — so the mirror's
+        # _dispatch_steering_to_child would reach them too, but toggling
+        # the event directly here eliminates any latency window between
+        # this call and the next loop iteration that drains the mirror.
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -693,7 +701,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.clear()
 
         self._pause_event.clear()
-        # Mirror as synthetic helper tool_call (no LLM step)
+        # Mirror as synthetic helper tool_call (no LLM step).
+        # The inner loop processes this via _synthesize_mirrored_helper_calls,
+        # which dispatches pause to ALL children (steerable and base alike).
         try:
             await self._queue.put(
                 {
@@ -710,7 +720,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     async def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Auto-resume base tools that were started in paused state while the outer loop was paused
+        # Immediately toggle pause_event for base (non-steerable) tools.
+        # Steerable handles are resumed via the mirror path below (see the
+        # symmetric comment in pause() for the full rationale). Direct
+        # toggling here gives base tools instant resume without waiting
+        # for the next loop iteration to drain the mirror.
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -723,7 +737,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.set()
 
         self._pause_event.set()
-        # Mirror as synthetic helper tool_call (no LLM step)
+        # Mirror as synthetic helper tool_call (no LLM step).
+        # The inner loop processes this via _synthesize_mirrored_helper_calls,
+        # which dispatches resume to ALL children (steerable and base alike).
         try:
             await self._queue.put(
                 {
