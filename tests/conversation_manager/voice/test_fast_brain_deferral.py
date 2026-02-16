@@ -683,7 +683,7 @@ class TestRealTimeDataDeferral:
     async def test_defers_weather_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked about weather."""
         conversation = [
-            {"role": "user", "content": "What's the weather like today?"},
+            {"role": "user", "content": "What's the weather like in Chicago today?"},
         ]
 
         response = await get_fast_brain_response(
