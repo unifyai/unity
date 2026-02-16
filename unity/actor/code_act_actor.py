@@ -24,13 +24,11 @@ from pydantic import BaseModel
 
 from unity.actor.base import BaseCodeActActor
 from unity.actor.execution import (
-    ActorContext,
     ExecutionResult,
     PackageOverlay,
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
-    _ACTOR_CONTEXT,
     _CURRENT_PACKAGE_OVERLAY,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
@@ -1658,13 +1656,6 @@ class CodeActActor(BaseCodeActActor):
                     pass
 
                 _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
-                _ac_token = _ACTOR_CONTEXT.set(
-                    ActorContext(
-                        function_manager=self.function_manager,
-                        can_compose=self.can_compose,
-                        can_store=self.can_store,
-                    ),
-                )
                 try:
                     try:
                         out = await self._session_executor.execute(
@@ -1711,7 +1702,6 @@ class CodeActActor(BaseCodeActActor):
                         }
                 finally:
                     _PARENT_CHAT_CONTEXT.reset(_pcc_token)
-                    _ACTOR_CONTEXT.reset(_ac_token)
 
                 # Enrich with session name.
                 if out.get("session_id") is not None:
@@ -2152,13 +2142,6 @@ class CodeActActor(BaseCodeActActor):
                         pass
 
                     _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
-                    _ac_token = _ACTOR_CONTEXT.set(
-                        ActorContext(
-                            function_manager=self.function_manager,
-                            can_compose=self.can_compose,
-                            can_store=self.can_store,
-                        ),
-                    )
                     try:
                         try:
                             out = await self._session_executor.execute(
@@ -2205,7 +2188,6 @@ class CodeActActor(BaseCodeActActor):
                             }
                     finally:
                         _PARENT_CHAT_CONTEXT.reset(_pcc_token)
-                        _ACTOR_CONTEXT.reset(_ac_token)
 
                     # Enrich with session name.
                     if out.get("session_id") is not None:
