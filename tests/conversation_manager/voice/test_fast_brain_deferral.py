@@ -107,11 +107,12 @@ def has_in_progress_language(response: str) -> bool:
     response_lower = response.lower()
     progress_patterns = [
         r"still working",
-        r"working on (it|that)",
+        r"working on (it|that|them)",
         r"in progress",
         r"not done",
         r"on it now",
-        r"still doing (it|that)",
+        r"still doing (it|that|them)",
+        r"still (creating|setting|checking|starting|queuing|submitting)",
     ]
     return any(re.search(pattern, response_lower) for pattern in progress_patterns)
 
