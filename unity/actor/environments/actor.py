@@ -157,7 +157,6 @@ class _ActorRunner:
         can_compose: bool = True,
         can_store: bool = False,
         can_spawn_sub_agents: bool = False,
-        storage_check_on_return: bool = False,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> "SteerableToolHandle":
@@ -256,15 +255,14 @@ class _ActorRunner:
             only discovering and executing stored functions.
             Capped by the parent agent's own ``can_compose`` setting.
         can_store : bool, default False
-            Whether the actor can persist new functions to the
-            FunctionManager via ``FunctionManager_add_functions``.
+            Whether a post-completion review loop should run to identify
+            and store reusable functions and guidance from the actor's
+            trajectory. Storage is always deferred to a dedicated second
+            loop after the main task completes.
             Capped by the parent agent's own ``can_store`` setting.
         can_spawn_sub_agents : bool, default False
             Whether the actor can itself spawn deeper actors.
             Use with caution to avoid excessive nesting.
-        storage_check_on_return : bool, default False
-            Whether a post-completion review loop should run to identify
-            and store reusable functions from the actor's trajectory.
 
         Returns
         -------
@@ -303,7 +301,6 @@ class _ActorRunner:
             function_manager=inner_fm,
             can_compose=bool(effective_can_compose),
             can_store=bool(effective_can_store),
-            storage_check_on_return=bool(storage_check_on_return),
             timeout=effective_timeout,
         )
 

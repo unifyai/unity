@@ -1040,7 +1040,6 @@ class CodeActActor(BaseCodeActActor):
         guidance_manager: Optional["GuidanceManager"] = None,
         can_compose: bool = True,
         can_store: bool = True,
-        storage_check_on_return: bool = False,
         timeout: float = 1000,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
@@ -1063,10 +1062,11 @@ class CodeActActor(BaseCodeActActor):
                 post-completion storage check loop alongside FunctionManager tools.
             can_compose: Whether the LLM can write and execute arbitrary code via
                 ``execute_code``. Set to False for function-execution-only mode.
-            can_store: Whether the LLM can persist new functions via
-                ``FunctionManager_add_functions``.
-            storage_check_on_return: Whether a post-completion review loop should run
-                to identify and store reusable functions from the trajectory.
+            can_store: Whether a post-completion review loop should run to
+                identify and store reusable functions and guidance from the
+                trajectory. Storage is always deferred to a dedicated second
+                loop after the main task completes — the main loop never
+                exposes storage tools.
             timeout: Maximum seconds for the actor to complete.
             model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
                 If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
@@ -1144,7 +1144,6 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
-        self.storage_check_on_return: bool = bool(storage_check_on_return)
         self.tool_policy: Union[ToolPolicyFn, None, object] = tool_policy
         self._model = model
         self._preprocess_msgs = preprocess_msgs
@@ -1950,7 +1949,8 @@ class CodeActActor(BaseCodeActActor):
 
                 Notes
                 -----
-                - This tool is gated by CodeActActor's `can_store` flag (and can be disabled per-call).
+                - This tool is only available in the post-completion storage review loop,
+                  never in the main execution loop.
                 - Prefer using existing functions (search first) before adding new ones.
                 """
                 fm = self.function_manager
@@ -2837,7 +2837,6 @@ class CodeActActor(BaseCodeActActor):
         persist: Optional[bool] = None,
         can_compose: Optional[bool] = None,
         can_store: Optional[bool] = None,
-        storage_check_on_return: Optional[bool] = None,
         **kwargs,
     ) -> SteerableToolHandle:
         if not self._main_event_loop:
@@ -2847,16 +2846,6 @@ class CodeActActor(BaseCodeActActor):
             self.can_compose if can_compose is None else bool(can_compose)
         )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
-        effective_storage_check = (
-            self.storage_check_on_return
-            if storage_check_on_return is None
-            else bool(storage_check_on_return)
-        )
-        # storage_check_on_return only applies when both can_compose and can_store are True.
-        if effective_storage_check and (
-            not effective_can_compose or not effective_can_store
-        ):
-            effective_storage_check = False
 
         # can_compose=False requires a FunctionManager so the LLM has execute_function
         # and the discovery tools available. Without it there are no usable tools.
@@ -3075,12 +3064,9 @@ class CodeActActor(BaseCodeActActor):
             if not effective_can_compose:
                 for name in _compose_only_tools:
                     out.pop(name, None)
-                out.pop("FunctionManager_add_functions", None)
-            if not effective_can_store or effective_storage_check:
-                # Mask storage tools when storage is disabled outright, or
-                # when storage_check_on_return defers storage to the
-                # dedicated post-completion pass.
-                out.pop("FunctionManager_add_functions", None)
+            # Storage is always deferred to the post-completion loop;
+            # the main loop never exposes the add_functions tool.
+            out.pop("FunctionManager_add_functions", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))
@@ -3144,7 +3130,7 @@ class CodeActActor(BaseCodeActActor):
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
-            storage_check_on_return=effective_storage_check,
+            can_store=effective_can_store,
             guidelines=guidelines,
         )
 
@@ -3252,7 +3238,7 @@ class CodeActActor(BaseCodeActActor):
         new_ctx.handle = handle
 
         # Wrap in StorageCheckHandle for post-completion function review.
-        if effective_storage_check:
+        if effective_can_store:
             handle = _StorageCheckHandle(inner=handle, actor=self)
 
         return handle
