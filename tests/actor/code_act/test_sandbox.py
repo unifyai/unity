@@ -1,7 +1,9 @@
 import pytest
 from pydantic import TypeAdapter
+from unittest.mock import AsyncMock, MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
+from unity.actor.environments.computer import ComputerEnvironment
 from unity.actor.execution import (
     PythonExecutionSession,
     ExecutionResult,
@@ -420,7 +422,12 @@ async def test_get_screenshot_display_produces_image_in_stdout():
     ExecutionResult should contain an image block in stdout — the standard
     rich-output pipeline — rather than relying on post-hoc injection.
     """
-    actor = CodeActActor(timeout=30)
+    from PIL import Image
+
+    mock_cp = MagicMock()
+    mock_cp.get_screenshot = AsyncMock(return_value=Image.new("RGB", (2, 2), "red"))
+    computer_env = ComputerEnvironment(mock_cp)
+    actor = CodeActActor(environments=[computer_env], timeout=30)
     try:
         tools = actor._build_tools()
         execute_code = tools["execute_code"]
