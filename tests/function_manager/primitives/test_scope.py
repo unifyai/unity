@@ -146,6 +146,7 @@ def test_valid_manager_aliases_contains_expected():
         "data",
         "files",
         "computer",
+        "actor",
     }
     assert expected == VALID_MANAGER_ALIASES
 
