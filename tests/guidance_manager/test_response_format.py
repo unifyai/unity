@@ -93,8 +93,8 @@ async def test_real_ask_response_format():
     """Real GuidanceManager.ask should return structured output when response_format is provided."""
     gm = GuidanceManager()
     # Seed some guidance entries
-    gm._add_guidance(title="Onboarding", content="How to onboard a user step by step")
-    gm._add_guidance(title="Billing", content="Explains invoices and payments")
+    gm.add_guidance(title="Onboarding", content="How to onboard a user step by step")
+    gm.add_guidance(title="Billing", content="Explains invoices and payments")
 
     handle = await gm.ask(
         "What guidance items do we have and what topics do they cover?",
@@ -114,7 +114,7 @@ async def test_real_update_response_format():
     """Real GuidanceManager.update should return structured output when response_format is provided."""
     gm = GuidanceManager()
     # First create a guidance entry
-    gm._add_guidance(title="API Guidelines", content="How to use our REST API")
+    gm.add_guidance(title="API Guidelines", content="How to use our REST API")
 
     handle = await gm.update(
         "Update the API Guidelines to mention rate limiting of 100 requests per minute",

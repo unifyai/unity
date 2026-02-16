@@ -26,14 +26,14 @@ def test_log_creates_all_guidance_entries():
     gm = GuidanceManager()
 
     # Create a guidance entry
-    result = gm._add_guidance(
+    result = gm.add_guidance(
         title="Test Guidance",
         content="Test guidance content for All/Ctx",
     )
     guidance_id = result["details"]["guidance_id"]
 
     # Verify it exists in the manager's context
-    guidance = gm._filter(filter=f"guidance_id == {guidance_id}")
+    guidance = gm.filter(filter=f"guidance_id == {guidance_id}")
     assert len(guidance) == 1, "Guidance should exist in manager's context"
 
     # Derive both aggregation contexts from the manager's context
@@ -59,7 +59,7 @@ def test_user_field_injected():
         return_value=test_user_name,
     ):
         gm = GuidanceManager()
-        result = gm._add_guidance(
+        result = gm.add_guidance(
             title="User Test Guidance",
             content="Testing user field injection",
         )
@@ -84,7 +84,7 @@ def test_assistant_field_injected():
         return_value=test_assistant_name,
     ):
         gm = GuidanceManager()
-        result = gm._add_guidance(
+        result = gm.add_guidance(
             title="Assistant Test Guidance",
             content="Testing assistant field injection",
         )
@@ -109,7 +109,7 @@ def test_assistant_id_field_injected():
         return_value=test_assistant_id,
     ):
         gm = GuidanceManager()
-        result = gm._add_guidance(
+        result = gm.add_guidance(
             title="Assistant ID Test",
             content="Testing assistant ID field injection",
         )
@@ -134,7 +134,7 @@ def test_user_id_field_injected():
         return_value=test_user_id,
     ):
         gm = GuidanceManager()
-        result = gm._add_guidance(
+        result = gm.add_guidance(
             title="User ID Test",
             content="Testing user ID field injection",
         )
@@ -170,14 +170,14 @@ def test_private_fields_excluded_from_filter():
     """Private fields should be excluded when reading guidance via public API."""
     gm = GuidanceManager()
 
-    result = gm._add_guidance(
+    result = gm.add_guidance(
         title="Private Field Test",
         content="Testing private field exclusion",
     )
     guidance_id = result["details"]["guidance_id"]
 
-    # Get guidance via _filter API
-    guidance_list = gm._filter(filter=f"guidance_id == {guidance_id}")
+    # Get guidance via filter API
+    guidance_list = gm.filter(filter=f"guidance_id == {guidance_id}")
     assert len(guidance_list) == 1
 
     guidance = guidance_list[0]
@@ -194,7 +194,7 @@ def test_deleting_guidance_removes_from_all_ctxs():
     gm = GuidanceManager()
 
     # Create a guidance entry
-    result = gm._add_guidance(
+    result = gm.add_guidance(
         title="Delete Test Guidance",
         content="Guidance to be deleted",
     )
@@ -215,7 +215,7 @@ def test_deleting_guidance_removes_from_all_ctxs():
         ), f"Guidance should exist in {all_ctx} before deletion"
 
     # Delete the guidance
-    gm._delete_guidance(guidance_id=guidance_id)
+    gm.delete_guidance(guidance_id=guidance_id)
 
     # Verify it's removed from all aggregation contexts after deletion
     for all_ctx in all_ctxs:
@@ -234,7 +234,7 @@ def test_update_syncs_to_all_aggregation_contexts():
     gm = GuidanceManager()
 
     # Create a guidance entry with initial values
-    result = gm._add_guidance(
+    result = gm.add_guidance(
         title="Update Sync Guidance",
         content="Original content",
     )
@@ -253,7 +253,7 @@ def test_update_syncs_to_all_aggregation_contexts():
         ), f"Initial content in {ctx}"
 
     # Update the guidance's content
-    gm._update_guidance(guidance_id=guidance_id, content="Updated content")
+    gm.update_guidance(guidance_id=guidance_id, content="Updated content")
 
     # Verify the update is immediately visible in ALL contexts (primary + aggregations)
     for ctx in [gm._ctx, *all_ctxs]:
@@ -271,7 +271,7 @@ def test_log_id_unchanged_after_update():
     gm = GuidanceManager()
 
     # Create a guidance entry
-    result = gm._add_guidance(
+    result = gm.add_guidance(
         title="Log ID Test Guidance",
         content="Before update",
     )
@@ -282,7 +282,7 @@ def test_log_id_unchanged_after_update():
     original_log_id = original_log.id
 
     # Update the guidance
-    gm._update_guidance(guidance_id=guidance_id, content="After update")
+    gm.update_guidance(guidance_id=guidance_id, content="After update")
 
     # Verify the log ID is unchanged (in-place update, not delete+create)
     updated_log = _get_raw_log_by_guidance_id(gm._ctx, guidance_id)

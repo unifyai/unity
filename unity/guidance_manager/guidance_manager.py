@@ -106,8 +106,8 @@ class GuidanceManager(BaseGuidanceManager):
         ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
-                self._filter,
-                self._search,
+                self.filter,
+                self.search,
                 # Image-aware tools (read-only / persistent context helpers)
                 self._get_images_for_guidance,
                 self._ask_image,
@@ -123,9 +123,9 @@ class GuidanceManager(BaseGuidanceManager):
         update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
-                self._add_guidance,
-                self._update_guidance,
-                self._delete_guidance,
+                self.add_guidance,
+                self.update_guidance,
+                self.delete_guidance,
                 self._create_custom_column,
                 self._delete_custom_column,
                 include_class_name=False,
@@ -569,7 +569,7 @@ class GuidanceManager(BaseGuidanceManager):
         This tool is read-only and returns metadata only. It never exposes raw
         image bytes.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
         guidance_row = rows[0]
@@ -716,7 +716,7 @@ class GuidanceManager(BaseGuidanceManager):
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
             Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and an ``annotations`` list.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return {"attached_count": 0, "images": []}
         guidance_row = rows[0]
@@ -769,7 +769,7 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return {"attached_count": len(images), "images": images}
 
-    def _add_guidance(
+    def add_guidance(
         self,
         *,
         title: Optional[str] = None,
@@ -827,7 +827,7 @@ class GuidanceManager(BaseGuidanceManager):
             "details": {"guidance_id": log.entries["guidance_id"]},
         }
 
-    def _update_guidance(
+    def update_guidance(
         self,
         *,
         guidance_id: int,
@@ -934,7 +934,7 @@ class GuidanceManager(BaseGuidanceManager):
             One item per related function, including ``function_id``, ``name``,
             ``argspec``, ``docstring``, ``calls``, and ``precondition`` fields.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
         fids = list(dict.fromkeys(int(fid) for fid in (rows[0].function_ids or [])))
@@ -991,7 +991,7 @@ class GuidanceManager(BaseGuidanceManager):
                 funcs = funcs[:limit]
         return {"attached_count": len(funcs), "functions": funcs}
 
-    def _delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
+    def delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
         """Delete a guidance entry by id.
 
         Parameters
@@ -1021,7 +1021,7 @@ class GuidanceManager(BaseGuidanceManager):
         unify.delete_logs(context=self._ctx, logs=ids[0])
         return {"outcome": "guidance deleted", "details": {"guidance_id": guidance_id}}
 
-    def _search(
+    def search(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
@@ -1054,7 +1054,7 @@ class GuidanceManager(BaseGuidanceManager):
         )
         return [Guidance(**r) for r in rows]
 
-    def _filter(
+    def filter(
         self,
         *,
         filter: Optional[str] = None,

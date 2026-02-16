@@ -435,7 +435,7 @@ def _start_storage_check_loop(
         k : int
             Maximum number of results to return.
         """
-        return gm._search(references=references, k=k)
+        return gm.search(references=references, k=k)
 
     async def GuidanceManager_filter_guidance(
         filter: Optional[str] = None,
@@ -455,7 +455,7 @@ def _start_storage_check_loop(
         limit : int
             Maximum number of records to return.
         """
-        return gm._filter(filter=filter, offset=offset, limit=limit)
+        return gm.filter(filter=filter, offset=offset, limit=limit)
 
     async def GuidanceManager_add_guidance(
         *,
@@ -484,7 +484,7 @@ def _start_storage_check_loop(
             easy to navigate from guidance to the concrete
             implementations it describes.
         """
-        return gm._add_guidance(
+        return gm.add_guidance(
             title=title,
             content=content,
             function_ids=function_ids or [],
@@ -510,7 +510,7 @@ def _start_storage_check_loop(
         function_ids : list[int] | None
             Replacement list of related function ids.
         """
-        return gm._update_guidance(
+        return gm.update_guidance(
             guidance_id=guidance_id,
             title=title,
             content=content,
@@ -526,7 +526,7 @@ def _start_storage_check_loop(
         Use this to remove obsolete or superseded guidance.
         Obtain ``guidance_id`` from search or filter results.
         """
-        return gm._delete_guidance(guidance_id=guidance_id)
+        return gm.delete_guidance(guidance_id=guidance_id)
 
     tools: Dict[str, Callable] = {
         "FunctionManager_search_functions": FunctionManager_search_functions,

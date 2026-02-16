@@ -12,7 +12,7 @@ def _seed(gm: GuidanceManager) -> dict[str, int]:
         ("Beta", "Guide for beta procedures"),
         ("Gamma", "Guide for gamma procedures"),
     ]:
-        out = gm._add_guidance(title=title, content=content)
+        out = gm.add_guidance(title=title, content=content)
         ids[title] = out["details"]["guidance_id"]
     return ids
 
@@ -26,7 +26,7 @@ def test_filter_scope_restricts_filter():
     ids = _seed(gm)
 
     gm.filter_scope = f"guidance_id == {ids['Beta']}"
-    rows = gm._filter()
+    rows = gm.filter()
     assert len(rows) == 1
     assert rows[0].guidance_id == ids["Beta"]
 
@@ -42,11 +42,11 @@ def test_filter_scope_composes_with_caller_filter():
         f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
     )
 
-    rows = gm._filter(filter="title == 'Alpha'")
+    rows = gm.filter(filter="title == 'Alpha'")
     assert len(rows) == 1
     assert rows[0].title == "Alpha"
 
-    rows = gm._filter(filter="title == 'Gamma'")
+    rows = gm.filter(filter="title == 'Gamma'")
     assert len(rows) == 0
 
     gm.filter_scope = None
@@ -62,7 +62,7 @@ def test_exclude_ids_restricts_filter():
 
     gm.exclude_ids = frozenset({ids["Alpha"]})
 
-    rows = gm._filter()
+    rows = gm.filter()
     returned_ids = {r.guidance_id for r in rows}
     assert ids["Alpha"] not in returned_ids
     assert ids["Beta"] in returned_ids
@@ -78,7 +78,7 @@ def test_exclude_ids_multiple():
 
     gm.exclude_ids = frozenset({ids["Alpha"], ids["Gamma"]})
 
-    rows = gm._filter()
+    rows = gm.filter()
     assert len(rows) == 1
     assert rows[0].guidance_id == ids["Beta"]
 
@@ -98,7 +98,7 @@ def test_scope_and_exclusion_combined():
     )
     gm.exclude_ids = frozenset({ids["Alpha"]})
 
-    rows = gm._filter()
+    rows = gm.filter()
     assert len(rows) == 1
     assert rows[0].guidance_id == ids["Beta"]
 
@@ -106,7 +106,7 @@ def test_scope_and_exclusion_combined():
     gm.exclude_ids = None
 
 
-# -- _search respects scope/exclusion --------------------------------------
+# -- search respects scope/exclusion --------------------------------------
 
 
 @_handle_project
@@ -116,7 +116,7 @@ def test_search_respects_filter_scope():
 
     gm.filter_scope = f"guidance_id == {ids['Alpha']}"
 
-    results = gm._search(references={"title": "procedures"}, k=10)
+    results = gm.search(references={"title": "procedures"}, k=10)
     returned_ids = {r.guidance_id for r in results}
     assert returned_ids == {ids["Alpha"]}
 
@@ -130,7 +130,7 @@ def test_search_respects_exclude_ids():
 
     gm.exclude_ids = frozenset({ids["Beta"]})
 
-    results = gm._search(references={"title": "procedures"}, k=10)
+    results = gm.search(references={"title": "procedures"}, k=10)
     returned_ids = {r.guidance_id for r in results}
     assert ids["Beta"] not in returned_ids
     assert ids["Alpha"] in returned_ids
@@ -174,16 +174,16 @@ def test_clearing_scope_restores_full_view():
     ids = _seed(gm)
 
     gm.filter_scope = f"guidance_id == {ids['Gamma']}"
-    assert len(gm._filter()) == 1
+    assert len(gm.filter()) == 1
 
     gm.filter_scope = None
-    assert len(gm._filter()) == 3
+    assert len(gm.filter()) == 3
 
     gm.exclude_ids = frozenset({ids["Alpha"], ids["Beta"]})
-    assert len(gm._filter()) == 1
+    assert len(gm.filter()) == 1
 
     gm.exclude_ids = None
-    assert len(gm._filter()) == 3
+    assert len(gm.filter()) == 3
 
 
 # -- limit correctness with scoping ----------------------------------------
@@ -198,11 +198,11 @@ def test_limit_with_scope():
         f"guidance_id == {ids['Alpha']} or guidance_id == {ids['Beta']}"
     )
 
-    rows = gm._filter(limit=1)
+    rows = gm.filter(limit=1)
     assert len(rows) == 1
     assert rows[0].guidance_id in {ids["Alpha"], ids["Beta"]}
 
-    rows = gm._filter(limit=10)
+    rows = gm.filter(limit=10)
     assert len(rows) == 2
 
     gm.filter_scope = None

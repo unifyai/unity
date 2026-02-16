@@ -29,8 +29,8 @@ def test_fk_guidance_ids_valid_reference():
     fm = FunctionManager()
 
     # Create guidance entries
-    gm._add_guidance(title="Setup Guide", content="How to setup the system")
-    gm._add_guidance(title="Usage Guide", content="How to use the system")
+    gm.add_guidance(title="Setup Guide", content="How to setup the system")
+    gm.add_guidance(title="Usage Guide", content="How to use the system")
 
     # Get guidance IDs
     guidance_list = unify.get_logs(context=gm._ctx, from_fields=["guidance_id"])
@@ -74,9 +74,9 @@ def test_fk_guidance_ids_cascade_on_delete():
     fm = FunctionManager()
 
     # Create guidance entries
-    gm._add_guidance(title="Guide 1", content="Content 1")
-    gm._add_guidance(title="Guide 2", content="Content 2")
-    gm._add_guidance(title="Guide 3", content="Content 3")
+    gm.add_guidance(title="Guide 1", content="Content 1")
+    gm.add_guidance(title="Guide 2", content="Content 2")
+    gm.add_guidance(title="Guide 3", content="Content 3")
 
     # Get guidance IDs
     guidance_list = unify.get_logs(context=gm._ctx, from_fields=["guidance_id"])
@@ -113,7 +113,7 @@ def test_fk_guidance_ids_cascade_on_delete():
     assert sorted(funcs[0].entries["guidance_ids"]) == [g1, g2, g3]
 
     # Delete the middle guidance entry (g2)
-    gm._delete_guidance(guidance_id=g2)
+    gm.delete_guidance(guidance_id=g2)
 
     # Verify g2 was removed from function.guidance_ids (CASCADE behavior)
     funcs_after = unify.get_logs(
@@ -152,7 +152,7 @@ def test_fk_guidance_ids_multiple_deletes():
 
     # Create multiple guidance entries
     for i in range(5):
-        gm._add_guidance(title=f"Guide {i}", content=f"Content {i}")
+        gm.add_guidance(title=f"Guide {i}", content=f"Content {i}")
 
     # Get all guidance IDs
     guidance_list = unify.get_logs(context=gm._ctx, from_fields=["guidance_id"])
@@ -181,7 +181,7 @@ def test_fk_guidance_ids_multiple_deletes():
 
     # Delete guidance entries one by one
     for gid in g_ids[:3]:  # Delete first 3
-        gm._delete_guidance(guidance_id=gid)
+        gm.delete_guidance(guidance_id=gid)
 
     # Verify only last 2 remain in function.guidance_ids
     funcs = unify.get_logs(

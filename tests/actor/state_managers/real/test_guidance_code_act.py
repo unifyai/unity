@@ -23,7 +23,7 @@ async def test_ask_calls_manager():
     """CodeAct routes read-only guidance question → primitives.guidance.ask."""
     async with make_code_act_actor(impl="real") as (actor, _primitives, calls):
         gm = ManagerRegistry.get_guidance_manager()
-        gm._add_guidance(
+        gm.add_guidance(
             title="Onboarding Overview",
             content="We walk through onboarding steps for new users.",
         )
@@ -60,7 +60,7 @@ async def ask_guidance_question(question: str, response_format=None) -> str:
         function_manager=fm,
     ) as (actor, _primitives, calls):
         gm = ManagerRegistry.get_guidance_manager()
-        gm._add_guidance(
+        gm.add_guidance(
             title="Onboarding Overview",
             content="We walk through onboarding steps for new users.",
         )
@@ -99,7 +99,7 @@ async def test_update_calls_manager():
         assert "primitives.guidance.update" in calls
         assert "primitives.guidance.ask" not in calls
 
-        rows = gm._filter(filter="title == 'Incident Response'")
+        rows = gm.filter(filter="title == 'Incident Response'")
         assert len(rows) > 0, "Expected 'Incident Response' entry to be created"
         content = rows[0].content.lower()
         assert "sev-1" in content or "on-call" in content
@@ -143,7 +143,7 @@ async def create_guidance_entry(title: str, content: str) -> str:
         assert "primitives.guidance.update" in calls
         assert "primitives.guidance.ask" not in calls
 
-        rows = gm._filter(filter="title == 'Incident Response'")
+        rows = gm.filter(filter="title == 'Incident Response'")
         assert len(rows) > 0, "Expected 'Incident Response' entry to be created"
         content = rows[0].content.lower()
         assert "sev-1" in content or "on-call" in content
