@@ -511,7 +511,8 @@ const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null
 
 const startDesktop = async (): Promise<BrowserAgent> => {
   try {
-    const desktopUrl = `http://localhost:6080/custom.html?password=${process.env.UNIFY_KEY}`;
+    const encodedPassword = encodeURIComponent(process.env.UNIFY_KEY || '');
+    const desktopUrl = `http://localhost:6080/custom.html?password=${encodedPassword}`;
     const desktopOrigin = new URL(desktopUrl).origin;
     const agent = await startBrowserAgent({
       url: desktopUrl,

@@ -8,11 +8,10 @@ printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
 
 # Start window manager, VNC server and noVNC proxy
 fluxbox 2>/dev/null &
-# Ensure VNC auth file exists (initialize with random password)
+# Set VNC password to UNIFY_KEY so the agent-service and developers can
+# authenticate with the same credential via ?password= in the noVNC URL.
 mkdir -p /root/.vnc
-if [ ! -f /root/.vnc/passwd ]; then
-  x11vnc -storepasswd "$(head -c 32 /dev/urandom | base64)" /root/.vnc/passwd
-fi
+x11vnc -storepasswd "${UNIFY_KEY:-changeme}" /root/.vnc/passwd
 chmod 600 /root/.vnc/passwd || true
 
 # Start x11vnc with rfbauth

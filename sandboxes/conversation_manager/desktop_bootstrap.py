@@ -25,12 +25,23 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import quote
 
 ProgressCallback = Callable[[str], None]
 
 DESKTOP_IMAGE_TAG = "unity-desktop"
 DESKTOP_CONTAINER_NAME = "unity-desktop-sandbox"
-DESKTOP_NOVNC_URL = "http://localhost:6080/custom.html"
+
+
+def _desktop_novnc_url() -> str:
+    """Return the noVNC viewer URL with the VNC password embedded."""
+    key = os.environ.get("UNIFY_KEY", "")
+    if key:
+        # Query params are parsed with URLSearchParams in custom.html; '+' must be
+        # percent-encoded as %2B (otherwise it is decoded as a space).
+        encoded_key = quote(key, safe="")
+        return f"http://localhost:6080/custom.html?password={encoded_key}"
+    return "http://localhost:6080/custom.html"
 
 
 @dataclass(frozen=True)
@@ -258,7 +269,7 @@ def _wait_for_container_ready(
             container_id = _find_running_container(container_name)
             return DesktopBootstrapResult(
                 ok=True,
-                summary=f"Desktop container ready — view at {DESKTOP_NOVNC_URL}",
+                summary=f"Desktop container ready — view at {_desktop_novnc_url()}",
                 container_id=container_id,
             )
         time.sleep(float(poll_interval_s))
@@ -388,11 +399,11 @@ def try_start_desktop_direct(
         unify_key=unify_key,
     ):
         progress(
-            f"[desktop] Reusing existing desktop container — view at {DESKTOP_NOVNC_URL}",
+            f"[desktop] Reusing existing desktop container — view at {_desktop_novnc_url()}",
         )
         return DesktopBootstrapResult(
             ok=True,
-            summary=f"Desktop container already running — view at {DESKTOP_NOVNC_URL}",
+            summary=f"Desktop container already running — view at {_desktop_novnc_url()}",
             container_id=existing,
         )
 
@@ -465,11 +476,11 @@ def try_auto_bootstrap_desktop(
         unify_key=unify_key,
     ):
         progress(
-            f"[desktop] Reusing existing desktop container — view at {DESKTOP_NOVNC_URL}",
+            f"[desktop] Reusing existing desktop container — view at {_desktop_novnc_url()}",
         )
         return DesktopBootstrapResult(
             ok=True,
-            summary=f"Desktop container already running — view at {DESKTOP_NOVNC_URL}",
+            summary=f"Desktop container already running — view at {_desktop_novnc_url()}",
             container_id=existing,
         )
 
