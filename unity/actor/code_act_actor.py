@@ -343,6 +343,9 @@ def _start_storage_check_loop(
         query: str,
         n: int = 5,
         include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Any:
         return fm.search_functions(
             query=query,
@@ -359,6 +362,9 @@ def _start_storage_check_loop(
         offset: int = 0,
         limit: int = 100,
         include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Any:
         return fm.filter_functions(
             filter=filter,
@@ -373,6 +379,9 @@ def _start_storage_check_loop(
 
     async def FunctionManager_list_functions(
         include_implementations: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Any:
         return fm.list_functions(
             include_implementations=include_implementations,
@@ -1910,6 +1919,9 @@ class CodeActActor(BaseCodeActActor):
                 query: str,
                 n: int = 5,
                 include_implementations: bool = True,
+                _return_callable: bool = False,
+                _namespace: Optional[Dict[str, Any]] = None,
+                _also_return_metadata: bool = False,
             ) -> Any:
                 result = self.function_manager.search_functions(
                     query=query,
@@ -1930,6 +1942,9 @@ class CodeActActor(BaseCodeActActor):
                 offset: int = 0,
                 limit: int = 100,
                 include_implementations: bool = True,
+                _return_callable: bool = False,
+                _namespace: Optional[Dict[str, Any]] = None,
+                _also_return_metadata: bool = False,
             ) -> Any:
                 result = self.function_manager.filter_functions(
                     filter=filter,
@@ -1948,6 +1963,9 @@ class CodeActActor(BaseCodeActActor):
 
             async def FunctionManager_list_functions(
                 include_implementations: bool = False,
+                _return_callable: bool = False,
+                _namespace: Optional[Dict[str, Any]] = None,
+                _also_return_metadata: bool = False,
             ) -> Any:
                 result = self.function_manager.list_functions(
                     include_implementations=include_implementations,
