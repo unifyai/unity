@@ -22,21 +22,27 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import os
 import queue as _queue
 import traceback as _traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
-from sandboxes.utils import configure_sandbox_logging
+from sandboxes.utils import activate_project, configure_sandbox_logging
 
 from sandboxes.conversation_manager.agent_service_bootstrap import (
     try_auto_bootstrap_agent_service,
     try_start_agent_service_direct,
     free_agent_service_port,
+)
+from sandboxes.conversation_manager.desktop_bootstrap import (
+    try_start_desktop_direct,
+    try_auto_bootstrap_desktop,
+    stop_desktop_container,
 )
 from sandboxes.conversation_manager.cm_init import initialize_cm, shutdown_cm
 from sandboxes.conversation_manager.command_router import CommandRouter
@@ -59,6 +65,21 @@ from unity.events.types.manager_method import ManagerMethodPayload
 LG = logging.getLogger("conversation_manager_sandbox")
 
 _RESTART_EXIT_CODE = 23
+
+
+def _enable_unillm_boundary_logging() -> Path:
+    """Enable full UniLLM request/response file logging for the GUI worker."""
+    log_dir = Path(__file__).resolve().parents[2] / "logs" / "unillm"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["UNILLM_LOG"] = "true"
+    os.environ["UNILLM_LOG_DIR"] = str(log_dir)
+    try:
+        from unillm.logger import configure_log_dir as _configure_log_dir
+
+        _configure_log_dir(str(log_dir))
+    except Exception:
+        pass
+    return log_dir
 
 
 def _simplify_execute_code_result(result: Any) -> dict[str, Any]:
@@ -757,6 +778,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         load_dotenv(override=True)
     except Exception:
         pass
+    unillm_log_dir = _enable_unillm_boundary_logging()
 
     # Ensure this process writes to the sandbox log file (append mode).
     try:
@@ -773,6 +795,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             import os as _os
 
             LG.info("[runtime] started pid=%s", _os.getpid())
+            LG.info("[runtime] LLM boundary logs: %s", str(unillm_log_dir))
         except Exception:
             LG.info("[runtime] started")
     except Exception:
@@ -780,14 +803,29 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
 
     args = _build_args_namespace(config=config, sender=sender)
     actor_cfg: ActorConfig = getattr(args, "_actor_config", ActorConfig())
+    try:
+        project_name = str(getattr(args, "project_name", "unity"))
+        overwrite = bool(getattr(args, "overwrite", False))
+        activate_project(project_name, overwrite)
+    except Exception as exc:
+        sender.send_error(
+            (
+                "Failed to activate project in GUI worker: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            tb=_traceback.format_exc(),
+        )
+        sender.send_worker_exit(restart=False, config=None)
+        return
     cfg_mgr = ConfigurationManager(
         project_name=str(getattr(args, "project_name", "unity")),
         project_root=Path(__file__).resolve().parents[2],
     )
 
-    # agent-service bootstrap (best-effort) for real computer interface.
+    # agent-service / desktop bootstrap (best-effort) for real computer interface.
     repo_root = Path(__file__).resolve().parents[2]
     agent_proc = None
+    desktop_container_id: Optional[str] = None
     try:
         if actor_cfg.actor_type == "codeact_real":
             from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
@@ -795,37 +833,62 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             agent_server_url = (
                 getattr(args, "agent_server_url", None) or DEFAULT_AGENT_SERVER_URL
             )
-            # Always try to free the port first (only kills repo-owned agent-service).
-            try:
-                free_agent_service_port(
-                    repo_root=repo_root,
-                    agent_server_url=agent_server_url,
-                    progress=lambda m: sender.send_lines([str(m)]),
-                )
-            except Exception:
-                pass
-
+            agent_mode = getattr(args, "agent_mode", "desktop")
             do_bootstrap = bool(getattr(args, "agent_service_bootstrap", False))
-            if do_bootstrap:
-                res = await asyncio.to_thread(
-                    try_auto_bootstrap_agent_service,
-                    repo_root=repo_root,
-                    agent_server_url=agent_server_url,
-                    progress=lambda m: sender.send_lines([str(m)]),
-                )
+
+            if agent_mode == "desktop":
+                # Desktop mode: start the Docker container (bundles agent-service).
+                if do_bootstrap:
+                    res = await asyncio.to_thread(
+                        try_auto_bootstrap_desktop,
+                        repo_root=repo_root,
+                        agent_server_url=agent_server_url,
+                        progress=lambda m: sender.send_lines([str(m)]),
+                    )
+                else:
+                    res = await asyncio.to_thread(
+                        try_start_desktop_direct,
+                        repo_root=repo_root,
+                        agent_server_url=agent_server_url,
+                        progress=lambda m: sender.send_lines([str(m)]),
+                    )
+                if not res.ok:
+                    sender.send_error(res.summary)
+                    sender.send_worker_exit(restart=False, config=None)
+                    return
+                desktop_container_id = res.container_id
             else:
-                res = await asyncio.to_thread(
-                    try_start_agent_service_direct,
-                    repo_root=repo_root,
-                    agent_server_url=agent_server_url,
-                    progress=lambda m: sender.send_lines([str(m)]),
-                )
-            if not res.ok:
-                sender.send_error(res.summary)
-                sender.send_worker_exit(restart=False, config=None)
-                return
-            agent_proc = res.process
-            setattr(args, "_agent_service_process", agent_proc)
+                # Web mode: start a local agent-service process.
+                # Free the port first (only kills repo-owned agent-service).
+                try:
+                    free_agent_service_port(
+                        repo_root=repo_root,
+                        agent_server_url=agent_server_url,
+                        progress=lambda m: sender.send_lines([str(m)]),
+                    )
+                except Exception:
+                    pass
+
+                if do_bootstrap:
+                    res = await asyncio.to_thread(
+                        try_auto_bootstrap_agent_service,
+                        repo_root=repo_root,
+                        agent_server_url=agent_server_url,
+                        progress=lambda m: sender.send_lines([str(m)]),
+                    )
+                else:
+                    res = await asyncio.to_thread(
+                        try_start_agent_service_direct,
+                        repo_root=repo_root,
+                        agent_server_url=agent_server_url,
+                        progress=lambda m: sender.send_lines([str(m)]),
+                    )
+                if not res.ok:
+                    sender.send_error(res.summary)
+                    sender.send_worker_exit(restart=False, config=None)
+                    return
+                agent_proc = res.process
+                setattr(args, "_agent_service_process", agent_proc)
     except Exception as exc:
         sender.send_error(
             f"agent-service bootstrap failed: {type(exc).__name__}: {exc}",
@@ -1054,16 +1117,18 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         except Exception:
             pass
 
-        # Terminate agent-service if we started it.
+        # Terminate agent-service / desktop container if we started it.
         try:
-            if agent_proc is not None:
+            if desktop_container_id is not None:
+                stop_desktop_container(progress=lambda _m: None)
+            elif agent_proc is not None:
                 _terminate_process_best_effort(agent_proc)
         except Exception:
             pass
 
-        # Best-effort: free port after shutdown (only repo agent-service).
+        # Best-effort: free port after shutdown (only for web mode local agent-service).
         try:
-            if actor_cfg.actor_type == "codeact_real":
+            if actor_cfg.actor_type == "codeact_real" and desktop_container_id is None:
                 from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
 
                 free_agent_service_port(
