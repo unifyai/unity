@@ -535,6 +535,93 @@ def test_schema_strips_hidden_params_from_inherited_doc() -> None:
     assert "callable injection" not in desc
 
 
+def test_schema_strips_hidden_param_references_from_returns() -> None:
+    """
+    The Returns section may contain conditional branches like
+    ``When ``_return_callable=False``: ...`` that reference hidden params.
+    These branches must be stripped from the LLM-facing description since
+    the LLM cannot control the param they depend on.
+    """
+
+    def search(
+        query: str,
+        n: int = 5,
+        _return_callable: bool = False,
+        _also_return_metadata: bool = False,
+    ) -> list:
+        """
+        Search for items.
+
+        Parameters
+        ----------
+        query : str
+            Search text.
+        n : int, default ``5``
+            Max results.
+        _return_callable : bool, default ``False``
+            When ``True``, return callables instead of metadata.
+        _also_return_metadata : bool, default ``False``
+            When ``True``, return both callables and metadata.
+
+        Returns
+        -------
+        list[dict] | list[Callable] | dict
+            - When ``_return_callable=False``: list of metadata dicts.
+            - When ``_return_callable=True``: list of callables.
+            - When ``_also_return_metadata=True``: a dict with both.
+        """
+        return []
+
+    schema = llmh.method_to_schema(search)
+    desc = schema["function"]["description"]
+
+    # The Returns section should not reference hidden params
+    assert "_return_callable" not in desc
+    assert "_also_return_metadata" not in desc
+
+
+def test_schema_strips_hidden_param_references_from_raises() -> None:
+    """
+    The Raises section may document errors for hidden-param validation
+    (e.g. ``If ``_return_callable=True`` but ``_namespace`` is ``None````).
+    These entries must be stripped from the LLM-facing description since
+    the LLM cannot trigger these errors.
+    """
+
+    def search(
+        query: str,
+        _return_callable: bool = False,
+        _namespace: dict | None = None,
+    ) -> list:
+        """
+        Search for items.
+
+        Parameters
+        ----------
+        query : str
+            Search text.
+        _return_callable : bool, default ``False``
+            When ``True``, return callables.
+        _namespace : dict | None, default ``None``
+            Target namespace for injection.
+
+        Raises
+        ------
+        ValueError
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
+        ValueError
+            If ``_return_callable`` is set without proper context.
+        """
+        return []
+
+    schema = llmh.method_to_schema(search)
+    desc = schema["function"]["description"]
+
+    # The Raises section should not reference hidden params
+    assert "_return_callable" not in desc
+    assert "_namespace" not in desc
+
+
 def test_schema_plain_function() -> None:
     def _plain(a: int) -> None:
         """Plain function doc."""
