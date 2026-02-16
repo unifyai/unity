@@ -14,10 +14,6 @@ data:
         access: proxy
         isDefault: true
         jsonData:
-          authenticationType: jwt
+          authenticationType: gce
           defaultProject: responsive-city-458413-a2
-          tokenUri: https://oauth2.googleapis.com/token
-          clientEmail: ""
-        secureJsonFields:
-          serviceAccountKey: false
         editable: true

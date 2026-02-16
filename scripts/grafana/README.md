@@ -124,12 +124,12 @@ The script will:
    ```
    Once status shows `Active`, HTTPS is live.
 
-3. **Configure the data source in Grafana:**
+3. **Verify the data source in Grafana:**
    - Log in at `https://grafana.staging.internal.saas.unify.ai`
    - Go to **Connections > Data Sources > Google Cloud Monitoring**
-   - Upload the service account key (the same key from `comm-sa-key`)
-   - Set the default project to `responsive-city-458413-a2`
-   - Click **Save & Test**
+   - Click **Save & Test** — it should succeed immediately (the data source
+     uses `gce` authentication, which picks up the SA key mounted from the
+     `comm-sa-key` secret at `/secrets/key.json` via `GOOGLE_APPLICATION_CREDENTIALS`)
 
 ---
 
@@ -161,8 +161,9 @@ kubectl apply -f datasource-configmap.yaml
 ```
 
 This provisions the Google Cloud Monitoring data source automatically on Grafana
-startup. The data source uses JWT authentication and expects the service account
-key to be mounted at `/secrets/key.json` (handled by the Deployment).
+startup. The data source uses `gce` authentication, which picks up the service
+account key mounted at `/secrets/key.json` via the `GOOGLE_APPLICATION_CREDENTIALS`
+env var (handled by the Deployment). No manual key upload is needed.
 
 ### 4. Apply the Deployment
 
