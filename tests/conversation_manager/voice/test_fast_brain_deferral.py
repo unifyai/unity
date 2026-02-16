@@ -11,7 +11,7 @@ This file tests "false positive" prevention - scenarios where the fast brain
 might be tempted to hallucinate but should defer with natural language.
 
 Tests are parameterized to run against both:
-- gpt-5-nano@openai (TTS mode fast brain, via UnifyLLM)
+- TTS mode fast brain (SETTINGS.conversation.FAST_BRAIN_MODEL, via UnifyLLM)
 - gpt-realtime (STS mode fast brain, via OpenAI Realtime API with text modality)
 """
 
@@ -29,10 +29,10 @@ from livekit.agents import llm
 
 from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.settings import SETTINGS
 
-# Model identifiers
-MODEL_GPT5_NANO = "gpt-5-nano@openai"
-MODEL_GPT5_MINI = "gpt-5-mini@openai"
+# Model identifiers — TTS model reads from the central setting
+MODEL_TTS = SETTINGS.conversation.FAST_BRAIN_MODEL
 MODEL_GPT_REALTIME = "gpt-realtime"
 
 # Patterns indicating proper deferral (case-insensitive)
@@ -179,10 +179,10 @@ def voice_agent_prompt():
 async def get_unify_llm_response(
     system_prompt: str,
     conversation: list[dict[str, str]],
-    model: str = "gpt-5-nano@openai",
+    model: str = MODEL_TTS,
 ) -> str:
     """
-    Get response from UnifyLLM (for gpt-5-nano TTS mode).
+    Get response from UnifyLLM (TTS mode fast brain).
 
     Uses the same UnifyLLM adapter that production call.py uses, with streaming
     to collect the full response (matching real-world behavior).
@@ -347,13 +347,13 @@ async def get_realtime_response(
 async def get_fast_brain_response(
     system_prompt: str,
     conversation: list[dict[str, str]],
-    model: str = MODEL_GPT5_NANO,
+    model: str = MODEL_TTS,
 ) -> str:
     """
     Get response from the fast brain model.
 
     Dispatches to the appropriate backend based on model:
-    - gpt-5-nano@openai: Uses UnifyLLM (TTS mode)
+    - TTS model (from SETTINGS): Uses UnifyLLM
     - gpt-realtime: Uses OpenAI Realtime WebSocket API (STS mode)
     """
     if model == MODEL_GPT_REALTIME:
@@ -368,7 +368,7 @@ async def get_fast_brain_response(
 
 # List of models to test
 FAST_BRAIN_MODELS = [
-    pytest.param(MODEL_GPT5_NANO, id="tts-gpt5nano"),
+    pytest.param(MODEL_TTS, id="tts-" + MODEL_TTS.split("@")[0]),
     pytest.param(MODEL_GPT_REALTIME, id="sts-realtime"),
 ]
 
@@ -1078,7 +1078,7 @@ class TestInProgressActionStatus:
         response = await get_fast_brain_response(
             voice_agent_prompt,
             conversation,
-            model=MODEL_GPT5_MINI,
+            model=MODEL_TTS,
         )
 
         assert has_deferral_language(response) or has_in_progress_language(response), (
@@ -1122,7 +1122,7 @@ class TestInProgressActionStatus:
         response = await get_fast_brain_response(
             voice_agent_prompt,
             conversation,
-            model=MODEL_GPT5_MINI,
+            model=MODEL_TTS,
         )
 
         assert has_deferral_language(response) or has_in_progress_language(response), (

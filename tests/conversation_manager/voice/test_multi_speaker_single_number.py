@@ -24,7 +24,7 @@ IMPORTANT NOTE ON MESSAGE FORMAT:
   e.g., "[Dan Lewis @ DATE]: Hi Alex, this is Richard." — ALL utterances from that phone
   number are attributed to the registered contact, even when a different person is speaking.
 
-These tests verify that both the fast brain (gpt-5-nano) and slow brain understand
+These tests verify that both the fast brain and slow brain understand
 this nuance. The fast brain tests deliberately avoid trivial scenarios where speakers
 explicitly self-identify, focusing instead on whether a small model can track speaker
 context across multiple turns.
@@ -37,6 +37,7 @@ from __future__ import annotations
 import pytest
 
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.settings import SETTINGS
 from unity.conversation_manager.events import (
     PhoneCallStarted,
     InboundPhoneUtterance,
@@ -88,7 +89,7 @@ async def _get_fast_brain_response_raw(
     conversation: list[dict[str, str]],
 ) -> str:
     """
-    Get a response from the fast brain (gpt-5-nano) using the production pathway.
+    Get a response from the fast brain using the production pathway.
 
     Unlike get_fast_brain_response() from test_fast_brain_deferral.py, this does
     NOT append an artificial "Respond as the assistant" meta-instruction. The model
@@ -97,7 +98,9 @@ async def _get_fast_brain_response_raw(
     from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
     from livekit.agents import llm
 
-    llm_instance = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="minimal")
+    llm_instance = UnifyLLM(
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL, reasoning_effort="minimal",
+    )
 
     chat_ctx = llm.ChatContext()
     chat_ctx.add_message(role="system", content=system_prompt)
@@ -152,7 +155,7 @@ def boss_call_prompt():
 @pytest.mark.asyncio
 class TestFastBrainMultiSpeakerTracking:
     """
-    Tests whether gpt-5-nano can correctly track and address a new speaker
+    Tests whether the fast brain model can correctly track and address a new speaker
     introduced mid-call. Uses the raw fast brain pathway (no artificial
     meta-instruction) to match production behavior.
 
@@ -719,7 +722,7 @@ class TestSlowBrainMultiSpeakerAwareness:
 class TestFastBrainExtendedMultiSpeakerConversation:
     """
     Longer conversation tests where the fast brain must maintain speaker context
-    across many turns. These are the hardest tests for gpt-5-nano because the
+    across many turns. These are the hardest tests for the fast brain because the
     model must remember who's speaking without repeated name cues.
     """
 
@@ -729,7 +732,7 @@ class TestFastBrainExtendedMultiSpeakerConversation:
         5th turn, he asks a confirming question. The fast brain should still
         be engaging with Richard, not suddenly addressing Dan.
 
-        This specifically tests whether gpt-5-nano's limited context window
+        This specifically tests whether the fast brain model's context window
         and reasoning can maintain speaker identity over multiple turns.
         """
         conversation = [

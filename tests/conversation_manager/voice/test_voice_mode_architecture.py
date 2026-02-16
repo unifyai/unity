@@ -219,8 +219,9 @@ async def test_unify_llm_chat_returns_stream():
         UnifyLLM,
         UnifyLLMStream,
     )
+    from unity.settings import SETTINGS
 
-    llm_instance = UnifyLLM(model="gpt-5-nano@openai")
+    llm_instance = UnifyLLM(model=SETTINGS.conversation.FAST_BRAIN_MODEL)
 
     # Create a minimal chat context
     chat_ctx = llm.ChatContext()
