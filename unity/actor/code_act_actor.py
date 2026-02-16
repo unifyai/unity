@@ -387,9 +387,7 @@ def _start_storage_check_loop(
             include_implementations=include_implementations,
         )
 
-    FunctionManager_list_functions.__doc__ = (
-        BaseFunctionManager.list_functions.__doc__
-    )
+    FunctionManager_list_functions.__doc__ = BaseFunctionManager.list_functions.__doc__
 
     async def FunctionManager_add_functions(
         implementations: str | list[str],

@@ -146,9 +146,9 @@ def test_state_manager_env_excludes_computer_primitives():
     full_env = StateManagerEnvironment(Primitives(primitive_scope=full_scope))
     full_tools = full_env.get_tools()
     computer_tools = [t for t in full_tools if t.startswith("primitives.computer")]
-    assert len(computer_tools) > 0, (
-        "Computer primitives should appear when included in scope"
-    )
+    assert (
+        len(computer_tools) > 0
+    ), "Computer primitives should appear when included in scope"
 
 
 # ────────────────────────────────────────────────────────────────────────────

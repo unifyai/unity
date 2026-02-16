@@ -28,7 +28,12 @@ from unity.conversation_manager.events import SMSReceived, SMSSent
 
 pytestmark = pytest.mark.eval
 
-_ACTION_TOOLS = {"act", "ask_about_contacts", "update_contacts", "query_past_transcripts"}
+_ACTION_TOOLS = {
+    "act",
+    "ask_about_contacts",
+    "update_contacts",
+    "query_past_transcripts",
+}
 
 _DISAMBIGUATION_RESULT = (
     'Found 3 contacts named "Bob":\n'
