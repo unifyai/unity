@@ -18,7 +18,7 @@ class MemorySettings(BaseSettings):
     """
 
     IMPL: str = "real"
-    ENABLED: bool = True
+    ENABLED: bool = False
 
     model_config = SettingsConfigDict(
         env_prefix="UNITY_MEMORY_",
