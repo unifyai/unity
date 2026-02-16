@@ -336,7 +336,7 @@ class SimulatedFileManager(BaseFileManager):
         self.__data_manager: Optional["DataManager"] = None
 
         # Shared, *stateful* **asynchronous** LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedFileManager")
 
         # Mirror the real file manager's tool exposure programmatically
         try:

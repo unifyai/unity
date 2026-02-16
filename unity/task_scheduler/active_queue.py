@@ -54,7 +54,7 @@ class _InterjectionRouter:
                 except Exception:
                     return str(value)
 
-            client = new_llm_client()
+            client = new_llm_client(debug_marker="ActiveQueue.route_interjection")
             schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
             sys = (
                 "You route user interjections to one or more tasks in a queue.\n"
@@ -1009,7 +1009,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         )
 
         # Use an LLM to decide the appropriate granularity and compose the answer
-        client = new_llm_client()
+        client = new_llm_client(debug_marker="ActiveQueue.ask")
 
         sys = (
             "You answer questions about a running chain of tasks. Decide the appropriate level of detail.\n"

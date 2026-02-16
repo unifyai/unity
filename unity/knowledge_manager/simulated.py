@@ -319,7 +319,10 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         self._hold_completion = hold_completion
 
         # One shared, memory-retaining LLM (reuse common client for fast init/clear)
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedKnowledgeManager",
+        )
         # Mirror the real knowledge manager's tool exposure for prompts
         ref_tools = mirror_knowledge_manager_tools("refactor")
         upd_tools = mirror_knowledge_manager_tools("update")

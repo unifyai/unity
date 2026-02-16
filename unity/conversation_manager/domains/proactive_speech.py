@@ -93,6 +93,7 @@ class ProactiveSpeech:
                 self.model,
                 reasoning_effort=None,
                 service_tier=None,
+                debug_marker="ConversationManager.proactive_speech",
             )
             client.set_response_format(ProactiveDecision)
 

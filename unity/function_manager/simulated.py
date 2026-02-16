@@ -46,7 +46,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self._exclude_compositional_ids: Optional[FrozenSet[int]] = None
 
         # One shared, *stateful* LLM for the simulation
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedFunctionManager",
+        )
 
         self._rebuild_system_message()
 
