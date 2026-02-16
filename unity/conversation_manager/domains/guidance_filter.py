@@ -249,6 +249,7 @@ Is this guidance still relevant? Should it be sent to the Voice Agent?"""
                 self.model,
                 reasoning_effort=None,  # Disable extended thinking for speed
                 service_tier=None,  # No priority needed for fast filter
+                debug_marker="ConversationManager.guidance_filter",
             )
             client.set_response_format(GuidanceRelevanceDecision)
 

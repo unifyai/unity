@@ -704,7 +704,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         }
 
         # Single-shot LLM call: one decision, one action
-        client = new_llm_client(SETTINGS.UNIFY_MODEL)
+        client = new_llm_client(
+            SETTINGS.UNIFY_MODEL,
+            debug_marker="ConversationManager.decide",
+        )
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])

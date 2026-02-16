@@ -133,7 +133,11 @@ class UnifyLLMStream(llm.LLMStream):
             client_kwargs["service_tier"] = self._service_tier
 
         # Create Unify client
-        client = new_llm_client(self._model, **client_kwargs)
+        client = new_llm_client(
+            self._model,
+            debug_marker="ConversationManager.livekit",
+            **client_kwargs,
+        )
         client.set_stream(True)
 
         # Stream the response
