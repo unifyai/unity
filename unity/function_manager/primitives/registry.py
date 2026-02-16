@@ -10,6 +10,7 @@ No other module should define manager lists or primitive configurations.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import inspect
 import logging
 import re
@@ -38,11 +39,13 @@ class ManagerSpec:
     - Identity (alias, registry key, class path)
     - Method exclusions
     - Prompt metadata (domain, description, use_when, examples, priority)
+    - Sandbox namespace root (the top-level key in the sandbox's global_state)
     """
 
     manager_alias: str
     manager_registry_key: str
     primitive_class_path: str
+    sandbox_root: str = "primitives"
     excluded_methods: frozenset[str] = field(default_factory=frozenset)
     priority: int = 99
     domain: str = ""
@@ -188,6 +191,7 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         manager_alias="computer",
         manager_registry_key="",  # No ManagerRegistry getter - singleton via metaclass
         primitive_class_path="unity.function_manager.primitives.runtime.ComputerPrimitives",
+        sandbox_root="computer_primitives",
         excluded_methods=frozenset(),
         priority=10,
         domain="Web & Desktop Control",
@@ -199,6 +203,7 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         manager_alias="actor",
         manager_registry_key="",  # No ManagerRegistry getter - stateless, constructed directly
         primitive_class_path="unity.actor.environments.actor._ActorRunner",
+        sandbox_root="actor",
         excluded_methods=frozenset(),
         priority=11,
         domain="Actor Delegation",
@@ -217,6 +222,58 @@ _MANAGER_BY_ALIAS: Dict[str, ManagerSpec] = {
 _CLASS_PATH_TO_ALIAS: Dict[str, str] = {
     spec.primitive_class_path: spec.manager_alias for spec in _MANAGER_SPECS
 }
+
+# sandbox_root -> [specs]: maps each sandbox namespace root to its manager specs.
+_SANDBOX_ROOTS: Dict[str, list[ManagerSpec]] = {}
+for _spec in _MANAGER_SPECS:
+    _SANDBOX_ROOTS.setdefault(_spec.sandbox_root, []).append(_spec)
+
+
+def construct_sandbox_root(
+    root_name: str,
+    *,
+    primitive_scope: Optional[PrimitiveScope] = None,
+) -> Optional[Any]:
+    """Construct the root namespace object for a sandbox namespace key.
+
+    Given a sandbox root name (e.g. ``"primitives"``, ``"actor"``,
+    ``"computer_primitives"``), returns a freshly constructed instance
+    that provides the methods accessible under that namespace.
+
+    For ``"primitives"`` this returns a ``Primitives`` aggregator that
+    exposes all state-manager primitives as attributes.  For other roots
+    (like ``"actor"`` or ``"computer_primitives"``), the class is
+    dynamically imported from the matching ``ManagerSpec.primitive_class_path``
+    and instantiated directly.
+
+    Returns ``None`` when *root_name* does not match any known sandbox root.
+    """
+    specs = _SANDBOX_ROOTS.get(root_name)
+    if not specs:
+        return None
+
+    if root_name == "primitives":
+        from unity.function_manager.primitives.runtime import Primitives
+
+        return Primitives(primitive_scope=primitive_scope)
+
+    # Non-aggregator root: import and instantiate the class directly.
+    # All specs sharing a sandbox_root point at the same class for
+    # non-"primitives" roots (e.g. _ActorRunner, ComputerPrimitives).
+    class_path = specs[0].primitive_class_path
+    module_path, class_name = class_path.rsplit(".", 1)
+    try:
+        module = importlib.import_module(module_path)
+        cls = getattr(module, class_name)
+        return cls()
+    except Exception:
+        logger.warning(
+            "Failed to construct sandbox root %r from %s",
+            root_name,
+            class_path,
+            exc_info=True,
+        )
+        return None
 
 
 # =============================================================================
