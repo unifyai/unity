@@ -421,41 +421,24 @@ def _start_storage_check_loop(
 
     # ── GuidanceManager tools ─────────────────────────────────────────
 
+    _GuidanceManagerCls = type(gm)
+
     async def GuidanceManager_search_guidance(
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> Any:
-        """Search existing guidance entries by semantic similarity.
-
-        Parameters
-        ----------
-        references : dict[str, str] | None
-            Mapping of source expressions to reference text for
-            semantic search (e.g. ``{"title": "data pipeline"}``).
-        k : int
-            Maximum number of results to return.
-        """
         return gm.search(references=references, k=k)
+
+    GuidanceManager_search_guidance.__doc__ = _GuidanceManagerCls.search.__doc__
 
     async def GuidanceManager_filter_guidance(
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
     ) -> Any:
-        """Filter existing guidance entries using a boolean expression.
-
-        Parameters
-        ----------
-        filter : str | None
-            Python boolean expression evaluated per row, with column
-            names in scope (e.g. ``"'pipeline' in title"``).
-            When None, returns all guidance entries.
-        offset : int
-            Zero-based index of the first result to include.
-        limit : int
-            Maximum number of records to return.
-        """
         return gm.filter(filter=filter, offset=offset, limit=limit)
+
+    GuidanceManager_filter_guidance.__doc__ = _GuidanceManagerCls.filter.__doc__
 
     async def GuidanceManager_add_guidance(
         *,
@@ -463,32 +446,13 @@ def _start_storage_check_loop(
         content: str,
         function_ids: Optional[list[int]] = None,
     ) -> Any:
-        """Create a new guidance entry.
-
-        Use this to persist high-level guidance that explains *how* to
-        compose multiple functions together to accomplish a broader task.
-        A guidance entry is a recipe or playbook, not a function
-        implementation.
-
-        Parameters
-        ----------
-        title : str
-            Short descriptive title for the guidance entry.
-        content : str
-            The guidance text explaining the compositional workflow,
-            the order of steps, which functions to call, decision
-            points, and any caveats.
-        function_ids : list[int] | None
-            Optional ids of related functions stored in the
-            FunctionManager. Cross-referencing functions makes it
-            easy to navigate from guidance to the concrete
-            implementations it describes.
-        """
         return gm.add_guidance(
             title=title,
             content=content,
             function_ids=function_ids or [],
         )
+
+    GuidanceManager_add_guidance.__doc__ = _GuidanceManagerCls.add_guidance.__doc__
 
     async def GuidanceManager_update_guidance(
         *,
@@ -497,19 +461,6 @@ def _start_storage_check_loop(
         content: Optional[str] = None,
         function_ids: Optional[list[int]] = None,
     ) -> Any:
-        """Update fields of an existing guidance entry.
-
-        Parameters
-        ----------
-        guidance_id : int
-            Identifier of the guidance row to update.
-        title : str | None
-            New title (omit to keep existing value).
-        content : str | None
-            New content (omit to keep existing value).
-        function_ids : list[int] | None
-            Replacement list of related function ids.
-        """
         return gm.update_guidance(
             guidance_id=guidance_id,
             title=title,
@@ -517,16 +468,19 @@ def _start_storage_check_loop(
             function_ids=function_ids,
         )
 
+    GuidanceManager_update_guidance.__doc__ = (
+        _GuidanceManagerCls.update_guidance.__doc__
+    )
+
     async def GuidanceManager_delete_guidance(
         *,
         guidance_id: int,
     ) -> Any:
-        """Delete a guidance entry by id.
-
-        Use this to remove obsolete or superseded guidance.
-        Obtain ``guidance_id`` from search or filter results.
-        """
         return gm.delete_guidance(guidance_id=guidance_id)
+
+    GuidanceManager_delete_guidance.__doc__ = (
+        _GuidanceManagerCls.delete_guidance.__doc__
+    )
 
     tools: Dict[str, Callable] = {
         "FunctionManager_search_functions": FunctionManager_search_functions,
