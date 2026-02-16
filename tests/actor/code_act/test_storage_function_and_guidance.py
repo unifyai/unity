@@ -155,6 +155,13 @@ async def test_storage_loop_stores_both_function_and_guidance():
         result = await asyncio.wait_for(handle.result(), timeout=240)
         assert result is not None
 
+        # result() resolves after the task phase; wait for storage to finish.
+        deadline = asyncio.get_event_loop().time() + 120
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
+
         # The storage check should have stored at least one function.
         fm.add_functions.assert_called(), (
             f"Expected FunctionManager.add_functions to be called for the "
@@ -233,6 +240,13 @@ async def test_storage_loop_stores_function_without_guidance():
         )
         result = await asyncio.wait_for(handle.result(), timeout=240)
         assert result is not None
+
+        # result() resolves after the task phase; wait for storage to finish.
+        deadline = asyncio.get_event_loop().time() + 120
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
 
         # The storage check should have stored the function.
         fm.add_functions.assert_called(), (

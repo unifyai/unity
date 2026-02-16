@@ -186,7 +186,10 @@ async def test_can_store_true_defers_storage_to_review_loop():
     When can_store=True, the CodeActActor should compose and execute code,
     then run a post-completion storage-review loop that examines the
     trajectory and stores reusable functions via FunctionManager_add_functions.
-    result() blocks until both phases complete.
+
+    result() resolves after the task phase; storage runs in the background.
+    The test waits for done() to confirm the storage loop has completed
+    before asserting storage side effects.
 
     The function must be complex enough that the librarian LLM consistently
     judges it as worth storing (non-trivial logic, validation, edge cases).
@@ -219,9 +222,15 @@ async def test_can_store_true_defers_storage_to_review_loop():
             clarification_enabled=False,
         )
         result = await asyncio.wait_for(handle.result(), timeout=120)
-
-        # result() blocks until both the task and the storage review complete.
         assert result is not None
+
+        # result() resolves after the task phase.  Wait for the storage
+        # review loop to finish before asserting storage side effects.
+        deadline = asyncio.get_event_loop().time() + 120
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
 
         fm.add_functions.assert_called()
         call_kwargs = fm.add_functions.call_args.kwargs
@@ -255,7 +264,8 @@ async def test_can_store_true_merges_redundant_functions():
     The storage review should detect the overlap, store the merged
     version, and delete the now-redundant entries.
 
-    result() blocks until both the task and storage-review phases complete.
+    result() resolves after the task phase; storage runs in the background.
+    The test waits for done() to confirm the storage loop has completed.
     """
     _existing_functions = [
         {
@@ -303,6 +313,13 @@ async def test_can_store_true_merges_redundant_functions():
         )
         result = await asyncio.wait_for(handle.result(), timeout=120)
         assert result is not None
+
+        # Wait for storage to complete before asserting side effects.
+        deadline = asyncio.get_event_loop().time() + 120
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
 
         # The merged function should have been stored.
         fm.add_functions.assert_called()
