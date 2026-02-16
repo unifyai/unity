@@ -1,8 +1,14 @@
-"""Storage-loop integration test for FunctionManager + GuidanceManager.
+"""Storage-loop integration tests for FunctionManager + GuidanceManager.
 
-Verifies that the post-completion storage check loop correctly identifies
-and stores *both* reusable functions (in FM) and compositional workflow
-guidance (in GM) when the trajectory warrants it.
+Tests the storage check loop's discrimination between the two stores:
+
+* ``test_storage_loop_stores_both_function_and_guidance`` — a multi-step
+  pipeline with reusable utilities AND a non-trivial composition.
+  Expected: function(s) stored in FM, workflow guidance stored in GM.
+
+* ``test_storage_loop_stores_function_without_guidance`` — a single
+  well-parameterized utility with no multi-step composition.
+  Expected: function stored in FM, NO guidance created in GM.
 
 This complements the existing storage tests in ``test_can_compose_and_store.py``
 which only assert on FunctionManager storage.
@@ -162,6 +168,84 @@ async def test_storage_loop_stores_both_function_and_guidance():
             f"data-cleaning pipeline composition. "
             f"FM add_functions was called {fm.add_functions.call_count} time(s), "
             f"but no guidance was stored."
+        )
+    finally:
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Test: storage loop stores function but NOT guidance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+async def test_storage_loop_stores_function_without_guidance():
+    """The storage check stores a function (FM) but does NOT create guidance (GM).
+
+    The task produces a single, well-parameterized utility function
+    (phone-number normalization) that is clearly reusable but involves no
+    multi-step compositional workflow.  The storage-check librarian should:
+
+    - Recognise the utility as genuinely reusable → store via FM.
+    - NOT create a guidance entry, because there is no non-obvious
+      multi-step composition to document — the function's own docstring
+      fully describes its usage.
+    """
+    fm = MagicMock()
+    fm.search_functions = MagicMock(return_value={"metadata": []})
+    fm.filter_functions = MagicMock(return_value={"metadata": []})
+    fm.list_functions = MagicMock(return_value={"metadata": []})
+    fm.add_functions = MagicMock(return_value={"stored": "added"})
+    fm.delete_function = MagicMock(return_value={})
+
+    gm = _TrackingGuidanceManager()
+
+    actor = CodeActActor(
+        function_manager=fm,
+        guidance_manager=gm,
+        timeout=180,
+    )
+    try:
+        handle = await actor.act(
+            "Write a reusable Python function called `normalize_phone` that:\n\n"
+            "1. Takes a raw phone string in any common format — digits, spaces, "
+            "dashes, dots, parentheses, optional leading '+' or country code.\n"
+            "   Examples: '(555) 123-4567', '+1-555-123-4567', '555.123.4567', "
+            "'15551234567'\n\n"
+            "2. Strips all non-digit characters (except a leading '+').\n"
+            "3. For US numbers: accepts 10 digits (adds '+1' prefix) or "
+            "11 digits starting with '1' (adds '+' prefix). "
+            "Raises ValueError for other lengths.\n"
+            "4. Returns the normalized string in E.164 format (e.g. '+15551234567').\n\n"
+            "Test it with these inputs and verify the expected outputs:\n"
+            "- '(555) 123-4567'   → '+15551234567'\n"
+            "- '+1-555-123-4567'  → '+15551234567'\n"
+            "- '555.123.4567'     → '+15551234567'\n"
+            "- '15551234567'      → '+15551234567'\n"
+            "- '123'              → raises ValueError",
+            can_store=True,
+            persist=False,
+            clarification_enabled=False,
+        )
+        result = await asyncio.wait_for(handle.result(), timeout=240)
+        assert result is not None
+
+        # The storage check should have stored the function.
+        fm.add_functions.assert_called(), (
+            "Expected FunctionManager.add_functions to be called for the "
+            "reusable normalize_phone utility."
+        )
+
+        # The storage check should NOT have created guidance — this is a
+        # single utility with no multi-step compositional workflow.
+        assert not gm.add_calls, (
+            f"Expected NO GuidanceManager.add_guidance calls for a single "
+            f"utility function, but {len(gm.add_calls)} guidance entries "
+            f"were created: {[c['title'] for c in gm.add_calls]}"
         )
     finally:
         try:
