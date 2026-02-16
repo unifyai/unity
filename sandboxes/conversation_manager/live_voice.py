@@ -24,10 +24,11 @@ from pathlib import Path
 
 from livekit import api
 
-_VOICE_AGENT_LOG = Path(".logs_voice_agent.txt")
+_VOICE_AGENT_LOG_NAME = ".logs_voice_agent.txt"
 _CONNECTION_FILE = Path(".live_voice_connect.json")
 _PLAYGROUND_URL = "https://agents-playground.livekit.io"
 _READINESS_POLL_INTERVAL_SECONDS = 0.25
+_SANDBOX_LAUNCH_CWD_ENV = "UNITY_SANDBOX_LAUNCH_CWD"
 
 
 @dataclass
@@ -176,6 +177,14 @@ def _write_connection_file(session: LiveVoiceSession) -> None:
     )
 
 
+def _voice_agent_log_path() -> Path:
+    """Return the voice-agent log path anchored to sandbox launch cwd."""
+    launch_cwd = os.environ.get(_SANDBOX_LAUNCH_CWD_ENV, "").strip()
+    if launch_cwd:
+        return Path(launch_cwd).expanduser().resolve() / _VOICE_AGENT_LOG_NAME
+    return Path.cwd().resolve() / _VOICE_AGENT_LOG_NAME
+
+
 # ── Call-manager defaults ────────────────────────────────────────────────
 
 
@@ -299,7 +308,8 @@ async def start_session(
 
     # The subprocess runs ``agents.cli.run_app()`` in "dev" mode which
     # auto-joins the room — no separate dispatch_agent() call needed.
-    log_fh, restore = _spawn_quiet(_VOICE_AGENT_LOG)
+    voice_agent_log = _voice_agent_log_path()
+    log_fh, restore = _spawn_quiet(voice_agent_log)
     try:
         await cm.call_manager.start_unify_meet(
             contact=contact,
@@ -316,7 +326,7 @@ async def start_session(
         agent_name=agent_name,
         user_token=user_token,
         livekit_url=livekit_url,
-        log_file=str(_VOICE_AGENT_LOG.resolve()),
+        log_file=str(voice_agent_log.resolve()),
         connection_file=str(_CONNECTION_FILE.resolve()),
         _log_fh=log_fh,
     )
