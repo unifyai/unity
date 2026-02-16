@@ -84,15 +84,14 @@ def test_prompt_excludes_actor_guidance_when_env_absent():
 
 @pytest.mark.timeout(30)
 def test_actor_run_exposes_capability_parameters():
-    """actor.run should expose can_compose, can_store, can_spawn_sub_agents,
-    and storage_check_on_return as parameters visible to the LLM."""
+    """actor.run should expose can_compose, can_store, and can_spawn_sub_agents
+    as parameters visible to the LLM."""
     sig = inspect.signature(_ActorRunner.run)
     param_names = set(sig.parameters.keys())
 
     assert "can_compose" in param_names
     assert "can_store" in param_names
     assert "can_spawn_sub_agents" in param_names
-    assert "storage_check_on_return" in param_names
     assert "prompt_functions" in param_names
     assert "discovery_scope" in param_names
 
@@ -106,7 +105,6 @@ def test_actor_run_parameter_defaults():
     assert params["can_compose"].default is True
     assert params["can_store"].default is False
     assert params["can_spawn_sub_agents"].default is False
-    assert params["storage_check_on_return"].default is False
 
 
 @pytest.mark.timeout(30)
@@ -364,7 +362,6 @@ async def test_actor_run_forwards_capability_flags():
                 can_compose=True,
                 can_store=True,
                 can_spawn_sub_agents=True,
-                storage_check_on_return=True,
             )
             await handle.stop()
             try:

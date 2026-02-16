@@ -325,7 +325,7 @@ def build_code_act_prompt(
     *,
     environments: Mapping[str, "BaseEnvironment"],
     tools: Optional[Dict[str, Callable]] = None,
-    storage_check_on_return: bool = False,
+    can_store: bool = False,
     guidelines: Optional[str] = None,
 ) -> str:
     """
@@ -386,7 +386,7 @@ def build_code_act_prompt(
         )
 
         storage_deferred_block = (
-            _STORAGE_DEFERRED_NOTICE if storage_check_on_return else ""
+            _STORAGE_DEFERRED_NOTICE if can_store else ""
         )
 
         guidelines_block = (

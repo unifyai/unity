@@ -6,7 +6,7 @@ Tests that verify the ConversationManager brain correctly handles the
 two-phase notification pattern from ``_StorageCheckHandle``-wrapped
 actor handles.
 
-When ``storage_check_on_return=True``, the handle lifecycle is:
+When ``can_store=True``, the handle lifecycle is:
 
 1. Task completes → notification emitted (action still in-flight during
    storage check) → brain wakes up, should relay result to user.
