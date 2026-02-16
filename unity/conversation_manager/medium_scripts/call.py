@@ -165,12 +165,13 @@ async def entrypoint(ctx: agents.JobContext):
         STT = deepgram.STT(model="nova-3", language="en-GB")
         VAD = silero.VAD.load(min_speech_duration=0.15)
 
+    from unity.settings import SETTINGS
+
     # Fast brain LLM - lightweight model for responsive conversation
     # Uses UnifyLLM adapter for local caching (CI) and usage tracking
-    llm_model = UnifyLLM(model="gpt-5-mini@openai", reasoning_effort="minimal")
-
-    # Build Voice Agent prompt (used by both TTS and STS modes)
-    from unity.settings import SETTINGS
+    llm_model = UnifyLLM(
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL, reasoning_effort="minimal",
+    )
 
     assistant_name = SESSION_DETAILS.assistant.name
     system_prompt = build_voice_agent_prompt(

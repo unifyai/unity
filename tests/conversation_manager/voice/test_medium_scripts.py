@@ -1248,7 +1248,11 @@ class TestFastBrainGuidanceFlow:
         )
         chat_ctx.add_message(role="assistant", content="Let me check on that.")
 
-        stream = adapter_module.UnifyLLM(model="gpt-5-mini@openai").chat(
+        from unity.settings import SETTINGS
+
+        stream = adapter_module.UnifyLLM(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        ).chat(
             chat_ctx=chat_ctx,
         )
         await stream._run()

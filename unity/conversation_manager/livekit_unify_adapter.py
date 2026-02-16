@@ -32,7 +32,8 @@ class UnifyLLM(llm.LLM):
     - Consistent routing through our standard LLM client
 
     Usage:
-        llm_model = UnifyLLM(model="gpt-5-mini@openai", reasoning_effort="none")
+        from unity.settings import SETTINGS
+        llm_model = UnifyLLM(model=SETTINGS.conversation.FAST_BRAIN_MODEL)
         session = AgentSession(llm=llm_model, ...)
     """
 

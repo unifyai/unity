@@ -1692,6 +1692,7 @@ class TestInFlightActionOrchestration:
         from unity.conversation_manager.prompt_builders import (
             build_voice_agent_prompt,
         )
+        from unity.settings import SETTINGS
 
         fast_prompt = build_voice_agent_prompt(
             bio="I am a virtual assistant.",
@@ -1703,7 +1704,7 @@ class TestInFlightActionOrchestration:
             is_boss_user=True,
         ).flatten()
         client = new_llm_client(
-            model="gpt-5-nano@openai",
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
             reasoning_effort="minimal",
         )
         # Use the actual guidance content that was produced, or a fallback
