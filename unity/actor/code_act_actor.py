@@ -43,6 +43,7 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
+from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
 from unity.events.manager_event_logging import log_manager_call
@@ -341,34 +342,45 @@ def _start_storage_check_loop(
     async def FunctionManager_search_functions(
         query: str,
         n: int = 5,
+        include_implementations: bool = True,
     ) -> Any:
-        """Search for existing stored functions by semantic similarity."""
         return fm.search_functions(
             query=query,
             n=n,
-            include_implementations=True,
+            include_implementations=include_implementations,
         )
+
+    FunctionManager_search_functions.__doc__ = (
+        BaseFunctionManager.search_functions.__doc__
+    )
 
     async def FunctionManager_filter_functions(
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        include_implementations: bool = True,
     ) -> Any:
-        """Filter existing stored functions using a filter expression."""
         return fm.filter_functions(
             filter=filter,
             offset=offset,
             limit=limit,
-            include_implementations=True,
+            include_implementations=include_implementations,
         )
+
+    FunctionManager_filter_functions.__doc__ = (
+        BaseFunctionManager.filter_functions.__doc__
+    )
 
     async def FunctionManager_list_functions(
         include_implementations: bool = False,
     ) -> Any:
-        """List all stored functions."""
         return fm.list_functions(
             include_implementations=include_implementations,
         )
+
+    FunctionManager_list_functions.__doc__ = (
+        BaseFunctionManager.list_functions.__doc__
+    )
 
     async def FunctionManager_add_functions(
         implementations: str | list[str],
@@ -1889,70 +1901,65 @@ class CodeActActor(BaseCodeActActor):
             "install_python_packages": install_python_packages,
         }
 
-        # Add FunctionManager tools (auto-inject callables into sandbox) if available.
-        #
-        # IMPORTANT:
-        # These tools are called via JSON tool calls (not inside Python). They return
-        # metadata to the LLM while injecting the matching function callables into the
-        # sandbox global namespace so they can be executed immediately in Python code.
+        # FunctionManager read tools: thin wrappers that inject callables
+        # into the sandbox and return only metadata to the LLM. Docstrings
+        # are inherited from the base class (the single source of truth).
         if self.function_manager:
 
             async def FunctionManager_search_functions(
                 query: str,
                 n: int = 5,
+                include_implementations: bool = True,
             ) -> Any:
-                """
-                Search for functions by semantic similarity to a natural-language query.
-
-                Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after searching.
-                """
                 result = self.function_manager.search_functions(
                     query=query,
                     n=n,
-                    return_callable=True,
-                    namespace=_CURRENT_SANDBOX.get().global_state,
-                    also_return_metadata=True,
+                    include_implementations=include_implementations,
+                    _return_callable=True,
+                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _also_return_metadata=True,
                 )
                 return result["metadata"]
+
+            FunctionManager_search_functions.__doc__ = (
+                BaseFunctionManager.search_functions.__doc__
+            )
 
             async def FunctionManager_filter_functions(
                 filter: Optional[str] = None,
                 offset: int = 0,
                 limit: int = 100,
+                include_implementations: bool = True,
             ) -> Any:
-                """
-                Filter functions using a Python-like filter expression.
-
-                Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after filtering.
-                """
                 result = self.function_manager.filter_functions(
                     filter=filter,
                     offset=offset,
                     limit=limit,
-                    return_callable=True,
-                    namespace=_CURRENT_SANDBOX.get().global_state,
-                    also_return_metadata=True,
+                    include_implementations=include_implementations,
+                    _return_callable=True,
+                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _also_return_metadata=True,
                 )
                 return result["metadata"]
+
+            FunctionManager_filter_functions.__doc__ = (
+                BaseFunctionManager.filter_functions.__doc__
+            )
 
             async def FunctionManager_list_functions(
                 include_implementations: bool = False,
             ) -> Any:
-                """
-                List available functions.
-
-                Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after listing.
-                """
                 result = self.function_manager.list_functions(
                     include_implementations=include_implementations,
-                    return_callable=True,
-                    namespace=_CURRENT_SANDBOX.get().global_state,
-                    also_return_metadata=True,
+                    _return_callable=True,
+                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _also_return_metadata=True,
                 )
                 return result["metadata"]
+
+            FunctionManager_list_functions.__doc__ = (
+                BaseFunctionManager.list_functions.__doc__
+            )
 
             tools["FunctionManager_search_functions"] = FunctionManager_search_functions
             tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
@@ -3046,9 +3053,9 @@ class CodeActActor(BaseCodeActActor):
 
                 out = fm.filter_functions(
                     filter=f"function_id == {entrypoint_id}",
-                    return_callable=True,
-                    namespace=sandbox.global_state,
-                    also_return_metadata=True,
+                    _return_callable=True,
+                    _namespace=sandbox.global_state,
+                    _also_return_metadata=True,
                 )
                 metadata = []
                 if isinstance(out, dict):

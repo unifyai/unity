@@ -255,15 +255,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         # Ask the stateful LLM to produce a catalogue snapshot aligned to guidance
         guidance = self._guidance_hint()
@@ -323,10 +323,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 t0,
             )
 
-        if not return_callable:
+        if not _return_callable:
             return data
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
 
         def _make_stub(fn_name: str):
             async def _stub(*args, **kwargs):
@@ -345,10 +345,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
             if not isinstance(fn_name, str):
                 continue
             cb = _make_stub(fn_name)
-            namespace[fn_name] = cb
+            _namespace[fn_name] = cb
             callables_map[fn_name] = cb
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_map, "metadata": data}  # type: ignore[return-value]
 
         return callables_map  # type: ignore[return-value]
@@ -406,15 +406,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         offset: int = 0,
         limit: int = 100,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         guidance = self._guidance_hint()
         sched = maybe_tool_log_scheduled(
@@ -480,10 +480,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 if isinstance(rec, dict)
             ]
 
-        if not return_callable:
+        if not _return_callable:
             return data
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
 
         def _make_stub(fn_name: str):
             async def _stub(*args, **kwargs):
@@ -503,10 +503,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
             if not isinstance(fn_name, str):
                 continue
             cb = _make_stub(fn_name)
-            namespace[fn_name] = cb
+            _namespace[fn_name] = cb
             callables_list.append(cb)
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_list, "metadata": data}  # type: ignore[return-value]
 
         return callables_list  # type: ignore[return-value]
@@ -518,15 +518,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         query: str,
         n: int = 5,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         guidance = self._guidance_hint()
         sched = maybe_tool_log_scheduled(
@@ -591,10 +591,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 if isinstance(rec, dict)
             ]
 
-        if not return_callable:
+        if not _return_callable:
             return data
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
 
         def _make_stub(fn_name: str):
             async def _stub(*args, **kwargs):
@@ -614,10 +614,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
             if not isinstance(fn_name, str):
                 continue
             cb = _make_stub(fn_name)
-            namespace[fn_name] = cb
+            _namespace[fn_name] = cb
             callables_list.append(cb)
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_list, "metadata": data}  # type: ignore[return-value]
 
         return callables_list  # type: ignore[return-value]

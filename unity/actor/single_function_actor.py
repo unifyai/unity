@@ -436,9 +436,9 @@ class SingleFunctionActor(BaseActor):
         result = self._function_manager.filter_functions(
             filter=f"function_id == {function_id}",
             include_implementations=True,
-            return_callable=True,
-            namespace=namespace,
-            also_return_metadata=True,
+            _return_callable=True,
+            _namespace=namespace,
+            _also_return_metadata=True,
         )
         metadata = result.get("metadata", [])
         if not metadata:
@@ -462,9 +462,9 @@ class SingleFunctionActor(BaseActor):
         result = self._function_manager.search_functions(
             query=query,
             n=1,
-            return_callable=True,
-            namespace=namespace,
-            also_return_metadata=True,
+            _return_callable=True,
+            _namespace=namespace,
+            _also_return_metadata=True,
         )
         metadata = result.get("metadata", [])
         if not metadata:
