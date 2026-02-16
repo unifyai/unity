@@ -15,4 +15,6 @@ git submodule update --init --recursive
 cp "$src/.env" .env
 ln -sf "$src/.venv" .venv
 
+.venv/bin/python -m pre_commit install
+
 echo "Ready: $dst"
