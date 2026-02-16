@@ -101,9 +101,20 @@ class MemoryManager(BaseMemoryManager):
         enable_callbacks: When True, register EventBus callbacks for message
             ingestion and manager-method tracking. When False, skip callback
             registration.
+
+        Per-capability flags gate which operations run inside the passive
+        50-message chunk trigger.  They do NOT prevent direct calls to the
+        corresponding public methods.
         """
 
         enable_callbacks: bool = True
+
+        contacts: bool = True
+        bios: bool = True
+        rolling_summaries: bool = True
+        response_policies: bool = True
+        knowledge: bool = True
+        tasks: bool = True
 
     def __init__(
         self,
@@ -944,66 +955,71 @@ class MemoryManager(BaseMemoryManager):
                 )
 
                 # ── 1. Global, transcript-level updates (run *concurrently*) ────────
-                global_tasks = [
-                    self.update_contacts(plain_transcript),
-                    self.update_knowledge(plain_transcript),
-                    self.update_tasks(plain_transcript),
-                ]
+                all_tasks: list = []
+                if self._cfg.contacts:
+                    all_tasks.append(self.update_contacts(plain_transcript))
+                if self._cfg.knowledge:
+                    all_tasks.append(self.update_knowledge(plain_transcript))
+                if self._cfg.tasks:
+                    all_tasks.append(self.update_tasks(plain_transcript))
 
-                # ── 2. Per-contact updates (bio & rolling summary) ──────────────────
-                contact_ids: set[int] = set()
+                # ── 2. Per-contact updates (bio, rolling summary, response policy) ──
+                need_per_contact = (
+                    self._cfg.bios
+                    or self._cfg.rolling_summaries
+                    or self._cfg.response_policies
+                )
+                if need_per_contact:
+                    contact_ids: set[int] = set()
 
-                # Exclude the assistant's own contact from updates
-                assistant_id = SESSION_DETAILS.assistant.contact_id
+                    assistant_id = SESSION_DETAILS.assistant.contact_id
 
-                for item in messages:
-                    if item.get("kind") != "message":
-                        continue  # ignore manager-method items for contact updates
+                    for item in messages:
+                        if item.get("kind") != "message":
+                            continue
 
-                    md = item.get("data", {})
+                        md = item.get("data", {})
 
-                    # 1) sender -----------------------------------------------------
-                    sid = md.get("sender_id")
-                    if isinstance(sid, int) and sid != assistant_id:
-                        contact_ids.add(sid)
+                        sid = md.get("sender_id")
+                        if isinstance(sid, int) and sid != assistant_id:
+                            contact_ids.add(sid)
 
-                    # 2) receiver(s) ----------------------------------------------
-                    rids = md.get("receiver_ids")
+                        rids = md.get("receiver_ids")
+                        if rids is None:
+                            continue
+                        if isinstance(rids, int):
+                            if rids != assistant_id:
+                                contact_ids.add(rids)
+                        elif isinstance(rids, (list, tuple, set)):
+                            for rid in rids:
+                                if isinstance(rid, int) and rid != assistant_id:
+                                    contact_ids.add(rid)
 
-                    if rids is None:
-                        continue
+                    for _cid in contact_ids:
+                        if self._cfg.bios:
+                            all_tasks.append(
+                                self.update_contact_bio(
+                                    plain_transcript,
+                                    contact_id=_cid,
+                                ),
+                            )
+                        if self._cfg.rolling_summaries:
+                            all_tasks.append(
+                                self.update_contact_rolling_summary(
+                                    plain_transcript,
+                                    contact_id=_cid,
+                                ),
+                            )
+                        if self._cfg.response_policies:
+                            all_tasks.append(
+                                self.update_contact_response_policy(
+                                    plain_transcript,
+                                    contact_id=_cid,
+                                ),
+                            )
 
-                    if isinstance(rids, int):
-                        if rids != assistant_id:
-                            contact_ids.add(rids)
-                    elif isinstance(rids, (list, tuple, set)):
-                        for rid in rids:
-                            if isinstance(rid, int) and rid != assistant_id:
-                                contact_ids.add(rid)
-
-                # Build per-contact tasks
-                for _cid in contact_ids:
-                    global_tasks.extend(
-                        [
-                            self.update_contact_bio(
-                                plain_transcript,
-                                contact_id=_cid,
-                            ),
-                            self.update_contact_rolling_summary(
-                                plain_transcript,
-                                contact_id=_cid,
-                            ),
-                            self.update_contact_response_policy(
-                                plain_transcript,
-                                contact_id=_cid,
-                            ),
-                        ],
-                    )
-
-                # Run *all* updates concurrently – failures are captured but do not
-                # cancel the remaining updates so one misbehaving method doesn’t stall
-                # the entire batch.
-                await asyncio.gather(*global_tasks, return_exceptions=True)
+                if all_tasks:
+                    await asyncio.gather(*all_tasks, return_exceptions=True)
             except Exception:  # pragma: no cover – defensive
                 # Never propagate errors back to the EventBus – log and swallow.
                 import traceback

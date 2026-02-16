@@ -743,7 +743,7 @@ async def update_session_contacts(
 
 async def update_rolling_summaries(cm: "ConversationManager") -> None:
     """Update rolling summaries for all active conversations."""
-    if cm.memory_manager is None:
+    if cm.memory_manager is None or not SETTINGS.memory.ROLLING_SUMMARIES:
         print("[ManagersWorker] Rolling summary skipped (MemoryManager disabled)")
         cm._session_logger.debug(
             "summarize",
@@ -1041,11 +1041,22 @@ def _init_managers(
 
     # 5. Initialize MemoryManager (optional - respects SETTINGS.memory.ENABLED and IMPL)
     if SETTINGS.memory.ENABLED:
+        from unity.memory_manager.memory_manager import MemoryManager
+
         print("[ManagersWorker] Initializing MemoryManager...")
         local_start_time = perf_counter()
+        mem_cfg = MemoryManager.MemoryConfig(
+            contacts=SETTINGS.memory.CONTACTS,
+            bios=SETTINGS.memory.BIOS,
+            rolling_summaries=SETTINGS.memory.ROLLING_SUMMARIES,
+            response_policies=SETTINGS.memory.RESPONSE_POLICIES,
+            knowledge=SETTINGS.memory.KNOWLEDGE,
+            tasks=SETTINGS.memory.TASKS,
+        )
         cm.memory_manager = ManagerRegistry.get_memory_manager(
             transcript_manager=cm.transcript_manager,
             contact_manager=cm.contact_manager,
+            config=mem_cfg,
             loop=loop,
         )
         print(
