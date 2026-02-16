@@ -17,3 +17,13 @@ data:
           authenticationType: gce
           defaultProject: responsive-city-458413-a2
         editable: true
+
+      - name: Google Managed Prometheus
+        type: prometheus
+        access: proxy
+        url: https://monitoring.googleapis.com/v1/projects/responsive-city-458413-a2/location/global/prometheus
+        isDefault: false
+        jsonData:
+          authenticationType: gce
+          httpMethod: POST
+        editable: true
