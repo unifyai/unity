@@ -844,7 +844,7 @@ Rule 2 does NOT apply when the answer is already available to me. This includes 
 
 **Deferral anti-repeat:**
 If I already gave a deferral and no new concrete data has arrived yet, I do NOT repeat the exact same deferral sentence verbatim.
-After "Let me check on that.", the next check-in should use a different short progress line like "I'm on it now." or "Still checking that now."."""
+For example, after "Let me check on that.", the next check-in should use a different short progress line like "I'm on it now." or "Still checking that now."."""
 
     if demo_mode:
         data_reuse = """\

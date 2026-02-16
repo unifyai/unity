@@ -706,13 +706,6 @@ class TestGuidanceRelevanceGuardrails:
             filter_calls["count"] == 0
         ), "Relevance filter should not run when no new user turn has arrived."
 
-    @pytest.mark.xfail(
-        reason=(
-            "Guidance filter does not yet detect redundancy against "
-            "recently-published guidance from a previous slow-brain run."
-        ),
-        strict=False,
-    )
     async def test_redundant_guidance_blocked_when_same_info_already_sent(
         self,
         initialized_cm,
@@ -812,6 +805,10 @@ class TestGuidanceRelevanceGuardrails:
             timestamp=assistant_speaks,
             role="assistant",
         )
+
+        # Simulate Run 1 having published its guidance (populates the
+        # _recent_guidance deque that _check_guidance_relevance reads)
+        cm._recent_guidance.append(first_guidance_content)
 
         # Run 2 produces semantically equivalent guidance (different wording,
         # same salary facts) — this is the duplicate that should be blocked
