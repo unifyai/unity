@@ -397,9 +397,18 @@ class SimulatedHandleMixin:
         ``get_handle_paused_state`` expects, following the async-tool-loop
         convention (set = running, cleared = paused).
 
-        Returns ``None`` when the handle has no ``_paused`` attribute,
-        causing ``get_handle_paused_state`` to return ``None`` (unknown).
+        If a subclass stores a real ``threading.Event`` via the setter (e.g.
+        ``SimulatedActorHandle``), that object is returned directly.
+
+        Returns ``None`` when the handle has neither a stored event nor a
+        ``_paused`` attribute, causing ``get_handle_paused_state`` to return
+        ``None`` (unknown).
         """
+        # A subclass wrote a real Event — return it as-is.
+        real = self.__dict__.get("_real_pause_event")
+        if real is not None:
+            return real
+
         if not hasattr(self, "_paused"):
             return None
 
@@ -410,6 +419,11 @@ class SimulatedHandleMixin:
                 return not handle._paused
 
         return _Proxy()
+
+    @_pause_event.setter
+    def _pause_event(self, value):
+        """Allow subclasses to store a real ``threading.Event``."""
+        self.__dict__["_real_pause_event"] = value
 
     # ── Completion gate ──────────────────────────────────────────────────
     _completion_gate: "threading.Event | None" = None
