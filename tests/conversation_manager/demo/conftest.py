@@ -22,7 +22,7 @@ import os
 import pytest
 import pytest_asyncio
 
-from tests.helpers import scenario_file_lock, get_or_create_contact
+from tests.helpers import scenario_file_lock
 from tests.conversation_manager.cm_test_driver import CMStepDriver
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,11 +69,24 @@ def pytest_configure(config):
     Sets the env var for any future SETTINGS re-creation AND directly mutates
     the existing unity.settings.SETTINGS singleton (which was already created
     eagerly during root conftest imports, before this hook ran).
+
+    Also populates SESSION_DETAILS.user with the demoer's details so that
+    init_conv_manager creates contact_id=2 with correct name/phone/email
+    (mirroring production where SESSION_DETAILS.user is populated from
+    the Orchestra assistant record before initialization).
     """
     os.environ["DEMO_MODE"] = "true"
     from unity.settings import SETTINGS
 
     SETTINGS.DEMO_MODE = True
+
+    from unity.session_details import SESSION_DETAILS
+
+    SESSION_DETAILS.user.name = (
+        f"{DEMO_OPERATOR['first_name']} {DEMO_OPERATOR['surname']}"
+    )
+    SESSION_DETAILS.user.number = DEMO_OPERATOR["phone_number"]
+    SESSION_DETAILS.user.email = DEMO_OPERATOR["email_address"]
 
 
 def pytest_unconfigure(config):
@@ -82,6 +95,12 @@ def pytest_unconfigure(config):
     from unity.settings import SETTINGS
 
     SETTINGS.DEMO_MODE = False
+
+    from unity.session_details import SESSION_DETAILS
+
+    SESSION_DETAILS.user.name = ""
+    SESSION_DETAILS.user.number = ""
+    SESSION_DETAILS.user.email = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -148,20 +167,12 @@ async def conversation_manager(request) -> CMStepDriver:
             )
             print("✅ Boss contact left sparse (demo mode)")
 
-            # Seed the demo operator (contact_id=2)
-            get_or_create_contact(
-                cm.contact_manager,
-                first_name=DEMO_OPERATOR["first_name"],
-                surname=DEMO_OPERATOR["surname"],
-                email_address=DEMO_OPERATOR["email_address"],
-                phone_number=DEMO_OPERATOR["phone_number"],
-            )
+            # Demo operator (contact_id=2) is created by init_conv_manager
+            # from SESSION_DETAILS.user (populated in pytest_configure).
+            # Just apply response_policy which isn't part of SESSION_DETAILS.
             if DEMO_OPERATOR.get("response_policy"):
-                op_contact_id = DEMO_OPERATOR["contact_id"]
                 cm.contact_manager.update_contact(
-                    contact_id=op_contact_id,
-                    should_respond=True,
-                    is_system=True,
+                    contact_id=DEMO_OPERATOR["contact_id"],
                     response_policy=DEMO_OPERATOR["response_policy"],
                 )
             print(f"✅ Demo operator seeded: {DEMO_OPERATOR['first_name']}")
