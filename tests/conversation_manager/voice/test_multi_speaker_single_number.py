@@ -335,12 +335,13 @@ class TestFastBrainMultiSpeakerTracking:
         boss_call_prompt,
     ):
         """
-        Boss introduces someone for a demo, then the new person starts talking
-        without saying their name. The boss mentioned the name, so the model
-        should use it.
+        Boss introduces someone for a demo, then the new person asks the
+        assistant to say their name. The new person never self-identified —
+        the name came only from the boss's introduction.
 
-        This tests whether the model can pick up a name from a THIRD PARTY
-        introduction rather than self-identification.
+        This directly tests whether the model tracked the third-party
+        introduction: the only correct answer to "can you pronounce my
+        name?" is "Maria", which was mentioned by Dan, not by the speaker.
         """
         conversation = [
             {
@@ -353,26 +354,26 @@ class TestFastBrainMultiSpeakerTracking:
             },
             {
                 "role": "user",
-                "content": (
-                    "Hi! So, can you help manage a team's calendar across "
-                    "different time zones?"
-                ),
+                "content": "Hi! Can you try pronouncing my name?",
             },
         ]
 
         response = await _get_fast_brain_response_raw(boss_call_prompt, conversation)
 
-        # The second user message is from Maria (based on Dan's intro).
-        # Maria didn't self-identify — Dan introduced her. The model should
-        # ideally use "Maria" in the response, but at minimum should NOT
-        # address this as Dan.
+        # The only name the model can correctly use here is "Maria" —
+        # she never self-identified, but Dan introduced her explicitly.
+        # Saying "Dan" would mean the model confused the speaker.
         assert _mentions_name(response, "Maria"), (
-            f"Fast brain should address Maria by name!\n"
+            f"Fast brain should know the speaker is Maria!\n"
             f"Response: {response}\n\n"
-            f"Dan introduced Maria and asked her to go ahead. The next message\n"
-            f"is from Maria (she asks about calendars). The fast brain should\n"
-            f"greet her by name — 'Hi Maria!' or 'Great question, Maria.'\n"
-            f"Maria didn't self-identify, but Dan's introduction was explicit."
+            f"Dan introduced Maria and told her to go ahead. The next speaker\n"
+            f"asks 'can you pronounce my name?' — the only correct answer is\n"
+            f"'Maria', from Dan's introduction."
+        )
+        assert not _mentions_name(response, "Dan"), (
+            f"Fast brain confused the speaker with the boss!\n"
+            f"Response: {response}\n\n"
+            f"The speaker is Maria (introduced by Dan), not Dan himself."
         )
 
     async def test_does_not_confuse_introduction_with_call_request(
