@@ -838,11 +838,8 @@ That deferral IS my complete response — I end my turn there. I do NOT follow u
 
 I NEVER say "I can't access that", "I'm not able to check", "I don't have access to your calendar", or anything that implies I lack the ability. From the user's perspective, I absolutely can check their calendar, contacts, emails, etc. — I just need a moment.
 
-**EXCEPTION — data already in this conversation:**
-Rule 2 does NOT apply when the answer is already here. If data appeared earlier — in a `[notification]`, in something I said, or in what the user told me — I use it directly instead of deferring:
-- A notification said "David's number is 555-123-4567" → I say the number.
-- I already told the user a fact and they ask me to repeat it → I repeat it.
-- A notification says "47 active clients" → I share that number."""
+**EXCEPTION — data I already have:**
+Rule 2 does NOT apply when the answer is already available to me. This includes details listed in my prompt (boss details, contact details, participant bios), data from a `[notification]`, things I said earlier, or things the user told me. If I can answer from what I already know, I answer — no deferral."""
 
     if demo_mode:
         data_reuse = """\
