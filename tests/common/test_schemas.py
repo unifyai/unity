@@ -457,6 +457,84 @@ def test_schema_prefers_child_docstring() -> None:
     assert "Base doc" not in desc
 
 
+# --------------------------------------------------------------------------- #
+#  INHERITED DOCSTRING + PRUNED WRAPPER SIGNATURE                              #
+#  When a thin wrapper inherits a docstring (via __doc__) from a base class    #
+#  that documents _-prefixed internal params, those params must be stripped     #
+#  from the LLM-facing description even though they don't appear in the        #
+#  wrapper's own signature.                                                    #
+# --------------------------------------------------------------------------- #
+def test_schema_strips_hidden_params_from_inherited_doc() -> None:
+    """
+    Regression: CodeActActor wraps FunctionManager methods with thin
+    closures that have pruned signatures (only public params) but inherit
+    the full base-class docstring via ``__doc__`` assignment.
+
+    The ``_``-prefixed internal params documented in the base docstring
+    must NOT leak through to the LLM-facing tool description.
+    """
+
+    class _BaseFM:
+        def search(
+            self,
+            *,
+            query: str,
+            n: int = 5,
+            _return_callable: bool = False,
+            _namespace: dict | None = None,
+        ) -> list:
+            """
+            Search for items by similarity.
+
+            Parameters
+            ----------
+            query : str
+                Natural-language search text.
+            n : int, default ``5``
+                Max results to return.
+            _return_callable : bool, default ``False``
+                When ``True``, return callables instead of metadata dicts.
+            _namespace : dict | None, default ``None``
+                Target namespace dict for callable injection when
+                ``_return_callable=True``.
+
+            Returns
+            -------
+            list
+                Up to ``n`` results.
+            """
+            return []
+
+    # Thin wrapper that includes _-prefixed params in the signature so the
+    # stripping machinery can see them, even though the body ignores them.
+    async def FunctionManager_search(
+        query: str,
+        n: int = 5,
+        _return_callable: bool = False,
+        _namespace: dict | None = None,
+    ) -> list:
+        return []
+
+    FunctionManager_search.__doc__ = _BaseFM.search.__doc__
+
+    schema = llmh.method_to_schema(FunctionManager_search)
+    props = schema["function"]["parameters"]["properties"]
+    desc = schema["function"]["description"]
+
+    # Public params visible in the schema
+    assert "query" in props
+    assert "n" in props
+
+    # Internal params must NOT appear in the schema
+    assert "_return_callable" not in props
+    assert "_namespace" not in props
+
+    # Internal param documentation must NOT appear in the description
+    assert "_return_callable" not in desc
+    assert "_namespace" not in desc
+    assert "callable injection" not in desc
+
+
 def test_schema_plain_function() -> None:
     def _plain(a: int) -> None:
         """Plain function doc."""

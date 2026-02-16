@@ -334,6 +334,18 @@ def _strip_hidden_params_from_doc(
                 i += 1
                 continue
 
+            # When skipping a hidden param block, check indent continuation
+            # BEFORE trying to match a new param line. Description lines are
+            # always more indented than the param heading in NumPy style; only
+            # when the indent drops back do we leave skip mode and try to
+            # match the line as a new parameter.
+            if skip:
+                indent = len(ln) - len(stripped)
+                if indent > base_indent:
+                    i += 1  # continuation of hidden param description
+                    continue
+                skip = False  # indent dropped → may be a new param
+
             # Parameter definition line
             m = _PARAM_LINE_RX.match(ln)
             if m:
@@ -351,13 +363,6 @@ def _strip_hidden_params_from_doc(
                     continue
                 else:
                     skip = False  # keep this parameter
-            # Parameter description line: keep skipping until indentation drops
-            elif skip:
-                indent = len(ln) - len(stripped)
-                if indent > base_indent:
-                    i += 1  # keep swallowing lines of the block
-                    continue
-                skip = False  # indent dropped → end of block
 
             if not skip:
                 out.append(ln)  # normal, unskipped content
