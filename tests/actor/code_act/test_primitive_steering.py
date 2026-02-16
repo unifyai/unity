@@ -64,36 +64,26 @@ def _restrict_to_execute_code(actor: CodeActActor) -> None:
     actor.add_tools("act", {"execute_code": act_tools["execute_code"]})
 
 
-async def _wait_for_inner_handle_adopted(
+async def _wait_for_tool_result_in_transcript(
     handle,
+    tool_name: str,
     *,
-    count: int = 1,
     timeout: float = 120.0,
 ) -> None:
-    """Wait until the outer loop has adopted at least *count* inner handles.
+    """Wait until a tool result for *tool_name* appears in the handle's transcript.
 
-    Detection: the loop's task_info dict contains metadata entries whose
-    ``handle`` attribute is not None.
+    The transcript (``handle.get_history()``) is append-only, so a tool result
+    message is a permanent, race-free signal that the tool ran and its return
+    value was processed (including handle adoption when applicable).
     """
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            task_info = getattr(handle._task, "task_info", {})
-            n = sum(
-                1
-                for _t, info in (
-                    task_info.items() if isinstance(task_info, dict) else []
-                )
-                if getattr(info, "handle", None) is not None
-            )
-            if n >= count:
-                return
-        except Exception:
-            pass
-        await asyncio.sleep(0.3)
-    raise AssertionError(
-        f"Expected {count} inner handle(s) adopted within timeout, " f"but found fewer",
-    )
+
+    async def _predicate():
+        return any(
+            m.get("role") == "tool" and m.get("name") == tool_name
+            for m in handle.get_history()
+        )
+
+    await _wait_for_condition(_predicate, poll=0.1, timeout=timeout)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -129,8 +119,10 @@ async def test_execute_function_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for the inner ContactManager.ask handle to be adopted.
-        await _wait_for_inner_handle_adopted(handle, timeout=120)
+        # Wait for the execute_function tool result in the transcript.
+        await _wait_for_tool_result_in_transcript(
+            handle, "execute_function", timeout=120,
+        )
 
         # Steer: interject additional context mid-flight.
         await handle.interject(
@@ -177,7 +169,9 @@ async def test_execute_code_mode_selection_realistic_steerable_intent(monkeypatc
             clarification_enabled=False,
         )
 
-        await _wait_for_inner_handle_adopted(handle, timeout=120)
+        await _wait_for_tool_result_in_transcript(
+            handle, "execute_code", timeout=120,
+        )
 
         snippets = extract_code_act_execute_code_snippets(handle)
         assert snippets, "Expected CodeAct to use execute_code."
@@ -279,8 +273,10 @@ async def test_execute_code_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for the inner ContactManager.ask handle to be adopted.
-        await _wait_for_inner_handle_adopted(handle, timeout=120)
+        # Wait for the execute_code tool result in the transcript.
+        await _wait_for_tool_result_in_transcript(
+            handle, "execute_code", timeout=120,
+        )
 
         # Steer: interject additional context mid-flight.
         await handle.interject(
@@ -342,18 +338,9 @@ async def test_execute_code_dual_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for the execute_code tool result to appear in the transcript.
-        # This is inserted by adopt_multi_nested the moment both handles are
-        # adopted, making it a deterministic, append-only signal (no race with
-        # handle completion removing entries from task_info).
-        async def _execute_code_result_appeared():
-            return any(
-                m.get("role") == "tool" and m.get("name") == "execute_code"
-                for m in handle.get_history()
-            )
-
-        await _wait_for_condition(
-            _execute_code_result_appeared, poll=0.1, timeout=120,
+        # Wait for the execute_code tool result in the transcript.
+        await _wait_for_tool_result_in_transcript(
+            handle, "execute_code", timeout=120,
         )
 
         # Steer the first handle (contacts) via an interjection.
