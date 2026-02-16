@@ -30,6 +30,7 @@ ProgressCallback = Callable[[str], None]
 
 DESKTOP_IMAGE_TAG = "unity-desktop"
 DESKTOP_CONTAINER_NAME = "unity-desktop-sandbox"
+DESKTOP_NOVNC_URL = "http://localhost:6080/custom.html"
 
 
 @dataclass(frozen=True)
@@ -257,7 +258,7 @@ def _wait_for_container_ready(
             container_id = _find_running_container(container_name)
             return DesktopBootstrapResult(
                 ok=True,
-                summary="Desktop container ready",
+                summary=f"Desktop container ready — view at {DESKTOP_NOVNC_URL}",
                 container_id=container_id,
             )
         time.sleep(float(poll_interval_s))
@@ -386,10 +387,12 @@ def try_start_desktop_direct(
         agent_server_url=agent_server_url,
         unify_key=unify_key,
     ):
-        progress("[desktop] Reusing existing desktop container")
+        progress(
+            f"[desktop] Reusing existing desktop container — view at {DESKTOP_NOVNC_URL}",
+        )
         return DesktopBootstrapResult(
             ok=True,
-            summary="Desktop container already running",
+            summary=f"Desktop container already running — view at {DESKTOP_NOVNC_URL}",
             container_id=existing,
         )
 
@@ -461,10 +464,12 @@ def try_auto_bootstrap_desktop(
         agent_server_url=agent_server_url,
         unify_key=unify_key,
     ):
-        progress("[desktop] Reusing existing desktop container")
+        progress(
+            f"[desktop] Reusing existing desktop container — view at {DESKTOP_NOVNC_URL}",
+        )
         return DesktopBootstrapResult(
             ok=True,
-            summary="Desktop container already running",
+            summary=f"Desktop container already running — view at {DESKTOP_NOVNC_URL}",
             container_id=existing,
         )
 
