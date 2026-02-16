@@ -1047,8 +1047,20 @@ def _init_managers(
             cm.actor = actor
         else:
             # Create via ManagerRegistry (respects SETTINGS.actor.IMPL)
+            from unity.actor.environments import (
+                StateManagerEnvironment,
+                ComputerEnvironment,
+                ActorEnvironment,
+            )
+            from unity.function_manager.primitives import ComputerPrimitives
+
             cm.actor = ManagerRegistry.get_actor(
                 description="production deployment",
+                environments=[
+                    StateManagerEnvironment(),
+                    ComputerEnvironment(ComputerPrimitives()),
+                    ActorEnvironment(),
+                ],
             )
         actor_cls = type(cm.actor).__name__
         print(
