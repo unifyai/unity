@@ -138,7 +138,7 @@ class TestSaveScreenshot:
         ts = datetime(2026, 2, 16, 14, 30, 45, 123456, tzinfo=timezone.utc)
         path = _save_screenshot(self._make_entry(source="assistant", ts=ts))
 
-        assert path == "Screenshots/Assistant/2026-02-16T14-30-45.123456.png"
+        assert path == "Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg"
 
     def test_writes_decoded_content(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -161,9 +161,9 @@ class TestSaveScreenshot:
         path2 = _save_screenshot(entry)
         path3 = _save_screenshot(entry)
 
-        assert path1 == "Screenshots/Assistant/2026-02-16T14-30-45.123456.png"
-        assert path2 == "Screenshots/Assistant/2026-02-16T14-30-45.123456_1.png"
-        assert path3 == "Screenshots/Assistant/2026-02-16T14-30-45.123456_2.png"
+        assert path1 == "Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg"
+        assert path2 == "Screenshots/Assistant/2026-02-16T14-30-45.123456_1.jpg"
+        assert path3 == "Screenshots/Assistant/2026-02-16T14-30-45.123456_2.jpg"
 
         # All three files exist with correct content.
         assert (tmp_path / path1).exists()
