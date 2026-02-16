@@ -500,22 +500,37 @@ class MemoryManager(BaseMemoryManager):
 
     async def _on_new_message(self, evt: Event) -> None:
         """Collect messages and trigger memory updates every *CHUNK_SIZE* messages."""
-        from unity.transcript_manager.types.message import Message
+        payload = evt.payload
 
-        if not isinstance(evt.payload, Message):
+        # Payloads are standardised as dicts by the EventBus, but may still
+        # arrive as Pydantic model instances from live publish paths.
+        if hasattr(payload, "model_dump"):
+            d = payload.model_dump(mode="json")
+        elif isinstance(payload, dict):
+            d = payload
+        else:
             return
 
-        msg = evt.payload
+        # Minimal validation: a Message payload must have content.
+        if "content" not in d:
+            return
+
+        ts_raw = d.get("timestamp")
+        ts_str = (
+            ts_raw.isoformat()
+            if hasattr(ts_raw, "isoformat")
+            else str(ts_raw) if ts_raw else ""
+        )
 
         self._recent_messages.append(
             {
                 "kind": "message",
                 "data": {
-                    "sender_id": msg.sender_id,
-                    "receiver_ids": msg.receiver_ids,
-                    "medium": msg.medium,
-                    "timestamp": msg.timestamp.isoformat(),
-                    "content": msg.content,
+                    "sender_id": d.get("sender_id"),
+                    "receiver_ids": d.get("receiver_ids"),
+                    "medium": d.get("medium"),
+                    "timestamp": ts_str,
+                    "content": d.get("content"),
                 },
             },
         )
