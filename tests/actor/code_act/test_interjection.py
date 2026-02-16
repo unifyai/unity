@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock
 
 from unity.actor.code_act_actor import CodeActActor
 
@@ -16,9 +15,6 @@ async def test_interjection_incremental_teaching_session():
     in an interactive teaching session.
     """
     actor = CodeActActor()
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     plan = None
     try:
@@ -73,10 +69,7 @@ async def test_interjection_incremental_teaching_session():
         ), f"Unexpected error: {final_result}"
 
         history_str = str(plan.get_history())
-        assert (
-            "allrecipes" in history_str.lower()
-            or actor._computer_primitives.navigate.called
-        )
+        assert "allrecipes" in history_str.lower()
     finally:
         if plan and not plan.done():
             try:
