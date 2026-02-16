@@ -34,13 +34,6 @@ def _build_target_prompt() -> str:
 
 
 class TestNaturalnessTargets:
-    @pytest.mark.xfail(
-        reason=(
-            "Naturalness target: progress updates should mention active work, "
-            "not only generic filler."
-        ),
-        strict=False,
-    )
     @pytest.mark.asyncio
     async def test_progress_update_mentions_active_work_item(self):
         prompt = _build_target_prompt()
