@@ -232,6 +232,8 @@ async def test_ask_uses_parent_context(llm_config) -> None:
     )
     ans = await helper.result()
 
+    await handle.result()
+
     assert (
         "apple" in ans.lower()
     ), "Answer did not reflect parent context (banana allergy)."
