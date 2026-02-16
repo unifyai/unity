@@ -29,30 +29,20 @@ logger = logging.getLogger(__name__)
 
 
 def _build_scoped_fm(
-    actor_ctx: Any,  # ActorContext | None
     discovery_scope: str | None,
-) -> Optional["FunctionManager"]:
-    """Build a fresh FunctionManager inheriting the parent's scope, optionally narrowed."""
-    if actor_ctx is None or actor_ctx.function_manager is None:
-        return None
+) -> "FunctionManager":
+    """Build a fresh FunctionManager with an optional discovery filter.
 
+    Constructs a default FunctionManager with all managers in scope.
+    If *discovery_scope* is provided it is applied as the ``filter_scope``
+    so the inner actor's search/list/filter results are restricted
+    accordingly.
+    """
     from unity.function_manager.function_manager import FunctionManager as _FM
 
-    parent_fm = actor_ctx.function_manager
-    parent_scope = parent_fm.filter_scope
-    if discovery_scope and parent_scope:
-        combined_scope = f"({parent_scope}) and ({discovery_scope})"
-    elif discovery_scope:
-        combined_scope = discovery_scope
-    else:
-        combined_scope = parent_scope
-
     return _FM(
-        primitive_scope=parent_fm.primitive_scope,
-        filter_scope=combined_scope,
-        exclude_primitive_ids=parent_fm.exclude_primitive_ids,
-        exclude_compositional_ids=parent_fm.exclude_compositional_ids,
-        include_primitives=parent_fm._include_primitives,
+        filter_scope=discovery_scope,
+        include_primitives=True,
     )
 
 
@@ -141,8 +131,8 @@ def _build_environments_from_db(
 class _ActorRunner:
     """Runtime object injected into the sandbox as ``actor``.
 
-    Self-contained: reads ambient context (FM scope, permissions) from
-    the ``_ACTOR_CONTEXT`` ContextVar set by the enclosing CodeActActor.
+    Fully stateless: constructs its own FunctionManager from defaults.
+    No ambient ContextVars required -- can be called in total isolation.
     """
 
     _PRIMITIVE_METHODS = ("act",)
@@ -250,12 +240,9 @@ class _ActorRunner:
             search/list/filter (e.g., ``"language == 'python'"`` or
             ``"'data' in docstring"``).
 
-            The actor automatically inherits the parent agent's
-            existing scope.  This parameter strictly narrows that
-            inherited scope further (ANDed with the parent's filter),
-            so the actor's discoverable function library is always
-            a subset of the parent's.  Use this to keep the actor
-            focused on only the functions relevant to its specific task.
+            When provided, only functions matching this expression are
+            visible to the actor's discovery tools.  When omitted, all
+            stored functions are discoverable.
         timeout : float, optional
             Maximum seconds for the actor to complete.  When omitted
             the actor runs without a time limit.
@@ -263,13 +250,11 @@ class _ActorRunner:
             Whether the actor can write and execute arbitrary code via
             ``execute_code``. Set to False to restrict the actor to
             only discovering and executing stored functions.
-            Capped by the parent agent's own ``can_compose`` setting.
         can_store : bool, default False
             Whether a post-completion review loop should run to identify
             and store reusable functions and guidance from the actor's
             trajectory. Storage is always deferred to a dedicated second
             loop after the main task completes.
-            Capped by the parent agent's own ``can_store`` setting.
         can_spawn_sub_agents : bool, default False
             Whether the actor can itself spawn deeper actors.
             Use with caution to avoid excessive nesting.
@@ -282,21 +267,16 @@ class _ActorRunner:
             final string result is surfaced when the actor completes.
         """
         from unity.actor.code_act_actor import CodeActActor
-        from unity.actor.execution import _ACTOR_CONTEXT, _PARENT_CHAT_CONTEXT
-
-        actor_ctx = _ACTOR_CONTEXT.get(None)
-        _parent_chat_context = _PARENT_CHAT_CONTEXT.get(None)
-
-        # Privilege escalation prevention: cap inner permissions by parent's.
-        effective_can_compose = can_compose and (
-            actor_ctx.can_compose if actor_ctx else True
-        )
-        effective_can_store = can_store and (actor_ctx.can_store if actor_ctx else True)
+        from unity.actor.execution import _PARENT_CHAT_CONTEXT
 
         effective_timeout = timeout if timeout is not None else 1000
 
-        # Build FM with inherited + narrowed scope.
-        inner_fm = _build_scoped_fm(actor_ctx, discovery_scope)
+        # Pick up parent chat context if running inside a CodeActActor
+        # sandbox.  Gracefully degrades to None in standalone usage.
+        _parent_chat_context = _PARENT_CHAT_CONTEXT.get(None)
+
+        # Build a fresh FM scoped by discovery_scope (no parent inheritance).
+        inner_fm = _build_scoped_fm(discovery_scope)
 
         # Resolve prompt_functions against DB.
         inner_envs = _build_environments_from_db(prompt_functions, inner_fm)
@@ -309,8 +289,8 @@ class _ActorRunner:
         inner_actor = CodeActActor(
             environments=inner_envs,
             function_manager=inner_fm,
-            can_compose=bool(effective_can_compose),
-            can_store=bool(effective_can_store),
+            can_compose=bool(can_compose),
+            can_store=bool(can_store),
             timeout=effective_timeout,
         )
 

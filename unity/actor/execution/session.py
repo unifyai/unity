@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import ast
 import contextvars
-import dataclasses
 import logging
 import sys
 import traceback
@@ -60,21 +59,6 @@ _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
 
 _PARENT_CHAT_CONTEXT: contextvars.ContextVar[list | None] = contextvars.ContextVar(
     "code_act_parent_chat_context",
-    default=None,
-)
-
-
-@dataclasses.dataclass(frozen=True)
-class ActorContext:
-    """Ambient context for actor.act() calls, set by the enclosing CodeActActor."""
-
-    function_manager: Any  # FunctionManager | None
-    can_compose: bool = True
-    can_store: bool = True
-
-
-_ACTOR_CONTEXT: contextvars.ContextVar[ActorContext | None] = contextvars.ContextVar(
-    "code_act_actor_context",
     default=None,
 )
 
