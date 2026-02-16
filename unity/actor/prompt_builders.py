@@ -142,6 +142,8 @@ def _build_filesystem_context() -> str:
         |----------|---------|
         | `Downloads/` | **Inbound** — user-sent attachments are auto-saved here. |
         | `Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
+        | `Screenshots/User/` | Auto-captured frames from the user's screen share. Read-only, cleared between sessions. |
+        | `Screenshots/Assistant/` | Auto-captured frames from the assistant's desktop. Read-only, cleared between sessions. |
         | `.env` | Environment secrets managed by SecretManager. |
         | Everything else | Your own persistent workspace — organize however makes sense for the work. |
 
@@ -150,6 +152,10 @@ def _build_filesystem_context() -> str:
           them with relative paths (e.g. `Downloads/report.pdf`).
         - **Outbound**: Save files for the user to `Outputs/` and include the
           relative path in your final answer (e.g. `Outputs/summary.csv`).
+        - **Screenshots**: Timestamped PNGs auto-saved during screen sharing.
+          Reference them for programmatic access (image analysis, OCR,
+          comparison, etc.) using relative paths
+          (e.g. `Screenshots/Assistant/2026-02-16T14-30-45.123456.png`).
         - **Stay inside the workspace**: Always use relative paths. Do not
           reference absolute paths outside `{local_root}` (e.g. `/tmp`,
           `/var`).  Everything you need is inside this workspace.

@@ -102,6 +102,8 @@ class BrainSpec:
     response_model: type["BaseModel"]
     # Buffered screenshots captured during screen sharing, aligned with user turns.
     screenshots: list[ScreenshotEntry] = field(default_factory=list)
+    # Relative file paths for each screenshot (parallel to screenshots list).
+    screenshot_paths: list[str] = field(default_factory=list)
 
     def state_message(self) -> dict:
         # Mark this as a state snapshot so the async tool loop can treat it as
@@ -152,11 +154,15 @@ class BrainSpec:
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
+            path_suffix = ""
+            if i <= len(self.screenshot_paths):
+                path_suffix = f" -- {self.screenshot_paths[i - 1]}"
             content_parts.append(
                 {
                     "type": "text",
                     "text": (
-                        f"\n[{label} - Screenshot {i}/{len(self.screenshots)}] "
+                        f"\n[{label} - Screenshot {i}/{len(self.screenshots)}"
+                        f"{path_suffix}] "
                         f'User said: "{entry.utterance}"'
                     ),
                 },
@@ -178,6 +184,7 @@ class BrainSpec:
 def build_brain_spec(
     cm: "ConversationManager",
     screenshots: list[ScreenshotEntry] | None = None,
+    screenshot_paths: list[str] | None = None,
 ) -> BrainSpec:
     """
     Build the prompt + response model inputs for a single Main CM Brain run.
@@ -192,6 +199,8 @@ def build_brain_spec(
     screenshots : list[ScreenshotEntry] | None
         Buffered screenshots from screen sharing (assistant and/or user), each
         paired with the user utterance that triggered capture and a timestamp.
+    screenshot_paths : list[str] | None
+        Relative file paths corresponding to each screenshot (parallel list).
     """
     from unity.settings import SETTINGS
 
@@ -229,4 +238,5 @@ def build_brain_spec(
         state_prompt=prompt,
         response_model=response_model,
         screenshots=screenshots or [],
+        screenshot_paths=screenshot_paths or [],
     )

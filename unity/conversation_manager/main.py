@@ -185,13 +185,20 @@ async def run_conversation_manager(
     # Ensure standard workspace directories exist.
     (_local_root / "Downloads").mkdir(exist_ok=True)
 
+    import shutil as _shutil
+
     # Clear Outputs/ between sessions so generated files don't accumulate.
     _outputs = _local_root / "Outputs"
     if _outputs.exists():
-        import shutil as _shutil
-
         _shutil.rmtree(_outputs)
     _outputs.mkdir(exist_ok=True)
+
+    # Clear Screenshots/ between sessions (ephemeral visual context).
+    _screenshots = _local_root / "Screenshots"
+    if _screenshots.exists():
+        _shutil.rmtree(_screenshots)
+    (_screenshots / "User").mkdir(parents=True, exist_ok=True)
+    (_screenshots / "Assistant").mkdir(parents=True, exist_ok=True)
 
     # Clean up dangling call processes
     if cleanup_call_processes:

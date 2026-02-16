@@ -61,6 +61,23 @@ if not logger.handlers:
 MAX_CONV_MANAGER_MSGS = 50
 
 
+def _save_screenshot(entry: ScreenshotEntry) -> str:
+    """Save a screenshot to disk and return its relative path."""
+    import base64
+    from pathlib import Path
+
+    subfolder = "Assistant" if entry.source == "assistant" else "User"
+    directory = Path("Screenshots") / subfolder
+    stem = entry.timestamp.strftime("%Y-%m-%dT%H-%M-%S.%f")
+    path = directory / f"{stem}.png"
+    suffix = 1
+    while path.exists():
+        path = directory / f"{stem}_{suffix}.png"
+        suffix += 1
+    path.write_bytes(base64.b64decode(entry.b64))
+    return str(path)
+
+
 class ConversationManager(metaclass=SingletonABCMeta):
     def __init__(
         self,
@@ -656,8 +673,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # captured while this turn is running will accumulate for the next turn.
         screenshots = self.drain_screenshot_buffer()
 
+        # Persist each screenshot to disk so the CodeActActor can reference them
+        # by filepath for programmatic operations (OCR, comparison, etc.).
+        screenshot_paths = [_save_screenshot(s) for s in screenshots]
+
         self.snapshot()
-        brain_spec = build_brain_spec(self, screenshots=screenshots)
+        brain_spec = build_brain_spec(
+            self,
+            screenshots=screenshots,
+            screenshot_paths=screenshot_paths,
+        )
         if screenshots:
             self._session_logger.info(
                 "screen_share",
