@@ -311,7 +311,7 @@ class SimulatedSecretManager(BaseSecretManager):
         self._hold_completion = hold_completion
 
         # Shared, stateful async LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedSecretManager")
 
         # Mirror the real manager's tool exposure using reflection helper
         ask_tools = mirror_secret_manager_tools("ask")

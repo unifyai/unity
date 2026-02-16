@@ -298,7 +298,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self._ask_tools = mirror_web_searcher_tools()
 
         # Stateful async LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedWebSearcher")
 
         # Reference the real prompt as context (no real tools here)
         ask_msg = build_ask_prompt(tools=self._ask_tools).flatten()
@@ -345,7 +345,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         # with the same system message to return structured output.
         llm_for_handle = self._llm
         if response_format is not None:
-            schema_llm = new_llm_client()
+            schema_llm = new_llm_client(debug_marker="SimulatedWebSearcher")
             # Mirror the stateful system message for continuity
             try:
                 schema_llm.set_system_message(getattr(self._llm, "system_message"))

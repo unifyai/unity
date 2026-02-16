@@ -318,7 +318,10 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         self._simulation_guidance = simulation_guidance
 
         # Shared, stateful LLM (memory across turns)
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedGuidanceManager",
+        )
 
         # Mirror the real manager's tool exposure programmatically and build
         # the same prompts via shared builders.

@@ -675,7 +675,7 @@ class SimulatedActor(BaseActor):
         self._sim_guidance: Optional[str] = simulation_guidance
 
         # One shared, memory-retaining LLM for all activities
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedActor")
         # Compose a system message that preserves default behaviour while
         # allowing optional simulation guidance to influence simulated responses.
         _base_sys = (
