@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel, Field
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.execution.session import PythonExecutionSession, _PARENT_CHAT_CONTEXT
@@ -22,9 +22,6 @@ async def test_code_act_initial_parent_chat_context_is_used():
     SecretModel.model_rebuild()
 
     actor = CodeActActor(timeout=60)
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     parent_ctx = [
         {"role": "user", "content": "The secret number is 456."},

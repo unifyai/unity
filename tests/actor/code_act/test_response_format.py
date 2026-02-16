@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel, Field
-from unittest.mock import AsyncMock
 
 from unity.actor.code_act_actor import CodeActActor
 
@@ -18,9 +17,6 @@ async def test_code_act_response_format_roundtrip():
     AnswerModel.model_rebuild()
 
     actor = CodeActActor(timeout=60)
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     handle = await actor.act(
         "Return {answer: 123}. Do not include any extra keys.",
