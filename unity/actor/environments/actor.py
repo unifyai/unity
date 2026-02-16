@@ -4,6 +4,12 @@ Provides an ``actor`` namespace in the sandbox with a single ``act()``
 method that spawns isolated inner CodeActActors for focused sub-tasks.
 Because actor invocations are regular sandbox code, they can be saved
 as compositional functions for reuse.
+
+Stored functions that call ``actor.act(...)`` work through the standard
+``depends_on`` pipeline: detected at storage time by ``DependencyVisitor``,
+injected at runtime by ``_inject_dependencies`` via
+``construct_sandbox_root("actor")`` → ``_ActorRunner()``.  This is why
+``_ActorRunner`` must be fully stateless (no ContextVars, no parent state).
 """
 
 from __future__ import annotations
@@ -132,7 +138,15 @@ class _ActorRunner:
     """Runtime object injected into the sandbox as ``actor``.
 
     Fully stateless: constructs its own FunctionManager from defaults.
-    No ambient ContextVars required -- can be called in total isolation.
+    No ambient ContextVars required — can be called in total isolation.
+
+    Statelessness is load-bearing: stored compositional functions that call
+    ``actor.act(...)`` are executed via ``FunctionManager._inject_dependencies``
+    → ``construct_sandbox_root("actor")`` → ``_ActorRunner()``.  That freshly
+    constructed instance has no enclosing ``CodeActActor`` and no ContextVar
+    state, so every piece of context the inner actor needs (FM scope,
+    environments, permissions) must be derived from the explicit parameters
+    passed to ``act()``.
     """
 
     _PRIMITIVE_METHODS = ("act",)

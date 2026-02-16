@@ -45,11 +45,17 @@ class Function(BaseModel):
     depends_on: List[str] = Field(
         [],
         description=(
-            "Functions this function depends on. Bare names (e.g. 'helper') "
-            "refer to other compositional functions. Dotted names (e.g. "
-            "'primitives.contacts.ask', 'actor.act') refer to environment "
-            "primitives and are tracked for introspection but not injected at "
-            "execution time (they are provided by the execution environment)."
+            "Functions this function depends on.  Both bare and dotted names "
+            "are auto-detected from the AST at storage time (see "
+            "dependency_analysis.py) and injected into the execution namespace "
+            "at runtime (see FunctionManager._inject_dependencies).\n\n"
+            "Bare names (e.g. 'helper') refer to other compositional functions "
+            "whose implementations are exec'd into the namespace.\n\n"
+            "Dotted names (e.g. 'primitives.contacts.ask', 'actor.act') refer "
+            "to environment-provided namespaces.  The root segment (e.g. "
+            "'actor', 'primitives') is resolved via "
+            "registry.construct_sandbox_root() which constructs a fresh "
+            "instance of the appropriate class on demand."
         ),
     )
     embedding_text: str = Field(

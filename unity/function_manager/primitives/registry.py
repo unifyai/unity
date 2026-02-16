@@ -45,6 +45,10 @@ class ManagerSpec:
     manager_alias: str
     manager_registry_key: str
     primitive_class_path: str
+    # The top-level key under which this manager's methods appear in a
+    # CodeActActor sandbox's global_state (e.g. "primitives", "actor",
+    # "computer_primitives").  Used by construct_sandbox_root() to map
+    # dotted depends_on entries back to the class that provides them.
     sandbox_root: str = "primitives"
     excluded_methods: frozenset[str] = field(default_factory=frozenset)
     priority: int = 99
@@ -224,6 +228,9 @@ _CLASS_PATH_TO_ALIAS: Dict[str, str] = {
 }
 
 # sandbox_root -> [specs]: maps each sandbox namespace root to its manager specs.
+# Used by construct_sandbox_root() to materialise environment namespaces at
+# runtime.  The keys here must stay in sync with the env_namespaces frozenset
+# in FunctionManager.add_functions (the storage-time AST detection side).
 _SANDBOX_ROOTS: Dict[str, list[ManagerSpec]] = {}
 for _spec in _MANAGER_SPECS:
     _SANDBOX_ROOTS.setdefault(_spec.sandbox_root, []).append(_spec)
@@ -234,17 +241,23 @@ def construct_sandbox_root(
     *,
     primitive_scope: Optional[PrimitiveScope] = None,
 ) -> Optional[Any]:
-    """Construct the root namespace object for a sandbox namespace key.
+    """Construct a fresh root namespace object for a sandbox namespace key.
 
-    Given a sandbox root name (e.g. ``"primitives"``, ``"actor"``,
-    ``"computer_primitives"``), returns a freshly constructed instance
-    that provides the methods accessible under that namespace.
+    This is the factory used by ``FunctionManager._inject_dependencies``
+    to satisfy *dotted* entries in a stored function's ``depends_on`` list.
+    When a function declares a dependency like ``"actor.act"`` or
+    ``"primitives.contacts.ask"``, ``_inject_dependencies`` extracts the
+    root segment (``"actor"``, ``"primitives"``) and calls this function
+    to obtain a live instance that provides those methods.
 
-    For ``"primitives"`` this returns a ``Primitives`` aggregator that
-    exposes all state-manager primitives as attributes.  For other roots
-    (like ``"actor"`` or ``"computer_primitives"``), the class is
-    dynamically imported from the matching ``ManagerSpec.primitive_class_path``
-    and instantiated directly.
+    The returned object is **stateless** — it does not require any ambient
+    ContextVars or parent actor state.  This is essential because stored
+    functions may be executed outside of a live ``CodeActActor`` sandbox
+    (e.g. by the storage-check loop's ``FunctionManager_add_functions``
+    tool or by a future caller that only has a FunctionManager).
+
+    Mapping from *root_name* to class is driven by ``ManagerSpec.sandbox_root``
+    in ``_MANAGER_SPECS``.
 
     Returns ``None`` when *root_name* does not match any known sandbox root.
     """

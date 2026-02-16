@@ -940,15 +940,31 @@ def _synthesize_python_call(
 ) -> str:
     """Build a Python code snippet that calls *function_name* with *call_kwargs*.
 
-    Resolution order:
-    1. If ``function_name`` is a valid Python identifier, emit a call expression.
-       The sandbox namespace already contains environment-injected callables and
-       previously-discovered FunctionManager functions, so a plain call is the
-       common-case fast path.  If the name isn't actually present at runtime the
-       sandbox will raise ``NameError`` naturally.
-    2. If the FunctionManager has a stored implementation for the name, prepend
-       the implementation (defining the function) before the call expression so
-       the function is available even in a fresh/stateless session.
+    This function only synthesises the **code string** — it does not handle
+    dependency injection.  Transitive dependencies (both bare compositional
+    functions and dotted environment namespaces like ``actor`` or
+    ``primitives``) are injected into the sandbox namespace *before* this
+    code runs, through a separate path:
+
+    * When the LLM discovers a function via ``FunctionManager_search_functions``
+      (or filter/list), the FM's ``_inject_callables_for_functions`` calls
+      ``_inject_dependencies``, which resolves every entry in ``depends_on``
+      and places the result into the sandbox's ``global_state``.
+    * Environment namespaces (``actor``, ``primitives``, etc.) are also
+      already present in the sandbox if the CodeActActor was constructed
+      with the corresponding environments.
+
+    So by the time this synthesised code executes, all names the function
+    references — whether bare helpers or dotted environment calls — are
+    already available in scope.
+
+    Resolution order for the *function itself*:
+    1. Emit a plain call expression.  The sandbox namespace already contains
+       environment-injected callables and previously-discovered FM functions,
+       so this is the common-case fast path.
+    2. If the FunctionManager has a stored implementation, prepend it as a
+       preamble (defining the function) so the call works even in a fresh
+       stateless session where discovery hasn't run yet.
 
     The call expression is always the **last expression** so that
     ``PythonExecutionSession``'s REPL semantics return its value (including
