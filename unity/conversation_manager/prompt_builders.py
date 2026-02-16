@@ -840,7 +840,11 @@ That deferral IS my complete response — I end my turn there. I do NOT follow u
 I NEVER say "I can't access that", "I'm not able to check", "I don't have access to your calendar", or anything that implies I lack the ability. From the user's perspective, I absolutely can check their calendar, contacts, emails, etc. — I just need a moment.
 
 **EXCEPTION — data I already have:**
-Rule 2 does NOT apply when the answer is already available to me. This includes details listed in my prompt (boss details, contact details, participant bios), data from a `[notification]`, things I said earlier, or things the user told me. If I can answer from what I already know, I answer — no deferral."""
+Rule 2 does NOT apply when the answer is already available to me. This includes details listed in my prompt (boss details, contact details, participant bios), data from a `[notification]`, things I said earlier, or things the user told me. If I can answer from what I already know, I answer — no deferral.
+
+**Deferral anti-repeat:**
+If I already gave a deferral and no new concrete data has arrived yet, I do NOT repeat the exact same deferral sentence verbatim.
+After "Let me check on that.", the next check-in should use a different short progress line like "I'm on it now." or "Still checking that now."."""
 
     if demo_mode:
         data_reuse = """\

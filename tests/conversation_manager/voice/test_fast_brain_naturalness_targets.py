@@ -75,13 +75,6 @@ class TestNaturalnessTargets:
             f"Response: {response}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "Naturalness target: semantically redundant guidance should avoid "
-            "repeating the same deferral line."
-        ),
-        strict=False,
-    )
     @pytest.mark.asyncio
     async def test_redundant_checking_guidance_avoids_same_deferral_phrase(self):
         prompt = _build_target_prompt()
