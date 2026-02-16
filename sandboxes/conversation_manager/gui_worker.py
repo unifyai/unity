@@ -857,6 +857,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                     sender.send_worker_exit(restart=False, config=None)
                     return
                 desktop_container_id = res.container_id
+                sender.send_lines([f"[desktop] {res.summary}"])
             else:
                 # Web mode: start a local agent-service process.
                 # Free the port first (only kills repo-owned agent-service).
