@@ -105,7 +105,7 @@ def test_add_sh_function_missing_name_fails():
 @_handle_project
 def test_add_multiple_sh_functions():
     """Test adding multiple shell functions in one call."""
-    fm = FunctionManager()
+    fm = FunctionManager(include_primitives=False)
     result = fm.add_functions(
         implementations=[SIMPLE_SH_SCRIPT, SH_SCRIPT_WITH_ARGS],
         language="sh",
@@ -225,7 +225,7 @@ def test_add_duplicate_sh_function_with_overwrite():
 @_handle_project
 def test_delete_sh_function():
     """Test deleting a shell function."""
-    fm = FunctionManager()
+    fm = FunctionManager(include_primitives=False)
     fm.add_functions(implementations=SIMPLE_SH_SCRIPT, language="sh")
 
     listing = fm.list_functions()
