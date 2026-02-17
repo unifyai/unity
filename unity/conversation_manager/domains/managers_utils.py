@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import unity
 
 from unity.settings import SETTINGS
-from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager.metrics import (
     manager_init_total,
     per_manager_init,
@@ -549,9 +549,8 @@ async def log_message(
         exchange_id = cm.call_manager.unify_meet_exchange_id
 
     call_utterance_timestamp = ""
-    call_url = ""
-    # compute utterance timestamp based on active call type
-    timestamp = (
+    # Compute utterance timestamp based on active call type.
+    call_start = (
         cm.call_manager.call_start_timestamp
         if medium == Medium.PHONE_CALL
         else (
@@ -560,18 +559,12 @@ async def log_message(
             else None
         )
     )
-    if timestamp:
-        delta = prompt_now(as_string=False) - timestamp
+    if call_start:
+        delta = prompt_now(as_string=False) - call_start
         if role == "Assistant":
             delta += timedelta(seconds=2)
         minutes, seconds = divmod(int(delta.total_seconds()), 60)
-        # ToDo: Make this MM:SS once we have explicit types working
         call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
-    if DEFAULT_ASSISTANT_ID not in SESSION_DETAILS.assistant.id:
-        call_url = (
-            "https://storage.cloud.google.com/assistant-call-recordings/staging/"
-            f"{cm.assistant_id}/{cm.call_manager.conference_name}.mp3"
-        )
 
     # publish transcript on a separate thread
     def _publish_transcript() -> int:
@@ -579,8 +572,6 @@ async def log_message(
         try:
             nonlocal exchange_id
             print(f"[ManagersWorker] Logging message: {event.to_dict()}")
-            # call_utterance_timestamp = event.call_utterance_timestamp
-            # call_url = event.call_url
 
             # Extract attachments from event if present (now always list[dict])
             attachments = getattr(event, "attachments", [])
@@ -601,6 +592,10 @@ async def log_message(
                     "cc": event.cc,
                     "bcc": event.bcc,
                 }
+
+            if call_utterance_timestamp:
+                metadata = metadata or {}
+                metadata["call_utterance_timestamp"] = call_utterance_timestamp
 
             tm_message_id = None
             if exchange_id == UNASSIGNED:

@@ -47,6 +47,7 @@ class LivekitCallManager:
         self.call_contact = None
         self._call_proc: subprocess.Popen | None = None
         self.conference_name = ""
+        self.room_name = ""
         self._event_broker = event_broker
         self._socket_server: CallEventSocketServer | None = None
         # Track whether the current call is outbound (we initiated it)
@@ -195,6 +196,7 @@ class LivekitCallManager:
                 else "unity_unify_meet_1"
             )
         )
+        self.room_name = room_name
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
         args = [
