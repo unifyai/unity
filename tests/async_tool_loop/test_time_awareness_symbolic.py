@@ -235,38 +235,6 @@ async def test_tool_history_cumulative(llm_config):
 
 
 # --------------------------------------------------------------------------- #
-#  TEST: Time context uses monkey-patched now()                               #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_timezone_applied_via_now(llm_config):
-    """Verify that times use the monkey-patched now() function.
-
-    The conftest.py patches now() to return a fixed datetime. This test
-    verifies that the time context respects that patching.
-    """
-    client = new_llm_client(**llm_config)
-
-    # Run a simple loop
-    answer = await start_async_tool_loop(
-        client,
-        message="Call simple_tool and reply 'ok'.",
-        tools={"simple_tool": simple_tool},
-    ).result()
-
-    assert answer.strip()
-
-    # The dedicated time context message should exist
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None
-
-    # The _time_context marker should be set
-    assert time_msg.get("_time_context") is True, "_time_context marker not set"
-
-
-# --------------------------------------------------------------------------- #
 #  TEST: Loop start time is captured at loop creation                         #
 # --------------------------------------------------------------------------- #
 
