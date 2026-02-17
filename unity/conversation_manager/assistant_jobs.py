@@ -1,3 +1,9 @@
+"""AssistantJobs lifecycle: log job startup, mark done, query running count.
+
+Manages records in the ``AssistantJobs`` Unify project that track which
+assistant containers are currently running.
+"""
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -6,11 +12,18 @@ import traceback
 import requests
 import unify
 
+from unity.conversation_manager.metrics import (
+    running_job_count as _m_running_jobs,
+    session_duration as _m_session_dur,
+)
 from unity.session_details import SESSION_DETAILS
 from unity.settings import SETTINGS
 
 # Track whether AssistantJobs project has been verified/created
 _project_verified = False
+
+# Session start time (perf_counter), set by log_job_startup, read by mark_job_done
+_session_start_perf: float | None = None
 
 
 def _ensure_project_exists(api_key: str) -> None:
@@ -22,7 +35,7 @@ def _ensure_project_exists(api_key: str) -> None:
         unify.create_project("AssistantJobs", api_key=api_key)
         _project_verified = True
     except Exception as e:
-        print(f"[debug_logger] Could not verify/create AssistantJobs project: {e}")
+        print(f"[assistant_jobs] Could not verify/create AssistantJobs project: {e}")
 
 
 def _is_managed_vm() -> bool:
@@ -114,6 +127,21 @@ def _resolve_vm_liveview(assistant_id: str, vm_type: str) -> str | None:
     return None
 
 
+def _record_running_job_count(api_key: str) -> None:
+    """Query running jobs and record the count as a metric (best-effort)."""
+    try:
+        logs = unify.get_logs(
+            project="AssistantJobs",
+            context="startup_events",
+            filter="running == 'true'",
+            api_key=api_key,
+        )
+        _m_running_jobs.set(len(logs))
+        print(f"[assistant_jobs] Running job count: {len(logs)}")
+    except Exception as exc:
+        print(f"[assistant_jobs] Failed to record running job count: {exc}")
+
+
 def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     """Update the running job record with job_name and liveview_url.
 
@@ -122,15 +150,16 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
-        print("[debug_logger] Skipping log_job_startup: no shared API key available")
+        print("[assistant_jobs] Skipping log_job_startup: no shared API key available")
         return
 
     _ensure_project_exists(api_key)
 
     # Update the existing record (created by adapter) with job_name and liveview_url
+    existing_logs = []
     try:
         print(
-            f"[debug_logger] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}",
+            f"[assistant_jobs] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}",
         )
         existing_logs = unify.get_logs(
             project="AssistantJobs",
@@ -142,38 +171,47 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
             ),
             api_key=api_key,
         )
-        print(f"[debug_logger] Found {len(existing_logs)} running records")
+        print(f"[assistant_jobs] Found {len(existing_logs)} running records")
 
         if existing_logs:
             log = existing_logs[0]
             log.update_entries(job_name=job_name)
-            print(f"[debug_logger] Updated record with job_name={job_name}")
+            print(f"[assistant_jobs] Updated record with job_name={job_name}")
+
+            # X1: record running job count right after the record is updated
+            _record_running_job_count(api_key)
+
+            # Mark session start for U9 duration measurement
+            global _session_start_perf
+            _session_start_perf = time.perf_counter()
         else:
             # No record found - adapter's mark_job_running() must have failed
             # Log warning but don't fail; liveview just won't be tracked
             print(
-                f"[debug_logger] WARNING: No running record found for "
+                f"[assistant_jobs] WARNING: No running record found for "
                 f"user_id={user_id}, assistant_id={assistant_id}. "
                 f"Adapter may have failed to create the record.",
             )
     except Exception as e:
-        print(f"[debug_logger] Error updating job record: {e}")
+        print(f"[assistant_jobs] Error updating job record: {e}")
         traceback.print_exc()
 
-    # Resolve liveview URL first (this can take a while)
-    try:
-        if _is_managed_vm():
-            vm_type = SESSION_DETAILS.assistant.desktop_mode
-            liveview_url = _resolve_vm_liveview(assistant_id, vm_type)
-        else:
-            # User's own desktop - no liveview URL to resolve
+    # Resolve liveview URL and attach it to the record (this can take a while).
+    # Only proceed if we successfully obtained a log record above.
+    if existing_logs:
+        try:
+            if _is_managed_vm():
+                vm_type = SESSION_DETAILS.assistant.desktop_mode
+                liveview_url = _resolve_vm_liveview(assistant_id, vm_type)
+            else:
+                # User's own desktop - no liveview URL to resolve
+                liveview_url = None
+        except Exception as e:
+            print(f"[Liveview] Error resolving liveview URL: {e}")
+            traceback.print_exc()
             liveview_url = None
-    except Exception as e:
-        print(f"[Liveview] Error resolving liveview URL: {e}")
-        traceback.print_exc()
-        liveview_url = None
-    log.update_entries(liveview_url=liveview_url)
-    print(f"[debug_logger] Updated record with liveview_url={liveview_url}")
+        log.update_entries(liveview_url=liveview_url)
+        print(f"[assistant_jobs] Updated record with liveview_url={liveview_url}")
 
 
 def _stop_vm(assistant_id: str, vm_type: str) -> None:
@@ -191,7 +229,7 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         if not comms_url or not admin_key:
             print(
-                "[debug_logger] Skipping VM stop: "
+                "[assistant_jobs] Skipping VM stop: "
                 "COMMS_URL or admin key not configured",
             )
             return
@@ -204,25 +242,26 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
         )
         if response.ok:
             print(
-                f"[debug_logger] {vm_type.capitalize()} VM stopped for assistant "
+                f"[assistant_jobs] {vm_type.capitalize()} VM stopped for assistant "
                 f"{assistant_id}: {response.json()}",
             )
         else:
             print(
-                f"[debug_logger] Failed to stop {vm_type} VM: "
+                f"[assistant_jobs] Failed to stop {vm_type} VM: "
                 f"{response.status_code} {response.text}",
             )
     except requests.exceptions.Timeout:
-        print(f"[debug_logger] {vm_type.capitalize()} VM stop request timed out")
+        print(f"[assistant_jobs] {vm_type.capitalize()} VM stop request timed out")
     except Exception as e:
-        print(f"[debug_logger] Error stopping {vm_type} VM: {e}")
+        print(f"[assistant_jobs] Error stopping {vm_type} VM: {e}")
         traceback.print_exc()
 
 
 def mark_job_done(job_name: str):
+    """Mark a job as done and record session-end metrics."""
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
-        print("[debug_logger] Skipping mark_job_done: no shared API key available")
+        print("[assistant_jobs] Skipping mark_job_done: no shared API key available")
         return
 
     # mark job done in the logs
@@ -235,9 +274,18 @@ def mark_job_done(job_name: str):
         )[0]
         job_log.update_entries(running=False)
         print("Job marked done", job_name)
+
+        # X1: record running job count right after the record is updated
+        _record_running_job_count(api_key)
     except Exception as e:
         print(f"Error finding job: {e}")
         traceback.print_exc()
+
+    # U9: session duration (log_job_startup → mark_job_done)
+    if _session_start_perf is not None:
+        dur = time.perf_counter() - _session_start_perf
+        _m_session_dur.record(dur)
+        print(f"[assistant_jobs] Session duration: {dur:.1f}s")
 
     # Stop VM if applicable (managed VM, not user's own desktop)
     if _is_managed_vm():
