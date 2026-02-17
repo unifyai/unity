@@ -168,8 +168,8 @@ class TimeContext:
         if self.tool_history:
             lines.append("")
             lines.append("### Tool Execution History")
-            lines.append("| call_id | Tool | Started (relative) | Duration |")
-            lines.append("|---------|------|-------------------|----------|")
+            lines.append("| call_id | tool | started (relative) | duration |")
+            lines.append("| --- | --- | --- | --- |")
 
             for tool in self.tool_history:
                 started = f"+{tool.started_offset_secs:.1f}s"
