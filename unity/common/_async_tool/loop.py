@@ -586,6 +586,8 @@ async def async_tool_loop_inner(
             )
             # Expose ask_tools snapshot so handle.ask() can propagate to inner handles.
             setattr(_self_task, "get_ask_tools", tools_data.get_ask_tools)  # type: ignore[attr-defined]
+            # Expose completed tool metadata (including handle refs) for downstream consumers.
+            setattr(_self_task, "get_completed_tool_metadata", lambda: dict(tools_data._completed_askable_tools))  # type: ignore[attr-defined]
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):

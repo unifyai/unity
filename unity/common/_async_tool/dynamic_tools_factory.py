@@ -707,11 +707,21 @@ class DynamicToolFactory:
         """
         completed = self.tools_data._completed_askable_tools
 
-        # Build a dynamic docstring listing all askable completed tools
+        # Build a dynamic docstring listing all askable completed tools.
+        # Annotate tools whose handle has an active background lifecycle
+        # (e.g. post-result storage review) so the LLM can distinguish
+        # them from truly dormant tools.
         tool_lines = []
         for cid, meta in completed.items():
             args_str = meta["arg_repr"]
-            tool_lines.append(f'  - tool_id="{cid}": {meta["name"]}({args_str})')
+            handle = meta.get("handle")
+            if handle is not None and hasattr(handle, "done") and not handle.done():
+                suffix = " [result returned — background skill storage in progress]"
+            else:
+                suffix = ""
+            tool_lines.append(
+                f'  - tool_id="{cid}": {meta["name"]}({args_str}){suffix}',
+            )
         listing = "\n".join(tool_lines)
 
         doc = (

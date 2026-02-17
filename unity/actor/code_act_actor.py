@@ -314,6 +314,7 @@ def _start_storage_check_loop(
     *,
     trajectory: list[dict],
     ask_tools: dict,
+    completed_tool_metadata: dict | None = None,
     actor: "CodeActActor",
     original_result: str,
 ) -> "AsyncToolLoopHandle | None":
@@ -493,20 +494,52 @@ def _start_storage_check_loop(
 
     # ── Wire ask_about_completed_tool from snapshot ───────────────────
 
+    # Classify completed tools into storage-active (background skill
+    # review in progress) vs dormant (fully finished).
+    _meta = completed_tool_metadata or {}
+    storage_active_lines: list[str] = []
+    storage_active_handles: Dict[str, Any] = {}
+    dormant_lines: list[str] = []
+    for name, fn in ask_tools.items():
+        # Try to find the metadata entry for this ask tool.
+        entry = None
+        for _cid, _m in _meta.items():
+            if _m.get("ask_fn") is fn:
+                entry = _m
+                break
+        handle = entry.get("handle") if entry else None
+        if handle is not None and hasattr(handle, "done") and not handle.done():
+            storage_active_lines.append(f"- `{name}` [storage-active]")
+            storage_active_handles[name] = handle
+        else:
+            dormant_lines.append(f"- `{name}`")
+
     if ask_tools:
-        completed_info: list[str] = []
-        for name, fn in ask_tools.items():
-            completed_info.append(f"- `{name}`")
+
+        # Build categorized docstring for the tool.
+        doc_sections: list[str] = [
+            "Ask a follow-up question about a completed tool from the "
+            "trajectory to inspect its internal reasoning or results.",
+        ]
+        if storage_active_lines:
+            doc_sections.append(
+                "\nStorage-active tools (background skill review in progress):\n"
+                + "\n".join(storage_active_lines)
+                + "\n\nThese tools have completed their primary task but are "
+                "currently reviewing their execution for reusable skills. "
+                "You can ask what they have stored or are considering.",
+            )
+        if dormant_lines:
+            doc_sections.append(
+                "\nCompleted tools (dormant):\n" + "\n".join(dormant_lines),
+            )
+
+        _ask_doc = "\n".join(doc_sections)
 
         async def ask_about_completed_tool(
             tool_name: str,
             question: str,
         ) -> str:
-            """Ask a follow-up question about a completed tool from the trajectory.
-
-            Use this to inspect the internal reasoning or detailed results of
-            any tool that ran during the completed execution.
-            """
             fn = ask_tools.get(tool_name)
             if fn is None:
                 return (
@@ -522,11 +555,118 @@ def _start_storage_check_loop(
                 return str(result)
             return str(handle)
 
+        ask_about_completed_tool.__doc__ = _ask_doc
         tools["ask_about_completed_tool"] = ask_about_completed_tool
+
+    # ── Wire steering tools for storage-active inner handles ──────────
+
+    if storage_active_handles:
+        _sa_handles = storage_active_handles
+        _sa_listing = "\n".join(storage_active_lines)
+
+        def _resolve_handle(tool_name: str) -> tuple[Any | None, str | None]:
+            h = _sa_handles.get(tool_name)
+            if h is None:
+                avail = list(_sa_handles.keys())
+                return None, (
+                    f"Tool '{tool_name}' not found or no longer storage-active. "
+                    f"Available: {avail}"
+                )
+            if hasattr(h, "done") and h.done():
+                return None, (
+                    f"Tool '{tool_name}' has already finished its storage review."
+                )
+            return h, None
+
+        async def stop_inner_storage(tool_name: str, reason: str) -> str:
+            """Stop an inner storage loop, preventing it from storing anything further.
+
+            Use this when you have determined that the inner agent's storage
+            would be redundant (e.g. you are storing a comprehensive function
+            that already covers the inner agent's scope).
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.stop(reason=reason)
+            return f"Stopped inner storage for '{tool_name}': {reason}"
+
+        stop_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        async def interject_inner_storage(tool_name: str, message: str) -> str:
+            """Inject a directive into an inner storage loop's conversation.
+
+            Use this to provide context that should influence the inner
+            loop's storage decisions (e.g. "The parent is storing a
+            comprehensive function — only store yours if it is genuinely
+            independent and reusable in isolation").
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.interject(message)
+            return f"Interjected into inner storage for '{tool_name}'."
+
+        interject_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        async def pause_inner_storage(tool_name: str) -> str:
+            """Temporarily pause an inner storage loop.
+
+            Use this to halt an inner loop while you make decisions,
+            then resume it with ``resume_inner_storage``. The inner loop
+            will not proceed until resumed (or until its timeout expires).
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.pause()
+            return f"Paused inner storage for '{tool_name}'."
+
+        pause_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        async def resume_inner_storage(tool_name: str) -> str:
+            """Resume a previously paused inner storage loop.
+
+            Call this after ``pause_inner_storage`` to let the inner
+            loop continue its skill review.
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.resume()
+            return f"Resumed inner storage for '{tool_name}'."
+
+        resume_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        tools["stop_inner_storage"] = stop_inner_storage
+        tools["interject_inner_storage"] = interject_inner_storage
+        tools["pause_inner_storage"] = pause_inner_storage
+        tools["resume_inner_storage"] = resume_inner_storage
 
     # ── Build prompt ──────────────────────────────────────────────────
 
     trajectory_json = json.dumps(trajectory, indent=2, default=str)
+
+    # Build optional section about inner storage loops.
+    inner_storage_section = ""
+    if storage_active_lines:
+        inner_storage_section = (
+            "## Inner Storage Loops\n\n"
+            "Some inner tools from this trajectory are currently running "
+            "their own background skill-review loops:\n\n"
+            + "\n".join(storage_active_lines)
+            + "\n\n"
+            "These inner loops may be storing functions independently at a "
+            "finer granularity. You can:\n"
+            "- Query them via `ask_about_completed_tool`\n"
+            "- Inject directives via `interject_inner_storage`\n"
+            "- Stop them via `stop_inner_storage`\n"
+            "- Pause/resume them via `pause_inner_storage` / "
+            "`resume_inner_storage`\n\n"
+            "Use these to coordinate storage decisions (e.g. stop an inner "
+            "loop that would store something redundant, or interject context "
+            "about what you plan to store at the higher level).\n\n"
+        )
 
     system_prompt = (
         "You are a skill librarian. A CodeActActor has just completed a task. "
@@ -537,6 +677,7 @@ def _start_storage_check_loop(
         f"{trajectory_json}\n\n"
         "## Final Result\n\n"
         f"{original_result}\n\n"
+        f"{inner_storage_section}"
         "## Two Stores\n\n"
         "You have access to two complementary stores:\n\n"
         "### Function Store — the *what*\n\n"
@@ -740,12 +881,23 @@ class _StorageCheckHandle(SteerableToolHandle):
                 ask_tools = _get_ask()
             except Exception:
                 pass
+            completed_tool_metadata: dict = {}
+            try:
+                _get_meta = getattr(
+                    self._inner._task,
+                    "get_completed_tool_metadata",
+                    lambda: {},
+                )
+                completed_tool_metadata = _get_meta()
+            except Exception:
+                pass
 
             # ── Phase 2: storage check ────────────────────────────────
             self._phase = "storage"
             storage_handle = _start_storage_check_loop(
                 trajectory=trajectory,
                 ask_tools=ask_tools,
+                completed_tool_metadata=completed_tool_metadata,
                 actor=self._actor,
                 original_result=str(self._original_result),
             )
