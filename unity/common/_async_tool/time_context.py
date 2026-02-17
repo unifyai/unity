@@ -162,6 +162,9 @@ class TimeContext:
 
         lines = [
             "## Time Context",
+            "Below is your temporal awareness for this conversation: when it started, "
+            "how long it's been running, and a log of every tool call with timing. "
+            "Consult it when reasoning about elapsed time or the order of events.",
             f"- Conversation started: {elapsed_str} ago",
         ]
 
