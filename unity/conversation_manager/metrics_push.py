@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 
 from opentelemetry import metrics
 from opentelemetry.exporter.cloud_monitoring import CloudMonitoringMetricsExporter
@@ -22,6 +23,7 @@ from opentelemetry.resourcedetector.gcp_resource_detector import (
 )
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
 
 _provider: MeterProvider | None = None
 
@@ -45,14 +47,29 @@ def init_metrics() -> None:
 
     # Surface export errors that would otherwise be swallowed by the
     # background PeriodicExportingMetricReader thread.
+    logging.basicConfig()
     logging.getLogger("opentelemetry.exporter.cloud_monitoring").setLevel(logging.DEBUG)
     logging.getLogger("opentelemetry.sdk.metrics").setLevel(logging.DEBUG)
 
-    # Detect GKE resource attributes (cluster, namespace, pod, container)
-    # so the exporter maps data points to the correct Cloud Monitoring
-    # monitored resource type.  Without this, writes are silently rejected.
-    resource = GoogleCloudResourceDetector().detect()
-    print(f"[metrics] Detected GCP resource: {resource.attributes}")
+    # Detect GKE resource attributes from the metadata server (gives us
+    # cloud.provider, cloud.account.id, cloud.region, k8s.cluster.name).
+    detected = GoogleCloudResourceDetector().detect()
+
+    # The metadata server doesn't provide pod-level attributes for GKE Jobs.
+    # Without k8s.namespace.name, k8s.pod.name, and k8s.container.name the
+    # exporter can't map to the k8s_container monitored resource type and
+    # data points are silently rejected.  Supply them from the environment.
+    namespace = "staging" if os.getenv("STAGING") else "production"
+    resource = detected.merge(
+        Resource.create(
+            {
+                "k8s.namespace.name": namespace,
+                "k8s.pod.name": socket.gethostname(),
+                "k8s.container.name": "unity-assistant",
+            }
+        )
+    )
+    print(f"[metrics] Resource attributes: {resource.attributes}")
 
     exporter = CloudMonitoringMetricsExporter()
     reader = PeriodicExportingMetricReader(
