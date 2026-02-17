@@ -370,8 +370,6 @@ async def async_tool_loop_inner(
 
     # ── Time context for time-awareness ──────────────────────────────────────
     # Capture the conversation start time and track tool execution timings.
-    # Uses now() from prompt_helpers which respects SESSION_DETAILS.assistant.timezone
-    # and is monkey-patched in tests for deterministic behavior.
     time_ctx: Optional[TimeContext] = create_time_context() if time_awareness else None
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
@@ -547,7 +545,6 @@ async def async_tool_loop_inner(
             sys_msg["_parent_chat_context"] = True
         msgs_to_append.append(sys_msg)
 
-    # Time context as its own system message (updated after tool completions)
     time_ctx_sys_msg: Optional[dict] = None
     if time_ctx is not None:
         time_ctx_sys_msg = {
