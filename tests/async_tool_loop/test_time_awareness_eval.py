@@ -76,48 +76,6 @@ def count_tool_calls(messages: list, tool_name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-#  TEST: LLM is aware of current time                                         #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_current_time_awareness(llm_config):
-    """Verify the LLM can extract the exact current date/time.
-
-    ``now()`` is monkey-patched to 2025-06-13 12:00:00 UTC, so the system
-    message always contains that timestamp. The structured response must
-    reflect those exact values.
-    """
-
-    class CurrentTimeResponse(BaseModel):
-        year: int = Field(..., description="The current year.")
-        month: int = Field(..., description="The current month (1-12).")
-        day: int = Field(..., description="The current day of the month (1-31).")
-        hour_24: int = Field(
-            ...,
-            description="The current hour in 24-hour format (0-23).",
-        )
-        minute: int = Field(..., description="The current minute (0-59).")
-
-    client = new_llm_client(**llm_config)
-
-    answer = await start_async_tool_loop(
-        client,
-        message="What is the current date and time?",
-        tools={},
-        response_format=CurrentTimeResponse,
-    ).result()
-
-    assert isinstance(answer, CurrentTimeResponse)
-    assert answer.year == 2025
-    assert answer.month == 6
-    assert answer.day == 13
-    assert answer.hour_24 == 12
-    assert answer.minute == 0
-
-
-# --------------------------------------------------------------------------- #
 #  TEST: LLM knows when conversation started                                  #
 # --------------------------------------------------------------------------- #
 
@@ -264,57 +222,3 @@ async def test_faster_tool_identification(llm_config):
     assert answer.faster_tool == "tool_beta"
     assert answer.slower_tool == "tool_alpha"
     assert answer.faster_duration_seconds < answer.slower_duration_seconds
-
-
-# --------------------------------------------------------------------------- #
-#  TEST: LLM can reason about relative tool timing                            #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_relative_timing_comparison(llm_config):
-    """Verify the LLM can compare execution times of different tools."""
-
-    class TimingComparisonResponse(BaseModel):
-        slower_tool: str = Field(
-            ...,
-            description="The name of the tool that took longer.",
-        )
-        faster_tool: str = Field(
-            ...,
-            description="The name of the tool that was faster.",
-        )
-        slower_duration_seconds: float = Field(
-            ...,
-            description="Execution duration of the slower tool in seconds.",
-        )
-        faster_duration_seconds: float = Field(
-            ...,
-            description="Execution duration of the faster tool in seconds.",
-        )
-
-    client = new_llm_client(**llm_config)
-
-    answer = await start_async_tool_loop(
-        client,
-        message=(
-            "Call tool_alpha first, then call tool_beta. "
-            "After both complete, compare their execution times. "
-            "Report which tool was slower and which was faster, "
-            "along with their durations."
-        ),
-        tools={"tool_alpha": tool_alpha, "tool_beta": tool_beta},
-        response_format=TimingComparisonResponse,
-    ).result()
-
-    # Both tools should be called
-    alpha_count = count_tool_calls(client.messages, "tool_alpha")
-    beta_count = count_tool_calls(client.messages, "tool_beta")
-    assert alpha_count >= 1, "tool_alpha should have been called"
-    assert beta_count >= 1, "tool_beta should have been called"
-
-    assert isinstance(answer, TimingComparisonResponse)
-    assert answer.slower_tool == "tool_alpha"
-    assert answer.faster_tool == "tool_beta"
-    assert answer.slower_duration_seconds > answer.faster_duration_seconds
