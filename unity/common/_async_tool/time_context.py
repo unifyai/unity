@@ -180,26 +180,21 @@ class TimeContext:
 
         return "\n".join(lines)
 
-    def update_system_message(self, msg: dict, runtime_context_parts: list) -> None:
+    def update_system_message(self, msg: dict) -> None:
         """Update a system message dict with refreshed time context.
 
-        This replaces the Time Context section in the runtime context
-        while preserving other sections (Caller Context, Broader Context, etc.).
+        Replaces the content of the dedicated time context system message
+        with the latest build (including any new tool timings).
 
         Parameters
         ----------
         msg : dict
-            The system message dict to update (must have "_time_context" marker).
-        runtime_context_parts : list
-            The list of runtime context parts (will have last element replaced).
+            The time context system message dict (must have "_time_context" marker).
         """
         if not msg or not msg.get("_time_context"):
             return
 
-        # Replace the time context part (always the last one added)
-        if runtime_context_parts:
-            runtime_context_parts[-1] = self.build_system_message()
-            msg["content"] = "\n\n".join(runtime_context_parts)
+        msg["content"] = self.build_system_message()
 
 
 def create_time_context() -> TimeContext:

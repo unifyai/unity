@@ -278,8 +278,6 @@ class ToolsData:
         # Time context for tracking tool execution timings
         self._time_ctx: Optional["TimeContext"] = time_ctx
         self._time_ctx_msg: Optional[dict] = time_ctx_msg
-        # Runtime context parts list for updating time context (set by loop)
-        self._runtime_context_parts: Optional[list] = None
         # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
         # Set by the loop after the factory is initialised each turn.
         self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
@@ -904,14 +902,8 @@ class ToolsData:
                     duration=duration_secs,
                 )
                 # Update the time context system message content
-                if (
-                    self._time_ctx_msg is not None
-                    and self._runtime_context_parts is not None
-                ):
-                    self._time_ctx.update_system_message(
-                        self._time_ctx_msg,
-                        self._runtime_context_parts,
-                    )
+                if self._time_ctx_msg is not None:
+                    self._time_ctx.update_system_message(self._time_ctx_msg)
             except Exception:
                 pass  # Time context is best-effort; don't break the loop
 

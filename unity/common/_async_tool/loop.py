@@ -365,8 +365,6 @@ async def async_tool_loop_inner(
     # Uses now() from prompt_helpers which respects SESSION_DETAILS.assistant.timezone
     # and is monkey-patched in tests for deterministic behavior.
     time_ctx: TimeContext = create_time_context()
-    # Will hold a reference to the time context system message dict for updates
-    _time_ctx_msg: dict | None = None
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Reasoning model compatibility ────────────────────────────────────────────
@@ -528,24 +526,29 @@ async def async_tool_loop_inner(
             f"{json.dumps(ctx_content_transformed, indent=2)}",
         )
 
-    # Add time context (conversation start time, will be updated with tool timings)
-    runtime_context_parts.append(time_ctx.build_system_message())
+    # Append runtime context as a new system message (never mutate the original)
+    msgs_to_append = []
+    if runtime_context_parts:
+        sys_msg = {
+            "role": "system",
+            "_runtime_context": True,
+            "_ctx_header": True,  # backwards compatibility
+            "content": "\n\n".join(runtime_context_parts),
+        }
+        if _has_parent_chat_context:
+            sys_msg["_parent_chat_context"] = True
+        msgs_to_append.append(sys_msg)
 
-    # Always append runtime context as a new system message (never mutate the original)
-    # We always have runtime_context_parts now because of time context
-    sys_msg = {
+    # Time context as its own system message (updated after tool completions)
+    time_ctx_sys_msg = {
         "role": "system",
-        "_runtime_context": True,
-        "_ctx_header": True,  # backwards compatibility
-        "_time_context": True,  # marker for time context updates
-        "content": "\n\n".join(runtime_context_parts),
+        "_time_context": True,
+        "_ctx_header": True,
+        "content": time_ctx.build_system_message(),
     }
-    if _has_parent_chat_context:
-        sys_msg["_parent_chat_context"] = True
+    msgs_to_append.append(time_ctx_sys_msg)
 
-    await _msg_dispatcher.append_msgs([sys_msg])
-
-    _time_ctx_msg = sys_msg  # Store reference for updates after tool completions
+    await _msg_dispatcher.append_msgs(msgs_to_append)
 
     # ── 0-a++. Initialize context state for incremental propagation ──────────
     # Tracks initial parent context and any continued updates received via interjections.
@@ -587,10 +590,8 @@ async def async_tool_loop_inner(
         client=client,
         logger=logger,
         time_ctx=time_ctx,
-        time_ctx_msg=_time_ctx_msg,
+        time_ctx_msg=time_ctx_sys_msg,
     )
-    # Provide runtime_context_parts reference for time context updates
-    tools_data._runtime_context_parts = runtime_context_parts
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}

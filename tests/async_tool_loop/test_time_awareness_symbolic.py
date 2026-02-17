@@ -156,12 +156,12 @@ async def test_time_context_injected(llm_config):
 
     assert answer.strip()
 
-    # Find the runtime context system message
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None, "Runtime context system message not found"
+    # Find the dedicated time context system message
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None, "Time context system message not found"
 
     # Verify it contains the Time Context section
-    content = runtime_msg.get("content", "")
+    content = time_msg.get("content", "")
     assert (
         "## Time Context" in content
     ), "Time Context section not found in system message"
@@ -190,11 +190,11 @@ async def test_tool_timing_recorded(llm_config):
 
     assert answer.strip()
 
-    # Find the runtime context message
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None
+    # Find the dedicated time context message
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None
 
-    content = runtime_msg.get("content", "")
+    content = time_msg.get("content", "")
 
     # Verify tool execution history is present
     assert "### Tool Execution History" in content, "Tool history section not found"
@@ -225,11 +225,11 @@ async def test_tool_history_cumulative(llm_config):
 
     assert answer.strip()
 
-    # Find the runtime context message
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None
+    # Find the dedicated time context message
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None
 
-    content = runtime_msg.get("content", "")
+    content = time_msg.get("content", "")
 
     # Count tool entries in the history (look for table rows with tool names)
     # The table format is: | call_id | Tool | Started (relative) | Duration |
@@ -265,12 +265,12 @@ async def test_timezone_applied_via_now(llm_config):
 
     assert answer.strip()
 
-    # The runtime context message should exist
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None
+    # The dedicated time context message should exist
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None
 
     # The _time_context marker should be set
-    assert runtime_msg.get("_time_context") is True, "_time_context marker not set"
+    assert time_msg.get("_time_context") is True, "_time_context marker not set"
 
 
 # --------------------------------------------------------------------------- #
@@ -293,11 +293,11 @@ async def test_loop_start_time_captured(llm_config):
 
     assert answer.strip()
 
-    # Find the runtime context message
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None
+    # Find the dedicated time context message
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None
 
-    content = runtime_msg.get("content", "")
+    content = time_msg.get("content", "")
 
     # Should show "Conversation started: X ago" format
     assert "Conversation started:" in content
@@ -338,11 +338,11 @@ async def test_simulated_time_progression(llm_config, simulated_time):
 
     assert answer.strip()
 
-    # Find the runtime context message
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None
+    # Find the dedicated time context message
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None
 
-    content = runtime_msg.get("content", "")
+    content = time_msg.get("content", "")
 
     # Verify time context section exists
     assert "## Time Context" in content
@@ -389,11 +389,11 @@ async def test_simulated_time_shows_elapsed_correctly(llm_config, simulated_time
         simulated_time["perf_call_count"] > initial_perf_count
     ), "perf_counter() should have been called during loop"
 
-    # Find the runtime context message
-    runtime_msg = find_runtime_context_message(client.messages)
-    assert runtime_msg is not None
+    # Find the dedicated time context message
+    time_msg = find_time_context_in_messages(client.messages)
+    assert time_msg is not None
 
-    content = runtime_msg.get("content", "")
+    content = time_msg.get("content", "")
     elapsed = extract_elapsed_seconds(content)
 
     # The elapsed time in the message reflects the difference between
