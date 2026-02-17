@@ -546,88 +546,87 @@ def test_clear():
 
 
 # --------------------------------------------------------------------------- #
-#  9. _inject_dependencies — actor.act round-trip                              #
+#  9. _inject_dependencies — primitives.actor.act round-trip                    #
 # --------------------------------------------------------------------------- #
 
 
 @_handle_project
 def test_inject_dependencies_resolves_actor_act():
-    """_inject_dependencies injects a live _ActorRunner for 'actor.act' deps.
+    """_inject_dependencies injects a Primitives instance for 'primitives.actor.act' deps.
 
-    When a stored function declares depends_on=["actor.act"],
-    _inject_dependencies should call construct_sandbox_root("actor")
-    and place the resulting _ActorRunner instance in the namespace
-    under the key "actor".
+    When a stored function declares depends_on=["primitives.actor.act"],
+    _inject_dependencies should call construct_sandbox_root("primitives")
+    and place the resulting Primitives instance in the namespace
+    under the key "primitives".
     """
-    from unity.actor.environments.actor import _ActorRunner
+    from unity.function_manager.primitives.runtime import Primitives
 
     fm = _FM()
 
     func_data = {
         "name": "delegate_contact_research",
-        "depends_on": ["actor.act"],
+        "depends_on": ["primitives.actor.act"],
     }
     namespace = {}
     visited = set()
 
     fm._inject_dependencies(func_data, namespace=namespace, visited=visited)
 
-    assert "actor" in namespace
-    assert isinstance(namespace["actor"], _ActorRunner)
-    assert hasattr(namespace["actor"], "act")
-    assert callable(namespace["actor"].act)
+    assert "primitives" in namespace
+    assert isinstance(namespace["primitives"], Primitives)
+    assert hasattr(namespace["primitives"].actor, "act")
+    assert callable(namespace["primitives"].actor.act)
 
 
 @_handle_project
 def test_inject_dependencies_actor_idempotent():
-    """Injecting "actor.act" twice doesn't replace or duplicate the namespace entry."""
+    """Injecting "primitives.actor.act" twice doesn't replace or duplicate the namespace entry."""
     fm = _FM()
 
-    func_data_a = {"name": "fn_a", "depends_on": ["actor.act"]}
-    func_data_b = {"name": "fn_b", "depends_on": ["actor.act"]}
+    func_data_a = {"name": "fn_a", "depends_on": ["primitives.actor.act"]}
+    func_data_b = {"name": "fn_b", "depends_on": ["primitives.actor.act"]}
     namespace = {}
     visited = set()
 
     fm._inject_dependencies(func_data_a, namespace=namespace, visited=visited)
-    first_actor = namespace["actor"]
+    first_primitives = namespace["primitives"]
 
     fm._inject_dependencies(func_data_b, namespace=namespace, visited=visited)
-    assert namespace["actor"] is first_actor
+    assert namespace["primitives"] is first_primitives
 
 
 @_handle_project
 def test_inject_dependencies_mixed_actor_and_primitives():
-    """A function depending on both "actor.act" and "primitives.contacts.ask"
-    gets both roots injected into the namespace."""
-    from unity.actor.environments.actor import _ActorRunner
+    """A function depending on both "primitives.actor.act" and "primitives.contacts.ask"
+    gets a single Primitives root injected into the namespace."""
+    from unity.function_manager.primitives.runtime import Primitives
 
     fm = _FM()
 
     func_data = {
         "name": "mixed_dep",
-        "depends_on": ["actor.act", "primitives.contacts.ask"],
+        "depends_on": ["primitives.actor.act", "primitives.contacts.ask"],
     }
     namespace = {}
     visited = set()
 
     fm._inject_dependencies(func_data, namespace=namespace, visited=visited)
 
-    assert "actor" in namespace
-    assert isinstance(namespace["actor"], _ActorRunner)
     assert "primitives" in namespace
+    assert isinstance(namespace["primitives"], Primitives)
 
 
 # --------------------------------------------------------------------------- #
-#  10. add_functions records actor.act in depends_on                            #
+#  10. add_functions records primitives.actor.act in depends_on                 #
 # --------------------------------------------------------------------------- #
 
 
 @_handle_project
 def test_add_function_with_actor_act_records_dependency():
-    """Storing a function that calls actor.act(...) records 'actor.act' in depends_on.
+    """Storing a function that calls primitives.actor.act(...) records 'primitives.actor.act' in depends_on.
 
     This verifies the storage-time half: DependencyVisitor detects the
-    actor.act call and FunctionManager.add_functions persists it in the
+    primitives.actor.act call and FunctionManager.add_functions persists it in the
     depends_on field of the stored function record.
     """
     fm = _FM()
@@ -635,7 +634,7 @@ def test_add_function_with_actor_act_records_dependency():
     source = (
         "async def research_contact(request: str):\n"
         '    """Delegate contact research to a scoped sub-agent."""\n'
-        "    handle = await actor.act(\n"
+        "    handle = await primitives.actor.act(\n"
         "        request=request,\n"
         '        guidelines="Check all fields.",\n'
         '        prompt_functions=["primitives.contacts.ask"],\n'
@@ -649,19 +648,19 @@ def test_add_function_with_actor_act_records_dependency():
     func_data = fm._get_function_data_by_name(name="research_contact")
     assert func_data is not None
     depends_on = func_data.get("depends_on", [])
-    assert "actor.act" in depends_on
+    assert "primitives.actor.act" in depends_on
 
 
 @_handle_project
 def test_add_function_with_multiple_env_deps_records_all():
-    """A function using both actor.act and primitives.* records all deps."""
+    """A function using both primitives.actor.act and primitives.contacts.ask records all deps."""
     fm = _FM()
 
     source = (
         "async def orchestrate(query: str):\n"
         '    """Use multiple environment namespaces."""\n'
         "    contacts = await primitives.contacts.ask(query)\n"
-        "    handle = await actor.act(request=query)\n"
+        "    handle = await primitives.actor.act(request=query)\n"
         "    return await handle.result()\n"
     )
 
@@ -670,33 +669,33 @@ def test_add_function_with_multiple_env_deps_records_all():
 
     func_data = fm._get_function_data_by_name(name="orchestrate")
     depends_on = set(func_data.get("depends_on", []))
-    assert "actor.act" in depends_on
+    assert "primitives.actor.act" in depends_on
     assert "primitives.contacts.ask" in depends_on
 
 
 # --------------------------------------------------------------------------- #
-#  11. _inject_callables_for_functions with actor.act dependency               #
+#  11. _inject_callables_for_functions with primitives.actor.act dependency    #
 # --------------------------------------------------------------------------- #
 
 
 @_handle_project
 def test_inject_callables_for_stored_actor_function():
-    """A stored function with depends_on=["actor.act"] can be prepared for execution.
+    """A stored function with depends_on=["primitives.actor.act"] can be prepared for execution.
 
     This exercises the runtime half of the pipeline:
-    1. Store a function that calls actor.act(...)
+    1. Store a function that calls primitives.actor.act(...)
     2. Retrieve it and pass through _inject_callables_for_functions
-    3. Verify the namespace contains a live _ActorRunner
+    3. Verify the namespace contains a live Primitives instance
     4. Verify the returned callable is valid
     """
-    from unity.actor.environments.actor import _ActorRunner
+    from unity.function_manager.primitives.runtime import Primitives
 
     fm = _FM()
 
     source = (
         "async def delegate_task(request: str):\n"
         '    """Delegate a task to a sub-agent."""\n'
-        "    handle = await actor.act(request=request, timeout=30)\n"
+        "    handle = await primitives.actor.act(request=request, timeout=30)\n"
         "    return await handle.result()\n"
     )
 
@@ -704,7 +703,7 @@ def test_inject_callables_for_stored_actor_function():
 
     func_data = fm._get_function_data_by_name(name="delegate_task")
     assert func_data is not None
-    assert "actor.act" in func_data.get("depends_on", [])
+    assert "primitives.actor.act" in func_data.get("depends_on", [])
 
     namespace = {}
     callables = fm._inject_callables_for_functions(
@@ -713,7 +712,7 @@ def test_inject_callables_for_stored_actor_function():
     )
 
     assert len(callables) == 1
-    assert "actor" in namespace
-    assert isinstance(namespace["actor"], _ActorRunner)
+    assert "primitives" in namespace
+    assert isinstance(namespace["primitives"], Primitives)
     assert "delegate_task" in namespace
     assert callable(namespace["delegate_task"])

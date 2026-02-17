@@ -22,7 +22,7 @@ The `FunctionManager` includes robust security measures to ensure safe function 
 
 - **Dangerous Built-ins Blocking**: Prevents use of potentially harmful functions like `eval`, `exec`, `open`, `input`, etc.
 - **Function Isolation**: User-defined functions cannot directly call other user-defined functions to prevent complex dependencies
-- **Method Call Allowance**: Permits safe method calls on objects (e.g., `computer_primitives.*`, `call_handle.*`)
+- **Method Call Allowance**: Permits safe method calls on objects (e.g., `primitives.computer.*`, `call_handle.*`)
 - **AST-based Analysis**: Uses Abstract Syntax Tree parsing to analyze function calls and dependencies
 - **Sandbox Execution**: Functions are compiled and validated in isolated namespaces
 
@@ -141,10 +141,10 @@ def process_data(data: list) -> dict:
         result[key] = item.upper() if hasattr(item, 'upper') else item
     return result
 
-def make_api_call(computer_primitives, endpoint: str) -> dict:
+def make_api_call(endpoint: str) -> dict:
     """Function using action provider methods."""
-    # Method calls on computer_primitives are explicitly allowed
-    response = computer_primitives.get(endpoint)
+    # Method calls on primitives.computer are explicitly allowed
+    response = primitives.computer.get(endpoint)
     return response.json() if hasattr(response, 'json') else {}
 ```
 

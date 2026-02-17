@@ -1,15 +1,15 @@
 """Actor execution environment for CodeActActor.
 
-Provides an ``actor`` namespace in the sandbox with a single ``act()``
-method that spawns isolated inner CodeActActors for focused sub-tasks.
-Because actor invocations are regular sandbox code, they can be saved
-as compositional functions for reuse.
+Provides ``primitives.actor.act()`` in the sandbox for spawning isolated
+inner CodeActActors for focused sub-tasks.  Lives under the unified
+``primitives`` namespace alongside state managers and computer control.
 
-Stored functions that call ``actor.act(...)`` work through the standard
-``depends_on`` pipeline: detected at storage time by ``DependencyVisitor``,
-injected at runtime by ``_inject_dependencies`` via
-``construct_sandbox_root("actor")`` → ``_ActorRunner()``.  This is why
-``_ActorRunner`` must be fully stateless (no ContextVars, no parent state).
+Stored functions that call ``primitives.actor.act(...)`` work through the
+standard ``depends_on`` pipeline: detected at storage time by
+``DependencyVisitor``, injected at runtime by ``_inject_dependencies``
+via ``construct_sandbox_root("primitives")`` → ``Primitives()``.  This
+is why ``_ActorRunner`` must be fully stateless (no ContextVars, no
+parent state).
 """
 
 from __future__ import annotations
@@ -135,18 +135,20 @@ def _build_environments_from_db(
 
 
 class _ActorRunner:
-    """Runtime object injected into the sandbox as ``actor``.
+    """Runtime object accessible as ``primitives.actor`` in the sandbox.
 
     Fully stateless: constructs its own FunctionManager from defaults.
     No ambient ContextVars required — can be called in total isolation.
 
     Statelessness is load-bearing: stored compositional functions that call
-    ``actor.act(...)`` are executed via ``FunctionManager._inject_dependencies``
-    → ``construct_sandbox_root("actor")`` → ``_ActorRunner()``.  That freshly
-    constructed instance has no enclosing ``CodeActActor`` and no ContextVar
-    state, so every piece of context the inner actor needs (FM scope,
-    environments, permissions) must be derived from the explicit parameters
-    passed to ``act()``.
+    ``primitives.actor.act(...)`` are executed via
+    ``FunctionManager._inject_dependencies`` →
+    ``construct_sandbox_root("primitives")`` → ``Primitives()`` →
+    ``primitives.actor`` → ``_ActorRunner()``.  That freshly constructed
+    instance has no enclosing ``CodeActActor`` and no ContextVar state,
+    so every piece of context the inner actor needs (FM scope, environments,
+    permissions) must be derived from the explicit parameters passed to
+    ``act()``.
     """
 
     _PRIMITIVE_METHODS = ("act",)
@@ -351,13 +353,14 @@ class _ActorRunner:
 
 
 class ActorEnvironment(BaseEnvironment):
-    """Environment that provides actor spawning via the ``actor`` namespace.
+    """Environment that provides actor spawning via ``primitives.actor``.
 
-    Injects an ``actor`` object into the sandbox with a single ``act()``
-    method for spawning isolated inner CodeActActors.
+    Injects a ``Primitives``-scoped object into the sandbox so that
+    ``primitives.actor.act(...)`` spawns isolated inner CodeActActors.
     """
 
-    NAMESPACE = "actor"
+    NAMESPACE = "primitives"
+    MANAGER_ALIAS = "actor"
 
     def __init__(
         self,
@@ -365,9 +368,15 @@ class ActorEnvironment(BaseEnvironment):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> None:
-        runner = _ActorRunner()
+        from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+        primitives = Primitives(
+            primitive_scope=PrimitiveScope(
+                scoped_managers=frozenset({self.MANAGER_ALIAS}),
+            ),
+        )
         super().__init__(
-            instance=runner,
+            instance=primitives,
             namespace=self.NAMESPACE,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
@@ -375,12 +384,13 @@ class ActorEnvironment(BaseEnvironment):
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
         registry = get_registry()
+        fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.act"
         return {
-            f"{self.NAMESPACE}.act": ToolMetadata(
-                name=f"{self.NAMESPACE}.act",
+            fq_name: ToolMetadata(
+                name=fq_name,
                 is_impure=True,
                 is_steerable=True,
-                function_id=registry.get_function_id("actor", "act"),
+                function_id=registry.get_function_id(self.MANAGER_ALIAS, "act"),
                 function_context="primitive",
             ),
         }
@@ -395,8 +405,9 @@ class ActorEnvironment(BaseEnvironment):
         full_doc = inspect.getdoc(_ActorRunner.act) or ""
         filtered_doc = registry._filter_internal_params_from_docstring(full_doc)
 
-        lines = [f"### `{self.NAMESPACE}` — Actor Delegation\n"]
-        lines.append(f"**`{self.NAMESPACE}.act{sig_str}`**")
+        fq_prefix = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}"
+        lines = [f"### `{fq_prefix}` — Actor Delegation\n"]
+        lines.append(f"**`{fq_prefix}.act{sig_str}`**")
         if filtered_doc:
             for doc_line in filtered_doc.splitlines():
                 lines.append(f"  {doc_line}")

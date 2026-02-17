@@ -10,7 +10,6 @@ No other module should define manager lists or primitive configurations.
 from __future__ import annotations
 
 import hashlib
-import importlib
 import inspect
 import logging
 import re
@@ -46,9 +45,10 @@ class ManagerSpec:
     manager_registry_key: str
     primitive_class_path: str
     # The top-level key under which this manager's methods appear in a
-    # CodeActActor sandbox's global_state (e.g. "primitives", "actor",
-    # "computer_primitives").  Used by construct_sandbox_root() to map
-    # dotted depends_on entries back to the class that provides them.
+    # CodeActActor sandbox's global_state.  All managers live under
+    # ``"primitives"`` (accessed as ``primitives.<alias>.<method>``).
+    # Used by construct_sandbox_root() to map dotted depends_on entries
+    # back to the class that provides them.
     sandbox_root: str = "primitives"
     excluded_methods: frozenset[str] = field(default_factory=frozenset)
     priority: int = 99
@@ -195,7 +195,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         manager_alias="computer",
         manager_registry_key="",  # No ManagerRegistry getter - singleton via metaclass
         primitive_class_path="unity.function_manager.primitives.runtime.ComputerPrimitives",
-        sandbox_root="computer_primitives",
         excluded_methods=frozenset(),
         priority=10,
         domain="Web & Desktop Control",
@@ -207,7 +206,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         manager_alias="actor",
         manager_registry_key="",  # No ManagerRegistry getter - stateless, constructed directly
         primitive_class_path="unity.actor.environments.actor._ActorRunner",
-        sandbox_root="actor",
         excluded_methods=frozenset(),
         priority=11,
         domain="Actor Delegation",
@@ -245,10 +243,10 @@ def construct_sandbox_root(
 
     This is the factory used by ``FunctionManager._inject_dependencies``
     to satisfy *dotted* entries in a stored function's ``depends_on`` list.
-    When a function declares a dependency like ``"actor.act"`` or
+    When a function declares a dependency like ``"primitives.actor.act"`` or
     ``"primitives.contacts.ask"``, ``_inject_dependencies`` extracts the
-    root segment (``"actor"``, ``"primitives"``) and calls this function
-    to obtain a live instance that provides those methods.
+    root segment (``"primitives"``) and calls this function to obtain a
+    live ``Primitives`` instance that provides those methods.
 
     The returned object is **stateless** — it does not require any ambient
     ContextVars or parent actor state.  This is essential because stored
@@ -256,37 +254,15 @@ def construct_sandbox_root(
     (e.g. by the storage-check loop's ``FunctionManager_add_functions``
     tool or by a future caller that only has a FunctionManager).
 
-    Mapping from *root_name* to class is driven by ``ManagerSpec.sandbox_root``
-    in ``_MANAGER_SPECS``.
-
     Returns ``None`` when *root_name* does not match any known sandbox root.
     """
     specs = _SANDBOX_ROOTS.get(root_name)
     if not specs:
         return None
 
-    if root_name == "primitives":
-        from unity.function_manager.primitives.runtime import Primitives
+    from unity.function_manager.primitives.runtime import Primitives
 
-        return Primitives(primitive_scope=primitive_scope)
-
-    # Non-aggregator root: import and instantiate the class directly.
-    # All specs sharing a sandbox_root point at the same class for
-    # non-"primitives" roots (e.g. _ActorRunner, ComputerPrimitives).
-    class_path = specs[0].primitive_class_path
-    module_path, class_name = class_path.rsplit(".", 1)
-    try:
-        module = importlib.import_module(module_path)
-        cls = getattr(module, class_name)
-        return cls()
-    except Exception:
-        logger.warning(
-            "Failed to construct sandbox root %r from %s",
-            root_name,
-            class_path,
-            exc_info=True,
-        )
-        return None
+    return Primitives(primitive_scope=primitive_scope)
 
 
 # =============================================================================
@@ -1012,7 +988,7 @@ class ToolSurfaceRegistry:
 
         method_names = ComputerPrimitives._PRIMITIVE_METHODS
 
-        lines = ["### Computer Primitives (`computer_primitives`)\n"]
+        lines = ["### Computer Primitives (`primitives.computer`)\n"]
         lines.append(
             "Web and desktop control capabilities for browser automation "
             "and UI interaction.\n",

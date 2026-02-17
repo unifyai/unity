@@ -239,7 +239,7 @@ class BaseEnvironment(ABC):
 
     @property
     def namespace(self) -> str:
-        """Global variable name injected into the sandbox (e.g. "computer_primitives")."""
+        """Global variable name injected into the sandbox (e.g. "primitives")."""
         return self._namespace
 
     def get_instance(self) -> Any:
@@ -289,3 +289,75 @@ class BaseEnvironment(ABC):
         Implementations should be best-effort and never raise; if state capture
         fails, return a structured error payload (e.g. `{"type": "...", "error": "..."}`).
         """
+
+
+class _CompositeEnvironment(BaseEnvironment):
+    """Merges multiple environments sharing the same namespace.
+
+    When several environments share the ``"primitives"`` namespace (e.g.
+    ``StateManagerEnvironment``, ``ComputerEnvironment``, ``ActorEnvironment``),
+    this wrapper aggregates their tool metadata and prompt context while
+    injecting a single ``Primitives`` instance into the sandbox.
+    """
+
+    def __init__(
+        self,
+        envs: List["BaseEnvironment"],
+        *,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> None:
+        self._envs = envs
+        primary = self._build_primary_instance(envs)
+        super().__init__(
+            instance=primary,
+            namespace=envs[0].namespace,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    @staticmethod
+    def _build_primary_instance(envs: List["BaseEnvironment"]) -> Any:
+        """Return the broadest-scoped Primitives instance from sub-envs."""
+        from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+        merged_managers: Set[str] = set()
+        for env in envs:
+            instance = env.get_instance()
+            if isinstance(instance, Primitives):
+                merged_managers |= instance.primitive_scope.scoped_managers
+
+        if merged_managers:
+            return Primitives(
+                primitive_scope=PrimitiveScope(
+                    scoped_managers=frozenset(merged_managers),
+                ),
+            )
+        # Fallback: first environment's instance.
+        return envs[0].get_instance()
+
+    @property
+    def sub_environments(self) -> List["BaseEnvironment"]:
+        """Expose wrapped environments for introspection."""
+        return list(self._envs)
+
+    def get_tools(self) -> Dict[str, ToolMetadata]:
+        merged: Dict[str, ToolMetadata] = {}
+        for env in self._envs:
+            merged.update(env.get_tools())
+        return merged
+
+    def get_prompt_context(self) -> str:
+        parts = [env.get_prompt_context() for env in self._envs]
+        return "\n\n".join(p for p in parts if p and p.strip())
+
+    async def capture_state(self) -> Dict[str, Any]:
+        states: List[Dict[str, Any]] = []
+        for env in self._envs:
+            try:
+                states.append(await env.capture_state())
+            except Exception:
+                pass
+        if len(states) == 1:
+            return states[0]
+        return {"type": "composite", "states": states}

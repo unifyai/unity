@@ -445,7 +445,7 @@ class BaseFunctionManager(BaseStateManager):
             Named objects to inject into the function's execution namespace.
             For in-process Python execution, all entries are injected into the
             globals dict. For venv/subprocess execution, ``"primitives"`` and
-            ``"computer_primitives"`` entries are bridged via RPC; other entries
+            ``"primitives"`` entries are bridged via RPC; other entries
             are only available in-process.
 
         Returns

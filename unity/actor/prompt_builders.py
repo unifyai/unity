@@ -343,11 +343,19 @@ def _build_code_act_rules_and_examples(
         if env_ctx and env_ctx.strip():
             parts.append(env_ctx)
 
-    # Cross-environment (mixed) examples when multiple environments are present.
-    if len(environments) > 1:
-        has_computer = "computer_primitives" in environments
-        has_primitives = "primitives" in environments
-        if has_computer and has_primitives:
+    # Cross-environment (mixed) examples when computer tools are available.
+    env = environments.get("primitives")
+    if env is not None:
+        _has_computer = any(
+            k.startswith("primitives.computer.") for k in env.get_tools()
+        )
+        _has_state = any(
+            k.startswith("primitives.")
+            and not k.startswith("primitives.computer.")
+            and not k.startswith("primitives.actor.")
+            for k in env.get_tools()
+        )
+        if _has_computer and _has_state:
             from unity.actor.prompt_examples import get_mixed_examples
 
             mixed = get_mixed_examples()
@@ -380,7 +388,10 @@ def build_code_act_prompt(
         has_execute_code=has_execute_code,
     )
 
-    has_computer_env = "computer_primitives" in environments
+    _penv = environments.get("primitives")
+    has_computer_env = _penv is not None and any(
+        k.startswith("primitives.computer.") for k in _penv.get_tools()
+    )
     has_fm_tools = tools and any(
         str(k).startswith("FunctionManager_") for k in tools.keys()
     )

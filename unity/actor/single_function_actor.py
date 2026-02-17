@@ -485,8 +485,10 @@ class SingleFunctionActor(BaseActor):
 
     def _create_execution_globals(self) -> Dict[str, Any]:
         """Create the globals dict for function execution."""
+        from unity.function_manager.primitives import Primitives
+
         globals_dict = create_execution_globals()
-        globals_dict["computer_primitives"] = self._computer_primitives
+        globals_dict["primitives"] = Primitives()
         return globals_dict
 
     async def _execute_primitive(

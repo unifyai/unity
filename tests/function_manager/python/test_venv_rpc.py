@@ -2,7 +2,7 @@
 Tests for RPC access to primitives from custom virtual environments.
 
 Tests that functions running in custom venvs can call back to the main process
-to access primitives (state managers) and computer_primitives.
+to access primitives (state managers) and primitives.computer.
 """
 
 import asyncio
@@ -49,7 +49,7 @@ async def multi_primitive_call() -> dict:
 COMPUTER_PRIMITIVES_FUNCTION = """
 async def use_computer(selector: str) -> str:
     \"\"\"Call computer_primitives via RPC.\"\"\"
-    result = await computer_primitives.click(selector=selector)
+    result = await primitives.computer.click(selector=selector)
     return result
 """.strip()
 
@@ -220,7 +220,7 @@ async def test_execute_with_computer_primitives_rpc(
         )
 
         assert result["error"] is None, f"Unexpected error: {result['error']}"
-        mock_computer_primitives.click.assert_called_once_with(selector="#button")
+        mock_primitives.computer.click.assert_called_once_with(selector="#button")
         assert result["result"] == "clicked"
     finally:
         venv_dir = fm._get_venv_dir(venv_id)
@@ -237,7 +237,7 @@ async def test_missing_primitives_errors_gracefully(function_manager_factory):
 
     cp_observe = """
 async def use_observe() -> str:
-    result = await computer_primitives.observe()
+    result = await primitives.computer.observe()
     return result
 """.strip()
 
@@ -255,18 +255,17 @@ async def use_observe() -> str:
             "primitives" in result["error"].lower() or "rpc" in result["error"].lower()
         )
 
-        # Test missing computer_primitives
+        # Test missing computer primitives (accessed via primitives.computer)
         result = await fm.execute_in_venv(
             venv_id=venv_id,
             implementation=cp_observe,
             call_kwargs={},
             is_async=True,
-            computer_primitives=None,
+            primitives=None,
         )
         assert result["error"] is not None
         assert (
-            "computer_primitives" in result["error"].lower()
-            or "rpc" in result["error"].lower()
+            "primitives" in result["error"].lower() or "rpc" in result["error"].lower()
         )
     finally:
         venv_dir = fm._get_venv_dir(venv_id)
@@ -528,31 +527,31 @@ def crash_subprocess() -> str:
     [
         (
             "act",
-            "async def use_act(instruction: str) -> str:\n    return await computer_primitives.act(instruction=instruction)",
+            "async def use_act(instruction: str) -> str:\n    return await primitives.computer.act(instruction=instruction)",
             {"instruction": "Click button"},
             "action performed",
         ),
         (
             "observe",
-            "async def use_observe() -> str:\n    return await computer_primitives.observe()",
+            "async def use_observe() -> str:\n    return await primitives.computer.observe()",
             {},
             "login form",
         ),
         (
             "query",
-            "async def use_query(question: str) -> str:\n    return await computer_primitives.query(question=question)",
+            "async def use_query(question: str) -> str:\n    return await primitives.computer.query(question=question)",
             {"question": "What is the title?"},
             "Dashboard",
         ),
         (
             "navigate",
-            "async def use_navigate(url: str) -> str:\n    return await computer_primitives.navigate(url=url)",
+            "async def use_navigate(url: str) -> str:\n    return await primitives.computer.navigate(url=url)",
             {"url": "https://example.com"},
             "navigated to url",
         ),
         (
             "get_content",
-            "async def use_get_content() -> str:\n    return await computer_primitives.get_content()",
+            "async def use_get_content() -> str:\n    return await primitives.computer.get_content()",
             {},
             "<html>",
         ),
@@ -597,13 +596,13 @@ async def test_computer_primitives_get_links_returns_list(
     function_manager_factory,
     full_mock_computer_primitives,
 ):
-    """computer_primitives.get_links should return a list via RPC."""
+    """primitives.computer.get_links should return a list via RPC."""
     fm = function_manager_factory()
     venv_id = fm.add_venv(venv=MINIMAL_VENV_CONTENT)
 
     func_impl = """
 async def use_get_links() -> list:
-    return await computer_primitives.get_links()
+    return await primitives.computer.get_links()
 """.strip()
 
     try:
@@ -638,16 +637,16 @@ async def test_computer_primitives_chain_and_mixed(
 
     chain_func = """
 async def chain_cp(url: str, question: str) -> dict:
-    nav = await computer_primitives.navigate(url=url)
-    obs = await computer_primitives.observe()
-    qry = await computer_primitives.query(question=question)
+    nav = await primitives.computer.navigate(url=url)
+    obs = await primitives.computer.observe()
+    qry = await primitives.computer.query(question=question)
     return {"navigate": nav, "observe": obs, "query": qry}
 """.strip()
 
     mixed_func = """
 async def use_both(contact_q: str, url: str) -> dict:
     contact = await primitives.contacts.ask(question=contact_q)
-    nav = await computer_primitives.navigate(url=url)
+    nav = await primitives.computer.navigate(url=url)
     return {"contacts": contact, "navigate": nav}
 """.strip()
 
@@ -664,7 +663,7 @@ async def use_both(contact_q: str, url: str) -> dict:
         assert result["result"]["navigate"] == "navigated to url"
 
         # Reset mocks
-        full_mock_computer_primitives.navigate.reset_mock()
+        full_mock_primitives.computer.navigate.reset_mock()
 
         # Test mixed primitives
         result = await fm.execute_in_venv(
@@ -693,13 +692,13 @@ async def test_computer_primitives_error_handling(function_manager_factory):
 
     nav_func = """
 async def use_navigate(url: str) -> str:
-    return await computer_primitives.navigate(url=url)
+    return await primitives.computer.navigate(url=url)
 """.strip()
 
     chain_func = """
 async def chain_cp(url: str, question: str) -> dict:
-    nav = await computer_primitives.navigate(url=url)
-    obs = await computer_primitives.observe()
+    nav = await primitives.computer.navigate(url=url)
+    obs = await primitives.computer.observe()
     return {"navigate": nav, "observe": obs}
 """.strip()
 

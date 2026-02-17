@@ -51,7 +51,7 @@ class Function(BaseModel):
             "at runtime (see FunctionManager._inject_dependencies).\n\n"
             "Bare names (e.g. 'helper') refer to other compositional functions "
             "whose implementations are exec'd into the namespace.\n\n"
-            "Dotted names (e.g. 'primitives.contacts.ask', 'actor.act') refer "
+            "Dotted names (e.g. 'primitives.contacts.ask', 'primitives.actor.act') refer "
             "to environment-provided namespaces.  The root segment (e.g. "
             "'actor', 'primitives') is resolved via "
             "registry.construct_sandbox_root() which constructs a fresh "

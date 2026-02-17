@@ -274,7 +274,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
     # Second pass: compute dependency graph now that we know all custom names.
     functions: Dict[str, Dict[str, Any]] = {}
     known_names = {name for name, *_rest in staged}
-    env_namespaces = frozenset({"primitives", "computer_primitives", "actor"})
+    env_namespaces = frozenset({"primitives"})
 
     for name, _func, metadata, argspec, docstring, implementation in staged:
         deps = sorted(
