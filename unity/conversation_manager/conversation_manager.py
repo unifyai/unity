@@ -197,6 +197,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # log_message() for post-hoc screenshot image updates.
         self._local_to_global_message_ids: dict[int, int] = {}
 
+        # mapping from conference_name/room_name to exchange_id, populated
+        # at call/meet end so the async RecordingReady handler can resolve
+        # the exchange without a database filter query.
+        self._recording_exchange_ids: dict[str, int] = {}
+
         # recently-published guidance content for redundancy detection
         self._recent_guidance: deque[str] = deque(maxlen=5)
 

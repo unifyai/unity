@@ -366,7 +366,8 @@ async def _(
     *args,
     **kwargs,
 ):
-    # Persist session identifiers in exchange metadata before clearing state.
+    # Persist session identifiers in exchange metadata and stash the
+    # exchange_id so the async RecordingReady handler can find it.
     if isinstance(event, PhoneCallEnded):
         exchange_id = cm.call_manager.call_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.conference_name:
@@ -374,6 +375,7 @@ async def _(
                 exchange_id,
                 {"conference_name": cm.call_manager.conference_name},
             )
+            cm._recording_exchange_ids[cm.call_manager.conference_name] = exchange_id
     else:
         exchange_id = cm.call_manager.unify_meet_exchange_id
         if exchange_id != UNASSIGNED and cm.call_manager.room_name:
@@ -381,6 +383,7 @@ async def _(
                 exchange_id,
                 {"room_name": cm.call_manager.room_name},
             )
+            cm._recording_exchange_ids[cm.call_manager.room_name] = exchange_id
 
     cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
@@ -424,21 +427,18 @@ async def _(
     **kwargs,
 ):
     name = event.conference_name
-    exchanges = cm.transcript_manager.filter_exchanges(
-        filter=f'metadata["conference_name"] == "{name}" '
-        f'or metadata["room_name"] == "{name}"',
-    )
-    if exchanges:
+    exchange_id = cm._recording_exchange_ids.pop(name, None)
+    if exchange_id is not None:
         cm.transcript_manager.update_exchange_metadata(
-            exchanges[0].exchange_id,
+            exchange_id,
             {"recording_url": event.recording_url},
         )
         print(
             f"[RecordingReady] Stored recording_url on exchange "
-            f"{exchanges[0].exchange_id} for {name}",
+            f"{exchange_id} for {name}",
         )
     else:
-        print(f"[RecordingReady] No exchange found for conference_name={name}")
+        print(f"[RecordingReady] No exchange_id found for {name}")
 
 
 @EventHandler.register(
