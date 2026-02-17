@@ -366,6 +366,40 @@ class TestRendererSimpleMessage:
         assert "**NEW**" not in result
         assert "[Alice Smith @" in result
 
+    def test_render_message_with_screenshots(self, renderer):
+        """Message with screenshots renders filepath references."""
+        message = Message(
+            name="Alice Smith",
+            content="Click the blue button",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+            screenshots=[
+                "Screenshots/User/2025-06-13T12-00-00.000000.jpg",
+                "Screenshots/Assistant/2025-06-13T12-00-00.100000.jpg",
+            ],
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "Click the blue button" in result
+        assert "[Screenshots:" in result
+        assert "Screenshots/User/2025-06-13T12-00-00.000000.jpg" in result
+        assert "Screenshots/Assistant/2025-06-13T12-00-00.100000.jpg" in result
+
+    def test_render_message_without_screenshots_has_no_tag(self, renderer):
+        """Message without screenshots has no [Screenshots:] block."""
+        message = Message(
+            name="Alice Smith",
+            content="Just a normal message",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc),
+            role="user",
+        )
+        last_snapshot = datetime(2025, 6, 13, 11, 0, 0, tzinfo=timezone.utc)
+        result = renderer.render_message(message, last_snapshot)
+
+        assert "Just a normal message" in result
+        assert "[Screenshots:" not in result
+
 
 # =============================================================================
 # Tests for UnifyMessage Rendering
