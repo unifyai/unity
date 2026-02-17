@@ -2,8 +2,8 @@ import asyncio
 import inspect
 import json
 import traceback
-import time
 import dataclasses
+import time
 
 
 from typing import (
@@ -16,6 +16,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from .tools_utils import ToolCallMetadata, create_tool_call_message
+from . import time_context
 from .messages import (
     insert_tool_message_after_assistant,
     _normalise_kwargs_for_bound_method,
@@ -30,6 +31,7 @@ from .context_tracker import LoopContextState
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
     from .message_dispatcher import LoopMessageDispatcher
+    from .time_context import TimeContext
 
 
 # Sentinel for bare top-level handles (no label needed).
@@ -249,7 +251,15 @@ def compute_context_injection(
 
 
 class ToolsData:
-    def __init__(self, tools, *, client, logger: "LoopLogger"):
+    def __init__(
+        self,
+        tools,
+        *,
+        client,
+        logger: "LoopLogger",
+        time_ctx: "Optional[TimeContext]" = None,
+        time_ctx_msg: "Optional[dict]" = None,
+    ):
         self._client = client
         self._logger = logger
         self.normalized = normalise_tools(tools)
@@ -266,6 +276,9 @@ class ToolsData:
         self._completed_tool_names: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
+        # Time context for tracking tool execution timings
+        self._time_ctx: Optional["TimeContext"] = time_ctx
+        self._time_ctx_msg: Optional[dict] = time_ctx_msg
         # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
         # Set by the loop after the factory is initialised each turn.
         self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
@@ -876,6 +889,23 @@ class ToolsData:
                 )
             except Exception:
                 pass
+
+        # 5️⃣  record tool timing to time context ─────────────────────────────
+        #     Update the time context system message with this tool's execution info
+        if self._time_ctx is not None:
+            try:
+                start_offset = self._time_ctx.compute_start_offset(info.scheduled_time)
+                self._time_ctx.add_tool_timing(
+                    call_id=call_id,
+                    name=name,
+                    start_offset=start_offset,
+                    duration=time_context.perf_counter() - info.scheduled_time,
+                )
+                # Update the time context system message content
+                if self._time_ctx_msg is not None:
+                    self._time_ctx.update_system_message(self._time_ctx_msg)
+            except Exception:
+                pass  # Time context is best-effort; don't break the loop
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():

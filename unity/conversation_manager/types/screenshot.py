@@ -11,3 +11,4 @@ class ScreenshotEntry(NamedTuple):
     utterance: str
     timestamp: datetime
     source: str  # "assistant" (assistant's desktop) or "user" (user's screen share)
+    message_id: int | None = None

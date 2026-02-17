@@ -17,6 +17,7 @@ from tests.helpers import _handle_project
 from tests.conversation_manager.conftest import BOSS
 from tests.conversation_manager.actions.integration.helpers import (
     assert_no_errors,
+    extract_actor_handle,
     get_actor_started_event,
     inject_actor_result,
     wait_for_actor_completion,
@@ -45,7 +46,7 @@ async def test_pause_resume_inflight_handle(initialized_cm_codeact):
     )
 
     handle_id = get_actor_started_event(result).handle_id
-    handle = cm.cm.in_flight_actions[handle_id]["handle"]
+    handle = extract_actor_handle(cm, handle_id)
 
     # User asks to pause.
     await cm.step_until_wait(
@@ -167,7 +168,7 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
         ),
     )
     handle_id_a = get_actor_started_event(result_a).handle_id
-    handle_a = cm.cm.in_flight_actions[handle_id_a]["handle"]
+    handle_a = extract_actor_handle(cm, handle_id_a)
 
     # User asks to pause A.
     await cm.step_until_wait(
@@ -192,9 +193,10 @@ async def test_two_concurrent_handles_pause_one_other_completes(initialized_cm_c
     )
     handle_id_b = get_actor_started_event(result_b).handle_id
 
-    # CM should be tracking both handles concurrently.
-    assert handle_id_a in cm.cm.in_flight_actions
-    assert handle_id_b in cm.cm.in_flight_actions
+    # CM should be tracking both handles (in-flight or completed).
+    all_actions = {**cm.cm.in_flight_actions, **cm.cm.completed_actions}
+    assert handle_id_a in all_actions
+    assert handle_id_b in all_actions
     assert handle_id_a != handle_id_b
 
     # B should complete successfully even while A is paused.

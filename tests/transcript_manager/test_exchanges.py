@@ -65,7 +65,7 @@ def test_update_metadata_updates_row():
     tm = TranscriptManager()
 
     # Create a fresh exchange via the new helper
-    exid = tm.log_first_message_in_new_exchange(
+    exid, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "sms_message",
             "sender_id": 1,
@@ -110,7 +110,7 @@ def test_filter_by_metadata():
     tm = TranscriptManager()
 
     # Seed two new exchanges with distinct metadata
-    ex_billing = tm.log_first_message_in_new_exchange(
+    ex_billing, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "sms_message",
             "sender_id": 1,
@@ -120,7 +120,7 @@ def test_filter_by_metadata():
         },
         exchange_initial_metadata={"topic": "billing", "ref": "A"},
     )
-    ex_support = tm.log_first_message_in_new_exchange(
+    ex_support, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "sms_message",
             "sender_id": 1,
@@ -150,7 +150,7 @@ def test_filter_by_nested_metadata():
     tm = TranscriptManager()
 
     # Seed nested metadata with tags
-    ex_nested = tm.log_first_message_in_new_exchange(
+    ex_nested, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "email",
             "sender_id": 3,
@@ -162,7 +162,7 @@ def test_filter_by_nested_metadata():
             "thread": {"id": "T-123", "tags": ["billing", "vip"]},
         },
     )
-    ex_other = tm.log_first_message_in_new_exchange(
+    ex_other, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "email",
             "sender_id": 3,

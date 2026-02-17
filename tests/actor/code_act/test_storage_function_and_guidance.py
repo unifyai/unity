@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from unity.actor.code_act_actor import CodeActActor
+from unity.function_manager.function_manager import FunctionManager
 
 pytestmark = pytest.mark.eval
 
@@ -92,13 +93,7 @@ async def test_storage_loop_stores_both_function_and_guidance():
       strategy selection, empty-record filtering, statistics) as a
       non-trivial workflow recipe → store via GM.
     """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": []})
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"stored": "added"})
-    fm.delete_function = MagicMock(return_value={})
-
+    fm = FunctionManager(include_primitives=False)
     gm = _TrackingGuidanceManager()
 
     actor = CodeActActor(
@@ -163,9 +158,10 @@ async def test_storage_loop_stores_both_function_and_guidance():
             await asyncio.sleep(0.5)
 
         # The storage check should have stored at least one function.
-        fm.add_functions.assert_called(), (
-            f"Expected FunctionManager.add_functions to be called for the "
-            f"reusable data-cleaning utilities."
+        stored = fm.filter_functions()
+        assert stored, (
+            "Expected FunctionManager to contain at least one stored function "
+            "for the reusable data-cleaning utilities."
         )
 
         # The storage check should have stored guidance about the
@@ -173,7 +169,7 @@ async def test_storage_loop_stores_both_function_and_guidance():
         assert gm.add_calls, (
             f"Expected GuidanceManager.add_guidance to be called for the "
             f"data-cleaning pipeline composition. "
-            f"FM add_functions was called {fm.add_functions.call_count} time(s), "
+            f"FM has {len(stored)} stored function(s), "
             f"but no guidance was stored."
         )
     finally:

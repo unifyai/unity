@@ -591,7 +591,7 @@ def test_fk_message_exchange_id_cascade_delete():
     )
 
     # Log messages in same exchange
-    exchange_id = tm.log_first_message_in_new_exchange(
+    exchange_id, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "sms_message",
             "sender_id": alice_id,
