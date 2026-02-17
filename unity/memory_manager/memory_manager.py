@@ -14,6 +14,7 @@ from ..common.async_tool_loop import start_async_tool_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
+from ..events.manager_event_logging import log_manager_result
 
 if TYPE_CHECKING:
     from ..contact_manager.base import BaseContactManager
@@ -247,6 +248,12 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 1  update_contacts                                                 #
     # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "update_contacts",
+        payload_key="transcript",
+        display_label="Updating Contacts",
+    )
     async def update_contacts(
         self,
         transcript: str,
@@ -278,6 +285,12 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 2  update_knowledge                                                #
     # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "update_knowledge",
+        payload_key="transcript",
+        display_label="Updating Knowledge",
+    )
     async def update_knowledge(
         self,
         transcript: str,
@@ -316,6 +329,12 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 3  update_tasks                                                    #
     # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "update_tasks",
+        payload_key="transcript",
+        display_label="Updating Tasks",
+    )
     async def update_tasks(
         self,
         transcript: str,
@@ -353,6 +372,12 @@ class MemoryManager(BaseMemoryManager):
     # ------------------------------------------------------------------ #
     # 4  process_chunk  (unified single-loop for passive chunk trigger)  #
     # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "process_chunk",
+        payload_key="transcript",
+        display_label="Processing Memory Chunk",
+    )
     async def process_chunk(
         self,
         transcript: str,
