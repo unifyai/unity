@@ -329,7 +329,7 @@ class TestWaitTool:
     async def test_returns_waiting_status(self, brain_action_tools):
         """Wait tool returns waiting status."""
         result = await brain_action_tools.wait()
-        assert result == {"status": "waiting"}
+        assert result == {"status": "waiting", "delay": None}
 
     def test_has_docstring(self, brain_action_tools):
         """Wait tool has descriptive docstring."""

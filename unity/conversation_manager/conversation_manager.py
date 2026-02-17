@@ -903,6 +903,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": assistant_content})
 
+        # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
+        if result.tool_name == "wait":
+            delay = (result.tool_args or {}).get("delay")
+            if delay is not None:
+                await self.request_llm_run(delay=delay)
+
         return result.tool_name
 
     async def wait_for_events(self):
