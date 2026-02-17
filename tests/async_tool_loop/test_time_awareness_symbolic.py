@@ -83,16 +83,9 @@ def simulated_time(monkeypatch):
     monkeypatch.setattr("unity.common._async_tool.time_context.now", _simulated_now)
 
     # Patch perf_counter() for deterministic tool timing
+    # Single patch at definition site — consumers access via time_context.perf_counter
     monkeypatch.setattr(
         "unity.common._async_tool.time_context.perf_counter",
-        _simulated_perf_counter,
-    )
-    monkeypatch.setattr(
-        "unity.common._async_tool.tools_utils.perf_counter",
-        _simulated_perf_counter,
-    )
-    monkeypatch.setattr(
-        "unity.common._async_tool.tools_data.perf_counter",
         _simulated_perf_counter,
     )
 

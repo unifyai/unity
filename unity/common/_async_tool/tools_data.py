@@ -16,7 +16,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from .tools_utils import ToolCallMetadata, create_tool_call_message
-from .time_context import perf_counter
+from . import time_context
 from .messages import (
     insert_tool_message_after_assistant,
     _normalise_kwargs_for_bound_method,
@@ -899,7 +899,7 @@ class ToolsData:
                     call_id=call_id,
                     name=name,
                     start_offset=start_offset,
-                    duration=perf_counter() - info.scheduled_time,
+                    duration=time_context.perf_counter() - info.scheduled_time,
                 )
                 # Update the time context system message content
                 if self._time_ctx_msg is not None:

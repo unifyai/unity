@@ -276,6 +276,14 @@ def stub_external_deps(monkeypatch):
         _static_now,
     )
 
+    def _static_perf_counter() -> float:
+        return 1000.0
+
+    monkeypatch.setattr(
+        "unity.common._async_tool.time_context.perf_counter",
+        _static_perf_counter,
+    )
+
 
 # --------------------------------------------------------------------------- #
 # 3. Singleton isolation                                                      #
