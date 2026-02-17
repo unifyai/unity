@@ -106,14 +106,6 @@ class ActorFactory:
             progress_callback=progress,
         )
 
-        # Keep `primitives.computer` consistent with the dedicated `computer_primitives`
-        # environment. This avoids accidentally creating two separate computer backends.
-        if computer_primitives is not None:
-            try:
-                primitives._computer = computer_primitives  # type: ignore[attr-defined]
-            except Exception:
-                pass
-
         envs = [StateManagerEnvironment(primitives)]
         if computer_primitives is not None:
             envs.append(ComputerEnvironment(computer_primitives))
