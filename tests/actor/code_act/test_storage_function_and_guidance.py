@@ -15,7 +15,6 @@ which only assert on FunctionManager storage.
 """
 
 import asyncio
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -198,13 +197,7 @@ async def test_storage_loop_stores_function_without_guidance():
       multi-step composition to document — the function's own docstring
       fully describes its usage.
     """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": []})
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"stored": "added"})
-    fm.delete_function = MagicMock(return_value={})
-
+    fm = FunctionManager(include_primitives=False)
     gm = _TrackingGuidanceManager()
 
     actor = CodeActActor(
@@ -245,9 +238,10 @@ async def test_storage_loop_stores_function_without_guidance():
             await asyncio.sleep(0.5)
 
         # The storage check should have stored the function.
-        fm.add_functions.assert_called(), (
-            "Expected FunctionManager.add_functions to be called for the "
-            "reusable normalize_phone utility."
+        stored = fm.filter_functions()
+        assert stored, (
+            "Expected FunctionManager to contain at least one stored function "
+            "for the reusable normalize_phone utility."
         )
 
         # The storage check should NOT have created guidance — this is a
