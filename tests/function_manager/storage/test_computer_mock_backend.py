@@ -15,7 +15,6 @@ from unity.function_manager.computer_backends import (
     MockComputerBackend,
     ComputerBackend,
 )
-from unity.function_manager.computer import Computer
 
 
 class TestMockComputerBackendInterface:
@@ -164,24 +163,39 @@ class TestMockComputerBackendExtras:
         assert backend.current_seq == 3
 
 
-class TestComputerWithMockMode:
-    """Verify Computer class works with mode='mock'."""
+class TestComputerPrimitivesWithMockMode:
+    """Verify ComputerPrimitives works with computer_mode='mock'."""
 
-    def test_computer_mock_mode(self):
-        """Computer should accept mode='mock'."""
-        computer = Computer(mode="mock")
-        assert isinstance(computer.backend, MockComputerBackend)
+    def test_mock_mode_backend(self):
+        """ComputerPrimitives(computer_mode='mock') should use MockComputerBackend."""
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        ManagerRegistry.clear()
+        prims = ComputerPrimitives(computer_mode="mock")
+        assert isinstance(prims.backend, MockComputerBackend)
+        ManagerRegistry.clear()
 
     @pytest.mark.asyncio
-    async def test_computer_mock_mode_act(self):
-        """Computer with mock mode should delegate to MockComputerBackend."""
-        computer = Computer(mode="mock")
-        result = await computer.act("Click button")
+    async def test_mock_mode_act(self):
+        """ComputerPrimitives with mock mode should delegate act to MockComputerBackend."""
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        ManagerRegistry.clear()
+        prims = ComputerPrimitives(computer_mode="mock")
+        result = await prims.backend.act("Click button")
         assert result == "done"
+        ManagerRegistry.clear()
 
     @pytest.mark.asyncio
-    async def test_computer_mock_mode_get_url(self):
-        """Computer with mock mode should return mock URL."""
-        computer = Computer(mode="mock")
-        url = await computer.get_current_url()
+    async def test_mock_mode_get_url(self):
+        """ComputerPrimitives with mock mode should return mock URL."""
+        from unity.function_manager.primitives.runtime import ComputerPrimitives
+        from unity.manager_registry import ManagerRegistry
+
+        ManagerRegistry.clear()
+        prims = ComputerPrimitives(computer_mode="mock")
+        url = await prims.backend.get_current_url()
         assert url == "https://google.com"
+        ManagerRegistry.clear()

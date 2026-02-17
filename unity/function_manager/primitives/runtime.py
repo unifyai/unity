@@ -31,7 +31,7 @@ from unity.manager_registry import SingletonABCMeta
 
 if TYPE_CHECKING:
     from PIL import Image
-    from unity.function_manager.computer import Computer
+    from unity.function_manager.computer_backends import ComputerBackend
     from unity.contact_manager.contact_manager import ContactManager
     from unity.transcript_manager.transcript_manager import TranscriptManager
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -132,7 +132,7 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         }
 
         self._secret_manager = None
-        self._computer = None
+        self._backend = None
         self._computer_mode = computer_mode
         self._computer_kwargs_map = computer_kwargs
 
@@ -147,15 +147,9 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         if computer_mode == "mock" or resolved_url == DEFAULT_AGENT_SERVER_URL:
             _vm_ready.set()
 
-        # Lazily create the Computer (and thus avoid connecting to agent-service) unless requested
+        # Eagerly create the backend if requested (otherwise lazily via property)
         if connect_now:
-            from unity.function_manager.computer import Computer
-
-            self._computer = Computer(
-                mode=self._computer_mode,
-                secret_manager=self.secret_manager,
-                **self._computer_kwargs_map[self._computer_mode],
-            )
+            _ = self.backend
         self._setup_computer_methods()
 
     @property
@@ -166,6 +160,10 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
 
             self._secret_manager = ManagerRegistry.get_secret_manager()
         return self._secret_manager
+
+    # Methods whose first positional arg contains user-facing text that may
+    # include ${SECRET_NAME} placeholders requiring substitution.
+    _SECRET_INJECTED_METHODS = frozenset({"act", "observe"})
 
     def _setup_computer_methods(self):
         """Dynamically create tool methods without forcing an early backend connection."""
@@ -198,7 +196,11 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                         raise RuntimeError(
                             "Managed VM did not become ready within 5 minutes",
                         )
-                backend_method = getattr(self.computer.backend, method_name)
+                # Substitute ${SECRET_NAME} placeholders with real values
+                if method_name in self._SECRET_INJECTED_METHODS and args:
+                    resolved = await self.secret_manager.from_placeholder(args[0])
+                    args = (resolved,) + args[1:]
+                backend_method = getattr(self.backend, method_name)
                 return await backend_method(*args, **kwargs)
 
             wrapper.__name__ = method_name
@@ -216,17 +218,27 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
             )
 
     @property
-    def computer(self) -> "Computer":
-        """Lazily initialize and return the Computer instance."""
-        if self._computer is None:
-            from unity.function_manager.computer import Computer
-
-            self._computer = Computer(
-                mode=self._computer_mode,
-                secret_manager=self.secret_manager,
-                **self._computer_kwargs_map[self._computer_mode],
+    def backend(self) -> "ComputerBackend":
+        """Lazily initialize and return the computer backend instance."""
+        if self._backend is None:
+            from unity.function_manager.computer_backends import (
+                MagnitudeBackend,
+                MockComputerBackend,
             )
-        return self._computer
+
+            if self._computer_mode == "magnitude":
+                self._backend = MagnitudeBackend(
+                    **self._computer_kwargs_map["magnitude"],
+                )
+            elif self._computer_mode == "mock":
+                self._backend = MockComputerBackend(
+                    **self._computer_kwargs_map.get("mock", {}),
+                )
+            else:
+                raise ValueError(
+                    f"Unknown computer_mode: '{self._computer_mode}'.",
+                )
+        return self._backend
 
     async def get_screenshot(self) -> "Image.Image":
         """Capture a screenshot of the current screen and return it as a PIL Image.
@@ -254,7 +266,7 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                 raise RuntimeError(
                     "Managed VM did not become ready within 5 minutes",
                 )
-        b64 = await self.computer.get_screenshot()
+        b64 = await self.backend.get_screenshot()
         return Image.open(io.BytesIO(base64.b64decode(b64)))
 
     # ── Steering control (not exposed as actor tools) ────────────────────
@@ -266,7 +278,7 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         CodeActActor is paused.  This is not an actor tool — it is never
         listed in ``_DYNAMIC_METHODS`` or ``_PRIMITIVE_METHODS``.
         """
-        await self.computer.pause()
+        await self.backend.pause()
 
     async def resume(self) -> None:
         """Resume the underlying browser agent's action loop.
@@ -274,7 +286,7 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         Called programmatically by the actor's steering mechanism when the
         CodeActActor is resumed.
         """
-        await self.computer.resume()
+        await self.backend.resume()
 
     # ── Interject queue registry ─────────────────────────────────────────
 
