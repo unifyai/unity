@@ -302,12 +302,12 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         managers_utils.log_message,
         cm,
         event,
-        cm_message_id=message_id,
+        local_message_id=message_id,
     )
 
     if role == "user":
         # Link any pending user screenshot to this message by stamping it
-        # with the message_id, then pass the same id to the assistant
+        # with the local_message_id, then pass the same id to the assistant
         # screenshot capture so both can be matched back deterministically.
         cm._claim_pending_user_screenshot(message_id)
         if cm.assistant_screen_share_active:

@@ -465,7 +465,7 @@ async def log_message(
     cm: "ConversationManager",
     event: Event,
     *,
-    cm_message_id: int | None = None,
+    local_message_id: int | None = None,
 ) -> None:
     """Log a message via TranscriptManager."""
     event_name = event.__class__.__name__
@@ -646,8 +646,8 @@ async def log_message(
                 if logged_msgs:
                     tm_message_id = logged_msgs[0].message_id
 
-            if cm_message_id is not None and tm_message_id is not None:
-                cm._cm_to_tm_message_ids[cm_message_id] = tm_message_id
+            if local_message_id is not None and tm_message_id is not None:
+                cm._local_to_global_message_ids[local_message_id] = tm_message_id
 
             print(
                 f"[ManagersWorker] Logged message: {medium}"

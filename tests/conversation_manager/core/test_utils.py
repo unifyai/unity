@@ -980,8 +980,8 @@ class TestContactIndex:
 
         assert id1 == 1
         assert id2 == 2
-        assert contact_index.global_thread[0].message.message_id == 1
-        assert contact_index.global_thread[1].message.message_id == 2
+        assert contact_index.global_thread[0].message.local_message_id == 1
+        assert contact_index.global_thread[1].message.local_message_id == 2
 
     def test_push_message_returns_zero_for_non_message_types(
         self,
@@ -1067,12 +1067,12 @@ class TestContactIndex:
         msg.image_ids.extend([101, 202])
         assert msg.image_ids == [101, 202]
 
-    def test_cm_to_tm_message_id_mapping(
+    def test_local_to_global_message_id_mapping(
         self,
         contact_index,
         sample_contact_dict,
     ):
-        """The _cm_to_tm_message_ids mapping can store and retrieve cm->tm links."""
+        """The _local_to_global_message_ids mapping can store and retrieve local->global links."""
         mapping: dict[int, int] = {}
         mid = contact_index.push_message(
             contact_id=sample_contact_dict["contact_id"],

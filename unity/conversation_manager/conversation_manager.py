@@ -192,9 +192,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
-        # mapping from local CM message_id to backend TM message_id,
-        # populated by log_message() for post-hoc screenshot image updates.
-        self._cm_to_tm_message_ids: dict[int, int] = {}
+        # mapping from local_message_id (ephemeral CM counter) to
+        # global message_id (persistent backend TM id), populated by
+        # log_message() for post-hoc screenshot image updates.
+        self._local_to_global_message_ids: dict[int, int] = {}
 
         # recently-published guidance content for redundancy detection
         self._recent_guidance: deque[str] = deque(maxlen=5)
@@ -253,7 +254,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     async def capture_assistant_screenshot(
         self,
         user_utterance: str,
-        message_id: int | None = None,
+        local_message_id: int | None = None,
     ) -> None:
         """Capture the assistant's screen and buffer it for the next slow brain turn.
 
@@ -290,7 +291,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                                 user_utterance,
                                 datetime.now(timezone.utc),
                                 "assistant",
-                                message_id,
+                                local_message_id,
                             ),
                         )
                         self._session_logger.debug(
@@ -310,12 +311,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._screenshot_buffer.clear()
         return screenshots
 
-    def _claim_pending_user_screenshot(self, message_id: int) -> None:
-        """Stamp the most recent unclaimed user screenshot with the given message_id."""
+    def _claim_pending_user_screenshot(self, local_message_id: int) -> None:
+        """Stamp the most recent unclaimed user screenshot with the given local_message_id."""
         if self._screenshot_buffer:
             last = self._screenshot_buffer[-1]
-            if last.source == "user" and last.message_id is None:
-                self._screenshot_buffer[-1] = last._replace(message_id=message_id)
+            if last.source == "user" and last.local_message_id is None:
+                self._screenshot_buffer[-1] = last._replace(
+                    local_message_id=local_message_id,
+                )
 
     def _buffer_user_screenshot(self, event_json: str) -> None:
         """Buffer a user screen share screenshot received from the fast brain via IPC."""
@@ -727,9 +730,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             msg_to_image_refs: dict[int, list[dict]] = {}
             source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
             for i, (entry, path) in enumerate(zip(screenshots, screenshot_paths)):
-                if entry.message_id is None:
+                if entry.local_message_id is None:
                     continue
-                mid = entry.message_id
+                mid = entry.local_message_id
                 msg_to_paths.setdefault(mid, []).append(path)
                 if i < len(image_ids):
                     img_id = image_ids[i]
@@ -746,19 +749,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if msg_to_paths:
                 for gte in self.contact_index.global_thread:
                     msg = gte.message
-                    if isinstance(msg, Message) and msg.message_id in msg_to_paths:
-                        msg.screenshots.extend(msg_to_paths.pop(msg.message_id))
-                        if msg.message_id in msg_to_image_ids:
+                    if (
+                        isinstance(msg, Message)
+                        and msg.local_message_id in msg_to_paths
+                    ):
+                        msg.screenshots.extend(msg_to_paths.pop(msg.local_message_id))
+                        if msg.local_message_id in msg_to_image_ids:
                             msg.image_ids.extend(
-                                msg_to_image_ids.pop(msg.message_id),
+                                msg_to_image_ids.pop(msg.local_message_id),
                             )
                     if not msg_to_paths:
                         break
 
             # Post-hoc update TM messages with AnnotatedImageRefs.
             if msg_to_image_refs and self.transcript_manager is not None:
-                for cm_msg_id, refs in msg_to_image_refs.items():
-                    tm_msg_id = self._cm_to_tm_message_ids.get(cm_msg_id)
+                for local_mid, refs in msg_to_image_refs.items():
+                    tm_msg_id = self._local_to_global_message_ids.get(local_mid)
                     if tm_msg_id is not None:
                         try:
                             await asyncio.to_thread(
