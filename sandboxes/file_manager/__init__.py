@@ -1,8 +1,7 @@
-"""FileManager and GlobalFileManager interactive sandboxes."""
+"""FileManager interactive sandboxes."""
 
 from __future__ import annotations
 
 __all__ = [
     "file_manager_sandbox",
-    "global_file_manager_sandbox",
 ]

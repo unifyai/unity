@@ -54,7 +54,6 @@ from .utils.storage import (
 )
 from unity.data_manager.types import PlotResult as _VizPlotResult
 
-
 if TYPE_CHECKING:
     from unity.file_manager.types.describe import FileStorageMap
     from unity.data_manager.base import BaseDataManager
@@ -82,8 +81,8 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         adapter : BaseFileSystemAdapter | None, default None
-            Filesystem adapter (e.g., Local, CodeSandbox, Interact). When None,
-            adapter-backed operations will raise.
+            Filesystem adapter (e.g., Local). When None, a
+            ``LocalFileSystemAdapter`` is created automatically.
         parser : BaseParser | None, default None
             Parser used for extracting tables/text/metadata from bytes. Defaults
             to ``DoclingParser`` with table and image extraction enabled.
@@ -95,6 +94,12 @@ class FileManager(BaseFileManager):
         """
         super().__init__()
         self.include_in_multi_assistant_table = False
+        if adapter is None:
+            from unity.file_manager.filesystem_adapters.local_adapter import (
+                LocalFileSystemAdapter,
+            )
+
+            adapter = LocalFileSystemAdapter()
         self._adapter = adapter
         self.__parser: Optional[FileParser] = parser
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
@@ -302,13 +307,11 @@ class FileManager(BaseFileManager):
     @read_only
     def describe(
         self,
-        *,
-        file_path: Optional[str] = None,
-        file_id: Optional[int] = None,
+        file_path: str,
     ) -> "FileStorageMap":
         from .utils.storage import describe_file as _storage_describe_file
 
-        return _storage_describe_file(self, file_path=file_path, file_id=file_id)
+        return _storage_describe_file(self, file_path=file_path)
 
     # ------------------------- Sync helper ---------------------------------- #
     def _sync(self, *, file_path: str) -> Dict[str, Any]:
@@ -505,7 +508,7 @@ class FileManager(BaseFileManager):
         Returns
         -------
         str
-            The base adapter type (e.g., "Local", "CodeSandbox", "Interact").
+            The base adapter type (e.g., "Local").
         """
         if not adapter_name:
             return "Unknown"
@@ -1051,9 +1054,6 @@ class FileManager(BaseFileManager):
         bin_count: Optional[int] = None,
         show_regression: Optional[bool] = None,
     ) -> Union["_VizPlotResult", List["_VizPlotResult"]]:
-        # Import DataManager types for compatibility
-        from unity.data_manager.types import PlotConfig as DMPlotConfig
-
         # Normalize tables to list
         table_list: List[str] = []
         if isinstance(tables, str):
@@ -1079,24 +1079,31 @@ class FileManager(BaseFileManager):
                     table=tbl,
                 )
 
-        # Build plot config using DataManager types
-        dm_config = DMPlotConfig(
+        # Delegate to DataManager for plot generation.
+        # plot_batch expects individual kwargs (x, y, ...) not a config object.
+        # Note: DataManager uses "x"/"y" while FileManager uses "x_axis"/"y_axis".
+        plot_kwargs: dict = dict(
             plot_type=plot_type,
-            x_axis=x_axis,
-            y_axis=y_axis,
+            x=x_axis,
+            y=y_axis,
             group_by=group_by,
-            metric=metric,
             aggregate=aggregate,
-            scale_x=scale_x,
-            scale_y=scale_y,
-            bin_count=bin_count,
-            show_regression=show_regression,
-            title=title,
             filter=filter,
+            title=title,
         )
+        # Pass optional kwargs only when set (they go through **kwargs)
+        if metric is not None:
+            plot_kwargs["metric"] = metric
+        if scale_x is not None:
+            plot_kwargs["scale_x"] = scale_x
+        if scale_y is not None:
+            plot_kwargs["scale_y"] = scale_y
+        if bin_count is not None:
+            plot_kwargs["bin_count"] = bin_count
+        if show_regression is not None:
+            plot_kwargs["show_regression"] = show_regression
 
-        # Delegate to DataManager for plot generation
-        dm_results = self._data_manager.plot_batch(contexts=contexts, config=dm_config)
+        dm_results = self._data_manager.plot_batch(contexts=contexts, **plot_kwargs)
 
         # Convert DataManager results to FileManager result type for backward compat
         results: List[_VizPlotResult] = []
@@ -1470,12 +1477,40 @@ class FileManager(BaseFileManager):
             raise NotImplementedError(
                 "No adapter configured for save_file_to_downloads",
             )
-        return self._adapter.save_file_to_downloads(file_path, contents)
+        display_name = self._adapter.save_file_to_downloads(file_path, contents)
+        result = self.ingest_files(display_name)
+
+        # ingest_files only creates FileRecords entries for successfully parsed
+        # files.  When parsing fails (corrupt file, unknown format, etc.) the
+        # file must still be registered so it is discoverable via describe().
+        file_result = result.files.get(display_name)
+        if file_result and getattr(file_result, "status", None) == "error":
+            from .utils.ops import add_or_replace_file_row
+
+            add_or_replace_file_row(
+                self,
+                entry={
+                    "file_path": display_name,
+                    "source_uri": self._resolve_to_uri(display_name),
+                    "source_provider": getattr(self._adapter, "name", None),
+                    "status": "error",
+                    "error": getattr(file_result, "error", None)
+                    or "file could not be parsed",
+                    "storage_id": "",
+                },
+            )
+
+        return display_name
 
     # File-specific Q&A
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
     @manager_tool
-    @log_manager_call("FileManager", "ask_about_file", payload_key="question")
+    @log_manager_call(
+        "FileManager",
+        "ask_about_file",
+        payload_key="question",
+        display_label="Reading File",
+    )
     async def ask_about_file(
         self,
         file_path: str,
@@ -1518,7 +1553,7 @@ class FileManager(BaseFileManager):
         system_msg = build_file_manager_ask_about_file_prompt(
             tools=tools,
             include_activity=include_activity,
-        )
+        ).to_list()
         client.set_system_message(system_msg)
         # Use filesystem type without exposing absolute paths to LLM
         user_blob = json.dumps(

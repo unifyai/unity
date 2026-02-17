@@ -1,10 +1,10 @@
 """
-Centralized utilities for dynamic task action generation in ConversationManager.
+Centralized utilities for action steering operations in ConversationManager.
 
 This module provides a single source of truth for:
 - Steering operations derived from SteerableToolHandle
 - Action name generation and parsing
-- Short name derivation from task queries
+- Short name derivation from action queries
 
 Dynamic action names use a structured format with __ as the delimiter:
     {operation}_{short_name}__{handle_id}
@@ -23,7 +23,6 @@ from typing import Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 
-
 # Structural delimiter separating semantic parts from identifiers.
 # Using __ because neither derive_short_name nor safe_call_id_suffix can produce it.
 _DELIM = "__"
@@ -36,11 +35,13 @@ _DELIM = "__"
 
 @dataclass(frozen=True)
 class SteeringOperation:
-    """Describes a steering operation that can be performed on an active task."""
+    """Describes a steering operation that can be performed on an active action."""
 
     name: str  # e.g., "ask", "stop"
     method_name: str  # Method name on SteerableToolHandle
-    param_name: str  # Primary parameter name for the action (e.g., "query", "reason")
+    param_name: (
+        str  # Primary parameter name for the action (e.g., "question", "reason")
+    )
     requires_clarification: bool = False  # Whether this needs a call_id suffix
 
     def get_docstring(self) -> str:
@@ -56,7 +57,7 @@ class SteeringOperation:
 
 # Core steering operations - derived from SteerableToolHandle's abstract methods
 STEERING_OPERATIONS: tuple[SteeringOperation, ...] = (
-    SteeringOperation("ask", "ask", "query"),
+    SteeringOperation("ask", "ask", "question"),
     SteeringOperation("stop", "stop", "reason"),
     SteeringOperation("interject", "interject", "message"),
     SteeringOperation("pause", "pause", ""),
@@ -84,22 +85,52 @@ def get_steering_operation(name: str) -> Optional[SteeringOperation]:
 # Short name derivation
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Maximum character length for short_name to guarantee tool names stay under
+# OpenAI's 64-character limit. Calculated as:
+#   64 (max) - 21 (answer_clarification_) - 2 (__) - 5 (handle_id up to 99999)
+#            - 2 (__) - 8 (call_id_suffix) = 26 chars
+# Using 25 for safety margin.
+_MAX_SHORT_NAME_CHARS = 25
+
+# Characters to strip entirely (no word boundary created).
+# These appear within words (contractions, quotes) or terminate sentences.
+# - Apostrophes: ' and Unicode variants ' '
+# - Quotes: " and Unicode variants " " plus backtick `
+# - Sentence terminators: ! ?
+_STRIP_CHARS_PATTERN = re.compile(r"['\u2018\u2019\"\u201c\u201d`!?]")
+
 
 def derive_short_name(query: str, max_words: int = 4) -> str:
-    """Derive a short, descriptive name from a task query for use in action names.
+    """Derive a short, descriptive name from an action query for use in action names.
 
-    Takes the first few words, lowercased, with non-alphanumeric chars removed,
-    joined by underscores. Ensures no __ (reserved as structural delimiter).
+    Takes the first few words, lowercased, joined by underscores. Punctuation is
+    handled in two ways:
+    - Apostrophes, quotes, and sentence terminators are stripped (no word boundary)
+    - Other punctuation (slashes, hyphens, etc.) becomes word separators
+
+    Ensures no __ (reserved as structural delimiter) and enforces a character
+    limit to guarantee generated tool names never exceed OpenAI's 64-char limit.
 
     Examples:
         "List all contacts" -> "list_all_contacts"
         "What's the weather?" -> "whats_the_weather"
+        "Search transcripts/messages/emails" -> "search_transcripts_messages_emails"
     """
-    words = re.sub(r"[^a-zA-Z0-9\s]", "", query.lower()).split()[:max_words]
+    # First, strip apostrophes/quotes/terminators (they don't create word boundaries)
+    query = _STRIP_CHARS_PATTERN.sub("", query)
+    # Then replace remaining non-alphanumeric chars with spaces (word separators)
+    normalized = re.sub(r"[^a-zA-Z0-9\s]", " ", query.lower())
+    words = normalized.split()[:max_words]
     result = "_".join(words) if words else "task"
+
     # Collapse any accidental double underscores (__ is our structural delimiter)
     while _DELIM in result:
         result = result.replace(_DELIM, "_")
+
+    # Truncate to max length to guarantee tool names stay under 64 chars
+    if len(result) > _MAX_SHORT_NAME_CHARS:
+        result = result[:_MAX_SHORT_NAME_CHARS].rstrip("_")
+
     return result
 
 
@@ -122,12 +153,12 @@ def build_action_name(
 
     Args:
         operation: The steering operation (e.g., "ask", "stop")
-        short_name: The short name derived from the task query
-        handle_id: The task handle ID
+        short_name: The short name derived from the action query
+        handle_id: The action handle ID
         call_id_suffix: Optional suffix for clarification call IDs
 
     Returns:
-        Action name like "ask_list_contacts__0" or "answer_clarification_task__0__abc123"
+        Action name like "ask_list_contacts__0" or "answer_clarification_action__0__abc123"
     """
     base = f"{operation}_{short_name}{_DELIM}{handle_id}"
     if call_id_suffix:
@@ -213,29 +244,40 @@ def parse_action_name(action_name: str) -> ParsedActionName:
 
 
 def is_dynamic_action(action_name: str) -> bool:
-    """Check if an action name is a dynamic task action."""
+    """Check if an action name is a dynamic steering action."""
     return any(action_name.startswith(f"{op.name}_") for op in STEERING_OPERATIONS)
 
 
-def iter_available_actions_for_task(
+def iter_steering_tools_for_action(
     handle_id: int,
     query: str,
     pending_clarifications: list[dict] | None = None,
+    is_paused: bool | None = None,
 ) -> list[tuple[str, str]]:
-    """Generate (action_name, description) pairs for a task's available actions.
+    """Generate (action_name, description) pairs for an action's steering tools.
 
     Args:
-        handle_id: The task handle ID
-        query: The original task query
+        handle_id: The action handle ID
+        query: The original action query
         pending_clarifications: List of pending clarification dicts with "call_id" keys
+        is_paused: If True, only include resume (skip pause).
+                   If False, only include pause (skip resume).
+                   If None, include both (backward compatible behavior).
 
-    Yields:
-        (action_name, description) tuples
+    Returns:
+        List of (action_name, description) tuples
     """
     short_name = derive_short_name(query)
     actions = []
 
     for op in STEERING_OPERATIONS:
+        # Conditionally skip pause/resume based on current state
+        if is_paused is not None:
+            if op.name == "pause" and is_paused:
+                continue  # Skip pause when already paused
+            if op.name == "resume" and not is_paused:
+                continue  # Skip resume when not paused (running)
+
         if op.requires_clarification:
             # Only generate answer_clarification if there are pending ones
             for clar in pending_clarifications or []:
@@ -244,14 +286,40 @@ def iter_available_actions_for_task(
                 name = build_action_name(op.name, short_name, handle_id, suffix)
                 desc = (
                     op.get_docstring()
-                    or f"{op.name.replace('_', ' ').title()} this task"
+                    or f"{op.name.replace('_', ' ').title()} this action"
                 )
                 actions.append((name, desc))
         else:
             name = build_action_name(op.name, short_name, handle_id)
             desc = (
-                op.get_docstring() or f"{op.name.replace('_', ' ').title()} this task"
+                op.get_docstring() or f"{op.name.replace('_', ' ').title()} this action"
             )
             actions.append((name, desc))
+
+    return actions
+
+
+def iter_steering_tools_for_completed_action(
+    handle_id: int,
+    query: str,
+) -> list[tuple[str, str]]:
+    """Generate (action_name, description) pairs for a completed action.
+
+    Completed actions expose `ask` for querying the preserved trajectory.
+
+    Args:
+        handle_id: The action handle ID
+        query: The original action query
+
+    Returns:
+        List of (action_name, description) tuples
+    """
+    short_name = derive_short_name(query)
+    actions = []
+
+    ask_op = OPERATION_MAP["ask"]
+    ask_name = build_action_name(ask_op.name, short_name, handle_id)
+    ask_desc = ask_op.get_docstring() or "Ask about this completed action"
+    actions.append((ask_name, ask_desc))
 
     return actions

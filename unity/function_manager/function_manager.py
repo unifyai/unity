@@ -1,5 +1,7 @@
 import ast
 import asyncio
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import inspect
 import functools
 import json
@@ -11,8 +13,22 @@ import sys
 import tempfile
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, Union
+from secrets import token_hex
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+)
 import unify
+from .shell_pool import ShellPool
 from unify.utils.http import RequestError as _UnifyRequestError
 from ..common.log_utils import create_logs as unity_create_logs
 from ..common.embed_utils import list_private_fields
@@ -29,7 +45,8 @@ from ..image_manager.image_manager import ImageHandle
 from ..manager_registry import ManagerRegistry
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_registry import ContextRegistry, TableContext
-from .primitives import collect_primitives, compute_primitives_hash
+from unity.function_manager.primitives.scope import PrimitiveScope
+from unity.function_manager.primitives.registry import get_registry
 from .custom_functions import (
     collect_custom_functions,
     compute_custom_functions_hash,
@@ -37,8 +54,91 @@ from .custom_functions import (
     compute_custom_venvs_hash,
 )
 
-
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover
+    pass
+
+
+class _LineageTrackedFunction:
+    """Boundary wrapper for FunctionManager callables injected into CodeActActor sandboxes.
+
+    This wrapper preserves hierarchical lineage across mixed execution, e.g.:
+
+        CodeActActor.act -> execute_code -> <function> -> primitives.contacts.ask -> ...
+
+    It is injected into the Python namespace **in place of** the raw callable so that
+    inter-function calls (function A calling function B) still pass through a boundary that:
+    - updates `TOOL_LOOP_LINEAGE` (ContextVar)
+    - emits a concise boundary log line for terminal debugging
+
+    Note: async functions can be awaited in a different task context than the call-site.
+    ContextVar tokens are only valid in the context they were created, so this wrapper sets
+    lineage around coroutine construction (call-site) and again inside the awaited coroutine
+    (execution-site).
+    """
+
+    def __init__(self, wrapped_callable: Callable[..., Any], function_name: str):
+        self._wrapped = wrapped_callable
+        self._function_name = function_name
+
+        # Preserve introspection attributes.
+        self.__name__ = function_name
+        self.__doc__ = getattr(wrapped_callable, "__doc__", None)
+        self.__wrapped__ = wrapped_callable
+
+    def __getattr__(self, name: str) -> Any:
+        # Preserve wrapped callable API (e.g. venv proxy state helpers).
+        return getattr(self._wrapped, name)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Local imports to avoid import-time cycles.
+        from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+        from unity.common.hierarchical_logger import (
+            build_hierarchy_label,
+            log_boundary_event,
+        )
+
+        suffix = token_hex(2)
+
+        parent = TOOL_LOOP_LINEAGE.get([])
+        parent_lineage = list(parent) if isinstance(parent, list) else []
+        hierarchy = [*parent_lineage, self._function_name]
+        hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+
+        try:
+            log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
+        except Exception:
+            pass
+
+        # Ensure synchronous work at call-time (if any) happens under the lineage frame.
+        token_call = TOOL_LOOP_LINEAGE.set(hierarchy)
+        try:
+            result = self._wrapped(*args, **kwargs)
+        except Exception:
+            TOOL_LOOP_LINEAGE.reset(token_call)
+            raise
+        finally:
+            # For async results we only needed the lineage during coroutine construction.
+            # The actual awaited execution will run under a new token created in the
+            # awaiting task context below.
+            try:
+                TOOL_LOOP_LINEAGE.reset(token_call)
+            except Exception:
+                pass
+
+        if inspect.isawaitable(result):
+
+            async def _await_and_finalize():
+                token_run = TOOL_LOOP_LINEAGE.set(hierarchy)
+                try:
+                    return await result
+                finally:
+                    TOOL_LOOP_LINEAGE.reset(token_run)
+
+            return _await_and_finalize()
+
+        return result
 
 
 class _DependencyVisitor(ast.NodeVisitor):
@@ -114,6 +214,13 @@ def _strip_custom_function_decorators(source: str) -> str:
     The @custom_function decorator is used for sync metadata only (it is effectively
     a no-op at runtime), but the symbol is not guaranteed to exist inside execution
     environments (e.g., Actor sandboxes or venv runner subprocesses).
+
+    Handles both single-line and multi-line decorator syntax:
+        @custom_function(venv_name="foo")  # single-line
+        @custom_function(                   # multi-line
+            venv_name="foo",
+            verify=True,
+        )
     """
     try:
         lines = source.splitlines(keepends=True)
@@ -122,13 +229,44 @@ def _strip_custom_function_decorators(source: str) -> str:
 
     out: List[str] = []
     seen_def = False
+    in_custom_decorator = False
+    paren_depth = 0
+
     for line in lines:
         stripped = line.lstrip()
-        if not seen_def and stripped.startswith("@custom_function"):
+
+        # Once we've seen the function definition, keep all lines
+        if seen_def:
+            out.append(line)
             continue
+
         if stripped.startswith("def ") or stripped.startswith("async def "):
             seen_def = True
+            out.append(line)
+            continue
+
+        # Check if this line starts a @custom_function decorator
+        if stripped.startswith("@custom_function"):
+            in_custom_decorator = True
+            # Count parentheses to handle multi-line decorators
+            paren_depth += stripped.count("(") - stripped.count(")")
+            # If parens are balanced on this line, decorator is complete
+            if paren_depth <= 0:
+                in_custom_decorator = False
+                paren_depth = 0
+            continue
+
+        # If we're inside a multi-line @custom_function decorator, skip lines
+        if in_custom_decorator:
+            paren_depth += stripped.count("(") - stripped.count(")")
+            if paren_depth <= 0:
+                in_custom_decorator = False
+                paren_depth = 0
+            continue
+
+        # Keep other decorators and lines before the function def
         out.append(line)
+
     return "".join(out)
 
 
@@ -449,6 +587,23 @@ class _VenvConnection:
                     pass
 
 
+@dataclass
+class SessionMetadata:
+    venv_id: int
+    session_id: int
+    created_at: datetime
+    last_used: datetime
+
+
+class SessionLimitError(RuntimeError):
+    def __init__(self, *, message: str):
+        super().__init__(message)
+        self.message = message
+
+    def to_error_dict(self) -> dict:
+        return {"error": self.message, "error_type": "resource_limit"}
+
+
 class VenvPool:
     """
     Manages a pool of persistent venv subprocess connections.
@@ -461,11 +616,13 @@ class VenvPool:
     stateful sessions per venv. Each session has its own subprocess and globals.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_total_sessions: int = 20) -> None:
         # Key: (venv_id, session_id) -> _VenvConnection
         self._connections: Dict[Tuple[int, int], _VenvConnection] = {}
+        self._metadata: Dict[Tuple[int, int], SessionMetadata] = {}
         self._lock = asyncio.Lock()
         self._closed = False
+        self._max_total_sessions = int(max_total_sessions)
 
     async def get_or_create_connection(
         self,
@@ -494,12 +651,23 @@ class VenvPool:
             if key in self._connections:
                 conn = self._connections[key]
                 if conn.is_alive():
+                    md = self._metadata.get(key)
+                    if md is not None:
+                        md.last_used = datetime.now(timezone.utc)
                     return conn
                 # Connection died, remove it and create a new one
                 logger.warning(
                     f"VenvPool: connection for venv {venv_id} session {session_id} died, creating new one",
                 )
                 del self._connections[key]
+                self._metadata.pop(key, None)
+
+            # Enforce global session cap (across all venv_id/session_id combinations).
+            active = sum(1 for c in self._connections.values() if c.is_alive())
+            if active >= self._max_total_sessions:
+                raise SessionLimitError(
+                    message=f"Maximum sessions reached for python ({active}/{self._max_total_sessions})",
+                )
 
             # Create new connection
             conn = await _VenvConnection.create(
@@ -508,6 +676,13 @@ class VenvPool:
                 timeout=timeout,
             )
             self._connections[key] = conn
+            now = datetime.now(timezone.utc)
+            self._metadata[key] = SessionMetadata(
+                venv_id=int(venv_id),
+                session_id=int(session_id),
+                created_at=now,
+                last_used=now,
+            )
             return conn
 
     async def execute_in_venv(
@@ -541,14 +716,23 @@ class VenvPool:
             Dict with keys: result, error, stdout, stderr
         """
         key = (venv_id, session_id)
-        conn = await self.get_or_create_connection(
-            venv_id=venv_id,
-            function_manager=function_manager,
-            session_id=session_id,
-        )
+        try:
+            conn = await self.get_or_create_connection(
+                venv_id=venv_id,
+                function_manager=function_manager,
+                session_id=session_id,
+            )
+        except SessionLimitError as e:
+            return {
+                "result": None,
+                "stdout": "",
+                "stderr": "",
+                "error": e.message,
+                "error_type": "resource_limit",
+            }
 
         try:
-            return await conn.execute(
+            out = await conn.execute(
                 implementation=implementation,
                 call_kwargs=call_kwargs,
                 is_async=is_async,
@@ -556,6 +740,11 @@ class VenvPool:
                 computer_primitives=computer_primitives,
                 timeout=timeout,
             )
+            # Update last_used best-effort
+            md = self._metadata.get(key)
+            if md is not None:
+                md.last_used = datetime.now(timezone.utc)
+            return out
         except RuntimeError as e:
             if "subprocess has died" in str(e):
                 # Try to recreate and retry once
@@ -580,6 +769,107 @@ class VenvPool:
                     timeout=timeout,
                 )
             raise
+
+    def get_all_sessions(self) -> List[Dict[str, Any]]:
+        """Return list of all active python venv sessions with metadata."""
+        out: List[Dict[str, Any]] = []
+        for (venv_id, session_id), conn in list(self._connections.items()):
+            if not conn.is_alive():
+                continue
+            md = self._metadata.get((venv_id, session_id))
+            if md is None:
+                now = datetime.now(timezone.utc)
+                md = SessionMetadata(
+                    venv_id=int(venv_id),
+                    session_id=int(session_id),
+                    created_at=now,
+                    last_used=now,
+                )
+                self._metadata[(venv_id, session_id)] = md
+            out.append(
+                {
+                    "language": "python",
+                    "session_id": int(session_id),
+                    "venv_id": int(venv_id),
+                    "created_at": md.created_at.isoformat(),
+                    "last_used": md.last_used.isoformat(),
+                    "state_summary": "active",
+                },
+            )
+        return out
+
+    async def get_session_state(
+        self,
+        *,
+        venv_id: int,
+        session_id: int,
+        function_manager: "FunctionManager",
+        detail: str = "summary",
+        timeout: float = 10.0,
+    ) -> Dict[str, Any]:
+        """
+        Inspect state of a python venv-backed session.
+        """
+        key = (int(venv_id), int(session_id))
+        if key not in self._connections or not self._connections[key].is_alive():
+            return {
+                "error": f"Python venv session {(int(venv_id), int(session_id))} not found",
+                "error_type": "validation",
+            }
+        state = await self.get_connection_state(
+            venv_id=int(venv_id),
+            function_manager=function_manager,
+            session_id=int(session_id),
+            timeout=timeout,
+        )
+
+        def _is_secret_name(n: str) -> bool:
+            nn = n.lower()
+            return any(
+                tok in nn
+                for tok in ("token", "secret", "apikey", "api_key", "password", "key")
+            )
+
+        def _safe_repr(name: str, value: Any) -> str:
+            if _is_secret_name(name):
+                return "<redacted>"
+            try:
+                s = repr(value)
+            except Exception:
+                s = f"<{type(value).__name__}>"
+            if len(s) > 500:
+                s = s[:500] + "..."
+            return s
+
+        names = sorted(
+            [k for k in state.keys() if isinstance(k, str) and not k.startswith("_")],
+        )
+        if detail in ("summary", "names"):
+            return {
+                "names": names,
+                "count": len(names),
+            }
+        if detail == "full":
+            return {name: _safe_repr(name, state.get(name)) for name in names}
+        return {
+            "error": f"Unsupported detail level: {detail!r}",
+            "error_type": "validation",
+        }
+
+    async def close_session(self, *, venv_id: int, session_id: int) -> bool:
+        """Close a specific venv session and free resources."""
+        key = (int(venv_id), int(session_id))
+        async with self._lock:
+            conn = self._connections.get(key)
+            if conn is None:
+                return False
+            try:
+                await conn.shutdown()
+            except Exception:
+                pass
+            self._connections.pop(key, None)
+            self._metadata.pop(key, None)
+            return True
 
     async def get_connection_state(
         self,
@@ -651,6 +941,7 @@ class VenvPool:
             for conn in self._connections.values():
                 await conn.shutdown()
             self._connections.clear()
+            self._metadata.clear()
 
     def __del__(self) -> None:
         """Ensure cleanup on garbage collection."""
@@ -759,15 +1050,21 @@ class _InProcessFunctionProxy:
                 result = await result
             return result
 
-        # For stateless and read_only, use execute_function with appropriate mode
+        # For stateless and read_only, use execute_function with appropriate
+        # mode. Forward environment namespace objects (primitives, etc.) but
+        # NOT user-defined state variables -- those are managed by state_mode.
+        proxy_ns: Dict[str, Any] = {}
+        for key in ("primitives", "computer_primitives"):
+            val = self._namespace.get(key)
+            if val is not None:
+                proxy_ns[key] = val
         result = await self._function_manager.execute_function(
             function_name=self.__name__,
             call_kwargs=kwargs,
             target_venv_id=None,  # Force in-process execution
             state_mode=state_mode,
             session_id=0,  # Default session for read_only state source
-            primitives=self._namespace.get("primitives"),
-            computer_primitives=self._namespace.get("computer_primitives"),
+            extra_namespaces=proxy_ns if proxy_ns else None,
         )
 
         if result.get("error"):
@@ -1025,7 +1322,7 @@ class _VenvFunctionProxy:
             func_name=self.__name__,
         )
 
-        # Check if a persistent venv pool is available (injected by CodeExecutionSandbox)
+        # Check if a persistent venv pool is available (injected by PythonExecutionSession)
         venv_pool = self._namespace.get("__venv_pool__")
         venv_id_int = int(venv_id)
 
@@ -1277,10 +1574,26 @@ class FunctionManager(BaseFunctionManager):
     def __init__(
         self,
         *,
+        primitive_scope: Optional[PrimitiveScope] = None,
+        filter_scope: Optional[str] = None,
+        exclude_primitive_ids: Optional[FrozenSet[int]] = None,
+        exclude_compositional_ids: Optional[FrozenSet[int]] = None,
+        include_primitives: bool = True,
         daemon: bool = True,
         file_manager: Optional[LocalFileManager] = None,
     ) -> None:
-        # No thread behavior; keep parameter for backward compatibility
+        # Store the scope - this FunctionManager instance is permanently scoped
+        # Default to all managers if not specified
+        self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
+        self._filter_scope = filter_scope
+        self._exclude_primitive_ids = (
+            frozenset(exclude_primitive_ids) if exclude_primitive_ids else None
+        )
+        self._exclude_compositional_ids = (
+            frozenset(exclude_compositional_ids) if exclude_compositional_ids else None
+        )
+        self._include_primitives = include_primitives
+        self._registry = get_registry()
         self._daemon = daemon
         # ToDo: expose tools to LLM once needed
         self._tools: Dict[str, callable] = {}
@@ -1323,38 +1636,95 @@ class FunctionManager(BaseFunctionManager):
         self._custom_functions_synced = False
 
         # ------------------------------------------------------------------ #
-        #  File system mirroring (functions folder under FileManager root)    #
+        #  LocalFileManager reference (for VM sync manager access)           #
         # ------------------------------------------------------------------ #
         try:
-            # Resolve a LocalFileManager instance (DI preferred, else via registry)
             self._fm: Optional[LocalFileManager] = (
                 file_manager if file_manager is not None else LocalFileManager()
             )
         except Exception:
             self._fm = None
 
-        self._functions_dir: Optional[Path] = None
-        if self._fm is not None:
-            try:
-                # Access adapter root directly (LocalFileSystemAdapter._root)
-                adapter = getattr(self._fm, "_adapter", None)
-                root_dir = getattr(adapter, "_root", None) if adapter else None
-
-                if root_dir is not None and isinstance(root_dir, Path):
-                    functions_dir = root_dir / "functions"
-                    functions_dir.mkdir(parents=True, exist_ok=True)
-                    self._functions_dir = functions_dir
-                    # Bootstrap: mirror existing functions from context to disk (idempotent)
-                    self._bootstrap_functions_to_disk()
-            except Exception:
-                # Non-fatal – tests without FileManager still pass
-                self._functions_dir = None
-
         # ------------------------------------------------------------------ #
         #  In-process session state (for stateful/read_only modes)           #
         # ------------------------------------------------------------------ #
         # Dict[session_id, Dict[str, Any]] - persistent globals per session
         self._in_process_sessions: Dict[int, Dict[str, Any]] = {}
+
+    @property
+    def primitive_scope(self) -> PrimitiveScope:
+        """The scope controlling which managers' primitives are accessible."""
+        return self._primitive_scope
+
+    @property
+    def filter_scope(self) -> Optional[str]:
+        """A boolean expression permanently applied to all compositional read queries."""
+        return self._filter_scope
+
+    @filter_scope.setter
+    def filter_scope(self, value: Optional[str]) -> None:
+        self._filter_scope = value
+
+    @property
+    def exclude_primitive_ids(self) -> Optional[FrozenSet[int]]:
+        """Primitive function IDs excluded from ``Functions/Primitives`` queries."""
+        return self._exclude_primitive_ids
+
+    @exclude_primitive_ids.setter
+    def exclude_primitive_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_primitive_ids = frozenset(value) if value else None
+
+    @property
+    def exclude_compositional_ids(self) -> Optional[FrozenSet[int]]:
+        """Compositional function IDs excluded from ``Functions/Compositional`` queries."""
+        return self._exclude_compositional_ids
+
+    @exclude_compositional_ids.setter
+    def exclude_compositional_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_compositional_ids = frozenset(value) if value else None
+
+    @staticmethod
+    def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
+        """Build a ``function_id != X and ...`` filter clause from a set of IDs.
+
+        Returns ``None`` when *ids* is empty or ``None``.
+        """
+        if not ids:
+            return None
+        clauses = [f"function_id != {fid}" for fid in sorted(ids)]
+        return " and ".join(clauses)
+
+    def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
+        """Compose *caller_filter* with ``_filter_scope`` and compositional exclusions.
+
+        Returns ``None`` when all parts are absent, meaning "no filter".
+        """
+        parts = [
+            p
+            for p in [
+                caller_filter,
+                self._filter_scope,
+                self._build_id_exclusion(self._exclude_compositional_ids),
+            ]
+            if p
+        ]
+        if not parts:
+            return None
+        if len(parts) == 1:
+            return parts[0]
+        return " and ".join(f"({p})" for p in parts)
+
+    def _scoped_primitive_filter(self) -> str:
+        """Compose ``primitive_row_filter`` with primitive exclusions.
+
+        Always returns a non-empty string (``primitive_row_filter`` never
+        returns empty for valid scopes).
+        """
+        base = self._registry.primitive_row_filter(self._primitive_scope)
+        excl = self._build_id_exclusion(self._exclude_primitive_ids)
+        if not excl:
+            return base
+        return f"({base}) and ({excl})"
 
     @property
     def _dangerous_builtins(self) -> Set[str]:
@@ -1414,15 +1784,21 @@ class FunctionManager(BaseFunctionManager):
         self,
         fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
         all_known_function_names: Set[str],
+        *,
+        environment_namespaces: FrozenSet[str] = frozenset(),
     ) -> Set[str]:
         """
         Uses the stateful _DependencyVisitor to find verified direct calls,
         indirect calls via variables, and returned function name references
         to other known library functions.
+
+        When *environment_namespaces* is provided, dotted calls whose root segment
+        matches one of the namespaces are also captured as dependencies.
         """
         return collect_dependencies_from_function_node(
             fn_node,
             all_known_function_names,
+            environment_namespaces=environment_namespaces,
         )
 
     def _collect_function_calls(
@@ -1527,78 +1903,6 @@ class FunctionManager(BaseFunctionManager):
         return logs[0]
 
     # ------------------------------------------------------------------ #
-    #  Filesystem helpers                                                #
-    # ------------------------------------------------------------------ #
-
-    def _function_filename(self, name: str) -> str:
-        """Return canonical filename for a function (no extensions in name)."""
-        safe = name.strip().replace(os.sep, "_")
-        return f"{safe}.py"
-
-    def _function_path(self, name: str) -> Optional[Path]:
-        if self._functions_dir is None:
-            return None
-        return self._functions_dir / self._function_filename(name)
-
-    def _write_function_file(self, name: str, source: str) -> Optional[Path]:
-        """Atomically write the function source into the functions folder."""
-        p = self._function_path(name)
-        if p is None:
-            return None
-        try:
-            tmp = p.with_suffix(p.suffix + ".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(source)
-            os.replace(tmp, p)
-            return p
-        except Exception:
-            return None
-
-    def _register_function_file(self, name: str, path: Path) -> None:
-        """Register function file with FileManager as protected and visible."""
-        if self._fm is None:
-            return
-        display = f"functions/{path.name}"
-        try:
-            # Idempotent: if already registered under same display, keep it
-            if not self._fm.exists(display):
-                self._fm.register_existing_file(
-                    path,
-                    display_name=display,
-                    protected=True,
-                )
-        except Exception:
-            # Best-effort registration only
-            pass
-
-    def _bootstrap_functions_to_disk(self) -> None:
-        """Ensure all existing functions have a file on disk and are registered."""
-        if self._functions_dir is None:
-            return
-        try:
-            logs = unify.get_logs(
-                context=self._compositional_ctx,
-                exclude_fields=list_private_fields(self._compositional_ctx),
-            )
-            for lg in logs:
-                name = lg.entries.get("name")
-                impl = lg.entries.get("implementation") or ""
-                if not isinstance(name, str) or not impl:
-                    continue
-                p = self._function_path(name)
-                if p is None:
-                    continue
-                if not p.exists():
-                    wrote = self._write_function_file(name, impl)
-                    if wrote is not None:
-                        self._register_function_file(name, wrote)
-                else:
-                    # Ensure it's registered as protected even if file already exists
-                    self._register_function_file(name, p)
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------ #
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
@@ -1657,8 +1961,8 @@ class FunctionManager(BaseFunctionManager):
     #  Primitives sync                                                   #
     # ------------------------------------------------------------------ #
 
-    def _get_stored_primitives_hash(self) -> Optional[str]:
-        """Retrieve the primitives hash from the Meta context."""
+    def _get_stored_primitives_hash_by_manager(self) -> Dict[str, str]:
+        """Retrieve the per-manager primitives hashes from the Meta context."""
         try:
             logs = unify.get_logs(
                 context=self._meta_ctx,
@@ -1666,13 +1970,16 @@ class FunctionManager(BaseFunctionManager):
                 limit=1,
             )
             if logs:
-                return logs[0].entries.get("primitives_hash")
+                return logs[0].entries.get("primitives_hash_by_manager", {}) or {}
         except Exception:
             pass
-        return None
+        return {}
 
-    def _store_primitives_hash(self, hash_value: str) -> None:
-        """Store the primitives hash in the Meta context."""
+    def _store_primitives_hash_by_manager(
+        self,
+        hash_by_manager: Dict[str, str],
+    ) -> None:
+        """Store the per-manager primitives hashes in the Meta context."""
         try:
             logs = unify.get_logs(
                 context=self._meta_ctx,
@@ -1683,23 +1990,42 @@ class FunctionManager(BaseFunctionManager):
                 unify.update_logs(
                     logs=[logs[0].id],
                     context=self._meta_ctx,
-                    entries={"primitives_hash": hash_value},
+                    entries={"primitives_hash_by_manager": hash_by_manager},
                     overwrite=True,
                 )
             else:
                 unity_create_logs(
                     context=self._meta_ctx,
-                    entries=[{"meta_id": 1, "primitives_hash": hash_value}],
+                    entries=[
+                        {"meta_id": 1, "primitives_hash_by_manager": hash_by_manager},
+                    ],
                     add_to_all_context=self.include_in_multi_assistant_table,
                 )
         except Exception as e:
             logger.warning(f"Failed to store primitives hash: {e}")
 
-    def _delete_all_primitives(self) -> None:
-        """Delete all rows from the Primitives context."""
+    def _delete_primitives_for_managers(self, manager_aliases: List[str]) -> None:
+        """Delete primitive rows for specific managers."""
+        if not manager_aliases:
+            return
         try:
+            # Convert manager aliases to class paths for filtering
+            class_paths = []
+            for alias in manager_aliases:
+                for spec in self._registry.manager_specs(self._primitive_scope):
+                    if spec.manager_alias == alias:
+                        class_paths.append(spec.primitive_class_path)
+                        break
+
+            if not class_paths:
+                return
+
+            # Build filter using OR clauses (in [] syntax may not work for strings)
+            clauses = [f'primitive_class == "{cp}"' for cp in class_paths]
+            filter_expr = " or ".join(clauses)
             logs = unify.get_logs(
                 context=self._primitives_ctx,
+                filter=filter_expr,
                 exclude_fields=list_private_fields(self._primitives_ctx),
             )
             if logs:
@@ -1707,17 +2033,19 @@ class FunctionManager(BaseFunctionManager):
                     context=self._primitives_ctx,
                     logs=[lg.id for lg in logs],
                 )
-                logger.debug(f"Deleted {len(logs)} primitive rows")
+                logger.debug(
+                    f"Deleted {len(logs)} primitive rows for managers: {manager_aliases}",
+                )
         except Exception as e:
-            logger.warning(f"Failed to delete primitives: {e}")
+            logger.warning(f"Failed to delete primitives for {manager_aliases}: {e}")
 
-    def _insert_primitives(self, primitives: Dict[str, Dict[str, Any]]) -> None:
+    def _insert_primitives(self, primitives: List[Dict[str, Any]]) -> None:
         """Insert primitive rows into the Primitives context with explicit IDs."""
         if not primitives:
             return
 
         entries = []
-        for name, data in primitives.items():
+        for data in primitives:
             entry = {
                 "name": data["name"],
                 "function_id": data[
@@ -1752,8 +2080,15 @@ class FunctionManager(BaseFunctionManager):
         """
         Ensure primitives in the database match current Python definitions.
 
-        Uses hash comparison to avoid unnecessary writes. Safe to call
-        multiple times; will only perform sync if primitives have changed.
+        Uses per-manager hash comparison to avoid unnecessary writes. Only syncs
+        primitives for managers in this FunctionManager's scope.
+
+        The algorithm:
+        1. Read current hashes from Meta (one call)
+        2. Compute expected hashes for each scoped manager
+        3. Batch delete all changed managers' primitives (one call)
+        4. Batch insert all new primitives (one call)
+        5. Update Meta with new hashes (one call)
 
         Returns:
             True if sync was performed, False if already up-to-date.
@@ -1761,22 +2096,49 @@ class FunctionManager(BaseFunctionManager):
         if self._primitives_synced:
             return False
 
-        expected = collect_primitives()
-        expected_hash = compute_primitives_hash(expected)
+        target_managers = sorted(self._primitive_scope.scoped_managers)
 
-        current_hash = self._get_stored_primitives_hash()
+        # Step 1: Read current hashes (one backend call)
+        current_hashes = self._get_stored_primitives_hash_by_manager()
 
-        if current_hash == expected_hash:
-            logger.debug("Primitives hash matches, skipping sync")
+        # Step 2: Compute expected hashes and collect pending updates if they differ
+        pending_updates: List[Tuple[str, List[Dict[str, Any]], str]] = []
+        for manager_alias in target_managers:
+            expected_hash = self._registry.compute_hash_for_manager(manager_alias)
+
+            if current_hashes.get(manager_alias) == expected_hash:
+                continue
+
+            single_scope = PrimitiveScope(scoped_managers=frozenset({manager_alias}))
+            primitives_dict = self._registry.collect_primitives(single_scope)
+            expected_rows = list(primitives_dict.values())
+            pending_updates.append((manager_alias, expected_rows, expected_hash))
+
+        # Step 3: If nothing changed, mark synced and return
+        if not pending_updates:
+            logger.debug(
+                "Primitives hashes match for all scoped managers, skipping sync",
+            )
             self._primitives_synced = True
             return False
 
-        logger.info(
-            f"Primitives hash mismatch (current={current_hash}, expected={expected_hash}), syncing...",
-        )
-        self._delete_all_primitives()
-        self._insert_primitives(expected)
-        self._store_primitives_hash(expected_hash)
+        changed_managers = [alias for alias, _, _ in pending_updates]
+        logger.info(f"Primitives changed for managers: {changed_managers}, syncing...")
+
+        # Step 4: Batched delete for all changed managers (one backend call)
+        self._delete_primitives_for_managers(changed_managers)
+
+        # Step 5: Batched insert all new primitives (one backend call)
+        all_rows = []
+        for _, rows, _ in pending_updates:
+            all_rows.extend(rows)
+        self._insert_primitives(all_rows)
+
+        # Step 6: Update Meta with new hashes (one backend call)
+        new_hashes = dict(current_hashes)
+        for alias, _, hash_val in pending_updates:
+            new_hashes[alias] = hash_val
+        self._store_primitives_hash_by_manager(new_hashes)
 
         self._primitives_synced = True
         return True
@@ -2232,16 +2594,18 @@ class FunctionManager(BaseFunctionManager):
         """
         Return a mapping of primitive name to primitive metadata.
 
-        Returns primitives from the Primitives context. Call sync_primitives()
-        first to ensure the database is up-to-date.
+        Only returns primitives for managers in this FunctionManager's scope.
+        Call sync_primitives() first to ensure the database is up-to-date.
 
         Returns:
             Dict mapping primitive name to metadata dict (includes function_id).
         """
         entries: Dict[str, Dict[str, Any]] = {}
         try:
+            filter_expr = self._scoped_primitive_filter()
             logs = unify.get_logs(
                 context=self._primitives_ctx,
+                filter=filter_expr,
                 exclude_fields=list_private_fields(self._primitives_ctx),
             )
             for log in logs:
@@ -2270,6 +2634,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
@@ -2280,9 +2645,14 @@ class FunctionManager(BaseFunctionManager):
             preconditions: Optional preconditions for functions.
             verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
+            raise_on_error: If True (default), raise ValueError when any function
+                fails to add. If False, errors are returned in the result dict.
 
         Returns:
             Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
+
+        Raises:
+            ValueError: If raise_on_error=True and any function fails to add.
         """
 
         if preconditions is None:
@@ -2300,6 +2670,7 @@ class FunctionManager(BaseFunctionManager):
                 preconditions=preconditions,
                 verify=verify,
                 overwrite=overwrite,
+                raise_on_error=raise_on_error,
             )
 
         # Python-specific parsing and validation
@@ -2358,7 +2729,14 @@ class FunctionManager(BaseFunctionManager):
         entries_to_update: List[Dict[str, Any]] = []
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
-        functions_to_write: List[Tuple[str, str]] = []
+
+        # Sandbox namespace roots whose dotted calls should be recorded in
+        # depends_on (e.g. "actor.act" → depends_on includes "actor.act").
+        # At runtime, _inject_dependencies reads these entries and calls
+        # construct_sandbox_root() to materialise the root object.  This set
+        # must stay in sync with the sandbox_root values in _MANAGER_SPECS
+        # (see primitives/registry.py).
+        env_namespaces = frozenset({"primitives", "computer_primitives", "actor"})
 
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
@@ -2368,6 +2746,7 @@ class FunctionManager(BaseFunctionManager):
                 dependencies = self._collect_verified_dependencies(
                     node,
                     all_known_function_names,
+                    environment_namespaces=env_namespaces,
                 )
                 dependencies_list = sorted(list(dependencies))
 
@@ -2409,8 +2788,6 @@ class FunctionManager(BaseFunctionManager):
                     entry_data["guidance_ids"] = []
                     entries_to_create.append(entry_data)
                     results[name] = "added"
-
-                functions_to_write.append((name, source))
             except ValueError as e:
                 results[name] = f"error: {e}"
             except Exception as e:
@@ -2438,9 +2815,6 @@ class FunctionManager(BaseFunctionManager):
                     name = entry["name"]
                     if results.get(name) == "added":
                         results[name] = f"error: Failed to create log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
 
         # Batch update existing functions
         if log_ids_to_update and entries_to_update:
@@ -2460,15 +2834,13 @@ class FunctionManager(BaseFunctionManager):
                     name = log_id_to_name.get(log_id)
                     if name and results.get(name) == "updated":
                         results[name] = f"error: Failed to update log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
 
-        # Write function files to disk
-        for name, source in functions_to_write:
-            p = self._write_function_file(name, source)
-            if p is not None:
-                self._register_function_file(name, p)
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
+                raise ValueError(f"Failed to add function(s): {error_details}")
 
         return results
 
@@ -2480,6 +2852,7 @@ class FunctionManager(BaseFunctionManager):
         preconditions: Dict[str, Dict],
         verify: Dict[str, bool],
         overwrite: bool,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Add shell script functions (bash, zsh, sh, powershell).
@@ -2546,7 +2919,6 @@ class FunctionManager(BaseFunctionManager):
         entries_to_update: List[Dict[str, Any]] = []
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
-        functions_to_write: List[Tuple[str, str]] = []
 
         for name, argspec, docstring, source, lang in parsed:
             if name in duplicates_to_skip:
@@ -2585,8 +2957,6 @@ class FunctionManager(BaseFunctionManager):
                     entries_to_create.append(entry_data)
                     results[name] = "added"
 
-                functions_to_write.append((name, source))
-
             except Exception as e:
                 results[name] = f"error: {e}"
                 logger.error(
@@ -2612,9 +2982,6 @@ class FunctionManager(BaseFunctionManager):
                     name = entry["name"]
                     if results.get(name) == "added":
                         results[name] = f"error: Failed to create log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
 
         # Batch update existing functions
         if log_ids_to_update and entries_to_update:
@@ -2634,16 +3001,12 @@ class FunctionManager(BaseFunctionManager):
                     name = log_id_to_name.get(log_id)
                     if name and results.get(name) == "updated":
                         results[name] = f"error: Failed to update log - {e}"
-                        functions_to_write = [
-                            (n, s) for n, s in functions_to_write if n != name
-                        ]
 
-        # Write function files to disk (with appropriate extension)
-        for name, source in functions_to_write:
-            ext = ".sh" if language in ("bash", "zsh", "sh") else ".ps1"
-            p = self._write_function_file(f"{name}{ext}", source)
-            if p is not None:
-                self._register_function_file(name, p)
+        # Check for errors and raise if requested
+        if raise_on_error:
+            errors = {k: v for k, v in results.items() if v.startswith("error")}
+            if errors:
+                error_details = "; ".join(f"{k}: {v}" for k, v in errors.items())
 
         return results
 
@@ -2895,11 +3258,27 @@ class FunctionManager(BaseFunctionManager):
     ) -> None:
         """Inject transitive dependencies into ``namespace`` (breadth-first).
 
-        For in-process functions, the raw function (from exec) remains in the
-        namespace for inter-function calls, decorators, and introspection.
-        For venv functions, the proxy is placed in namespace (no raw function exists).
+        This is the runtime counterpart to the AST-based dependency detection
+        in ``dependency_analysis.py``.  Every name that ``add_functions``
+        recorded in ``depends_on`` is resolved here into a live object in the
+        execution namespace.  The two categories:
+
+        **Bare names** (e.g. ``"helper"``) — other compositional functions.
+        The stored implementation is exec'd into the namespace so inter-
+        function calls resolve naturally.
+
+        **Dotted names** (e.g. ``"actor.act"``, ``"primitives.contacts.ask"``)
+        — environment-provided namespaces.  Only the *root* segment matters
+        for injection (``"actor"``, ``"primitives"``).  If the root is not
+        already present in the namespace, ``construct_sandbox_root()`` from
+        the primitive registry constructs a fresh instance on demand.  The
+        classes backing each root (``_ActorRunner``, ``Primitives``, etc.)
+        are fully stateless, so a freshly constructed instance works in
+        isolation without any ambient ContextVars or parent actor state.
         """
         from collections import deque
+
+        from unity.function_manager.primitives.registry import construct_sandbox_root
 
         deps = func_data.get("depends_on") or []
         if not isinstance(deps, list):
@@ -2912,6 +3291,27 @@ class FunctionManager(BaseFunctionManager):
                 continue
             visited.add(dep_name)
 
+            # ── Dotted dependency (e.g. "actor.act", "primitives.contacts.ask") ──
+            if "." in dep_name:
+                root = dep_name.split(".")[0]
+                if root not in namespace:
+                    root_obj = construct_sandbox_root(
+                        root,
+                        primitive_scope=self._primitive_scope,
+                    )
+                    if root_obj is not None:
+                        namespace[root] = root_obj
+                    else:
+                        logger.warning(
+                            "Dotted dependency %r for %r: root %r could not "
+                            "be constructed and is not in namespace, skipping",
+                            dep_name,
+                            func_data.get("name"),
+                            root,
+                        )
+                continue
+
+            # ── Bare dependency (compositional function) ─────────────────────
             dep_data = self._get_function_data_by_name(name=dep_name)
             if not dep_data:
                 logger.warning(
@@ -2921,10 +3321,12 @@ class FunctionManager(BaseFunctionManager):
 
             # Handle venv dependencies: proxy goes in namespace (only way to call them)
             if dep_data.get("venv_id") is not None:
-                namespace[dep_name] = self._create_venv_callable(
+                _venv_cb = self._create_venv_callable(
                     dep_data,
                     namespace=namespace,
                 )
+                # Wrap boundary so inter-function calls create lineage frames.
+                namespace[dep_name] = _LineageTrackedFunction(_venv_cb, dep_name)
                 # Treat venv functions as atomic; do not recurse into their deps.
                 continue
 
@@ -2936,7 +3338,16 @@ class FunctionManager(BaseFunctionManager):
                 dep_data,
                 namespace=namespace,
             )
-            # Note: proxy is discarded; namespace[dep_name] remains the raw function
+            # replace namespace[dep_name] with wrapper so inter-function calls
+            # also flow through lineage/event boundaries.
+            try:
+                raw_dep = namespace.get(dep_name)
+                if callable(raw_dep):
+                    # Avoid double-wrapping.
+                    if not isinstance(raw_dep, _LineageTrackedFunction):
+                        namespace[dep_name] = _LineageTrackedFunction(raw_dep, dep_name)
+            except Exception:
+                pass
 
             nested = dep_data.get("depends_on") or []
             if isinstance(nested, list):
@@ -2957,6 +3368,10 @@ class FunctionManager(BaseFunctionManager):
         The returned proxies provide state mode control (.stateful/.stateless/.read_only).
 
         For venv functions, the proxy is placed in namespace (no raw function exists).
+
+        For primitives, the callable is resolved from the live runtime registry
+        via ``get_primitive_callable``. Primitives are NOT injected into the
+        namespace (they are already accessible via the ``primitives`` object).
         """
         callables: List[Callable[..., Any]] = []
         visited: Set[str] = set()
@@ -2966,8 +3381,22 @@ class FunctionManager(BaseFunctionManager):
             if not isinstance(name, str) or not name:
                 raise ValueError("Function record missing valid 'name'")
 
-            # Skip primitives (no stored implementation; names often contain dots).
+            # Primitives: resolve callable from the live runtime registry.
+            # They are already accessible via the ``primitives`` object in the
+            # namespace, so we don't inject a new namespace entry.
             if func_data.get("is_primitive") is True:
+                from unity.function_manager.primitives.runtime import (
+                    get_primitive_callable,
+                )
+
+                primitives_obj = namespace.get("primitives")
+                fn = get_primitive_callable(
+                    func_data,
+                    primitives=primitives_obj,
+                )
+                if fn is not None:
+                    fn = _LineageTrackedFunction(fn, name)
+                callables.append(fn)
                 continue
 
             # Check if we've already processed this function (e.g., duplicate in results)
@@ -2978,6 +3407,14 @@ class FunctionManager(BaseFunctionManager):
                 else:
                     raw_fn = namespace.get(name)
                     if callable(raw_fn):
+                        # If the namespace contains our wrapper, unwrap for the proxy.
+                        try:
+                            if hasattr(raw_fn, "__wrapped__"):
+                                raw_fn_for_proxy = getattr(raw_fn, "__wrapped__")
+                                if callable(raw_fn_for_proxy):
+                                    raw_fn = raw_fn_for_proxy
+                        except Exception:
+                            pass
                         fn = _InProcessFunctionProxy(
                             function_manager=self,
                             func_data=func_data,
@@ -3000,12 +3437,23 @@ class FunctionManager(BaseFunctionManager):
             if func_data.get("venv_id") is not None:
                 # Venv: proxy goes in namespace (only way to call them)
                 fn = self._create_venv_callable(func_data, namespace=namespace)
-                namespace[name] = fn
+                # Wrap boundary for lineage/events and keep proxy for return value.
+                namespace[name] = _LineageTrackedFunction(fn, name)
             else:
                 # In-process: exec puts raw function in namespace, return proxy to caller
                 # DON'T overwrite namespace - raw function stays for internal use
                 fn = self._create_in_process_callable(func_data, namespace=namespace)
-                # Note: namespace[name] remains the raw function from exec()
+                # replace namespace[name] with wrapper so inter-function calls
+                # also flow through lineage/event boundaries.
+                try:
+                    raw_root = namespace.get(name)
+                    if callable(raw_root) and not isinstance(
+                        raw_root,
+                        _LineageTrackedFunction,
+                    ):
+                        namespace[name] = _LineageTrackedFunction(raw_root, name)
+                except Exception:
+                    pass
 
             callables.append(fn)
 
@@ -3018,25 +3466,38 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
-        # Always build metadata in the existing shape for backwards-compat.
-        metadata: Dict[str, Dict[str, Any]] = {}
-        logs = unify.get_logs(
+        # Query compositional context, and optionally primitives.
+        compositional_logs = unify.get_logs(
             context=self._compositional_ctx,
+            filter=self._scoped_filter(None),
             exclude_fields=list_private_fields(self._compositional_ctx),
         )
 
+        primitive_logs: list = []
+        if self._include_primitives:
+            self.sync_primitives()
+            primitive_filter = self._scoped_primitive_filter()
+            primitive_logs = unify.get_logs(
+                context=self._primitives_ctx,
+                filter=primitive_filter,
+                exclude_fields=list_private_fields(self._primitives_ctx),
+            )
+
+        all_logs = list(compositional_logs) + list(primitive_logs)
+
+        metadata: Dict[str, Dict[str, Any]] = {}
         func_rows: List[Dict[str, Any]] = []
-        for log in logs:
+        for log in all_logs:
             ent = log.entries
             name = ent.get("name")
             if not isinstance(name, str):
@@ -3054,18 +3515,19 @@ class FunctionManager(BaseFunctionManager):
                 "guidance_ids": ent.get("guidance_ids", []),
                 "verify": ent.get("verify", True),
                 "venv_id": ent.get("venv_id"),
+                "is_primitive": ent.get("is_primitive", False),
             }
             if include_implementations:
                 data["implementation"] = ent.get("implementation")
             metadata[name] = data
 
-        if not return_callable:
+        if not _return_callable:
             return metadata
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
         callables_list = self._inject_callables_for_functions(
             func_rows,
-            namespace=namespace,
+            namespace=_namespace,
         )
         callables_map = {
             row["name"]: cb
@@ -3073,19 +3535,32 @@ class FunctionManager(BaseFunctionManager):
             if isinstance(row.get("name"), str)
         }
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_map, "metadata": metadata}  # type: ignore[return-value]
 
         return callables_map  # type: ignore[return-value]
 
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
     def get_precondition(self, *, function_name: str) -> Optional[Dict[str, Any]]:
+        # Check compositional first, then optionally primitives.
         logs = unify.get_logs(
             context=self._compositional_ctx,
-            filter=f"name == '{function_name}'",
+            filter=self._scoped_filter(f"name == '{function_name}'"),
             limit=1,
             exclude_fields=list_private_fields(self._compositional_ctx),
         )
+        if not logs and self._include_primitives:
+            self.sync_primitives()
+            prim_name_filter = f"name == '{function_name}'"
+            prim_filter = (
+                f"({prim_name_filter}) and ({self._scoped_primitive_filter()})"
+            )
+            logs = unify.get_logs(
+                context=self._primitives_ctx,
+                filter=prim_filter,
+                limit=1,
+                exclude_fields=list_private_fields(self._primitives_ctx),
+            )
         if not logs:
             return None
 
@@ -3109,12 +3584,35 @@ class FunctionManager(BaseFunctionManager):
 
         Returns:
             Dictionary mapping function names to "deleted" or "already_deleted".
+
+        Raises:
+            ValueError: If any of the requested function_ids correspond to
+                primitives (system-owned functions that cannot be deleted).
         """
         # Normalize to list
         function_ids = [function_id] if isinstance(function_id, int) else function_id
 
         if not function_ids:
             return {}
+
+        # Reject deletion of primitives (only check when primitives are enabled).
+        if self._include_primitives:
+            self.sync_primitives()
+            id_clauses = " or ".join(f"function_id == {fid}" for fid in function_ids)
+            prim_logs = unify.get_logs(
+                context=self._primitives_ctx,
+                filter=id_clauses,
+                limit=len(function_ids),
+                exclude_fields=list_private_fields(self._primitives_ctx),
+            )
+            if prim_logs:
+                prim_names = [
+                    lg.entries.get("name", lg.entries.get("function_id"))
+                    for lg in prim_logs
+                ]
+                raise ValueError(
+                    f"Cannot delete primitives (system-owned): {prim_names}",
+                )
 
         # Handle single function optimization
         if len(function_ids) == 1:
@@ -3208,43 +3706,35 @@ class FunctionManager(BaseFunctionManager):
 
     # 4. Filter --------------------------------------------------------- #
 
-    @functools.wraps(BaseFunctionManager.filter_functions, updated=())
-    def filter_functions(
+    def _get_logs_with_retry(
         self,
+        context: str,
         *,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: int = 100,
-        include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
-
-        normalized = normalize_filter_expr(filter)
-        # The underlying Unify backend returns 404 when a context hasn't been created yet.
-        # In tests and fresh projects, contexts are created lazily, so we retry briefly and
-        # then treat missing context as "no functions" rather than crashing the Actor.
+        """Query a context with retries for 404 (lazy context creation)."""
         import time as _time
 
         rows: List[Dict[str, Any]] = []
         last_exc: Exception | None = None
+        kwargs: Dict[str, Any] = {
+            "context": context,
+            "exclude_fields": list_private_fields(context),
+        }
+        if filter is not None:
+            kwargs["filter"] = filter
+        if limit is not None:
+            kwargs["limit"] = limit
+        if offset:
+            kwargs["offset"] = offset
+
         for delay in (0.0, 0.05, 0.15):
             if delay:
                 _time.sleep(delay)
             try:
-                logs = unify.get_logs(
-                    context=self._compositional_ctx,
-                    filter=normalized,
-                    offset=offset,
-                    limit=limit,
-                    exclude_fields=list_private_fields(self._compositional_ctx),
-                )
+                logs = unify.get_logs(**kwargs)
                 rows = [lg.entries for lg in logs]
                 last_exc = None
                 break
@@ -3258,7 +3748,6 @@ class FunctionManager(BaseFunctionManager):
                 last_exc = e
                 break
 
-        # If we still see 404 after retries, treat as empty library.
         if isinstance(last_exc, _UnifyRequestError):
             status = getattr(getattr(last_exc, "response", None), "status_code", None)
             if status == 404:
@@ -3266,7 +3755,56 @@ class FunctionManager(BaseFunctionManager):
         elif last_exc is not None:
             raise last_exc
 
-        if not return_callable:
+        return rows
+
+    @functools.wraps(BaseFunctionManager.filter_functions, updated=())
+    def filter_functions(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
+
+        normalized = self._scoped_filter(normalize_filter_expr(filter))
+
+        # Query both contexts with the same limit (yielding up to 2x results).
+        per_ctx_limit = limit + offset
+        compositional_rows = self._get_logs_with_retry(
+            self._compositional_ctx,
+            filter=normalized,
+            limit=per_ctx_limit,
+        )
+
+        primitive_rows: List[Dict[str, Any]] = []
+        if self._include_primitives:
+            self.sync_primitives()
+            # Combine caller filter with the scoped primitive filter (scope + exclusions).
+            primitive_base = self._scoped_primitive_filter()
+            prim_filter = normalize_filter_expr(filter)
+            if prim_filter:
+                prim_filter = f"({prim_filter}) and ({primitive_base})"
+            else:
+                prim_filter = primitive_base
+            primitive_rows = self._get_logs_with_retry(
+                self._primitives_ctx,
+                filter=prim_filter,
+                limit=per_ctx_limit,
+            )
+
+        # Stack compositional first, primitives last, then apply offset+limit.
+        rows = (compositional_rows + primitive_rows)[offset : offset + limit]
+
+        if not _return_callable:
             # Strip implementations if not requested (reduces payload size)
             if not include_implementations:
                 rows = [
@@ -3275,10 +3813,12 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return rows
 
-        assert namespace is not None  # validated above
-        # Note: rows must contain implementations for callable injection to work.
-        callables_list = self._inject_callables_for_functions(rows, namespace=namespace)
-        if also_return_metadata:
+        assert _namespace is not None  # validated above
+        callables_list = self._inject_callables_for_functions(
+            rows,
+            namespace=_namespace,
+        )
+        if _also_return_metadata:
             # Strip implementations from metadata if not requested
             metadata_rows = rows
             if not include_implementations:
@@ -3289,102 +3829,6 @@ class FunctionManager(BaseFunctionManager):
             return {"callables": callables_list, "metadata": metadata_rows}  # type: ignore[return-value]
         return callables_list  # type: ignore[return-value]
 
-    # ------------------------------------------------------------------ #
-    #  Accessors and disk → context sync                                 #
-    # ------------------------------------------------------------------ #
-
-    def get_function_file_path(self, name: str) -> Optional[str]:
-        p = self._function_path(name)
-        return str(p) if p is not None else None
-
-    def list_function_files(self) -> Dict[str, str]:
-        out: Dict[str, str] = {}
-        try:
-            logs = unify.get_logs(
-                context=self._compositional_ctx,
-                exclude_fields=list_private_fields(self._compositional_ctx),
-            )
-            for lg in logs:
-                nm = lg.entries.get("name")
-                if not isinstance(nm, str):
-                    continue
-                p = self._function_path(nm)
-                if p is not None:
-                    out[nm] = str(p)
-        except Exception:
-            pass
-        return out
-
-    def sync_from_disk(self, *, prefer_file_when_newer: bool = True) -> List[str]:
-        """
-        Reconcile function files under functions/ with the context rows.
-
-        Policy: if the on-disk file differs from the stored implementation, update
-        the context to the file contents. Returns the list of function names updated.
-        """
-        updated: List[str] = []
-        if self._functions_dir is None:
-            return updated
-        try:
-            # Build a map of name→(log_id, impl)
-            rows = unify.get_logs(
-                context=self._compositional_ctx,
-                exclude_fields=list_private_fields(self._compositional_ctx),
-            )
-            name_to_log: Dict[str, Tuple[int, str]] = {}
-            for lg in rows:
-                nm = lg.entries.get("name")
-                if isinstance(nm, str):
-                    name_to_log[nm] = (lg.id, lg.entries.get("implementation") or "")
-
-            for name, (log_id, stored_impl) in name_to_log.items():
-                p = self._function_path(name)
-                if p is None or not p.exists():
-                    continue
-                try:
-                    file_text = p.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-                if file_text.strip() == (stored_impl or "").strip():
-                    # Ensure it's registered as protected
-                    self._register_function_file(name, p)
-                    continue
-
-                # Parse and validate file to rebuild signature/docstring/depends_on
-                try:
-                    nm2, tree, node, _src = self._parse_implementation(file_text)
-                    if nm2 != name:
-                        # Skip mismatched names; keep 1:1 name↔file mapping
-                        continue
-                    namespace = create_base_globals()
-                    exec(file_text, namespace)
-                    fn_obj = namespace[name]
-                    signature = str(inspect.signature(fn_obj))
-                    docstring = inspect.getdoc(fn_obj) or ""
-                    depends_on = list(self._collect_function_calls(node))
-                    embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
-                    # Update unify row
-                    unify.update_logs(
-                        logs=[log_id],
-                        context=self._compositional_ctx,
-                        entries={
-                            "argspec": signature,
-                            "docstring": docstring,
-                            "implementation": file_text,
-                            "depends_on": depends_on,
-                            "embedding_text": embedding_text,
-                        },
-                        overwrite=True,
-                    )
-                    # Ensure it's registered as protected
-                    self._register_function_file(name, p)
-                    updated.append(name)
-                except Exception:
-                    continue
-        except Exception:
-            return updated
-        return updated
-
     # 5. Semantic Search ------------------------------------------------ #
     @functools.wraps(BaseFunctionManager.search_functions, updated=())
     def search_functions(
@@ -3393,71 +3837,57 @@ class FunctionManager(BaseFunctionManager):
         query: str,
         n: int = 5,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
-        include_primitives: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
-        """
-        Search for functions by semantic similarity to a natural-language query.
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        Args:
-            query: Natural-language text describing the desired function(s).
-            n: Number of similar results to return.
-            include_implementations: If True (default), include full source code.
-            include_primitives: If True (default), sync and include primitives
-                in the search results alongside user-defined functions.
-
-        Returns:
-            Up to n results ordered by similarity, including both user functions
-            and primitives (if include_primitives=True).
-        """
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         allowed_fields = list(Function.model_fields.keys())
 
-        # Search user-defined functions in the Compositional context
+        # Search compositional context.
         compositional_rows = table_search_top_k(
             context=self._compositional_ctx,
             references={"embedding_text": query},
             k=n,
             allowed_fields=allowed_fields,
             unique_id_field="function_id",
+            row_filter=self._scoped_filter(None),
         )
 
-        if not include_primitives:
-            results = compositional_rows[:n]
-        else:
-            # Sync and search primitives
+        # Optionally search primitives context.
+        primitive_rows: list = []
+        if self._include_primitives:
             self.sync_primitives()
-
+            primitive_filter = self._scoped_primitive_filter()
             primitive_rows = table_search_top_k(
                 context=self._primitives_ctx,
                 references={"embedding_text": query},
                 k=n,
                 allowed_fields=allowed_fields,
                 unique_id_field="function_id",
+                row_filter=primitive_filter,
             )
 
-            # Merge and sort by the private score column (lower distance = better match)
-            all_rows = compositional_rows + primitive_rows
-            sort_key: str | None = None
-            for row in all_rows:
-                for key in row.keys():
-                    if key.startswith("_"):
-                        sort_key = key
-                        break
-                if sort_key:
+        # Merge and sort by the private score column (lower distance = better match)
+        all_rows = compositional_rows + primitive_rows
+        sort_key: str | None = None
+        for row in all_rows:
+            for key in row.keys():
+                if key.startswith("_"):
+                    sort_key = key
                     break
             if sort_key:
-                all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
-            results = all_rows[:n]
+                break
+        if sort_key:
+            all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
+        results = all_rows[:n]
 
-        if not return_callable:
+        if not _return_callable:
             # Strip implementations if not requested (reduces payload size)
             if not include_implementations:
                 results = [
@@ -3466,27 +3896,19 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return results
 
-        assert namespace is not None  # validated above
-
-        # Only materialize non-primitive records as callables.
-        # Note: exec_rows must contain implementations for callable injection to work.
-        exec_rows = [
-            r
-            for r in results
-            if isinstance(r, dict) and r.get("is_primitive") is not True
-        ]
+        assert _namespace is not None  # validated above
         callables_list = self._inject_callables_for_functions(
-            exec_rows,
-            namespace=namespace,
+            results,
+            namespace=_namespace,
         )
 
-        if also_return_metadata:
+        if _also_return_metadata:
             # Strip implementations from metadata if not requested
-            metadata_rows = exec_rows
+            metadata_rows = results
             if not include_implementations:
                 metadata_rows = [
                     {k: v for k, v in row.items() if k != "implementation"}
-                    for row in exec_rows
+                    for row in results
                 ]
             return {"callables": callables_list, "metadata": metadata_rows}  # type: ignore[return-value]
 
@@ -3664,6 +4086,47 @@ class FunctionManager(BaseFunctionManager):
     #  Virtual Environment Management                                    #
     # ------------------------------------------------------------------ #
 
+    def _safe_get_venv_logs(
+        self,
+        *,
+        filter: Optional[str] = None,
+        limit: Optional[int] = None,
+        exclude_fields: Optional[List[str]] = None,
+        from_fields: Optional[List[str]] = None,
+    ) -> List[unify.Log]:
+        """Best-effort venv reads; treat missing contexts as empty."""
+        import time as _time
+
+        last_exc: Exception | None = None
+        for delay in (0.0, 0.05, 0.15):
+            if delay:
+                _time.sleep(delay)
+            try:
+                return unify.get_logs(
+                    context=self._venvs_ctx,
+                    filter=filter,
+                    limit=limit,
+                    exclude_fields=exclude_fields,
+                    from_fields=from_fields,
+                )
+            except _UnifyRequestError as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 404:
+                    last_exc = e
+                    continue
+                raise
+            except Exception as e:
+                last_exc = e
+                break
+
+        if isinstance(last_exc, _UnifyRequestError):
+            status = getattr(getattr(last_exc, "response", None), "status_code", None)
+            if status == 404:
+                return []
+        if last_exc is not None:
+            raise last_exc
+        return []
+
     def add_venv(self, *, venv: str) -> int:
         """
         Add a new virtual environment configuration.
@@ -3690,8 +4153,7 @@ class FunctionManager(BaseFunctionManager):
         elif isinstance(result, dict):
             log_ids = result.get("log_event_ids", [])
             if log_ids:
-                logs = unify.get_logs(
-                    context=self._venvs_ctx,
+                logs = self._safe_get_venv_logs(
                     filter=f"id == {log_ids[0]}",
                     limit=1,
                 )
@@ -3711,8 +4173,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             Dict with venv_id and venv content, or None if not found.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             filter=f"venv_id == {venv_id}",
             limit=1,
             exclude_fields=list_private_fields(self._venvs_ctx),
@@ -3728,8 +4189,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             List of dicts, each with venv_id and venv content.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             exclude_fields=list_private_fields(self._venvs_ctx),
         )
         return [lg.entries for lg in logs]
@@ -3747,8 +4207,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if deleted, False if not found.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             filter=f"venv_id == {venv_id}",
             limit=1,
         )
@@ -3771,8 +4230,7 @@ class FunctionManager(BaseFunctionManager):
         Returns:
             True if updated, False if not found.
         """
-        logs = unify.get_logs(
-            context=self._venvs_ctx,
+        logs = self._safe_get_venv_logs(
             filter=f"venv_id == {venv_id}",
             limit=1,
         )
@@ -3846,12 +4304,14 @@ class FunctionManager(BaseFunctionManager):
         The path includes the Unify context name to ensure isolation between
         different assistants/users and during parallel test runs.
         """
+        from unity.file_manager.settings import get_local_root
+
         # Get current context for isolation
         ctx = unify.get_active_context()
         ctx_name = ctx.get("read") or ctx.get("write") or "default"
         # Sanitize context name for filesystem use
         safe_ctx = ctx_name.replace("/", "_").replace("\\", "_")
-        return Path.home() / ".unity" / "venvs" / safe_ctx
+        return Path(get_local_root()) / ".unity" / "venvs" / safe_ctx
 
     def _get_venv_dir(self, venv_id: int) -> Path:
         """Get the directory for a specific venv."""
@@ -4293,17 +4753,24 @@ class FunctionManager(BaseFunctionManager):
         session_id: int = 0,
         venv_pool: Optional["VenvPool"] = None,
         shell_pool: Optional["ShellPool"] = None,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+        extra_namespaces: Optional[Dict[str, Any]] = None,
+        _parent_chat_context: Optional[list] = None,
+    ) -> Any:
         """
         Execute a stored function by name with optional state mode overrides.
 
         This method looks up a function by name from the function table and
         executes it. It automatically routes to the appropriate executor based
-        on the function's language (Python vs shell).
+        on the function's type:
 
-        State modes:
+        - **Primitives** (``is_primitive=True``): Resolved to their live
+          callable via ``get_primitive_callable`` and invoked directly. The
+          raw return value is passed through unmodified, which is critical
+          for primitives that return ``SteerableToolHandle`` instances.
+        - **Composed functions**: Executed via subprocess or in-process exec
+          and wrapped in a ``{"result", "error", "stdout", "stderr"}`` dict.
+
+        State modes (composed functions only):
         - "stateless" (default): Fresh subprocess with no inherited state. Pure
           function behavior. Backward compatible with previous behavior.
         - "stateful": Uses persistent pool connection. Variables from previous
@@ -4324,20 +4791,53 @@ class FunctionManager(BaseFunctionManager):
                 Only applies to stateful/read_only modes.
             venv_pool: VenvPool for stateful/read_only modes with Python venv functions.
             shell_pool: ShellPool for stateful/read_only modes with shell functions.
-            primitives: Primitives instance for RPC access to state managers.
-            computer_primitives: ComputerPrimitives instance for browser/desktop RPC.
+            extra_namespaces: Named objects to inject into the function's execution
+                namespace. For in-process execution, all entries are injected into
+                globals. For venv/subprocess execution, "primitives" and
+                "computer_primitives" entries are bridged via RPC.
 
         Returns:
-            Dict with keys: result, error, stdout, stderr
+            For composed functions: dict with keys result, error, stdout, stderr.
+            For primitives: the raw return value of the callable (may be a
+            SteerableToolHandle or any other type).
 
         Raises:
             ValueError: If the function doesn't exist or has no implementation.
             ValueError: If state_mode requires a pool but none is provided.
         """
-        # Look up function by name
+        ns = extra_namespaces or {}
+        # Look up function by name (compositional first, then optionally primitives).
         func_data = self._get_function_data_by_name(name=function_name)
+
+        if func_data is None and self._include_primitives:
+            func_data = self._get_primitive_data_by_name(name=function_name)
+
+        if func_data is None and self._include_primitives:
+            # Fallback: check primitives DB context directly.
+            self.sync_primitives()
+            try:
+                prim_logs = unify.get_logs(
+                    context=self._primitives_ctx,
+                    filter=f"name == {json.dumps(function_name)}",
+                    limit=1,
+                    exclude_fields=list_private_fields(self._primitives_ctx),
+                )
+                if prim_logs:
+                    func_data = prim_logs[0].entries
+            except Exception:
+                pass
+
         if func_data is None:
             raise ValueError(f"Function '{function_name}' not found")
+
+        # Primitive execution: resolve callable and invoke directly.
+        if func_data.get("is_primitive"):
+            return await self._execute_primitive(
+                func_data=func_data,
+                call_kwargs=call_kwargs,
+                extra_namespaces=ns,
+                _parent_chat_context=_parent_chat_context,
+            )
 
         implementation = func_data.get("implementation")
         if not isinstance(implementation, str) or not implementation.strip():
@@ -4355,8 +4855,8 @@ class FunctionManager(BaseFunctionManager):
                 state_mode=state_mode,
                 session_id=session_id,
                 venv_pool=venv_pool,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=ns,
+                _parent_chat_context=_parent_chat_context,
             )
         elif language in ("bash", "zsh", "sh", "powershell"):
             return await self._execute_shell_function(
@@ -4366,11 +4866,546 @@ class FunctionManager(BaseFunctionManager):
                 state_mode=state_mode,
                 session_id=session_id,
                 shell_pool=shell_pool,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=ns,
             )
         else:
             raise ValueError(f"Unsupported function language: {language}")
+
+    # ------------------------------------------------------------------ #
+    #  Primitive Execution Helpers                                       #
+    # ------------------------------------------------------------------ #
+
+    def _get_primitive_data_by_name(self, *, name: str) -> Optional[Dict[str, Any]]:
+        """Look up primitive metadata by name from the in-memory registry."""
+        primitives = self._registry.collect_primitives(self._primitive_scope)
+        return primitives.get(name)
+
+    async def _execute_primitive(
+        self,
+        *,
+        func_data: Dict[str, Any],
+        call_kwargs: Optional[Dict[str, Any]],
+        extra_namespaces: Dict[str, Any],
+        _parent_chat_context: Optional[list] = None,
+    ) -> Any:
+        """Resolve a primitive callable and invoke it directly.
+
+        Returns the raw result of the callable (which may be a
+        SteerableToolHandle for async tool loop primitives).
+        """
+        from unity.function_manager.primitives.runtime import get_primitive_callable
+
+        callable_fn = get_primitive_callable(
+            func_data,
+            primitives=extra_namespaces.get("primitives"),
+        )
+        if callable_fn is None:
+            raise ValueError(
+                f"Could not resolve primitive callable for '{func_data.get('name')}'",
+            )
+
+        kwargs = call_kwargs or {}
+
+        # Forward _parent_chat_context if the callable accepts it.
+        if _parent_chat_context is not None:
+            sig = inspect.signature(callable_fn)
+            params = sig.parameters
+            if "_parent_chat_context" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            ):
+                kwargs["_parent_chat_context"] = _parent_chat_context
+
+        result = callable_fn(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    # ------------------------------------------------------------------ #
+    #  Remote Windows Execution Helpers                                  #
+    # ------------------------------------------------------------------ #
+
+    # Remote Windows local root (matches LOCAL_ROOT in agent-service)
+    # Both default to ~/Unity/Local; on Windows VMs this is C:\Unity\Local
+    REMOTE_WINDOWS_LOCAL_ROOT = "C:\\Unity\\Local"
+
+    # Shell mode for remote Windows command execution ('powershell' or 'cmd')
+    REMOTE_WINDOWS_SHELL_MODE = "powershell"
+
+    def _get_sync_manager(self) -> Optional[Any]:
+        """Get SyncManager from LocalFileManager if available and started."""
+        if self._fm is None:
+            return None
+        adapter = getattr(self._fm, "_adapter", None)
+        if adapter is None:
+            return None
+        sync_mgr = getattr(adapter, "_sync_manager", None)
+        if sync_mgr is None or not getattr(sync_mgr, "_started", False):
+            return None
+        return sync_mgr
+
+    async def _sync_to_remote(self) -> bool:
+        """Trigger bisync before execution to push local changes and pull remote state.
+
+        Returns True if sync succeeded or was not needed.
+        """
+        sync_manager = self._get_sync_manager()
+        if sync_manager is None:
+            return True  # No sync configured, continue anyway
+
+        print("[windows exec] Syncing files to remote...")
+        result = await sync_manager.sync_remote_changes()
+        if not result.success:
+            print(f"[windows exec] Warning: sync failed: {result.errors}")
+            return False
+        return True
+
+    async def _sync_from_remote(self) -> bool:
+        """Trigger sync from remote after execution.
+
+        Returns True if sync succeeded.
+        """
+        sync_manager = self._get_sync_manager()
+        if sync_manager is None:
+            return True
+
+        print("[windows exec] Syncing files from remote...")
+        result = await sync_manager.sync_remote_changes()
+        if not result.success:
+            print(f"[windows exec] Warning: sync failed: {result.errors}")
+            return False
+        return True
+
+    def _should_execute_python_function_on_remote_windows(
+        self,
+        func_data: Dict[str, Any],
+    ) -> bool:
+        """
+        Determine if a Python function should execute on a remote Windows VM.
+
+        Returns True when ALL of the following conditions are met:
+        - Function has windows_os_required=True
+        - Assistant has desktop_mode='windows'
+
+        Args:
+            func_data: Function metadata dict from the function store.
+
+        Returns:
+            True if remote Windows execution is required, False otherwise.
+        """
+        windows_os_required = func_data.get("windows_os_required", False)
+        if not windows_os_required:
+            return False
+
+        from unity.session_details import SESSION_DETAILS
+
+        return SESSION_DETAILS.assistant.desktop_mode == "windows"
+
+    def _calculate_wait_time_from_vm_ready_at(
+        self,
+        vm_ready_at: Optional[str],
+    ) -> int:
+        """
+        Calculate seconds to wait based on vm_ready_at timestamp.
+
+        Uses the same logic as debug_logger._calc_wait_from_ready_at().
+
+        Args:
+            vm_ready_at: ISO timestamp string (e.g., "2025-01-16T14:02:00.000-08:00")
+
+        Returns:
+            Wait time in seconds, minimum 5 (no maximum).
+        """
+        if not vm_ready_at:
+            return 10  # Default if no timestamp
+
+        try:
+            from datetime import datetime, timezone
+
+            ready_dt = datetime.fromisoformat(vm_ready_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = (ready_dt - now).total_seconds()
+            return max(5, int(delta))
+        except Exception:
+            return 10  # Fallback on parse error
+
+    async def _wait_for_remote_windows_vm_ready(
+        self,
+        timeout: float = 300.0,
+    ) -> str:
+        """
+        Wait for the remote Windows VM to be ready before execution.
+
+        Polls the /infra/vm/status/{assistant_id}?vm_type=windows endpoint until
+        vm_ready=True. Uses the same endpoint pattern as debug_logger._resolve_vm_liveview().
+
+        Args:
+            timeout: Maximum time to wait in seconds (default 5 minutes).
+
+        Returns:
+            The desktop_url when VM is ready.
+
+        Raises:
+            TimeoutError: If VM not ready within timeout.
+            RuntimeError: If configuration is missing.
+        """
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+        from unity.settings import SETTINGS
+
+        comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
+        admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+        assistant_id = SESSION_DETAILS.assistant.id
+
+        if not comms_url or not admin_key:
+            raise RuntimeError(
+                "Cannot check Windows VM status: COMMS_URL or ORCHESTRA_ADMIN_KEY "
+                "not configured",
+            )
+
+        start_time = asyncio.get_event_loop().time()
+        print(f"[windows exec] Waiting for VM ready (timeout={timeout}s)")
+
+        async with aiohttp.ClientSession() as session:
+            while True:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                if elapsed > timeout:
+                    raise TimeoutError(
+                        f"Windows VM not ready after {timeout}s for assistant "
+                        f"{assistant_id}",
+                    )
+
+                try:
+                    async with session.get(
+                        f"{comms_url}/infra/vm/status/{assistant_id}",
+                        params={"vm_type": "windows"},
+                        headers={"Authorization": f"Bearer {admin_key}"},
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as resp:
+                        if resp.ok:
+                            data = await resp.json()
+                            vm_ready = data.get("vm_ready", False)
+                            desktop_url = data.get("desktop_url")
+
+                            if vm_ready and desktop_url:
+                                print(f"[windows exec] VM ready")
+                                logger.info(
+                                    f"Windows VM ready for {assistant_id}: "
+                                    f"{desktop_url}",
+                                )
+                                return desktop_url.rstrip("/")
+
+                            vm_ready_at = data.get("vm_ready_at")
+                            wait_secs = self._calculate_wait_time_from_vm_ready_at(
+                                vm_ready_at,
+                            )
+                            remaining = timeout - elapsed
+                            await asyncio.sleep(min(wait_secs, remaining))
+                        else:
+                            resp_text = await resp.text()
+                            logger.warning(
+                                f"VM status check failed: {resp.status} "
+                                f"{resp_text}",
+                            )
+                            await asyncio.sleep(10)
+                except aiohttp.ClientError as e:
+                    logger.warning(f"VM status check error: {e}")
+                    await asyncio.sleep(10)
+
+    async def _prepare_venv_on_remote_windows(
+        self,
+        desktop_url: str,
+        venv_id: int,
+    ) -> str:
+        """
+        Prepare virtual environment on remote Windows VM.
+
+        Uses the existing /files endpoint to write pyproject.toml,
+        then the existing /exec endpoint to run 'uv sync'.
+
+        Args:
+            desktop_url: Base URL for the Windows VM agent-service.
+            venv_id: The venv ID to prepare.
+
+        Returns:
+            Path to the Python executable in the prepared venv.
+
+        Raises:
+            ValueError: If venv_id does not exist.
+            RuntimeError: If venv preparation fails.
+        """
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+
+        venv_data = self.get_venv(venv_id=venv_id)
+        if venv_data is None:
+            raise ValueError(f"VirtualEnv with ID {venv_id} not found")
+
+        pyproject_content = venv_data["venv"]
+        venv_dir = f"Local\\venvs\\venv_{venv_id}"
+        headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
+
+        print(f"[windows exec] Preparing venv {venv_id}")
+
+        async with aiohttp.ClientSession() as session:
+            # Step 1: Write pyproject.toml
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "save",
+                    "files": [
+                        {
+                            "filename": f"{venv_dir}\\pyproject.toml",
+                            "content": pyproject_content,
+                            "encoding": "text",
+                        },
+                    ],
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if not resp.ok:
+                    resp_text = await resp.text()
+                    raise RuntimeError(
+                        f"Failed to write pyproject.toml to remote: {resp_text}",
+                    )
+
+            # Step 2: Install uv via pip
+            print(f"[windows exec] Installing uv")
+            async with session.post(
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": "pip install uv",
+                    "cwd": self.REMOTE_WINDOWS_LOCAL_ROOT,
+                    "timeout": 300000,
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=360),
+            ) as resp:
+                await resp.json()  # Don't fail if uv already installed
+
+            # Step 3: Run 'uv sync'
+            venv_full_path = f"{self.REMOTE_WINDOWS_LOCAL_ROOT}\\{venv_dir}"
+            print(f"[windows exec] Running uv sync")
+            async with session.post(
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": "uv sync",
+                    "cwd": venv_full_path,
+                    "timeout": 600000,
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=660),
+            ) as resp:
+                result = await resp.json()
+                if result.get("exitCode", 1) != 0:
+                    raise RuntimeError(
+                        f"Failed to sync venv on remote: "
+                        f"{result.get('stderr', result.get('stdout', 'Unknown error'))}",
+                    )
+
+            python_path = f"{venv_full_path}\\.venv\\Scripts\\python.exe"
+            logger.info(f"Prepared venv {venv_id} on remote Windows VM")
+            return python_path
+
+    async def _execute_python_function_on_remote_windows(
+        self,
+        *,
+        func_data: Dict[str, Any],
+        implementation: str,
+        call_kwargs: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Execute a Python function on a remote Windows VM.
+
+        Prerequisites:
+        - All file paths in call_kwargs must be under ~/
+        - FileSync makes these paths available on the remote VM
+
+        Flow:
+        1. Wait for VM to be ready
+        2. Sync files to remote (FileSync)
+        3. Prepare venv on remote if needed (HTTP API)
+        4. Write and execute Python script
+        5. Sync files from remote (FileSync)
+
+        Args:
+            func_data: Function metadata dict.
+            implementation: Function source code.
+            call_kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            Dict with keys: result, error, stdout, stderr
+        """
+        import uuid
+
+        import aiohttp
+
+        from unity.session_details import SESSION_DETAILS
+
+        # Strip @custom_function decorators (not available on remote Windows)
+        implementation = _strip_custom_function_decorators(implementation)
+
+        func_name_meta = func_data.get("name", "unknown")
+        print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
+
+        # Step 1: Get desktop URL
+        desktop_url = await self._wait_for_remote_windows_vm_ready()
+        headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
+
+        # Step 2: Sync files to remote before execution
+        await self._sync_to_remote()
+
+        # Step 3: Prepare venv on remote (if specified)
+        venv_id = func_data.get("venv_id")
+        if venv_id is not None:
+            python_path = await self._prepare_venv_on_remote_windows(
+                desktop_url,
+                venv_id,
+            )
+        else:
+            python_path = "python"
+
+        async with aiohttp.ClientSession() as session:
+            # Step 4: Build wrapper script
+            exec_id = uuid.uuid4().hex[:8]
+            is_async = "async def" in implementation
+
+            try:
+                tree = ast.parse(implementation)
+                func_name = tree.body[0].name if tree.body else "main"
+            except Exception:
+                func_name = "main"
+
+            call_kwargs_json = json.dumps(call_kwargs or {})
+
+            if is_async:
+                invoke_code = f"result = asyncio.run({func_name}(**call_kwargs))"
+            else:
+                invoke_code = f"result = {func_name}(**call_kwargs)"
+
+            wrapper_script = f"""
+import json
+import asyncio
+import sys
+
+# Function implementation
+{implementation}
+
+# Execution wrapper
+def _main():
+    call_kwargs = json.loads({repr(call_kwargs_json)})
+    try:
+        {invoke_code}
+        output = {{"result": result, "error": None}}
+    except Exception as e:
+        import traceback
+        output = {{"result": None, "error": traceback.format_exc()}}
+
+    # Write result to file
+    with open("_result_{exec_id}.json", "w", encoding="utf-8") as f:
+        json.dump(output, f, default=str)
+
+    print("__EXECUTION_COMPLETE__")
+
+if __name__ == "__main__":
+    _main()
+"""
+
+            # Step 5: Write script to remote
+            script_filename = f"scripts\\_exec_{exec_id}.py"
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "save",
+                    "files": [
+                        {
+                            "filename": script_filename,
+                            "content": wrapper_script,
+                            "encoding": "text",
+                        },
+                    ],
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if not resp.ok:
+                    resp_text = await resp.text()
+                    return {
+                        "result": None,
+                        "error": (f"Failed to write script to remote: {resp_text}"),
+                        "stdout": "",
+                        "stderr": "",
+                    }
+
+            # Step 6: Execute script
+            cwd = self.REMOTE_WINDOWS_LOCAL_ROOT
+            exec_command = f'& "{python_path}" "{script_filename}"'
+            print(
+                f"[windows exec] Starting script: {exec_command} - CWD: {cwd} - "
+                f"Kwargs: {call_kwargs}",
+            )
+
+            async with session.post(
+                f"{desktop_url}/api/exec",
+                json={
+                    "command": exec_command,
+                    "cwd": cwd,
+                    "timeout": 3600000,  # 1 hour
+                    "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
+                    "user_session": True,  # Run in interactive user session for COM/Excel
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=3660),
+            ) as resp:
+                exec_result = await resp.json()
+
+            stdout = exec_result.get("stdout", "")
+            stderr = exec_result.get("stderr", "")
+            exit_code = exec_result.get("exitCode")
+            print(f"[windows exec] Execution complete (exitCode={exit_code})")
+
+            # Step 7: Read result file
+            result_filename = f"_result_{exec_id}.json"
+            async with session.post(
+                f"{desktop_url}/api/files",
+                json={
+                    "action": "read",
+                    "filename": result_filename,
+                },
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if resp.ok:
+                    file_data = await resp.json()
+                    content = file_data.get("content", "{}")
+                    try:
+                        result_data = json.loads(content)
+                    except json.JSONDecodeError:
+                        result_data = {
+                            "result": None,
+                            "error": "Failed to parse result JSON",
+                        }
+                else:
+                    result_data = {
+                        "result": None,
+                        "error": (
+                            f"Execution failed: {stderr}" if stderr else "Unknown error"
+                        ),
+                    }
+
+        # Step 8: Sync files from remote after execution
+        await self._sync_from_remote()
+
+        return {
+            "result": result_data.get("result"),
+            "error": result_data.get("error"),
+            "stdout": stdout,
+            "stderr": stderr,
+        }
 
     async def _execute_python_function(
         self,
@@ -4382,10 +5417,18 @@ class FunctionManager(BaseFunctionManager):
         state_mode: Literal["stateful", "read_only", "stateless"],
         session_id: int,
         venv_pool: Optional["VenvPool"],
-        primitives: Optional[Any],
-        computer_primitives: Optional[Any],
+        extra_namespaces: Dict[str, Any],
+        _parent_chat_context: Optional[list] = None,
     ) -> Dict[str, Any]:
         """Execute a Python function with venv and state mode support."""
+        # Check if remote Windows execution is required
+        if self._should_execute_python_function_on_remote_windows(func_data):
+            return await self._execute_python_function_on_remote_windows(
+                func_data=func_data,
+                implementation=implementation,
+                call_kwargs=call_kwargs,
+            )
+
         # Strip @custom_function decorators (not available in subprocess runner)
         implementation = _strip_custom_function_decorators(implementation)
 
@@ -4402,6 +5445,10 @@ class FunctionManager(BaseFunctionManager):
 
         call_kwargs = call_kwargs or {}
 
+        # Extract RPC-bridgeable namespaces for subprocess execution paths.
+        primitives = extra_namespaces.get("primitives")
+        computer_primitives = extra_namespaces.get("computer_primitives")
+
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
             # No venv - execute in default environment with state_mode support
@@ -4411,8 +5458,8 @@ class FunctionManager(BaseFunctionManager):
                 is_async=is_async,
                 state_mode=state_mode,
                 session_id=session_id,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                extra_namespaces=extra_namespaces,
+                _parent_chat_context=_parent_chat_context,
             )
 
         # Venv execution - state_mode matters
@@ -4480,8 +5527,7 @@ class FunctionManager(BaseFunctionManager):
         state_mode: Literal["stateful", "read_only", "stateless"],
         session_id: int,
         shell_pool: Optional["ShellPool"],
-        primitives: Optional[Any],
-        computer_primitives: Optional[Any],
+        extra_namespaces: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         Execute a shell function with state mode support.
@@ -4500,8 +5546,8 @@ class FunctionManager(BaseFunctionManager):
             return await self.execute_shell_script(
                 implementation=implementation,
                 language=language,
-                primitives=primitives,
-                computer_primitives=computer_primitives,
+                primitives=extra_namespaces.get("primitives"),
+                computer_primitives=extra_namespaces.get("computer_primitives"),
             )
 
         elif state_mode == "stateful":
@@ -4575,8 +5621,8 @@ class FunctionManager(BaseFunctionManager):
         is_async: bool,
         state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
         session_id: int = 0,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
+        _parent_chat_context: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
         Execute a function in the default Python environment (no custom venv).
@@ -4612,11 +5658,22 @@ class FunctionManager(BaseFunctionManager):
         else:  # stateless
             globals_dict = create_base_globals()
 
-        # Inject primitives (always, since they may change between calls)
-        if primitives is not None:
-            globals_dict["primitives"] = primitives
-        if computer_primitives is not None:
-            globals_dict["computer_primitives"] = computer_primitives
+        # Inject all extra namespaces into globals (always, since they may
+        # change between calls).
+        if extra_namespaces:
+            globals_dict.update(extra_namespaces)
+
+        # Wrap primitives with ContextForwardingProxy so that environment
+        # methods called from composed functions receive _parent_chat_context
+        # (mirroring the PythonExecutionSession.execute() pattern).
+        _orig_prims = globals_dict.get("primitives")
+        if _parent_chat_context is not None and _orig_prims is not None:
+            from .primitives.context_proxy import ContextForwardingProxy
+
+            globals_dict["primitives"] = ContextForwardingProxy(
+                _orig_prims,
+                _parent_chat_context=_parent_chat_context,
+            )
 
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
@@ -4718,56 +5775,23 @@ class FunctionManager(BaseFunctionManager):
                 }
             }
         """
-        from .primitives import get_primitive_sources, MANAGER_METADATA
-
         result: Dict[str, Dict[str, Any]] = {"managers": {}}
 
-        # Map class names to manager short names
-        class_to_manager = {
-            "ContactManager": "contacts",
-            "TranscriptManager": "transcripts",
-            "KnowledgeManager": "knowledge",
-            "TaskScheduler": "tasks",
-            "SecretManager": "secrets",
-            "GuidanceManager": "guidance",
-            "WebSearcher": "web",
-            "FileManager": "files",
-            "ComputerPrimitives": "computer",
-        }
+        # Use the scoped primitive_scope from this FunctionManager
+        for spec in self._registry.manager_specs(self._primitive_scope):
+            manager_name = spec.manager_alias
+            description = spec.description
 
-        # Collect methods from primitive sources
-        for cls, method_names in get_primitive_sources():
-            class_name = cls.__name__
-            manager_name = class_to_manager.get(class_name)
-            if not manager_name:
-                continue
+            # Get primitive rows which contain signature and docstring
+            single_scope = PrimitiveScope(scoped_managers=frozenset({manager_name}))
+            primitives_dict = self._registry.collect_primitives(single_scope)
 
-            # Get description from MANAGER_METADATA
-            metadata = MANAGER_METADATA.get(manager_name, {})
-            description = metadata.get("description", "")
-
-            # Extract method signatures
             methods_info: Dict[str, Dict[str, str]] = {}
-            for method_name in method_names:
-                method = getattr(cls, method_name, None)
-                if method is None:
-                    continue
-
-                # Unwrap functools.wraps
-                fn = method
-                while hasattr(fn, "__wrapped__"):
-                    fn = fn.__wrapped__
-
-                try:
-                    sig = str(inspect.signature(fn))
-                except (ValueError, TypeError):
-                    sig = "(...)"
-
-                docstring = inspect.getdoc(fn) or ""
-
+            for row in primitives_dict.values():
+                method_name = row.get("primitive_method", "")
                 methods_info[method_name] = {
-                    "signature": sig,
-                    "docstring": docstring,
+                    "signature": row.get("argspec", ""),
+                    "docstring": row.get("docstring", ""),
                 }
 
             result["managers"][manager_name] = {

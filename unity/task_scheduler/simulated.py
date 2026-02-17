@@ -6,6 +6,7 @@ Provides a storage-free interface that returns steerable handles for ask, update
 and execute. All responses are produced by a shared, stateful LLM; no storage
 or queue state is read or written.
 """
+
 import asyncio
 import threading
 import functools
@@ -15,7 +16,8 @@ import unillm
 from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
-from ..constants import LOGGER
+from ..common._async_tool.messages import forward_handle_call
+from ..logger import LOGGER
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
@@ -36,7 +38,7 @@ from ..common.simulated import (
 )
 
 
-class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedTaskScheduleHandle(SimulatedHandleMixin, SteerableToolHandle):
     """A minimal, LLM-backed handle for ask/update interactions."""
 
     def __init__(
@@ -50,6 +52,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ) -> None:
         self._llm = llm
         self._initial_text = initial_text
@@ -98,6 +101,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._paused = False
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
+
+        self._init_completion_gate(hold_completion)
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API required by SteerableToolHandle
@@ -163,27 +168,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 response_format=self._response_format,
             )
 
-            # If a response_format is requested, ensure we return exactly one JSON document.
-            # The stateful simulator sometimes emits multiple JSON objects separated by newlines
-            # (e.g. NDJSON-style). Prefer the last successfully-validated JSON line.
-            if self._response_format is not None and isinstance(answer, str):
-                try:
-                    # Fast path: already valid
-                    _m = self._response_format.model_validate_json(answer)  # type: ignore[attr-defined]
-                    answer = _m.model_dump_json()
-                except Exception:
-                    _best: str | None = None
-                    for _line in [
-                        ln.strip() for ln in answer.splitlines() if ln.strip()
-                    ]:
-                        try:
-                            _m = self._response_format.model_validate_json(_line)  # type: ignore[attr-defined]
-                            _best = _m.model_dump_json()
-                        except Exception:
-                            continue
-                    if _best is not None:
-                        answer = _best
-
             self._answer = answer
             # very small, synthetic trace of "reasoning"
             self._messages = [
@@ -199,35 +183,31 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
-    ) -> str:
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:
         """Append a follow-up message that will be folded into the prompt.
 
         Args:
             message: The interjection message to inject.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         if self._cancelled:
-            return "Interaction already stopped."
+            return
         self._log_interject(message)
         self._interjections.append(message)
-        return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: Optional[str] = None,
         *,
         cancel: bool = False,
-        parent_chat_context_cont: list[dict] | None = None,
-    ) -> str:
+        **kwargs,
+    ) -> None:
         """Cancel further processing so `.result()` raises.
 
         The `cancel` flag is accepted for compatibility with TaskScheduler-style
@@ -237,8 +217,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         Args:
             reason: Optional reason for stopping.
             cancel: Ignored; interaction is always cancelled.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
@@ -247,7 +225,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done_event.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:
@@ -268,14 +245,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -287,10 +259,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -303,18 +272,15 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
             _return_reasoning_steps: Whether to return reasoning steps.
         """
         follow_up_prompt = build_followup_prompt(
@@ -366,12 +332,16 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Optional: customise how the SimulatedActor is constructed per execute()
         actor_factory: Optional[Callable[..., Any]] = None,
         actor_steps: Optional[int] = None,
         actor_duration: Optional[float] = None,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
         self._description = description
+        self._hold_completion = hold_completion
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
@@ -380,11 +350,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self._actor_steps: Optional[int] = actor_steps
         self._actor_duration: Optional[float] = actor_duration
 
+        super().__init__()
+
         # One shared, *stateful* LLM for *everything*
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedTaskScheduler")
         # Build tool lists programmatically so prompts match the exposed surface.
+        # Register them via add_tools so that the inherited update()/ask() methods
+        # can retrieve them at runtime via self.get_tools("update"/"ask").
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
+        self.add_tools("ask", ask_tools)
+        self.add_tools("update", update_tools)
 
         # Provide placeholder counts/columns for the simulated environment
         from .types.task import Task as _Task
@@ -398,13 +374,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             num_tasks=10,
             columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         update_msg = build_update_prompt(
             update_tools,
             num_tasks=10,
             columns=fake_task_columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* task-list manager. "
@@ -473,6 +449,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
             actor_factory=getattr(self, "_actor_factory", None),
             actor_steps=getattr(self, "_actor_steps", None),
             actor_duration=getattr(self, "_actor_duration", None),
@@ -521,6 +498,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -571,6 +549,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         # Tool-style scheduled log (only when no parent lineage)
@@ -666,41 +645,33 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 message: str,
                 *,
-                parent_chat_context_cont: list[dict] | None = None,
-                images: object | None = None,
+                _parent_chat_context_cont: list[dict] | None = None,
             ) -> None:  # type: ignore[override]
                 self._log_interject(message)
-                try:
-                    # Prefer forwarding full steerable signature when supported.
-                    try:
-                        await self._inner.interject(  # type: ignore[arg-type]
-                            message,
-                            parent_chat_context_cont=parent_chat_context_cont,
-                            images=images,
-                        )
-                    except TypeError:
-                        await self._inner.interject(message, images=images)  # type: ignore[arg-type]
-                except Exception:
-                    return None
+                await forward_handle_call(
+                    self._inner,
+                    "interject",
+                    {
+                        "message": message,
+                        "_parent_chat_context_cont": _parent_chat_context_cont,
+                    },
+                    fallback_positional_keys=("message",),
+                )
 
-            def stop(
+            async def stop(
                 self,
                 *,
                 cancel: bool = False,
                 reason: Optional[str] = None,
-                parent_chat_context_cont: list[dict] | None = None,
-            ) -> Optional[str]:  # type: ignore[override]
+                **kwargs,
+            ) -> None:  # type: ignore[override]
                 self._log_stop(reason)
-                # Prefer actor-style stop(reason) but tolerate both signatures
-                try:
-                    return self._inner.stop(reason)  # type: ignore[call-arg]
-                except TypeError:
-                    try:
-                        return self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
-                    except Exception:
-                        return "Stopped."
-                except Exception:
-                    return "Stopped."
+                await forward_handle_call(
+                    self._inner,
+                    "stop",
+                    {"reason": reason, "cancel": cancel},
+                    fallback_positional_keys=("reason",),
+                )
 
             async def pause(self) -> Optional[str]:  # type: ignore[override]
                 self._log_pause()
@@ -752,8 +723,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 self,
                 question: str,
                 *,
-                parent_chat_context_cont: list[dict] | None = None,
-                images: object | None = None,
+                _parent_chat_context: list[dict] | None = None,
                 _return_reasoning_steps: bool = False,
             ) -> "SteerableToolHandle":
                 return await self._inner.ask(question)  # type: ignore[attr-defined]

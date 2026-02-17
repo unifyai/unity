@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from abc import ABCMeta
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Dict, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type
 
 if TYPE_CHECKING:
     from .actor.base import BaseActor
@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from .task_scheduler.base import BaseTaskScheduler
     from .transcript_manager.base import BaseTranscriptManager
     from .web_searcher.base import BaseWebSearcher
+    from .function_manager.primitives.scope import PrimitiveScope
 
 __all__ = [
     "ManagerRegistry",
@@ -267,7 +268,17 @@ class ManagerRegistry:
 
     @classmethod
     def _resolve_impl(cls, manager_key: str) -> str:
-        """Resolve the IMPL setting for a manager key."""
+        """Resolve the IMPL setting for a manager key.
+
+        Checks environment variables at runtime first to support test-time
+        overrides. SETTINGS is frozen at import time, so test conftests that
+        set os.environ after import won't affect SETTINGS values.
+
+        The env var name is derived from the settings object's model_config
+        env_prefix (e.g., UNITY_CONTACT_ -> UNITY_CONTACT_IMPL).
+        """
+        import os
+
         settings_accessor = cls._settings_map.get(manager_key)
         if settings_accessor is None:
             raise ValueError(
@@ -275,6 +286,16 @@ class ManagerRegistry:
                 f"Available: {list(cls._settings_map.keys())}",
             )
         settings = settings_accessor()
+
+        # Derive env var name from the settings model_config env_prefix
+        env_prefix = settings.model_config.get("env_prefix", "")
+        if env_prefix:
+            env_var = f"{env_prefix}IMPL"
+            env_value = os.environ.get(env_var, "")
+            if env_value:
+                return env_value
+
+        # Fall back to SETTINGS value (frozen at import time)
         return getattr(settings, "IMPL", "real")
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -407,17 +428,35 @@ class ManagerRegistry:
     def get_function_manager(
         cls,
         *,
+        primitive_scope: Optional[PrimitiveScope] = None,
         description: str | None = None,
         simulation_guidance: str | None = None,
         _force_new: bool = False,
         **kwargs: Any,
     ) -> "BaseFunctionManager":
-        """Get the FunctionManager singleton (respects IMPL settings)."""
+        """Get the FunctionManager for a given primitive scope.
+
+        Unlike other managers, FunctionManager is NOT a singleton because each
+        scope requires its own instance with scoped primitive sync/search.
+
+        Parameters
+        ----------
+        primitive_scope : PrimitiveScope | None
+            Defines which managers' primitives are indexed and searchable.
+            If None, defaults to all_managers().
+        """
+        from unity.function_manager.primitives import PrimitiveScope
+
+        if primitive_scope is None:
+            primitive_scope = PrimitiveScope.all_managers()
+
+        # FunctionManager is always created fresh per scope (not singleton)
         return cls.get(
             "functions",
             description=description,
             simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
+            _force_new=True,  # Always create new instance per scope
+            primitive_scope=primitive_scope,
             **kwargs,
         )
 
@@ -623,12 +662,10 @@ def _populate_registry() -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # Actor implementations
     # ─────────────────────────────────────────────────────────────────────────
-    from .actor.hierarchical_actor import HierarchicalActor
     from .actor.single_function_actor import SingleFunctionActor
     from .actor.code_act_actor import CodeActActor
     from .actor.simulated import SimulatedActor
 
-    ManagerRegistry.register_class("actor", "hierarchical", HierarchicalActor)
     ManagerRegistry.register_class("actor", "single_function", SingleFunctionActor)
     ManagerRegistry.register_class("actor", "code_act", CodeActActor)
     ManagerRegistry.register_class("actor", "simulated", SimulatedActor)

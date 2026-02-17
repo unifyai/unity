@@ -7,10 +7,12 @@ import traceback
 import os
 from os import sep
 from pathlib import Path
-from typing import Any, Callable, List
+from typing import TYPE_CHECKING, Any, Callable, List
+
+if TYPE_CHECKING:
+    from unity.contact_manager.contact_manager import ContactManager
+    from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.events.event_bus import EVENT_BUS
-from unity.common.context_registry import ContextRegistry
-from unity.manager_registry import ManagerRegistry
 from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
 
 from tests.settings import SETTINGS
@@ -140,7 +142,7 @@ def _get_llm_io_dir() -> Path | None:
         logs/unillm/{datetime}_{socket_name}/{session_id}/
     """
     try:
-        from unity.constants import SESSION_ID
+        from unity.logger import SESSION_ID
     except ImportError:
         return None
 
@@ -420,7 +422,15 @@ class _TestContext:
         self.trace_id: str | None = None
 
     def setup(self) -> None:
-        """Prepare test context before execution."""
+        """Prepare test bookkeeping before execution.
+
+        NOTE:
+        Unify context management is handled centrally in tests/conftest.py
+        (pytest_runtest_setup/teardown) so it wraps fixture setup + teardown.
+        Doing unify.set_context()/unset_context() here (inside the test call
+        phase) can cause flaky cross-test interference when fixtures create
+        or clear managers that delete contexts.
+        """
         try:
             test_fn_name = getattr(self.wrapper, "_unity_pytest_nodeid")
         except AttributeError:
@@ -433,32 +443,15 @@ class _TestContext:
         self.ctx = f"{test_path}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
         self.fpath = _test_fpath(self.test_fn, test_fn_name)
 
-        skip_ctx_create = False
-        if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
-            skip_ctx_create = self.ctx in PRECREATED_CONTEXTS
-        elif not self.try_reuse_prev_ctx:
-            unify.delete_context(self.ctx)
-
         self.llm_io_before = _list_llm_io_files()
         self.start_time = time.perf_counter()
-
-        unify.set_context(self.ctx, relative=False, skip_create=skip_ctx_create)
-        ManagerRegistry.clear()
-        ContextRegistry.clear()
-        EVENT_BUS.clear(delete_contexts=False)
-
-        if not EVENT_BUS:
-            import unity as _unity_mod
-
-            _unity_mod.init("UnityTests")
-            EVENT_BUS.clear()
 
     def set_trace_id(self, trace_id: str | None) -> None:
         """Store the trace_id for this test run."""
         self.trace_id = trace_id
 
     def teardown(self) -> None:
-        """Clean up test context after execution."""
+        """Finalize bookkeeping after execution (no Unify context mutation)."""
         duration = time.perf_counter() - self.start_time
         llm_io_after = _list_llm_io_files()
         new_llm_io_files = llm_io_after - self.llm_io_before
@@ -467,10 +460,6 @@ class _TestContext:
 
         # Upload trace data to {TestContext}/Trace
         _upload_trace_to_context(self.ctx, self.trace_id)
-
-        if self.delete_ctx_on_exit:
-            unify.delete_context(self.ctx)
-        unify.unset_context()
 
 
 def _handle_project(
@@ -782,10 +771,33 @@ def is_scenario_seeded(
 # simpler idempotent check-before-create pattern works fine without a lock.
 # --------------------------------------------------------------------------
 
-import fcntl
 import tempfile
 import time
 from contextlib import contextmanager
+
+# Cross-platform file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file_nb(file_obj):
+        """Acquire an exclusive non-blocking lock on the file (Windows)."""
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Windows)."""
+        file_obj.seek(0)
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file_nb(file_obj):
+        """Acquire an exclusive non-blocking lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
 
 
 def _acquire_file_lock_with_timeout(
@@ -805,9 +817,9 @@ def _acquire_file_lock_with_timeout(
     start = time.monotonic()
     while True:
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_file_nb(lock_file)
             return  # Successfully acquired lock
-        except BlockingIOError:
+        except (BlockingIOError, OSError):
             elapsed = time.monotonic() - start
             if elapsed >= timeout:
                 raise TimeoutError(
@@ -853,7 +865,7 @@ def scenario_file_lock(lock_name: str, timeout: float | None = None):
         _acquire_file_lock_with_timeout(lock_file, timeout, lock_name)
         yield
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(lock_file)
         lock_file.close()
 
 
@@ -897,7 +909,7 @@ def mutation_test_lock(lock_name: str, timeout: float | None = None):
         _acquire_file_lock_with_timeout(lock_file, timeout, lock_name)
         yield
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(lock_file)
         lock_file.close()
 
 

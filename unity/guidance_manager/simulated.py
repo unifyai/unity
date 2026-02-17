@@ -23,15 +23,14 @@ from ..common.simulated import (
 )
 from ..contact_manager.prompt_builders import build_simulated_method_prompt
 from ..common.llm_client import new_llm_client
-from ..constants import LOGGER
-
+from ..logger import LOGGER
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal handle (mirrors contact/knowledge simulated handles)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedGuidanceHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Minimal LLM-backed handle used by SimulatedGuidanceManager.ask / update.
     """
@@ -47,6 +46,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_down_q: asyncio.Queue[str] | None,
         mode: str,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -68,6 +68,8 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._log_label = SimulatedLineage.make_label(
             f"SimulatedGuidanceManager.{self._mode}",
         )
+
+        self._init_completion_gate(hold_completion)
 
         if self._needs_clar:
             try:
@@ -158,6 +160,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -167,49 +170,42 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
-    ) -> str:
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:
         """Interject a message into the in-flight handle.
 
         Args:
             message: The interjection message to inject.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         if self._cancelled:
-            return "Interaction stopped."
+            return
         self._log_interject(message)
         self._extra_msgs.append(message)
-        return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
-    ) -> str:
+        **kwargs,
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
             reason: Optional reason for stopping.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
+        self._open_completion_gate()
         self._cancelled = True
         try:
             self._cancel_event.set()
         except Exception:
             pass
         self._done.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:
@@ -226,23 +222,20 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
         return "Resumed."
 
     def done(self) -> bool:  # type: ignore[override]
-        return self._done.is_set()
+        return self._done.is_set() and self._gate_open
 
     async def ask(
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         follow_up_prompt = build_followup_prompt(
             question=question,
@@ -271,14 +264,9 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -290,10 +278,7 @@ class _SimulatedGuidanceHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -321,14 +306,22 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
+        self._hold_completion = hold_completion
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
         # Shared, stateful LLM (memory across turns)
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedGuidanceManager",
+        )
 
         # Mirror the real manager's tool exposure programmatically and build
         # the same prompts via shared builders.
@@ -342,13 +335,13 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
             10,
             columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
         upd_msg = build_update_prompt(
             upd_tools,
             10,
             columns,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         sys_parts = [
             "You are a *simulated* guidance-manager assistant. ",
@@ -408,6 +401,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
             clarification_down_q=_clarification_down_q,
             mode="ask",
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         return handle
@@ -452,6 +446,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
             clarification_down_q=_clarification_down_q,
             mode="update",
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
 
         return handle
@@ -477,6 +472,7 @@ class SimulatedGuidanceManager(BaseGuidanceManager):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
         )
         if sched:
             label, cid, t0 = sched

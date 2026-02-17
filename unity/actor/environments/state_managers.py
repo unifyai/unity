@@ -1,3 +1,9 @@
+"""State manager environment for CodeActActor.
+
+Exposes state manager primitives (contacts, files, tasks, etc.) for use in
+generated plan code via the `primitives` namespace.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,93 +14,43 @@ from unity.actor.environments.base import (
     ToolMetadata,
     _ClarificationQueueInjector,
 )
-from unity.function_manager.primitives import (
-    MANAGER_METADATA,
-    get_primitive_sources,
-    Primitives,
-)
-
-
-class _FilteredPrimitivesProxy:
-    """Proxy that restricts access to only allowed managers.
-
-    When `exposed_managers` is set on StateManagerEnvironment, this proxy
-    is returned by `get_sandbox_instance()` instead of the raw Primitives object.
-    Accessing non-allowed managers raises AttributeError with a helpful message.
-
-    This is transparent to code that only uses allowed managers - all attributes
-    and methods work identically to the underlying Primitives instance.
-    """
-
-    # Managers that exist on Primitives (used for error messages)
-    _ALL_MANAGERS = frozenset(
-        {
-            "contacts",
-            "tasks",
-            "transcripts",
-            "knowledge",
-            "web",
-            "guidance",
-            "files",
-            "secrets",
-            "computer",
-        },
-    )
-
-    def __init__(self, primitives: Primitives, allowed_managers: Set[str]):
-        # Use object.__setattr__ to avoid triggering our __setattr__
-        object.__setattr__(self, "_primitives", primitives)
-        object.__setattr__(self, "_allowed", frozenset(allowed_managers))
-
-    def __getattr__(self, name: str) -> Any:
-        # Allow private/dunder attributes to pass through
-        if name.startswith("_"):
-            return getattr(self._primitives, name)
-
-        # Check if this is a manager access
-        if name in self._ALL_MANAGERS:
-            if name not in self._allowed:
-                raise AttributeError(
-                    f"Manager 'primitives.{name}' is not available in this sandbox. "
-                    f"Available managers: {sorted(self._allowed)}",
-                )
-
-        # Pass through to underlying Primitives
-        return getattr(self._primitives, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith("_"):
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._primitives, name, value)
-
-    def __repr__(self) -> str:
-        return f"<FilteredPrimitives allowed={sorted(self._allowed)}>"
+from unity.function_manager.primitives import Primitives, PrimitiveScope, get_registry
 
 
 class StateManagerEnvironment(BaseEnvironment):
-    """State manager environment backed by `unity.function_manager.primitives.Primitives`.
+    """State manager environment backed by scoped Primitives.
 
     Exposes state manager methods like `primitives.contacts.ask(...)` for use inside
     generated plan code.
 
     Parameters
     ----------
-    primitives : Primitives
-        The primitives instance to wrap.
-    exposed_managers : set[str] | None
-        If provided, only these managers will be exposed in tools and prompt context.
-        Example: {"files"} to only expose primitives.files.*
-        If None (default), all managers are exposed.
+    primitives : Primitives | None
+        The Primitives instance to wrap. If None, a default instance exposing
+        all managers is created. The instance is already scoped at construction
+        time via ``Primitives(primitive_scope=...)``.
+    allowed_methods : set[str] | None
+        Optional set of fully-qualified method names to expose (e.g.,
+        ``{"primitives.contacts.ask", "primitives.tasks.update"}``). When
+        set, only these methods appear in ``get_tools()`` and
+        ``get_prompt_context()``. When ``None`` (default), all methods
+        from scoped managers are exposed.
+    clarification_up_q : asyncio.Queue | None
+        Queue for sending clarification requests to the user.
+    clarification_down_q : asyncio.Queue | None
+        Queue for receiving clarification responses from the user.
     """
 
     def __init__(
         self,
-        primitives: Primitives,
-        exposed_managers: Optional[Set[str]] = None,
+        primitives: Optional[Primitives] = None,
+        *,
+        allowed_methods: Optional[Set[str]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
+        primitives = primitives or Primitives()
+
         super().__init__(
             instance=primitives,
             namespace="primitives",
@@ -102,32 +58,30 @@ class StateManagerEnvironment(BaseEnvironment):
             clarification_down_q=clarification_down_q,
         )
         self._primitives = primitives
-        self._exposed_managers = exposed_managers
+        self._primitive_scope = primitives.primitive_scope
+        self._allowed_methods = frozenset(allowed_methods) if allowed_methods else None
+        self._registry = get_registry()
 
     @property
     def namespace(self) -> str:
         return "primitives"
 
+    @property
+    def primitive_scope(self) -> PrimitiveScope:
+        """The scope controlling which managers are exposed."""
+        return self._primitive_scope
+
     def get_instance(self) -> Primitives:
-        """Return the primitives instance (always the full Primitives object)."""
+        """Return the primitives instance."""
         return self._primitives
 
     def get_sandbox_instance(self) -> Any:
-        """Return the instance for sandbox injection, filtered if exposed_managers is set.
+        """Return the instance for sandbox injection.
 
-        This is used by CodeExecutionSandbox in CodeActActor to inject a filtered proxy when
-        exposed_managers is set. For normal use cases (HierarchicalActor, etc.),
-        use get_instance() which always returns the full Primitives. This is a temporary
-        solution to avoid hardcoding the list of exposed managers in the CodeExecutionSandbox.
+        The Primitives instance is already scoped, so no additional filtering needed.
+        Optionally wraps for clarification queue injection.
         """
-        instance: Any
-        if self._exposed_managers is None:
-            instance = self._primitives
-        else:
-            instance = _FilteredPrimitivesProxy(
-                self._primitives,
-                self._exposed_managers,
-            )
+        instance: Any = self._primitives
 
         # Optionally wrap for clarification queue injection.
         if getattr(self, "_clarification_up_q", None) is None:
@@ -138,200 +92,170 @@ class StateManagerEnvironment(BaseEnvironment):
             clarification_down_q=self._clarification_down_q,
         )
 
-    def _infer_primitives_attr_name(self, cls_or_path) -> str | None:
-        """Infer the attribute name on Primitives from a class or class path."""
-        # Accept either a class object or a string path
-        if isinstance(cls_or_path, type):
-            class_name = cls_or_path.__name__
-        else:
-            class_name = cls_or_path.rsplit(".", 1)[-1]
-        for suffix in ("Manager", "Scheduler", "Searcher"):
-            if class_name.endswith(suffix):
-                class_name = class_name[: -len(suffix)]
-                break
-
-        base = class_name[:1].lower() + class_name[1:]
-        plural = f"{base}s"
-        if hasattr(Primitives, plural):
-            return plural
-        if hasattr(Primitives, base):
-            return base
-
-        special = {
-            "Task": "tasks",
-            "Contact": "contacts",
-            "Transcript": "transcripts",
-            "Secret": "secrets",
-            "Web": "web",
-            "File": "files",
-        }
-        for k, v in special.items():
-            if class_name == k and hasattr(Primitives, v):
-                return v
-        return None
-
-    def _is_manager_exposed(self, manager_attr: str) -> bool:
-        """Check if a manager should be exposed based on filtering."""
-        if self._exposed_managers is None:
-            return True
-        return manager_attr in self._exposed_managers
-
     def get_tools(self) -> Dict[str, ToolMetadata]:
-        """Get tool metadata, filtered by exposed_managers if set."""
-        # The public surface for state managers is driven by the shared primitives registry
-        # (`PRIMITIVE_SOURCES`) to avoid hardcoding manager/method lists in multiple places.
-        #
+        """Get tool metadata for exposed managers."""
         # IMPORTANT: We are intentionally conservative with purity:
         # - Only clearly read-only methods are treated as pure (cacheable).
         # - Unknown methods default to impure to avoid incorrectly caching side effects.
         pure_methods = {
             "ask",
-            "ask_about_file",  # FileManager read-only
+            "ask_about_file",
             "get",
             "list",
             "search",
             "exists",
             "parse",
             "preview",
-            "reduce",  # FileManager read-only
-            "filter_files",  # FileManager read-only
-            "search_files",  # FileManager read-only
-            "visualize",  # FileManager read-only (generates plots, no mutation)
-            "describe",  # FileManager read-only
-            "list_columns",  # FileManager read-only
+            "reduce",
+            "filter_files",
+            "search_files",
+            "visualize",
+            "describe",
+            "list_columns",
         }
 
         tools: Dict[str, ToolMetadata] = {}
-        for cls, method_names in get_primitive_sources():
-            # Skip ComputerPrimitives; those belong to the `computer_primitives` environment.
-            if cls.__name__ == "ComputerPrimitives":
-                continue
 
-            manager_attr = self._infer_primitives_attr_name(cls)
-            if not manager_attr:
-                # If the runtime `Primitives` interface doesn't expose this manager, skip it.
-                continue
-
-            # Apply exposed_managers filter
-            if not self._is_manager_exposed(manager_attr):
-                continue
-
+        for alias in sorted(self._primitive_scope.scoped_managers):
+            method_names = self._registry.primitive_methods(manager_alias=alias)
             for method_name in method_names:
-                fq_name = f"{self.namespace}.{manager_attr}.{method_name}"
+                fq_name = f"{self.namespace}.{alias}.{method_name}"
+                if (
+                    self._allowed_methods is not None
+                    and fq_name not in self._allowed_methods
+                ):
+                    continue
                 tools[fq_name] = ToolMetadata(
                     name=fq_name,
                     is_impure=(method_name not in pure_methods),
                     is_steerable=True,
                     docstring=None,
                     signature=None,
+                    function_id=self._registry.get_function_id(alias, method_name),
+                    function_context="primitive",
                 )
 
         return tools
 
     def get_prompt_context(self) -> str:
-        """Dynamically generate prompt context from PRIMITIVE_SOURCES + MANAGER_METADATA.
+        """Generate self-contained prompt context: rules, method docs, and examples."""
+        parts: list[str] = []
 
-        If exposed_managers is set, only those managers are included.
-        """
-        parts = ["### State manager primitives (`primitives.*`)\n"]
-        parts.append(
-            "Each manager owns a specific domain of the assistant's durable state. "
-            "Choose the right manager for your task:\n",
-        )
+        parts.append("""\
+### State Manager Rules
 
-        # Collect exposed managers with their metadata
-        exposed: list[tuple[str, list[str], dict]] = []
-        for cls, method_names in get_primitive_sources():
-            if cls.__name__ == "ComputerPrimitives":
+- **Do not answer from scratch when `primitives` is available**:
+  - If the user asks an information question, prefer calling the relevant \
+state manager via `await primitives.<manager>.ask(...)` instead of answering \
+purely from memory.
+  - This applies even when you think you "already know" the answer \
+— use the manager as evidence/ground truth.
+
+- **Read vs write**:
+  - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
+  - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` \
+are **impure** (they mutate state or start work).
+
+- **Prefer return values as evidence**: treat return values from state managers \
+as the primary ground truth.
+
+- **Steerable handles**: Manager calls return `SteerableToolHandle` objects for \
+in-flight control.
+  You can either **await the result** for immediate use, or **return the handle \
+as the last expression** of `execute_code` to hand steering control back to the \
+outer loop (see `execute_code` docstring).
+  Prefer returning the handle when the operation may be long-running or likely \
+to need user steering (progress updates, corrections, cancellation). Prefer \
+awaiting when you need the result immediately for additional logic in the same \
+code block. If intent is neutral or uncertain, default to returning the handle \
+and only await when same-block composition truly requires it.
+
+  **SteerableToolHandle API:**
+
+  | Method | Returns | Purpose |
+  |--------|---------|---------|
+  | `await handle.result()` | `str` | Wait for the final result |
+  | `await handle.ask(question)` | `SteerableToolHandle` | Query status without modifying execution |
+  | `await handle.interject(message)` | `None` | Inject corrections or context mid-flight |
+  | `await handle.pause()` | `str | None` | Pause at the next safe point |
+  | `await handle.resume()` | `str | None` | Resume a paused operation |
+  | `await handle.stop(reason=None)` | `None` | Terminate immediately |
+  | `handle.done()` | `bool` | Check if execution has completed |
+
+  ```python
+  handle = await primitives.tasks.execute(task_id=123)
+  result = await handle.result()  # wait for completion
+
+  # Mid-flight steering (while handle is running):
+  await handle.interject("Also include the Q2 numbers")
+  await handle.pause()   # pause if needed
+  await handle.resume()  # continue later
+  await handle.stop()    # cancel if no longer needed
+  ```""")
+
+        if self._allowed_methods is not None:
+            # Per-method filtering: build method docs only for allowed methods.
+            parts.append(self._build_filtered_method_docs())
+        else:
+            # Full registry-generated context (all methods for scoped managers).
+            registry_ctx = self._registry.prompt_context(self._primitive_scope)
+            if registry_ctx:
+                parts.append(registry_ctx)
+
+            examples = self._registry.prompt_examples(self._primitive_scope)
+            if examples:
+                parts.append(f"### Implementation Examples\n\n{examples}")
+
+        return "\n\n".join(p for p in parts if p and p.strip())
+
+    def _build_filtered_method_docs(self) -> str:
+        """Build method-level documentation for only the allowed methods."""
+        assert self._allowed_methods is not None
+
+        # Determine which managers have at least one allowed method.
+        allowed_aliases: dict[str, list[str]] = {}
+        for fq in sorted(self._allowed_methods):
+            parts = fq.split(".")
+            if len(parts) != 3 or parts[0] != self.namespace:
                 continue
+            alias, method = parts[1], parts[2]
+            allowed_aliases.setdefault(alias, []).append(method)
 
-            manager_attr = self._infer_primitives_attr_name(cls)
-            if not manager_attr:
-                continue
+        if not allowed_aliases:
+            return ""
 
-            if not self._is_manager_exposed(manager_attr):
-                continue
+        lines = ["### Method Reference\n"]
+        for alias in sorted(allowed_aliases):
+            spec = self._registry.get_manager_spec(alias)
+            mgr_cls = (
+                self._registry._load_manager_class(spec.primitive_class_path)
+                if spec
+                else None
+            )
 
-            meta = MANAGER_METADATA.get(manager_attr, {})
-            exposed.append((manager_attr, method_names, meta))
+            lines.append(f"\n#### `primitives.{alias}`")
+            if spec:
+                lines.append(f"*{spec.domain}* — {spec.description}")
 
-        # Sort by priority (lower = higher priority)
-        exposed.sort(key=lambda x: x[2].get("priority", 99))
-
-        for manager_attr, method_names, meta in exposed:
-            if not meta:
-                # Fallback for managers without metadata
-                parts.append(f"\n**`primitives.{manager_attr}`**")
-                parts.append(
-                    f"- Methods: {', '.join(f'`.{m}(...)`' for m in method_names)}",
+            for method_name in sorted(allowed_aliases[alias]):
+                sig_str = self._registry._format_method_signature(
+                    mgr_cls,
+                    method_name,
                 )
-                continue
+                full_doc = self._registry._extract_method_docstring(
+                    mgr_cls,
+                    method_name,
+                )
+                compact_doc = self._registry._extract_summary_and_params(full_doc)
+                lines.append(f"\n**`.{method_name}{sig_str}`**")
+                if compact_doc:
+                    for doc_line in compact_doc.splitlines():
+                        lines.append(f"  {doc_line}")
 
-            # Format: **Domain** → `primitives.manager`
-            parts.append(f"\n**{meta['domain']}** → `primitives.{manager_attr}`")
-            parts.append(f"- **Domain**: {meta['description']}")
-
-            # Show methods with their descriptions
-            methods_meta = meta.get("methods", {})
-            for method_name in method_names:
-                if method_name in methods_meta:
-                    parts.append(
-                        f"- `.{method_name}(...)`: {methods_meta[method_name]}",
-                    )
-                else:
-                    # Method exists but no description in metadata
-                    parts.append(f"- `.{method_name}(...)`")
-
-            # Add get_tools for files (special case - not in PRIMITIVE_SOURCES)
-            if manager_attr == "files" and "get_tools" in methods_meta:
-                parts.append(f"- `.get_tools()`: {methods_meta['get_tools']}")
-
-            if meta.get("use_when"):
-                parts.append(f"- **Use when**: {meta['use_when']}")
-
-            if meta.get("examples"):
-                parts.append(f"- **Examples**: {meta['examples']}")
-
-            if meta.get("special_note"):
-                parts.append(f"- **Note**: {meta['special_note']}")
-
-        # Add general rules only if multiple managers exposed
-        if len(exposed) > 1:
-            parts.append("\n**Manager Selection Priorities**:")
-            parts.append(
-                "1. **knowledge** takes priority for organizational policies, procedures, company facts, internal documentation",
-            )
-            parts.append(
-                "2. **transcripts** for historical communications (what was said/written)",
-            )
-            parts.append("3. **contacts** for people/relationship information")
-            parts.append("4. **tasks** for work items, deadlines, assignments")
-            parts.append(
-                "5. **web** for current external information (weather, news, real-time data)",
-            )
-            parts.append("6. **guidance** for execution instructions and runbooks")
-            parts.append(
-                "7. **files** when dealing with specific documents or data operations",
-            )
-
-            parts.append("\n**General Rules**:")
-            parts.append(
-                "- All manager calls return a steerable handle; await `.result()` to get the final answer",
-            )
-            parts.append(
-                "- If a manager asks for clarification, wait for the user response and answer via the handle's API",
-            )
-            parts.append(
-                "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed",
-            )
-            parts.append(
-                "- When in doubt between managers, prefer the most specific domain match",
-            )
-
-        return "\n".join(parts)
+        return "\n".join(lines)
 
     async def capture_state(self) -> Dict[str, Any]:
-        """State manager \"state\" is primarily evidenced via return values."""
+        """State manager state is primarily evidenced via return values."""
         return {
             "type": "return_value",
             "note": "State manager evidence is captured via function return values.",

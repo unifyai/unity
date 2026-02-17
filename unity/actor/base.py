@@ -7,20 +7,25 @@ from typing import Any, Dict, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.state_managers import BaseStateManager
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
-    from unity.function_manager.primitives import ComputerPrimitives
+    from unity.guidance_manager.guidance_manager import GuidanceManager
 
 __all__ = [
     "BaseActor",
     "BaseActorHandle",
     "PhoneCallHandle",
-    "BrowserSessionHandle",
+    "ComputerSessionHandle",
     "ComsManager",
+    "BaseCodeActActor",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -44,14 +49,14 @@ class BaseActor(ABC):
     Abstract contract that every concrete actor must satisfy.
 
     An actor is a component capable of performing work based on a natural
-    language description. It returns a steerable handle that can be paused,
+    language request. It returns a steerable handle that can be paused,
     resumed, interjected, or stopped. This type is intentionally decoupled
     from any task-specific terminology or lifecycle.
 
     Purpose and positioning
     -----------------------
     The Actor provides a direct, real-time handle to "act" in the world and
-    get things done – e.g. open a browser, click UI elements, or perform a
+    get things done – e.g. open a web page, click UI elements, or perform a
     short-lived sandbox session during a conversation.
 
     Intended use
@@ -67,7 +72,7 @@ class BaseActor(ABC):
     chat, especially when the activity involves controlling tools or a UI in
     short iterative steps. Typical phrasings include:
 
-    - "open a browser", "open a window", "navigate/click/show me"
+    - "open a web page", "open a window", "navigate/click/show me"
     - "walk me through", "let's set this up together", "guide me live"
     - "troubleshoot together", "pair on this", "step‑by‑step now"
 
@@ -83,45 +88,29 @@ class BaseActor(ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
         function_manager: Optional["FunctionManager"] = None,
-        # Computer-use params for default environment creation
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        agent_mode: str = "browser",
-        agent_server_url: str = "http://localhost:3000",
-        connect_now: bool = False,
-        # Clarification queue params for environment wiring
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
     ) -> None:
         """
         Shared initialization for concrete actor implementations.
 
         This centralizes:
-        - Environment setup with sensible defaults (browser + state managers)
+        - Environment dict construction from the provided list
         - FunctionManager resolution (registry fallback)
+        - GuidanceManager resolution (registry fallback)
         - Extraction of computer primitives for backward compatibility
         """
         self.environments: Dict[str, "BaseEnvironment"] = self._setup_environments(
             environments=environments,
-            computer_primitives=computer_primitives,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-            connect_now=connect_now,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
-        # Resolve FunctionManager (used by multiple actors for memoized skills).
         from unity.manager_registry import ManagerRegistry
 
         self.function_manager = (
             function_manager or ManagerRegistry.get_function_manager()
+        )
+        self.guidance_manager = (
+            guidance_manager or ManagerRegistry.get_guidance_manager()
         )
 
         # Backward-compat: some call sites expect an actor-level computer primitives instance.
@@ -131,56 +120,15 @@ class BaseActor(ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]],
-        computer_primitives: Optional["ComputerPrimitives"],
-        session_connect_url: Optional[str],
-        headless: bool,
-        computer_mode: str,
-        agent_mode: str,
-        agent_server_url: str,
-        connect_now: bool,
-        clarification_up_q: Optional[asyncio.Queue[str]],
-        clarification_down_q: Optional[asyncio.Queue[str]],
     ) -> Dict[str, "BaseEnvironment"]:
         """
-        Setup execution environments with defaults and optional clarification queues.
+        Build the environment namespace dict from the provided list.
 
         Returns:
             Dict keyed by environment namespace.
         """
-        from unity.actor.environments import (
-            ComputerEnvironment,
-            StateManagerEnvironment,
-        )
-        from unity.function_manager.primitives import ComputerPrimitives, Primitives
-
-        # If environments are explicitly provided, honor them and do not implicitly
-        # introduce a computer environment (domain-agnostic mode).
         if environments is None:
-            if computer_primitives is not None:
-                cp = computer_primitives
-            else:
-                cp = ComputerPrimitives(
-                    session_connect_url=session_connect_url,
-                    headless=headless,
-                    computer_mode=computer_mode,
-                    agent_mode=agent_mode,
-                    agent_server_url=agent_server_url,
-                    connect_now=connect_now,
-                )
-
-            primitives = Primitives()
-            environments = [
-                ComputerEnvironment(
-                    cp,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                ),
-                StateManagerEnvironment(
-                    primitives,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                ),
-            ]
+            environments = []
 
         env_map: Dict[str, "BaseEnvironment"] = {}
         for env in environments:
@@ -207,8 +155,9 @@ class BaseActor(ABC):
     @abstractmethod
     async def act(
         self,
-        description: str,
+        request: str,
         *,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -216,7 +165,7 @@ class BaseActor(ABC):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Perform work from a natural language description and return a steerable handle.
+        Perform work from a natural language request and return a steerable handle.
 
         This is the all-purpose method for engaging with knowledge, resources, and
         the world beyond immediate conversational context. Use ``act`` for any work
@@ -227,7 +176,7 @@ class BaseActor(ABC):
         - **Retrieval**: Search contact records, query knowledge bases, look up past
           conversations, find calendar events, search the web, retrieve files
         - **Action**: Send communications, update records, modify spreadsheets, control
-          the desktop/browser, schedule tasks, create reminders
+          the desktop/web interface, schedule tasks, create reminders
         - **Combined**: Find information and then act on it (e.g., "find David's email
           and send him a meeting invite")
 
@@ -247,10 +196,18 @@ class BaseActor(ABC):
         - Multiple ``act`` calls can run concurrently
 
         Args:
-            description: Natural language description of what to do. Can be a question
+            request: Natural language request specifying what to do. Can be a question
                 ("What is David's email?"), a command ("Send an email to David"), or
                 a combination ("Find David's email and send him a reminder").
-            clarification_enabled: Whether the actor can ask clarifying questions.
+            guidelines: Optional meta-guidance on *how* to approach the task, as
+                opposed to *what* to do. Examples: "don't install new python packages",
+                "use sub-agents for solving this task", "prefer simple solutions over
+                complex ones". When provided, these are injected into the system prompt
+                so the actor follows them throughout the session.
+            clarification_enabled: Whether the actor can request clarification from
+                its **caller** (i.e. whichever process holds the returned handle).
+                This does NOT surface questions to the end user directly — the
+                caller decides how (or whether) to resolve them.
             response_format: Optional Pydantic model for structured output.
             _parent_chat_context: Optional conversation context for continuity.
             _clarification_up_q: Queue for clarification requests (internal).
@@ -259,3 +216,55 @@ class BaseActor(ABC):
         Returns:
             A SteerableToolHandle for controlling and awaiting the result.
         """
+
+
+class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
+    """
+    Abstract contract for the CodeAct-style actor.
+
+    Notes
+    -----
+    - Still shares the global actor base class: `BaseActor`.
+    - Adds CodeAct-specific `act()` parameters (notifications, entrypoint, images) while
+      preserving manager tool-registration patterns via `BaseStateManager`.
+    """
+
+    _as_caller_description: str = (
+        "the CodeActActor, executing code-first actions on behalf of the end user"
+    )
+
+    def __init__(
+        self,
+        *,
+        environments: Optional[list["BaseEnvironment"]] = None,
+        function_manager: Optional["FunctionManager"] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
+    ) -> None:
+        BaseActor.__init__(
+            self,
+            environments=environments,
+            function_manager=function_manager,
+            guidance_manager=guidance_manager,
+        )
+        BaseStateManager.__init__(self)
+
+    @abstractmethod
+    async def act(
+        self,
+        request: str,
+        *,
+        guidelines: Optional[str] = None,
+        clarification_enabled: bool = True,
+        response_format: Optional[Type[BaseModel]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _call_id: Optional[str] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        entrypoint: Optional[int] = None,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
+        persist: bool = True,
+    ) -> SteerableToolHandle:
+        """Perform work from a natural-language request and return a steerable handle."""
+        raise NotImplementedError

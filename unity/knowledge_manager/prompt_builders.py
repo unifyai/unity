@@ -19,6 +19,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
 
@@ -82,7 +83,7 @@ def build_refactor_prompt(
     table_schemas_json: str,
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
-) -> str:
+) -> PromptParts:
     """
     Construct the system-prompt for :pymeth:`KnowledgeManager.refactor`.
 
@@ -292,7 +293,7 @@ Tool availability groups (for reference)
         ),
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
+        time_footer_prefix="Current UTC time is ",
     )
 
     return compose_system_prompt(spec)
@@ -304,7 +305,7 @@ def build_update_prompt(
     table_schemas_json: str,
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
-) -> str:
+) -> PromptParts:
     """
     Build the **system message** for `KnowledgeManager.update`.
 
@@ -522,7 +523,7 @@ Use the `{ask_fname}` method to see if you can find any missing context *before*
         + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
+        time_footer_prefix="Current UTC time is ",
     )
 
     return compose_system_prompt(spec)
@@ -535,7 +536,7 @@ def build_ask_prompt(
     include_activity: bool = True,
     case_specific_instructions: str | None = None,
     include_join_info: bool | None = None,
-) -> str:
+) -> PromptParts:
     """
     Build the **system message** for `KnowledgeManager.retrieve`.
     """
@@ -743,7 +744,7 @@ Do **not** hallucinate data.
         + ([case_specific_instructions.strip()] if case_specific_instructions else []),
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
+        time_footer_prefix="Current UTC time is ",
     )
 
     return compose_system_prompt(spec)
@@ -761,6 +762,7 @@ def build_simulated_method_prompt(
 ) -> str:
     """Return instruction prompt for *simulated* KnowledgeManager methods."""
     import json
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() in {"ask", "retrieve"}:
@@ -784,6 +786,6 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
     return "\n".join(parts)

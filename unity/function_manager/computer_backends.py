@@ -1,4 +1,3 @@
-import os
 import inspect
 import subprocess
 import time
@@ -14,7 +13,6 @@ import asyncio
 import functools
 import websockets
 from unity.session_details import SESSION_DETAILS
-from unity.settings import SETTINGS
 from unity.image_manager.utils import make_solid_png_base64
 
 logger = logging.getLogger("websockets")
@@ -31,33 +29,227 @@ class ComputerBackend(ABC):
     """
     Abstract Base Class defining the interface for any computer use backend.
 
-    Supports both browser automation (agent_mode="browser") and general
-    desktop/computer control (agent_mode="desktop") via vision-based agents.
+    Supports both desktop/computer control (agent_mode="desktop") and
+    web-only automation (agent_mode="web") via vision-based agents.
     """
 
     @abstractmethod
     async def act(self, instruction: str) -> str:
-        """Perform an action on the screen (browser or desktop)."""
+        """
+        Perform an autonomous action on the current page or screen.
+
+        Executes a natural language instruction by interpreting the current
+        visual state and performing the necessary UI interactions (clicks,
+        typing, scrolling, navigation, form filling, etc.). The agent is
+        **autonomous and can perform multiple steps** to achieve the goal
+        described in the instruction. It operates based on a visual
+        understanding of the current page/screen.
+
+        Guidance
+        --------
+        Write instructions at the **goal level**, not the action level. The
+        agent figures out the individual steps (find fields, type, click, etc.)
+        on its own.
+
+        **Good instructions (goal-level):**
+        - "Log into the account using username 'testuser' and password 'password123'."
+          (Agent finds the fields, types, and clicks the login button.)
+        - "Find the cheapest blue t-shirt on the page and add it to the cart."
+          (Agent visually scans, finds the item, clicks 'Add to Cart'.)
+        - "Click the 'Promotions' link in the navigation bar."
+
+        **Bad instructions (too low-level):**
+        - "Move the mouse to coordinate 250, 400, then click."
+          (Avoid pixel-level commands — let the agent handle element targeting.)
+
+        Parameters
+        ----------
+        instruction : str
+            High-level, natural language description of the desired outcome.
+            The agent autonomously determines the steps needed.
+
+        Returns
+        -------
+        str
+            Confirmation message describing what action was performed, or an
+            error message if the action could not be completed.
+        """
 
     @abstractmethod
     async def observe(self, query: str, response_format: Any = str) -> Any:
-        """Observe the state of the current page/screen."""
+        """
+        Observe and extract information from the current page or screen state.
+
+        Uses vision-based analysis to answer questions about what is currently
+        visible on the page/screen. This is a read-only operation that does not
+        modify the page state. The agent examines the visual content and extracts
+        the requested information. This is the primary tool for **perception**.
+
+        Guidance
+        --------
+        The agent uses a vision-language model, so its success depends on the
+        quality and clarity of the query.
+
+        **Key Principles for an Effective Query:**
+
+        1. **Be Specific and Descriptive**: Don't ask "what's on the page."
+           Instead of "get the product details," prefer "Extract the product
+           name from the top, the price listed in bold, and the author's name
+           below the title."
+
+        2. **Provide a Strategy for Non-Textual Elements**: For visual elements
+           like star ratings, progress bars, or icons, provide a method for
+           interpretation.
+           - Good: "For the star_rating, visually count the number of filled
+             yellow stars and provide it as a number (e.g., 4.0)."
+           - Bad: "Get the star rating." (Fails if the rating is not plain text.)
+
+        3. **Request Specific Data Types**: Guide the model to return the
+           correct data type (e.g., "Extract the number of reviews as an
+           integer", "Get the price as a float, without the currency symbol").
+
+        4. **Leverage Pydantic for Structure**: For any non-trivial extraction,
+           use a Pydantic model via ``response_format``. This forces the agent
+           to return clean, structured, and validated data.
+
+        5. **Embrace Optional Fields for Robustness**: Web pages are
+           unpredictable. Define fields that might not always be present as
+           ``Optional`` in Pydantic models to prevent failures.
+
+        6. **Resolve Visual Ambiguity**: If the page presents conflicting
+           information, instruct the model on how to resolve the conflict.
+           Prioritize the element that reflects the true state of the page.
+           - Bad: "Get the number of servings."
+           - Good: "Determine the active serving size multiplier. Identify
+             which button ('1/2X', '1X', '2X') is visually selected. IGNORE
+             any nearby static text like 'Original recipe yields...'."
+
+        **Bad Queries (HTML/DOM Specific):**
+        - "Get the href attribute of the 'About Us' link."
+          Instead, ask: "What is the destination URL of the 'About Us' link?"
+
+        Parameters
+        ----------
+        query : str
+            Natural language question about what to extract, and if necessary,
+            a strategy for visual interpretation.
+        response_format : type, default str
+            Expected return type. Can be ``str`` for plain text responses, or a
+            Pydantic model class for structured data extraction. When a Pydantic
+            model is provided, the response will be parsed and validated against
+            that schema. **Highly recommended for reliable extraction.**
+
+        Returns
+        -------
+        str | BaseModel
+            The extracted information. Returns a string when ``response_format=str``,
+            or an instance of the specified Pydantic model when a model class is
+            provided.
+        """
 
     @abstractmethod
     async def query(self, query: str, response_format: Any = str) -> Any:
-        """Query the agent's memory and action history."""
+        """
+        Query the agent's memory and action history.
+
+        Retrieves information from the agent's internal memory about past actions,
+        observations, and page states encountered during the current session. This
+        enables the agent to recall what it has done and seen, supporting multi-step
+        workflows that require context from earlier interactions.
+
+        **Key characteristics:**
+        - **Memory-focused**: Uses the agent's accumulated memory and context from
+          past actions.
+        - **Historical analysis**: Analyzes what happened during previous ``act()``
+          calls.
+        - **Context-aware**: Includes full agent memory context in the query.
+        - **No fresh content**: Does not capture new page content; works with
+          existing observations.
+
+        **Good queries (what the agent has done):**
+        - "Did the login attempt succeed?"
+        - "What were the steps you took to add the item to the cart?"
+        - "Summarize the actions you have performed so far."
+
+        **Bad queries (require live page content):**
+        - "What is the current price of the item on the page?" (Use ``observe``.)
+        - "Click the 'Submit' button." (Use ``act``.)
+
+        Parameters
+        ----------
+        query : str
+            Natural language question about the agent's history or memory.
+        response_format : type, default str
+            Expected return type. Can be ``str`` for plain text responses, or a
+            Pydantic model class for structured data extraction.
+
+        Returns
+        -------
+        str | BaseModel
+            Information from the agent's memory. Returns a string when
+            ``response_format=str``, or an instance of the specified Pydantic model
+            when a model class is provided.
+        """
 
     @abstractmethod
     async def get_screenshot(self) -> str:
-        """Get a base64 encoded screenshot of the current page."""
+        """
+        Capture a screenshot of the current page or screen.
+
+        Takes a visual snapshot of the current browser viewport (web mode) or
+        entire screen (desktop mode) and returns it as a base64-encoded PNG image.
+        This provides a visual record of the current state for debugging, logging,
+        or further analysis.
+
+        Returns
+        -------
+        str
+            Base64-encoded PNG image data representing the current screen state.
+            Can be decoded and saved as a .png file or embedded in HTML/markdown.
+        """
 
     @abstractmethod
     async def get_current_url(self) -> str:
-        """Get the current URL (browser mode) or active window info (desktop mode)."""
+        """
+        Get the current URL or active window information.
+
+        In web mode, returns the current browser URL. In desktop mode, returns
+        information about the currently active window (title, application name,
+        or other identifying details). This helps track navigation state and
+        context across multi-step workflows.
+
+        Returns
+        -------
+        str
+            In web mode: the current page URL (e.g., "https://example.com/page").
+            In desktop mode: active window information (e.g., window title or
+            application identifier).
+        """
 
     @abstractmethod
     async def navigate(self, url: str) -> str:
-        """Navigate to a specific URL."""
+        """
+        Navigate to a specific URL in the browser.
+
+        Directs the browser to load the specified URL. This is the primary method
+        for moving between pages in web mode. The method waits for the page to
+        load before returning. In desktop mode, this method may not be applicable
+        depending on the backend implementation.
+
+        Parameters
+        ----------
+        url : str
+            The target URL to navigate to. Should be a fully-qualified URL
+            including protocol (e.g., "https://example.com/page"). Relative URLs
+            may be supported depending on the backend implementation.
+
+        Returns
+        -------
+        str
+            Confirmation message indicating successful navigation, or an error
+            message if navigation failed (e.g., invalid URL, network error,
+            timeout).
+        """
 
     @abstractmethod
     async def get_links(
@@ -66,15 +258,76 @@ class ComputerBackend(ABC):
         selector: str = None,
         **kwargs,
     ) -> dict:
-        """Extract all links from the current page."""
+        """
+        Extract all links from the current page.
+
+        Scans the current page for hyperlinks and returns them in a structured
+        format. Supports filtering by domain and CSS selector to narrow results.
+        This is useful for discovering navigation options, scraping link
+        collections, or building site maps.
+
+        Parameters
+        ----------
+        same_domain : bool, default True
+            When True, only return links that point to the same domain as the
+            current page. When False, include all links regardless of domain
+            (including external links).
+        selector : str, optional
+            CSS selector to filter which elements are scanned for links. When
+            provided, only links within elements matching this selector are
+            returned. When None, all links on the page are considered.
+        **kwargs
+            Additional backend-specific filtering or formatting options.
+
+        Returns
+        -------
+        dict
+            Dictionary containing extracted links. Structure depends on backend
+            implementation but typically includes link URLs, anchor text, and
+            metadata about each link.
+        """
 
     @abstractmethod
     async def get_content(self, format: str = "markdown", **kwargs) -> dict:
-        """Get raw page content without LLM processing."""
+        """
+        Get raw page content without LLM processing.
+
+        Extracts the current page's content in a specified format without using
+        vision or LLM interpretation. This provides direct access to the page's
+        text, structure, or markup for parsing, analysis, or storage. Faster and
+        more deterministic than vision-based observation.
+
+        Parameters
+        ----------
+        format : str, default "markdown"
+            Desired output format for the page content. Common values include:
+            - "markdown": Convert page to markdown representation
+            - "html": Return raw HTML source
+            - "text": Extract plain text only
+            Backend implementations may support additional formats.
+        **kwargs
+            Additional backend-specific options for content extraction or
+            formatting.
+
+        Returns
+        -------
+        dict
+            Dictionary containing the extracted content. Structure depends on
+            backend implementation but typically includes the formatted content
+            string and metadata about the extraction.
+        """
 
     @abstractmethod
     def stop(self):
         """Cleanly shut down the backend."""
+
+    @abstractmethod
+    async def pause(self) -> None:
+        """Pause the agent's action loop at the next safe checkpoint."""
+
+    @abstractmethod
+    async def resume(self) -> None:
+        """Resume a paused agent's action loop."""
 
 
 # A valid 32x32 white PNG image encoded as base64 - used as default mock screenshot
@@ -154,6 +407,9 @@ class MockComputerBackend(ComputerBackend):
         wait: bool = True,
         context: dict = None,
         override_cache: bool = False,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **_kwargs: Any,
     ) -> Any:
         """Mock implementation of `MagnitudeBackend.act` (signature-compatible).
 
@@ -165,6 +421,9 @@ class MockComputerBackend(ComputerBackend):
 
         _ = context
         _ = override_cache
+        _ = _clarification_up_q
+        _ = _clarification_down_q
+        _ = _kwargs
         self._seq += 1
         if not wait:
             return "Command queued."
@@ -177,6 +436,9 @@ class MockComputerBackend(ComputerBackend):
         wait: bool = True,
         context: dict = None,
         bypass_dom_processing: bool = False,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **_kwargs: Any,
     ) -> Any:
         """Mock implementation of `MagnitudeBackend.observe` (signature-compatible)."""
 
@@ -184,6 +446,9 @@ class MockComputerBackend(ComputerBackend):
         _ = wait
         _ = context
         _ = bypass_dom_processing
+        _ = _clarification_up_q
+        _ = _clarification_down_q
+        _ = _kwargs
         self._seq += 1
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             # If a Pydantic model is requested, try to create an instance with defaults
@@ -193,8 +458,14 @@ class MockComputerBackend(ComputerBackend):
                 return self._observe_response
         return self._observe_response
 
-    async def query(self, query: str, response_format: Any = str) -> Any:
+    async def query(
+        self,
+        query: str,
+        response_format: Any = str,
+        **_kwargs: Any,
+    ) -> Any:
         """Returns the configured query response."""
+        _ = _kwargs
         self._seq += 1
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             try:
@@ -211,8 +482,17 @@ class MockComputerBackend(ComputerBackend):
         """Returns the configured URL."""
         return self._url
 
-    async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
+    async def navigate(
+        self,
+        url: str,
+        wait: bool = True,
+        context: dict = None,
+        **_kwargs: Any,
+    ) -> str:
         """Updates the internal URL and returns success."""
+        _ = wait
+        _ = context
+        _ = _kwargs
         self._url = url
         self._seq += 1
         return "success"
@@ -268,6 +548,22 @@ class MockComputerBackend(ComputerBackend):
         In the mock, there's nothing to interrupt.
         """
 
+    async def pause(self) -> None:
+        """
+        No-op pause for mock backend.
+
+        In MagnitudeBackend this pauses the agent's action loop.
+        In the mock, there's nothing to pause.
+        """
+
+    async def resume(self) -> None:
+        """
+        No-op resume for mock backend.
+
+        In MagnitudeBackend this resumes a paused agent's action loop.
+        In the mock, there's nothing to resume.
+        """
+
     async def clear_pending_commands(self, run_id: int) -> None:
         """
         No-op clear for mock backend.
@@ -285,7 +581,7 @@ class MagnitudeBackend(ComputerBackend):
         self,
         agent_server_url: str = "http://localhost:3000",
         headless: bool = False,
-        agent_mode: str = "browser",
+        agent_mode: str = "desktop",
         **kwargs,
     ):
         self.agent_mode = agent_mode
@@ -422,9 +718,8 @@ class MagnitudeBackend(ComputerBackend):
 
         # Prepare authentication headers
         auth_key = SESSION_DETAILS.unify_key
-        assistant_email = SESSION_DETAILS.assistant.email
         headers = {
-            "Authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+            "Authorization": f"Bearer {auth_key}",
         }
 
         while True:
@@ -578,11 +873,9 @@ class MagnitudeBackend(ComputerBackend):
         retries = 3
         for attempt in range(retries):
             try:
-                # Build auth header: "authorization: Bearer <UNIFY_KEY> <ASSISTANT_EMAIL>"
                 auth_key = SESSION_DETAILS.unify_key
-                assistant_email = SESSION_DETAILS.assistant.email
                 headers = {
-                    "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+                    "authorization": f"Bearer {auth_key}",
                 }
                 async with aiohttp.ClientSession() as session:
                     async with session.request(
@@ -594,18 +887,12 @@ class MagnitudeBackend(ComputerBackend):
                     ) as resp:
                         if resp.status >= 400:
                             try:
-                                from unity.actor.hierarchical_actor import (
-                                    ReplanFromParentException,
-                                )
-
                                 error_data = await resp.json()
                                 error_type = error_data.get(
                                     "error",
                                     "unknown_http_error",
                                 )
                                 message = error_data.get("message", "No error message.")
-                                if error_type == "misalignment":
-                                    raise ReplanFromParentException(message)
                                 raise ComputerAgentError(error_type, message)
                             except Exception as e:
                                 raise ComputerAgentError(
@@ -628,9 +915,8 @@ class MagnitudeBackend(ComputerBackend):
         try:
             url = f"{MagnitudeBackend._agent_base_url}{endpoint}"
             auth_key = SESSION_DETAILS.unify_key
-            assistant_email = SESSION_DETAILS.assistant.email
             headers = {
-                "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
+                "authorization": f"Bearer {auth_key}",
             }
 
             if payload is None:
@@ -664,229 +950,6 @@ class MagnitudeBackend(ComputerBackend):
         except Exception as e:
             raise RuntimeError(f"Could not reach agent-service {endpoint}: {e}")
 
-    def _load_persistent_data(self):
-        """
-        Load all files and folders in the assistant's data directory from a remote endpoint.
-        """
-        # list all files in /tmp/unify/assistant/install through the endpoint, then for each file, save in local /tmp/unify/assistant/install
-        logger.info("🐍 PYTHON: Loading persistent installs...")
-        try:
-            orchestra_url = SETTINGS.UNIFY_BASE_URL
-            dl_endpoint = f"{orchestra_url}/admin/file/download_url"
-
-            user_id = SESSION_DETAILS.user.id
-            assistant_name = SESSION_DETAILS.assistant.name
-            project = "Assistants"
-
-            headers = {
-                "Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}",
-            }
-
-            os.makedirs("/tmp/unify/assistant/install", exist_ok=True)
-            os.makedirs("/tmp/unify/assistant/deb", exist_ok=True)
-
-            # Download folders via prefix (assistant-scoped)
-            for prefix_folder in ["home/install", "home/deb"]:
-                try:
-                    # Request signed URLs for all files under the prefix
-
-                    dl_resp = http.get(
-                        dl_endpoint,
-                        params={
-                            "user_id": user_id,
-                            "project_name": project,
-                            "path": f"{assistant_name}/{prefix_folder}",
-                            "staging": "staging" in orchestra_url,
-                            "expires_in": 5 * 60,
-                            "as_prefix": True,
-                        },
-                        headers=headers,
-                        timeout=60,
-                        raise_for_status=False,
-                    )
-                    if dl_resp.status_code >= 400:
-                        logger.info(
-                            f"Warning: download_url (prefix) failed for {prefix_folder}: {dl_resp.status_code} {dl_resp.text[:200]}",
-                        )
-                        continue
-                    payload = dl_resp.json() or {}
-                    items = payload.get("items", [])
-                    for it in items:
-                        try:
-                            full_path = it.get(
-                                "path",
-                                "",
-                            )  # e.g., user/project/assistant/tmp/unify/assistant/install/file
-                            url = it.get("download_url")
-                            if not full_path or not url:
-                                continue
-                            # Derive local absolute path by stripping up to '/<assistant_name>/'
-                            marker = f"/{assistant_name}/"
-                            idx = full_path.find(marker)
-                            if idx == -1:
-                                continue
-                            rel_from_assistant = full_path[idx + len(marker) :]
-                            local_path = (
-                                "/" + rel_from_assistant
-                            )  # starts with home/install or home/deb
-                            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                            bin_resp = http.get(
-                                url,
-                                timeout=300,
-                                raise_for_status=False,
-                            )
-                            if bin_resp.status_code >= 400:
-                                logger.info(
-                                    f"Warning: download content failed for {full_path}: {bin_resp.status_code}",
-                                )
-                                continue
-                            with open(local_path, "wb") as f:
-                                f.write(bin_resp.content)
-                        except Exception as e:
-                            logger.info(
-                                f"Warning: Could not restore item under {prefix_folder}: {e}",
-                            )
-                except Exception as e:
-                    logger.info(f"Warning: Could not list prefix {prefix_folder}: {e}")
-
-        except Exception as e:
-            logger.info(f"Warning: Could not query remote files for persistence: {e}")
-
-        # Install downloaded/custom deb files
-        if os.path.exists("/tmp/unify/assistant/deb"):
-            for deb_file in os.listdir("/tmp/unify/assistant/deb"):
-                try:
-                    subprocess.run(
-                        [
-                            "dpkg",
-                            "-i",
-                            os.path.join("/tmp/unify/assistant/deb", deb_file),
-                        ],
-                        check=True,
-                    )
-                except Exception as e:
-                    logger.info(f"Warning: Could not install {deb_file}: {e}")
-
-        # Optionally install packages recorded in apt-manual.txt if present
-        try:
-            if os.path.exists("/tmp/unify/assistant/install/apt-manual.txt"):
-                subprocess.run(
-                    [
-                        "xargs",
-                        "-a",
-                        "/tmp/unify/assistant/install/apt-manual.txt",
-                        "apt-get",
-                        "install",
-                        "-y",
-                    ],
-                    check=True,
-                )
-        except Exception as e:
-            logger.info(
-                f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
-            )
-
-    def _save_persistent_data(self):
-        """
-        Save all files and folders in the assistant's data directory by sending them
-        to a remote endpoint for persistence.
-        """
-        logger.info("🐍 PYTHON: Saving persistent installs...")
-        try:
-            subprocess.run(
-                ["apt-mark", "showmanual"],
-                check=True,
-                stdout=open("/tmp/unify/assistant/install/apt-manual.txt", "w"),
-            )
-            # Now sort the file in place
-            with open("/tmp/unify/assistant/install/apt-manual.txt", "r") as f:
-                lines = f.readlines()
-            lines.sort()
-            with open("/tmp/unify/assistant/install/apt-manual.txt", "w") as f:
-                f.writelines(lines)
-        except Exception as e:
-            logger.info(f"Warning: Could not save apt manual package list: {e}")
-
-        # save files in /tmp/unify/assistant/install folder with the endpoint
-        try:
-            # Iterate local files and upload each via signed upload URL
-            orchestra_url = SETTINGS.UNIFY_BASE_URL
-            up_endpoint = f"{orchestra_url}/admin/file/upload_url"
-            user_id = SESSION_DETAILS.user.id
-            project = f"Assistants"
-            headers = {
-                "Authorization": f"Bearer {SETTINGS.ORCHESTRA_ADMIN_KEY}",
-                "Content-Type": "application/json",
-            }
-
-            def _iter_local_files(root_dir: str):
-                assistant_name = SESSION_DETAILS.assistant.name
-                for r, _, files in os.walk(root_dir):
-                    for fn in files:
-                        ap = os.path.join(r, fn)
-                        rel = os.path.relpath(ap, root_dir)
-                        base = root_dir.lstrip("/")  # e.g., home/install or home/deb
-                        key = os.path.join(assistant_name, base, rel)
-                        yield key, ap
-
-            for base_dir in [
-                "/tmp/unify/assistant/install",
-                "/tmp/unify/assistant/deb",
-            ]:
-                if not os.path.exists(base_dir):
-                    continue
-                for key, abs_path in _iter_local_files(base_dir):
-                    try:
-                        # 1) Request upload URL for this file
-                        req = {
-                            "user_id": user_id,
-                            "project_name": project,
-                            "path": key,
-                            "staging": "staging" in orchestra_url,
-                            "content_type": "application/octet-stream",
-                        }
-                        up_resp = http.post(
-                            up_endpoint,
-                            json=req,
-                            headers=headers,
-                            timeout=60,
-                            raise_for_status=False,
-                        )
-                        if up_resp.status_code >= 400:
-                            logger.info(
-                                f"Warning: upload_url failed for {key}: {up_resp.status_code} {up_resp.text[:200]}",
-                            )
-                            continue
-                        upload_url = up_resp.json().get("upload_url")
-                        if not upload_url:
-                            continue
-                        # 2) Upload bytes to signed URL (single-shot resumable PUT)
-                        with open(abs_path, "rb") as fp:
-                            data = fp.read()
-                        total = len(data)
-                        put_headers = {
-                            "Content-Type": "application/octet-stream",
-                            "Content-Length": str(total),
-                            "Content-Range": f"bytes 0-{total-1}/{total}",
-                        }
-                        put_resp = http.put(
-                            upload_url,
-                            data=data,
-                            headers=put_headers,
-                            timeout=600,
-                            raise_for_status=False,
-                        )
-                        if put_resp.status_code not in (200, 201, 204):
-                            logger.info(
-                                f"Warning: upload failed for {key}: {put_resp.status_code} {put_resp.text[:200]}",
-                            )
-                    except Exception as e:
-                        logger.info(f"Warning: Could not upload {key}: {e}")
-        except Exception as e:
-            logger.info(
-                f"Warning: Could not enumerate /tmp/unify/assistant/install for persistence: {e}",
-            )
-
     async def act(
         self,
         instruction: str,
@@ -897,7 +960,7 @@ class MagnitudeBackend(ComputerBackend):
         """
         Executes a high-level computer task using the Magnitude agent.
 
-        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the page.
+        This tool is **autonomous and can perform multiple steps** (e.g., typing, clicking, scrolling) to achieve the goal described in the instruction. It operates based on a visual understanding of the current web view.
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
@@ -980,6 +1043,24 @@ class MagnitudeBackend(ComputerBackend):
                 f"⚠️ Warning: Failed to send interrupt request. The action may continue in the background. Error: {e}",
             )
 
+    async def pause(self) -> None:
+        """Pauses the agent's action loop at the next safe checkpoint."""
+        try:
+            await self._request("POST", "/pause")
+        except Exception as e:
+            logger.info(
+                f"⚠️ Warning: Failed to send pause request. Error: {e}",
+            )
+
+    async def resume(self) -> None:
+        """Resumes a paused agent's action loop."""
+        try:
+            await self._request("POST", "/resume")
+        except Exception as e:
+            logger.info(
+                f"⚠️ Warning: Failed to send resume request. Error: {e}",
+            )
+
     async def observe(
         self,
         query: str,
@@ -993,6 +1074,9 @@ class MagnitudeBackend(ComputerBackend):
 
         This is your primary tool for perception. The agent uses a vision-language model to
         analyze the page, so its success depends entirely on the quality and clarity of your `query`.
+
+        This is a perception tool for what is *currently visible* in the web view or
+        on-screen desktop. It is NOT a general-purpose data access tool.
 
         **Key Principles for an Effective Query:**
 
@@ -1248,9 +1332,6 @@ class MagnitudeBackend(ComputerBackend):
 
     def stop(self):
         """Stops the Node.js service subprocess and cancels background tasks."""
-        # if "localhost:3000" in self.agent_base_url:
-        #     self._save_persistent_data()
-
         # Cancel the new asyncio tasks
         if self._log_stream_task and not self._log_stream_task.done():
             self._log_stream_task.cancel()

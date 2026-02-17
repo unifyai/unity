@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-
 logger = logging.getLogger(__name__)
 
 from ....common.context_store import TableStore
@@ -347,23 +346,15 @@ def resolve_storage_id(
 def describe_file(
     file_manager: "FileManager",
     *,
-    file_path: Optional[str] = None,
-    file_id: Optional[int] = None,
+    file_path: str,
 ) -> "FileStorageMap":
     """
     Return a complete storage representation of a file in the Unify backend.
 
-    This is the primary discovery tool for understanding a file's status and
-    storage. It returns existence/status info, all context paths, schemas,
-    and identifiers needed for accurate filter/search/reduce operations.
-
     Parameters
     ----------
-    file_path : str, optional
-        The filesystem path of the file. Either file_path or file_id must be provided.
-    file_id : int, optional
-        The stable unique identifier from FileRecords. Either file_path or file_id
-        must be provided.
+    file_path : str
+        The filesystem path of the file.
 
     Returns
     -------
@@ -373,40 +364,6 @@ def describe_file(
         - Identity: file_id, file_path, storage_id, source_uri, source_provider
         - Config: table_ingest, file_format
         - Storage: document (/Content), tables (/Tables/<name>), index_context
-
-    Raises
-    ------
-    ValueError
-        If neither file_path nor file_id is provided.
-
-    Examples
-    --------
-    >>> # Describe by file path - works even if not indexed
-    >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
-    >>> if not storage.indexed_exists:
-    ...     print("File exists but not indexed yet")
-    ...     file_manager.ingest_files("/reports/Q4.csv")
-    >>> elif storage.parsed_status != "success":
-    ...     print(f"Parsing failed: {storage.parsed_status}")
-    >>> else:
-    ...     print(f"Tables: {storage.table_names}")
-
-    >>> # Use the context path for queries
-    >>> if storage.has_tables:
-    ...     results = data_manager.filter(
-    ...         context=storage.tables[0].context_path,
-    ...         filter="revenue > 1000000"
-    ...     )
-
-    >>> # Describe by file_id (faster, no path resolution needed)
-    >>> storage = file_manager.describe(file_id=42)
-
-    Notes
-    -----
-    - describe() never raises for missing files; check indexed_exists instead.
-    - filesystem_exists is checked via the adapter if file_path is provided.
-    - Storage info (document/tables) is only populated when parsed_status='success'.
-    - Context paths use storage_id for stability across renames.
     """
     from ...types.describe import (
         FileStorageMap,
@@ -414,9 +371,6 @@ def describe_file(
         TableInfo,
         ContextSchema,
     )
-
-    if file_path is None and file_id is None:
-        raise ValueError("Either file_path or file_id must be provided")
 
     dm = file_manager._data_manager
 
@@ -428,7 +382,7 @@ def describe_file(
     table_ingest: bool = True
     file_format: Optional[str] = None
 
-    resolved_file_id: Optional[int] = file_id
+    resolved_file_id: Optional[int] = None
     resolved_file_path: Optional[str] = file_path
     source_uri: Optional[str] = None
     source_provider: Optional[str] = None
@@ -457,7 +411,7 @@ def describe_file(
 
         entry = rows[0]
         indexed_exists = True
-        resolved_file_id = entry.get("file_id", file_id)
+        resolved_file_id = entry.get("file_id")
         resolved_file_path = entry.get("file_path", file_path)
         source_uri = entry.get("source_uri")
         source_provider = entry.get("source_provider")
@@ -467,21 +421,8 @@ def describe_file(
         file_format = entry.get("file_format")
         return True
 
-    # Resolve from file_id first (most direct)
-    if file_id is not None:
-        try:
-            rows = dm.filter(
-                context=file_manager._ctx,
-                filter=f"file_id == {file_id}",
-                limit=1,
-                columns=index_fields,
-            )
-            _process_index_entry(rows)
-        except Exception as e:
-            logger.warning(f"Failed to lookup file_id={file_id}: {e}")
-
-    # If not found by file_id, try file_path
-    if not indexed_exists and file_path is not None:
+    # Resolve by file_path
+    if not indexed_exists:
         # Try by source_uri first (more reliable)
         resolve_to_uri = getattr(file_manager, "_resolve_to_uri", None)
         if resolve_to_uri:
@@ -577,8 +518,17 @@ def describe_file(
             content_columns = dm.get_columns(content_ctx)
             if content_columns:
                 columns = _fields_to_column_info(content_columns)
+                # Try to get context description
+                content_description: Optional[str] = None
+                try:
+                    content_meta = dm.get_table(content_ctx)
+                    if isinstance(content_meta, dict):
+                        content_description = content_meta.get("description")
+                except Exception:
+                    pass
                 document_info = DocumentInfo(
                     context_path=content_ctx,
+                    description=content_description,
                     column_schema=ContextSchema(columns=columns),
                     row_count=None,  # Fetch on-demand with reduce()
                 )
@@ -603,6 +553,11 @@ def describe_file(
                     if not table_name:
                         continue
 
+                    # Extract table description from context info
+                    table_description: Optional[str] = None
+                    if isinstance(ctx_info, dict):
+                        table_description = ctx_info.get("description")
+
                     # Get table schema
                     try:
                         table_columns = dm.get_columns(ctx_path)
@@ -613,6 +568,7 @@ def describe_file(
                                 context_path=ctx_path,
                                 column_schema=ContextSchema(columns=columns),
                                 row_count=None,  # Fetch on-demand with reduce()
+                                description=table_description,
                             ),
                         )
                     except Exception:
@@ -623,6 +579,7 @@ def describe_file(
                                 context_path=ctx_path,
                                 column_schema=ContextSchema(columns=[]),
                                 row_count=None,
+                                description=table_description,
                             ),
                         )
         except Exception as e:

@@ -13,150 +13,290 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
+import multer from 'multer';
+import { jsonSchemaToZod } from './jsonSchemaToZod';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- JSON Schema to Zod Conversion Utility ---
-function jsonSchemaToZod(schema: any, definitions: any = {}, visitedRefs = new Set<string>()): ZodTypeAny {
-  if (typeof schema !== 'object' || schema === null) {
-    return z.any();
+// --- File System and Command Execution Utilities ---
+//
+// Workspace root for file operations, command execution, and browser downloads.
+// Matches Unity's get_local_root() default of ~/Unity/Local.
+// Override via UNITY_LOCAL_ROOT env var.
+const LOCAL_ROOT = process.env.UNITY_LOCAL_ROOT || path.join(os.homedir(), 'Unity', 'Local');
+try { fs.mkdirSync(LOCAL_ROOT, { recursive: true }); } catch (_e) { /* ignore */ }
+const DEFAULT_EXEC_TIMEOUT = 60 * 60 * 1000; // 1 hour
+
+
+// Multer configuration for multipart file uploads
+const uploadTempDir = path.join(os.tmpdir(), 'unity-uploads');
+try {
+  fs.mkdirSync(uploadTempDir, { recursive: true });
+} catch (_e) {
+  // ignore
+}
+
+const uploadMiddleware = multer({
+  dest: uploadTempDir,
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500MB per file
+    files: 100,
+  },
+});
+
+function sanitizePath(filename: string, baseDir: string): string {
+  const resolved = path.resolve(baseDir, filename);
+  const normalizedBase = path.resolve(baseDir);
+  if (!resolved.startsWith(normalizedBase + path.sep) && resolved !== normalizedBase) {
+    throw new Error(`Path traversal blocked: ${filename}`);
+  }
+  return resolved;
+}
+
+async function ensureDir(dirPath: string): Promise<void> {
+  await fs.promises.mkdir(dirPath, { recursive: true });
+}
+
+async function writeFileWithEncoding(
+  filepath: string,
+  content: string,
+  encoding: 'text' | 'base64' = 'text'
+): Promise<void> {
+  await ensureDir(path.dirname(filepath));
+  if (encoding === 'base64') {
+    const buffer = Buffer.from(content, 'base64');
+    await fs.promises.writeFile(filepath, buffer);
+  } else {
+    await fs.promises.writeFile(filepath, content, 'utf-8');
+  }
+}
+
+async function readFileWithEncoding(
+  filepath: string,
+  encoding: 'text' | 'base64' = 'text'
+): Promise<string> {
+  const buffer = await fs.promises.readFile(filepath);
+  return encoding === 'base64' ? buffer.toString('base64') : buffer.toString('utf-8');
+}
+
+interface ExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  duration: number;
+}
+
+type ShellMode = 'cmd' | 'powershell';
+
+function getShellConfig(shellMode: ShellMode): string | boolean {
+  const isWindows = process.platform === 'win32';
+
+  if (!isWindows) {
+    return true;  // Use default /bin/sh on Unix
   }
 
-  // Use root definitions if provided, otherwise extract from the current schema
-  const defs = Object.keys(definitions).length > 0 ? definitions : (schema.$defs || schema.definitions || {});
-
-  // Handle references and recursion
-  if (schema.$ref) {
-    const refName = schema.$ref;
-    if (visitedRefs.has(refName)) {
-      // If we've seen this ref in the current path, it's a recursive type.
-      // We return a lazy schema that will resolve later.
-      return z.lazy(() => jsonSchemaToZod({$ref: refName}, defs, new Set([...visitedRefs])));
-    }
-
-    visitedRefs.add(refName);
-
-    const refPath = refName.split('/');
-    const defName = refPath.pop();
-    const resolvedSchema = defs[defName];
-
-    if (!resolvedSchema) {
-      throw new Error(`Could not resolve schema reference: ${refName}`);
-    }
-    // Pass the definitions down to the recursive call
-    return jsonSchemaToZod(resolvedSchema, defs, visitedRefs);
+  if (shellMode === 'cmd') {
+    return 'cmd.exe';
   }
 
-  // Handle unions and optionals
-  if (schema.anyOf) {
-    const nonNullTypes = schema.anyOf.filter((s: any) => s.type !== 'null');
+  // PowerShell (default on Windows)
+  return 'powershell.exe';
+}
 
-    // Check if this is a simple optional type (e.g., string | null)
-    if (schema.anyOf.length > nonNullTypes.length && nonNullTypes.length === 1) {
-      const baseSchema = { ...schema, ...nonNullTypes[0] };
-      delete baseSchema.anyOf; // Prevent infinite recursion
+function executeCommand(command: string, cwd: string, timeout: number, shellMode: ShellMode = 'powershell'): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
 
-      // Recursively call jsonSchemaToZod on the now-complete schema and make it optional
-      return jsonSchemaToZod(baseSchema, defs, visitedRefs).optional().nullable();
+    const proc = spawn(command, [], {
+      shell: getShellConfig(shellMode),
+      cwd,
+      timeout,
+    });
+
+    proc.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('error', (err) => {
+      stderr += err.message;
+    });
+
+    proc.on('close', (code, signal) => {
+      const duration = Date.now() - startTime;
+      if (signal === 'SIGTERM') {
+        killed = true;
+        stderr += `\nProcess killed after ${timeout}ms timeout`;
+      }
+      resolve({
+        exitCode: code ?? (killed ? 124 : 1),
+        stdout,
+        stderr,
+        duration,
+      });
+    });
+  });
+}
+
+// Execute command in interactive user session (for COM automation like Excel)
+async function executeCommandInUserSession(
+  command: string,
+  cwd: string,
+  timeout: number,
+  execId: string
+): Promise<ExecResult> {
+  const startTime = Date.now();
+  const taskName = `unity_exec_${execId}`;
+  const scriptFile = path.join(LOCAL_ROOT, `_script_${execId}.ps1`);
+  const resultFile = path.join(LOCAL_ROOT, `_result_${execId}.json`);
+
+  // Escape single quotes for PowerShell
+  const escapedCwd = cwd.replace(/\\/g, '\\\\').replace(/'/g, "''");
+  const escapedCommand = command.replace(/'/g, "''");
+  const escapedResultFile = resultFile.replace(/\\/g, '\\\\');
+
+  // PowerShell script that executes command and saves results to JSON
+  const scriptContent = `
+$ErrorActionPreference = 'Continue'
+$startTime = Get-Date
+$stdout = ''
+$stderr = ''
+$exitCode = 0
+
+try {
+    Set-Location -Path '${escapedCwd}'
+    $output = Invoke-Expression '${escapedCommand}' 2>&1
+    $stdout = ($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "\`n"
+    $stderr = ($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "\`n"
+} catch {
+    $stderr = $_.Exception.Message
+    $exitCode = 1
+}
+
+$duration = ((Get-Date) - $startTime).TotalMilliseconds
+
+$resultJson = @{
+    exitCode = $exitCode
+    stdout = $stdout
+    stderr = $stderr
+    duration = [int]$duration
+} | ConvertTo-Json
+
+# Write without BOM (Out-File adds BOM which breaks JSON.parse in Node.js)
+[System.IO.File]::WriteAllText('${escapedResultFile}', $resultJson, [System.Text.UTF8Encoding]::new($false))
+`;
+
+  await writeFileWithEncoding(scriptFile, scriptContent, 'text');
+
+  const escapedScriptFile = scriptFile.replace(/\\/g, '\\\\');
+
+  // PowerShell script to create and run scheduled task in user session
+  const createTaskScript = `
+$taskName = '${taskName}'
+$scriptPath = '${escapedScriptFile}'
+
+# Get the currently logged-in user
+$loggedInUser = (Get-WmiObject -Class Win32_ComputerSystem).UserName
+
+if (-not $loggedInUser) {
+    Write-Error 'No user logged in'
+    exit 1
+}
+
+Write-Host "Running task as user: $loggedInUser"
+
+# Create scheduled task action (hidden window)
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$scriptPath\`""
+
+# Create principal for interactive user session
+$principal = New-ScheduledTaskPrincipal -UserId $loggedInUser -LogonType Interactive -RunLevel Highest
+
+# Register and run the task
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+Start-ScheduledTask -TaskName $taskName
+
+# Wait for task to complete
+$maxWait = ${timeout}
+$waited = 0
+while ($waited -lt $maxWait) {
+    Start-Sleep -Milliseconds 500
+    $waited += 500
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task.State -eq 'Ready') {
+        break
     }
+}
 
-    // Fallback for more complex unions (e.g., string | number)
-    const unionTypes = schema.anyOf.map((s: any) => jsonSchemaToZod(s, defs, visitedRefs));
-    return z.union(unionTypes as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
-  }
+# Cleanup task
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+`;
 
-  // Handle type arrays
-  if (Array.isArray(schema.type)) {
-      // This is another common pattern for Optional fields.
-      const hasNull = schema.type.includes('null');
-      const nonNullTypes = schema.type.filter((t: string) => t !== 'null');
+  return new Promise((resolve) => {
+    const proc = spawn(createTaskScript, [], {
+      shell: 'powershell.exe',
+      cwd: LOCAL_ROOT,
+      timeout,
+    });
 
-      if (hasNull && nonNullTypes.length === 1) {
-          // This handles cases like `type: ['number', 'null']`
-          const baseType = jsonSchemaToZod({ ...schema, type: nonNullTypes[0] }, defs, visitedRefs);
-          return baseType.optional().nullable();
+    let createStdout = '';
+    let createStderr = '';
+
+    proc.stdout.on('data', (data) => {
+      createStdout += data.toString();
+    });
+
+    proc.stderr.on('data', (data) => {
+      createStderr += data.toString();
+    });
+
+    proc.on('close', async () => {
+      let result: ExecResult = {
+        exitCode: 1,
+        stdout: createStdout,
+        stderr: createStderr || 'Task execution failed',
+        duration: Date.now() - startTime,
+      };
+
+      // Wait a moment for result file to be written
+      await new Promise(r => setTimeout(r, 1000));
+
+      try {
+        const resultJson = await fs.promises.readFile(resultFile, 'utf-8');
+        const parsed = JSON.parse(resultJson);
+        result = {
+          exitCode: parsed.exitCode ?? 0,
+          stdout: parsed.stdout ?? '',
+          stderr: parsed.stderr ?? '',
+          duration: parsed.duration ?? (Date.now() - startTime),
+        };
+      } catch (e) {
+        result.stderr += `\nFailed to read result file: ${e}`;
       }
 
-      const types = schema.type.map((type: string) => jsonSchemaToZod({ ...schema, type }, defs, visitedRefs));
-      return z.union(types as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
-  }
+      // Cleanup temp files
+      try {
+        await fs.promises.unlink(scriptFile);
+      } catch (_e) { /* ignore */ }
+      try {
+        await fs.promises.unlink(resultFile);
+      } catch (_e) { /* ignore */ }
 
-  // Handle enums and literals
-  if (schema.enum) {
-    if (schema.enum.length === 1) return z.literal(schema.enum[0]);
-    const isStringEnum = schema.enum.every((item: any) => typeof item === 'string');
-    if (isStringEnum) return z.enum(schema.enum as [string, ...string[]]);
-    return z.union(schema.enum.map((item: any) => z.literal(item)));
-  }
-  if (schema.const) return z.literal(schema.const);
-
-  switch (schema.type) {
-    case 'string': {
-      let zodString = z.string();
-      if (schema.minLength !== undefined) zodString = zodString.min(schema.minLength);
-      if (schema.maxLength !== undefined) zodString = zodString.max(schema.maxLength);
-      if (schema.pattern) zodString = zodString.regex(new RegExp(schema.pattern));
-      if (schema.format === 'email') zodString = zodString.email();
-      if (schema.format === 'uuid') zodString = zodString.uuid();
-      if (schema.format === 'uri' || schema.format === 'url') zodString = zodString.url();
-      if (schema.format === 'date-time') zodString = zodString.datetime();
-      return zodString;
-    }
-    case 'number':
-    case 'integer': {
-      let zodNum = schema.type === 'integer' ? z.number().int() : z.number();
-      if (schema.minimum !== undefined) zodNum = zodNum.gte(schema.minimum);
-      if (schema.exclusiveMinimum !== undefined) zodNum = zodNum.gt(schema.exclusiveMinimum);
-      if (schema.maximum !== undefined) zodNum = zodNum.lte(schema.maximum);
-      if (schema.exclusiveMaximum !== undefined) zodNum = zodNum.lt(schema.exclusiveMaximum);
-      if (schema.multipleOf !== undefined) zodNum = zodNum.multipleOf(schema.multipleOf);
-      return zodNum;
-    }
-    case 'boolean': return z.boolean();
-    case 'null': return z.null();
-    case 'array': {
-      let itemSchema: ZodTypeAny = z.any();
-      if (schema.items) {
-        itemSchema = jsonSchemaToZod(schema.items, defs, visitedRefs);
-      }
-      let zodArray = z.array(itemSchema);
-      if (schema.minItems !== undefined) zodArray = zodArray.min(schema.minItems);
-      if (schema.maxItems !== undefined) zodArray = zodArray.max(schema.maxItems);
-      return zodArray;
-    }
-    case 'object': {
-      const shape: { [key: string]: ZodTypeAny } = {};
-      if (schema.properties) {
-        for (const key in schema.properties) {
-          const propSchema = jsonSchemaToZod(schema.properties[key], defs, visitedRefs);
-          shape[key] = schema.required?.includes(key) ? propSchema : propSchema.optional();
-        }
-      }
-      let zodObject: ZodTypeAny = z.object(shape);
-      if (schema.additionalProperties === false) {
-        zodObject = z.object(shape).strict();
-      } else if (typeof schema.additionalProperties === 'object') {
-        zodObject = z.object(shape).catchall(jsonSchemaToZod(schema.additionalProperties, defs, visitedRefs));
-      }
-      return zodObject;
-    }
-  }
-
-  if (schema.properties) return jsonSchemaToZod({ ...schema, type: 'object' }, defs, visitedRefs);
-
-  return z.any();
+      resolve(result);
+    });
+  });
 }
 
 function getDefaultBrowserPaths() {
-  const base = path.join(os.tmpdir(), 'unify', 'assistant', 'browser');
-  const downloadsPath = path.join(base, 'install');
-  const tracesDir = path.join(base, 'traces');
-  try {
-    fs.mkdirSync(downloadsPath, { recursive: true });
-    fs.mkdirSync(tracesDir, { recursive: true });
-  } catch (_e) {
-    // ignore directory creation errors; downstream may still handle
-  }
+  const downloadsPath = path.join(LOCAL_ROOT, 'Downloads');
+  const tracesDir = path.join(LOCAL_ROOT, 'Traces');
   return { downloadsPath, tracesDir };
 }
 
@@ -164,12 +304,12 @@ const defaultBrowserPaths = getDefaultBrowserPaths();
 
 const app = express();
 const wsInstance = expressWs(app);
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '100mb' }));
 
 // --- Authorization (Bearer) middleware ---
 function verifyApiKeyWithUnify(apiKey: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const url = new URL(`${process.env.UNIFY_BASE_URL}/user/basic-info`);
+    const url = new URL(`${process.env.ORCHESTRA_URL}/user/basic-info`);
     const options = {
       method: 'GET',
       hostname: url.hostname,
@@ -203,7 +343,7 @@ async function auth(req: Request, res: Response, next: Function) {
   if (!match) {
     return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid API key' });
   }
-  const apiKey = match[1];
+  const apiKey = match[1].trim();
 
   // Check 1: Bearer token must match UNIFY_KEY
   if (apiKey !== process.env.UNIFY_KEY) {
@@ -228,7 +368,7 @@ app.use(auth);
 // Session registry: maps sessionId to BrowserAgent
 interface SessionInfo {
   agent: BrowserAgent;
-  mode: 'browser' | 'desktop';
+  mode: 'web' | 'desktop';
   createdAt: Date;
   lastAccessed: Date;
 }
@@ -296,7 +436,8 @@ wsInstance.app.ws('/logs/stream', async (ws: WebSocket, req: Request) => {
     return;
   }
 
-  const apiKey = match[1];
+  const apiKeyRaw = match[1].trim();
+  const apiKey = apiKeyRaw.split(/\s+/)[0];
 
   // Check 1: Bearer token must match UNIFY_KEY
   if (apiKey !== process.env.UNIFY_KEY) {
@@ -370,13 +511,33 @@ const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null
 
 const startDesktop = async (): Promise<BrowserAgent> => {
   try {
+    const encodedPassword = encodeURIComponent(process.env.UNIFY_KEY || '');
+    const desktopUrl = `http://localhost:6080/custom.html?password=${encodedPassword}`;
+    const desktopOrigin = new URL(desktopUrl).origin;
     const agent = await startBrowserAgent({
-      url: `http://localhost:6080/custom.html?password=${process.env.UNIFY_KEY}`,
+      url: desktopUrl,
       browser: getLaunchOptions(true),
       prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
       narrate: true,
+      // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
+      llm: {
+        provider: 'openai-generic',
+        options: {
+          model: 'claude-4.5-opus@anthropic',
+          baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
+          headers: {
+            'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
+          },
+          temperature: 0.2,
+        }
+      }
     });
     agent.context.setDefaultNavigationTimeout(90000);
+    // Auto-grant clipboard permissions so the noVNC "Share clipboard?" popup is suppressed
+    await agent.context.grantPermissions(
+      ['clipboard-read', 'clipboard-write'],
+      { origin: desktopOrigin },
+    );
     console.log("✅ Desktop BrowserAgent started successfully.");
     return agent;
   } catch (err) {
@@ -391,6 +552,18 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
       url: "https://www.duckduckgo.com/",
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
+      // Route LLM calls through Orchestra/UniLLM proxy for billing and caching
+      llm: {
+        provider: 'openai-generic',
+        options: {
+          model: 'claude-4.5-opus@anthropic',
+          baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
+          headers: {
+            'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
+          },
+          temperature: 0.2,
+        }
+      }
     });
     agent.context.setDefaultNavigationTimeout(90000);
     console.log("✅ BrowserAgent started successfully.");
@@ -404,8 +577,12 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
   const { headless, mode } = req.body;
-  if (!mode || (mode !== "desktop" && mode !== "browser")) {
-    return res.status(400).json({ error: 'bad_request', message: 'Mode is required and must be either "desktop" or "browser".' });
+  if (!mode || (mode !== "desktop" && mode !== "web")) {
+    return res.status(400).json({
+      error: 'bad_request',
+      message:
+        'Mode is required and must be either "desktop" or "web".',
+    });
   }
 
   const sessionId = randomUUID();
@@ -705,7 +882,265 @@ app.post('/interrupt_action', isAgentReady, async (req: Request, res: Response) 
   }
 });
 
+app.post('/pause', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  try {
+    const session = activeSessions.get(sessionId)!;
+    session.agent.pause();
+    res.json({ status: 'paused', message: 'The agent has been paused.' });
+  } catch (err) {
+    handleAgentError(err, res, 'pause_failed');
+  }
+});
 
+app.post('/resume', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  try {
+    const session = activeSessions.get(sessionId)!;
+    session.agent.resume();
+    res.json({ status: 'resumed', message: 'The agent has been resumed.' });
+  } catch (err) {
+    handleAgentError(err, res, 'resume_failed');
+  }
+});
+
+// --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
+// Pass user_session=true for commands that need interactive session (Excel, COM automation)
+app.post('/exec', async (req: Request, res: Response) => {
+  const { command, cwd, timeout, shell_mode, user_session } = req.body;
+  const execId = randomUUID().slice(0, 8);
+
+  if (!command || typeof command !== 'string') {
+    return res.status(400).json({ error: 'bad_request', message: 'command is required and must be a string.' });
+  }
+
+  const workDir = cwd || LOCAL_ROOT;
+  const execTimeout = typeof timeout === 'number' && timeout > 0 ? timeout : DEFAULT_EXEC_TIMEOUT;
+  const shellMode: ShellMode = shell_mode === 'cmd' ? 'cmd' : 'powershell';
+
+  try {
+    const resolvedWorkDir = path.resolve(workDir);
+    await ensureDir(resolvedWorkDir);
+
+    let result: ExecResult;
+
+    // Use user_session=true for commands that need interactive session (Excel, COM, etc.)
+    if (user_session === true && process.platform === 'win32') {
+      console.log(`[exec] Running in USER SESSION: ${command} (cwd: ${resolvedWorkDir}, execId: ${execId})`);
+      result = await executeCommandInUserSession(command, resolvedWorkDir, execTimeout, execId);
+    } else {
+      console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
+      result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
+    }
+
+    res.json({
+      status: result.exitCode === 0 ? 'success' : 'error',
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      duration: result.duration,
+      cwd: resolvedWorkDir,
+      execId,
+      userSession: user_session === true,
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[exec] Error: ${errorMessage}`);
+    res.status(500).json({
+      error: 'exec_failed',
+      message: errorMessage,
+      execId,
+    });
+  }
+});
+
+// --- /files endpoint: Unified file management (JSON + Multipart) ---
+
+// Handler for JSON requests
+async function handleFilesJson(req: Request, res: Response) {
+  const { action, files, filenames, path: subPath, filename, encoding } = req.body;
+
+  if (!action || typeof action !== 'string') {
+    return res.status(400).json({ error: 'bad_request', message: 'action is required.' });
+  }
+
+  const baseDir = LOCAL_ROOT;
+
+  try {
+    switch (action) {
+      case 'save': {
+        if (!Array.isArray(files) || files.length === 0) {
+          return res.status(400).json({ error: 'bad_request', message: 'files array is required for save action.' });
+        }
+
+        const savedFiles: string[] = [];
+        for (const file of files) {
+          if (!file.filename || typeof file.filename !== 'string') {
+            return res.status(400).json({ error: 'bad_request', message: 'Each file must have a filename.' });
+          }
+          if (typeof file.content !== 'string') {
+            return res.status(400).json({ error: 'bad_request', message: 'Each file must have content.' });
+          }
+
+          const sanitizedPath = sanitizePath(file.filename, baseDir);
+          const fileEncoding = file.encoding === 'base64' ? 'base64' : 'text';
+          await writeFileWithEncoding(sanitizedPath, file.content, fileEncoding);
+          savedFiles.push(file.filename);
+          console.log(`[files] Saved: ${sanitizedPath}`);
+        }
+
+        return res.json({ status: 'saved', files: savedFiles });
+      }
+
+      case 'delete': {
+        if (!Array.isArray(filenames) || filenames.length === 0) {
+          return res.status(400).json({ error: 'bad_request', message: 'filenames array is required for delete action.' });
+        }
+
+        const deletedFiles: string[] = [];
+        for (const fname of filenames) {
+          if (typeof fname !== 'string') continue;
+          const sanitizedPath = sanitizePath(fname, baseDir);
+          try {
+            await fs.promises.unlink(sanitizedPath);
+            deletedFiles.push(fname);
+            console.log(`[files] Deleted: ${sanitizedPath}`);
+          } catch (err: any) {
+            if (err.code !== 'ENOENT') throw err;
+            // File doesn't exist, skip silently
+          }
+        }
+
+        return res.json({ status: 'deleted', files: deletedFiles });
+      }
+
+      case 'list': {
+        const listPath = subPath ? sanitizePath(subPath, baseDir) : baseDir;
+        await ensureDir(listPath);
+
+        const entries = await fs.promises.readdir(listPath, { withFileTypes: true });
+        const fileList = await Promise.all(
+          entries.map(async (entry) => {
+            const fullPath = path.join(listPath, entry.name);
+            const stats = await fs.promises.stat(fullPath);
+            return {
+              name: entry.name,
+              type: entry.isDirectory() ? 'directory' : 'file',
+              size: stats.size,
+              modified: stats.mtime.toISOString(),
+            };
+          })
+        );
+
+        return res.json({
+          path: subPath || '.',
+          files: fileList,
+        });
+      }
+
+      case 'read': {
+        if (!filename || typeof filename !== 'string') {
+          return res.status(400).json({ error: 'bad_request', message: 'filename is required for read action.' });
+        }
+
+        const sanitizedPath = sanitizePath(filename, baseDir);
+        const fileEncoding = encoding === 'base64' ? 'base64' : 'text';
+        const content = await readFileWithEncoding(sanitizedPath, fileEncoding);
+
+        return res.json({
+          filename,
+          content,
+          encoding: fileEncoding,
+        });
+      }
+
+      default:
+        return res.status(400).json({
+          error: 'bad_request',
+          message: `Unknown action: ${action}. Valid actions: save, delete, list, read.`,
+        });
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[files] Error: ${errorMessage}`);
+    res.status(500).json({
+      error: 'files_failed',
+      message: errorMessage,
+    });
+  }
+}
+
+// Handler for multipart requests (large file uploads)
+async function handleFilesMultipart(req: Request, res: Response) {
+  const targetDir = (req.body.target_dir as string) || '';
+  const uploadedFiles = req.files as Express.Multer.File[];
+
+  if (!uploadedFiles || uploadedFiles.length === 0) {
+    return res.status(400).json({ error: 'bad_request', message: 'No files uploaded.' });
+  }
+
+  const baseDir = LOCAL_ROOT;
+  const savedFiles: string[] = [];
+  const errors: string[] = [];
+
+  for (const file of uploadedFiles) {
+    try {
+      const originalName = file.originalname;
+      const destFilename = targetDir ? `${targetDir}/${originalName}` : originalName;
+
+      const destPath = sanitizePath(destFilename, baseDir);
+      await ensureDir(path.dirname(destPath));
+      await fs.promises.rename(file.path, destPath);
+
+      savedFiles.push(destFilename);
+      console.log(`[files] Saved (multipart): ${destPath}`);
+    } catch (err) {
+      // Clean up temp file on error
+      try {
+        await fs.promises.unlink(file.path);
+      } catch (_e) {
+        // ignore cleanup errors
+      }
+
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      errors.push(`${file.originalname}: ${errorMessage}`);
+      console.error(`[files] Error saving ${file.originalname}: ${errorMessage}`);
+    }
+  }
+
+  if (errors.length > 0 && savedFiles.length === 0) {
+    return res.status(500).json({
+      error: 'upload_failed',
+      message: 'All files failed to upload',
+      errors,
+    });
+  }
+
+  res.json({
+    status: errors.length > 0 ? 'partial' : 'saved',
+    files: savedFiles,
+    errors: errors.length > 0 ? errors : undefined,
+  });
+}
+
+// Route with content-type detection
+app.post('/files', (req: Request, res: Response) => {
+  const contentType = req.headers['content-type'] || '';
+
+  if (contentType.includes('multipart/form-data')) {
+    // Use multer middleware for multipart uploads
+    uploadMiddleware.array('files', 100)(req, res, (err) => {
+      if (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return res.status(400).json({ error: 'upload_error', message });
+      }
+      handleFilesMultipart(req, res);
+    });
+  } else {
+    // JSON request
+    handleFilesJson(req, res);
+  }
+});
 
 app.get('/sessions', auth, async (_req: Request, res: Response) => {
   const sessions = Array.from(activeSessions.entries()).map(([sessionId, session]) => ({

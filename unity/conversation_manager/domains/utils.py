@@ -28,19 +28,32 @@ class Debouncer:
         args, kwargs = args or (), kwargs or {}
         await self._cancel_tasks(running=cancel_running)
 
-        # scheduele a new task to run
+        # schedule a new task to run
         async def wait_for_running_task():
             if delay > 0:
                 await asyncio.sleep(delay)
             try:
-                # this will attempt to wait for any currently running tasks
-                # if it was already cancelled because of `cancel_running` will just throw a CancelledError
-                # if not then its gonna wait till the currently running task finishes
+                # Wait for any currently running task to complete.
+                # Use asyncio.shield() to protect the running task from being
+                # cancelled if THIS pending task is cancelled. In Python 3.11+,
+                # cancelling a task that awaits another task will also cancel
+                # the inner task - shield() prevents this propagation.
                 if self.running_task and not self.running_task.done():
-                    await self.running_task
+                    await asyncio.shield(self.running_task)
             except asyncio.CancelledError:
-                pass
-            # create a running task after delay (if it was not cancelled by a new event being emitted)
+                # CancelledError can come from two sources:
+                # 1. The running task was cancelled (e.g., cancel_running=True)
+                # 2. This pending task was cancelled (debounced by a newer submit)
+                #
+                # In case 1, we should proceed to create a new running task.
+                # In case 2, we should NOT proceed - let the newer pending task handle it.
+                if self.running_task and self.running_task.cancelled():
+                    # Running task was cancelled, proceed to create new one
+                    pass
+                else:
+                    # We (the pending task) were cancelled, re-raise to stop
+                    raise
+            # Create a running task (only if we weren't cancelled)
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
             self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None

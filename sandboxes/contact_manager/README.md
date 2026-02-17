@@ -16,7 +16,7 @@ What is the `ContactManager`?
 * **`ask(text)`**   – read-only questions such as *"What is Alice's phone number?"*
 * **`update(text)`** – mutations such as *"Update Bob's phone number to +123…"*
 
-Under the hood both methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_contacts`, `_create_contact`, `update_contact`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_contact/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
+Under the hood both methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_search_contacts`, `_create_contact`, `update_contact`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/contact/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
 
 ### New since the original README
 
@@ -135,7 +135,7 @@ In voice mode you could also answer with `/rc` to record a short spoken clarific
 
 ### Troubleshooting
 * **Deepgram / Cartesia keys** – if you use `--voice`, make sure the environment variables `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` are set.
-* **Unify backend access** – the sandbox will attempt to create contexts and logs in your configured Unify project.  If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – the sandbox will attempt to create contexts and logs in your configured Unify project.  If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **Linter complaints** – the interactive session is powered by an LLM; if you hit a bug look at the `--debug` reasoning trace first.
 
 Happy experimenting! 🎉

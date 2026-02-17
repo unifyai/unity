@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 
 from .base import BaseFunctionManager
@@ -33,15 +33,28 @@ class SimulatedFunctionManager(BaseFunctionManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        filter_scope: Optional[str] = None,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        self._filter_scope = filter_scope
+        self._exclude_primitive_ids: Optional[FrozenSet[int]] = None
+        self._exclude_compositional_ids: Optional[FrozenSet[int]] = None
 
         # One shared, *stateful* LLM for the simulation
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedFunctionManager",
+        )
 
+        self._rebuild_system_message()
+
+    def _rebuild_system_message(self) -> None:
+        """Reconstruct the LLM system message from current state."""
         columns = [{k: str(v.annotation)} for k, v in Function.model_fields.items()]
 
         guidance = (
@@ -50,13 +63,74 @@ class SimulatedFunctionManager(BaseFunctionManager):
             else ""
         )
 
+        scope_hint = (
+            f"\n\nIMPORTANT – This instance has a filter_scope applied: {self._filter_scope!r}. "
+            "Every query (list, filter, search) MUST only return functions whose metadata "
+            "satisfies this boolean expression. For example, if the scope is "
+            "\"language == 'python'\", never include shell/bash functions in results. "
+            "Treat the scope as an implicit 'AND' condition on every read query."
+            if self._filter_scope
+            else ""
+        )
+
+        exclusion_hint = ""
+        if self._exclude_primitive_ids or self._exclude_compositional_ids:
+            parts = []
+            if self._exclude_primitive_ids:
+                parts.append(
+                    f"primitive function_ids {sorted(self._exclude_primitive_ids)}",
+                )
+            if self._exclude_compositional_ids:
+                parts.append(
+                    f"compositional function_ids {sorted(self._exclude_compositional_ids)}",
+                )
+            exclusion_hint = (
+                f"\n\nIMPORTANT – The following function IDs are excluded from all "
+                f"read queries (they are prompt-injected via the environment and "
+                f"must NOT appear in search/list/filter results): {', '.join(parts)}."
+            )
+
         sys_msg = (
             "You are a simulated function-catalogue assistant. There is no real "
             "storage; invent plausible functions and keep answers self-consistent.\n\n"
-            f"Back-story: {self._description}{guidance}\n\n"
+            f"Back-story: {self._description}{guidance}{scope_hint}{exclusion_hint}\n\n"
             "Function columns available (simulated):\n" + json.dumps(columns)
         )
         self._llm.set_system_message(sys_msg)
+
+    # ------------------------------------------------------------------ #
+    #  Properties & setters (same contract as FunctionManager)            #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def filter_scope(self) -> Optional[str]:
+        """A boolean expression applied to all simulated read queries."""
+        return self._filter_scope
+
+    @filter_scope.setter
+    def filter_scope(self, value: Optional[str]) -> None:
+        self._filter_scope = value
+        self._rebuild_system_message()
+
+    @property
+    def exclude_primitive_ids(self) -> Optional[FrozenSet[int]]:
+        """Primitive function IDs excluded from simulated queries."""
+        return self._exclude_primitive_ids
+
+    @exclude_primitive_ids.setter
+    def exclude_primitive_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_primitive_ids = frozenset(value) if value else None
+        self._rebuild_system_message()
+
+    @property
+    def exclude_compositional_ids(self) -> Optional[FrozenSet[int]]:
+        """Compositional function IDs excluded from simulated queries."""
+        return self._exclude_compositional_ids
+
+    @exclude_compositional_ids.setter
+    def exclude_compositional_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_compositional_ids = frozenset(value) if value else None
+        self._rebuild_system_message()
 
     # ------------------------------------------------------------------ #
     #  Internal helper: run async LLM from sync contexts                  #
@@ -140,6 +214,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         implementations: str | List[str],
         preconditions: Optional[Dict[str, Dict]] = None,
+        raise_on_error: bool = True,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
         sched = maybe_tool_log_scheduled(
@@ -183,15 +258,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         # Ask the stateful LLM to produce a catalogue snapshot aligned to guidance
         guidance = self._guidance_hint()
@@ -200,13 +275,18 @@ class SimulatedFunctionManager(BaseFunctionManager):
             "list_functions",
             {"include_implementations": include_implementations},
         )
+        scope_clause = (
+            f"\nScope constraint (MUST be satisfied by every returned function): {self._filter_scope!r}"
+            if self._filter_scope
+            else ""
+        )
         prompt = (
             "Simulate FunctionManager.list_functions. Return ONLY a JSON object mapping "
             "function name -> {function_id, argspec, docstring"
             + (", implementation" if include_implementations else "")
             + "}. "
             "Ensure the catalogue reflects the following high-level domain guidance if provided.\n\n"
-            f"Guidance: {guidance!r}"
+            f"Guidance: {guidance!r}{scope_clause}"
         )
 
         def _call() -> str:
@@ -246,10 +326,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 t0,
             )
 
-        if not return_callable:
+        if not _return_callable:
             return data
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
 
         def _make_stub(fn_name: str):
             async def _stub(*args, **kwargs):
@@ -268,10 +348,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
             if not isinstance(fn_name, str):
                 continue
             cb = _make_stub(fn_name)
-            namespace[fn_name] = cb
+            _namespace[fn_name] = cb
             callables_map[fn_name] = cb
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_map, "metadata": data}  # type: ignore[return-value]
 
         return callables_map  # type: ignore[return-value]
@@ -329,15 +409,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         offset: int = 0,
         limit: int = 100,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         guidance = self._guidance_hint()
         sched = maybe_tool_log_scheduled(
@@ -345,13 +425,18 @@ class SimulatedFunctionManager(BaseFunctionManager):
             "filter_functions",
             {"filter": filter, "offset": offset, "limit": limit},
         )
+        scope_clause = (
+            f"\nScope constraint (MUST be satisfied by every returned function): {self._filter_scope!r}"
+            if self._filter_scope
+            else ""
+        )
         prompt = (
             "Simulate FunctionManager.filter_functions. Return ONLY a JSON array of objects "
             "with fields name, function_id, argspec, docstring. "
             f"Limit to {limit} starting at {offset}. "
             f"Filter expression: {filter!r}. "
             "Ensure results reflect the high-level guidance when relevant.\n\n"
-            f"Guidance: {guidance!r}"
+            f"Guidance: {guidance!r}{scope_clause}"
         )
 
         def _call() -> str:
@@ -398,10 +483,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 if isinstance(rec, dict)
             ]
 
-        if not return_callable:
+        if not _return_callable:
             return data
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
 
         def _make_stub(fn_name: str):
             async def _stub(*args, **kwargs):
@@ -421,10 +506,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
             if not isinstance(fn_name, str):
                 continue
             cb = _make_stub(fn_name)
-            namespace[fn_name] = cb
+            _namespace[fn_name] = cb
             callables_list.append(cb)
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_list, "metadata": data}  # type: ignore[return-value]
 
         return callables_list  # type: ignore[return-value]
@@ -436,15 +521,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         query: str,
         n: int = 5,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         guidance = self._guidance_hint()
         sched = maybe_tool_log_scheduled(
@@ -452,12 +537,17 @@ class SimulatedFunctionManager(BaseFunctionManager):
             "search_functions",
             {"query": query, "n": n},
         )
+        scope_clause = (
+            f"\nScope constraint (MUST be satisfied by every returned function): {self._filter_scope!r}"
+            if self._filter_scope
+            else ""
+        )
         prompt = (
             "Simulate FunctionManager.search_functions. Given the natural-language query, "
             "invent up to n plausible functions that would exist in the current catalogue. "
             "Return ONLY a JSON array of objects with keys name, function_id, argspec, score. "
             "Bias the inventions to align with the high-level guidance if present.\n\n"
-            f"query={query!r}, n={n}, guidance={guidance!r}"
+            f"query={query!r}, n={n}, guidance={guidance!r}{scope_clause}"
         )
 
         def _call() -> str:
@@ -504,10 +594,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 if isinstance(rec, dict)
             ]
 
-        if not return_callable:
+        if not _return_callable:
             return data
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
 
         def _make_stub(fn_name: str):
             async def _stub(*args, **kwargs):
@@ -527,10 +617,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
             if not isinstance(fn_name, str):
                 continue
             cb = _make_stub(fn_name)
-            namespace[fn_name] = cb
+            _namespace[fn_name] = cb
             callables_list.append(cb)
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_list, "metadata": data}  # type: ignore[return-value]
 
         return callables_list  # type: ignore[return-value]
@@ -545,8 +635,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         state_mode: str = "stateless",
         session_id: int = 0,
         venv_pool: Optional[Any] = None,
-        primitives: Optional[Any] = None,
-        computer_primitives: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         sched = maybe_tool_log_scheduled(
@@ -601,6 +690,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            filter_scope=getattr(self, "_filter_scope", None),
         )
         if sched:
             label, cid, t0 = sched

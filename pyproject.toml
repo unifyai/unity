@@ -65,10 +65,11 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
+    "pytest-asyncio>=0.24.0",
     "pytest-xdist>=3.6.1",
     "pytest-html>=4.1.1",
     "autoflake>=2.3.1",
-    "black>=25.9.0",
+    "black==26.1.0",
     "hypothesis>=6.135.29",
     "viztracer>=1.0.4",
     "pytest-dotenv>=0.5.2",

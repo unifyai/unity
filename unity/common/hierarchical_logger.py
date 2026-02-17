@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from secrets import token_hex
 from typing import Optional
 
-from unity.constants import LOGGER
+from unity.logger import LOGGER
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session lineage context (parallel to TOOL_LOOP_LINEAGE for non-tool-loop components)
@@ -298,3 +298,52 @@ def make_child_loop_id(parent_logger: SessionLogger, method_name: str) -> str:
         A loop_id string like "ConversationManager.ask"
     """
     return f"{parent_logger._component_name}.{method_name}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Generic helpers for hierarchical labels and boundary logging
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_hierarchy_label(lineage: list[str], suffix: str) -> str:
+    """Build a hierarchy label from lineage segments and a suffix.
+
+    Format: ``seg1->seg2->...->segN(suffix)``
+
+    Examples
+    --------
+    - [] + "a1b2" -> "(a1b2)"
+    - ["CodeActActor.act"] + "a1b2" -> "CodeActActor.act(a1b2)"
+    - ["A", "B", "C"] + "a1b2" -> "A->B->C(a1b2)"
+    """
+    try:
+        # Use the same "->" separator as LoopConfig labels so logs stay consistent across
+        # async tool loops and boundary wrappers.
+        base = "->".join([str(x) for x in (lineage or []) if str(x)])
+    except Exception:
+        base = ""
+    if base:
+        return f"{base}({suffix})"
+    return f"({suffix})"
+
+
+def log_boundary_event(
+    hierarchy_label: str,
+    message: str,
+    *,
+    icon: str = "🛠️",
+    level: str = "info",
+) -> None:
+    """Log a boundary event with hierarchical label.
+
+    Format: ``{icon} [{hierarchy_label}] {message}``
+    """
+    try:
+        txt = f"{icon} [{hierarchy_label}] {message}"
+        log_fn = getattr(LOGGER, str(level).lower(), None)
+        if not callable(log_fn):
+            log_fn = LOGGER.info
+        log_fn(txt)
+    except Exception:
+        # Best-effort logging; never fail execution.
+        return

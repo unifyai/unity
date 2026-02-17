@@ -16,7 +16,7 @@ class Computer:
     a strategy pattern to delegate to a specific backend implementation
     based on the selected mode.
 
-    Supports both browser automation and general desktop/computer control
+    Supports both web automation and general desktop/computer control
     via vision-based agents (Magnitude).
 
     Modes:
@@ -53,14 +53,14 @@ class Computer:
             else secret_manager
         )
 
-    async def act(self, instruction: str, expectation: str = "") -> str:
+    async def act(self, instruction: str) -> str:
         """Executes a single, high-level action by delegating to the active backend."""
-        instruction = self._secret_manager.from_placeholder(instruction)
-        return await self.backend.act(instruction, expectation)
+        instruction = await self._secret_manager.from_placeholder(instruction)
+        return await self.backend.act(instruction)
 
     async def observe(self, query: str, response_format: Type = str) -> Any:
         """Asks a question by delegating to the active backend."""
-        query = self._secret_manager.from_placeholder(query)
+        query = await self._secret_manager.from_placeholder(query)
         return await self.backend.observe(query, response_format)
 
     async def navigate(self, url: str) -> str:
@@ -79,6 +79,14 @@ class Computer:
         """Shuts down the underlying backend."""
         self.backend.stop()
 
+    async def pause(self):
+        """Pauses the underlying backend's action loop."""
+        await self.backend.pause()
+
+    async def resume(self):
+        """Resumes the underlying backend's action loop."""
+        await self.backend.resume()
+
     # --- Placeholders for other planned methods ---
     async def multi_step(self, description: str) -> SteerableToolHandle:
         """
@@ -87,16 +95,8 @@ class Computer:
         Returns a handle to the sub-agent that will execute the task.
         """
         raise NotImplementedError(
-            "multi_step method is not yet implemented. Use HierarchicalActor or CodeActActor instead.",
+            "multi_step method is not yet implemented. Use CodeActActor instead.",
         )
-
-    async def reason(self, query: str) -> str:
-        """
-        Asks a question about the current state of the page/screen.
-        e.g., "What is the title of the page?", "Is there a button with the text 'Submit'?"
-        """
-        # TODO: Implement reasoning logic
-        print("Starting computer reasoning...")
 
     def start_recording(
         self,

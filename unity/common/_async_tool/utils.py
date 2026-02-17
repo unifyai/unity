@@ -18,3 +18,32 @@ def try_parse_json(value):
     except Exception:
         pass
     return value
+
+
+def get_handle_paused_state(handle) -> bool | None:
+    """Check if a SteerableToolHandle is paused by inspecting its _pause_event.
+
+    This is the canonical way to determine whether a handle is currently paused.
+    The pattern follows the async tool loop convention where:
+    - Event **set** = running (not paused)
+    - Event **cleared** = paused
+
+    All steerable handles should expose a `_pause_event` attribute (or property)
+    that follows this convention. For handles that track state differently
+    (e.g., via an enum), they should expose a `_pause_event` property that
+    returns a proxy object with an `is_set()` method.
+
+    Args:
+        handle: A SteerableToolHandle or any object with a `_pause_event` attribute.
+
+    Returns:
+        True if paused (event cleared), False if running (event set),
+        None if unknown (no _pause_event, not an Event, or error).
+    """
+    try:
+        pev = getattr(handle, "_pause_event", None)
+        if pev is not None and hasattr(pev, "is_set"):
+            return not pev.is_set()  # running ⇢ set, paused ⇢ cleared
+    except Exception:
+        pass
+    return None

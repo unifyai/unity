@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
-from typing import Literal, Optional, Type, Any
+from typing import Optional, Type, Any
 from pydantic import BaseModel
 import unillm
 
@@ -19,8 +18,8 @@ from ..common import SteerableToolHandle
 
 
 class SimulatedConversationManagerHandle(
-    BaseConversationManagerHandle,
     SimulatedHandleMixin,
+    BaseConversationManagerHandle,
 ):
     """
     Simulated conversation manager handle for testing and demos.
@@ -31,11 +30,17 @@ class SimulatedConversationManagerHandle(
 
     def __init__(
         self,
-        assistant_id: str,
-        contact_id: int,
+        assistant_id: str = "",
+        contact_id: int = 0,
         *,
         description: str = "A simulated conversation between an AI assistant and a user.",
         simulation_guidance: Optional[str] = None,
+        # Accept but ignore parameters that real ConversationManagerHandle uses
+        event_broker: Any = None,
+        conversation_id: Any = None,
+        transcript_manager: Any = None,
+        conversation_manager: Any = None,
+        **kwargs: Any,
     ):
         self.assistant_id = assistant_id
         self.contact_id = contact_id
@@ -43,7 +48,10 @@ class SimulatedConversationManagerHandle(
         self._simulation_guidance = simulation_guidance
 
         # A shared, stateful LLM for maintaining conversation context
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            debug_marker="SimulatedConversationManager",
+        )
 
         # Initialize the system message for the stateful LLM
         system_msg = self._build_system_message()
@@ -95,56 +103,13 @@ class SimulatedConversationManagerHandle(
 ### Core Responsibilities
 1.  **Maintain Internal State:** You must remember the conversation history, the user's mood, and any notifications you receive.
 2.  **Respond to `ask`:** When you receive a question via `ask`, provide a plausible, in-character response from the simulated user. The response should be concise and directly answer the question.
-3.  **Acknowledge `send_notification`:** When a notification is sent, incorporate its content into your internal state and provide a simple JSON confirmation. For example, if you receive "Task 'X' is complete," your subsequent `ask` responses should reflect this knowledge.
+3.  **Acknowledge `interject`:** When an interjection is received, incorporate its content into your internal state. For example, if you receive "Task 'X' is complete," your subsequent `ask` responses should reflect this knowledge.
 4.  **Adhere to Simulation Guidance:** {self._simulation_guidance or "No specific guidance provided."}
 
 ### Response Formats
 - For `ask` calls, provide a direct, first-person answer as the simulated user.
-- For `send_notification` calls, respond with a JSON object like: `{{"status": "ok", "notification_id": "...", "timestamp": "..."}}`
+- For `interject` calls, acknowledge and incorporate the information into your state.
 """
-
-    # ─────────────────────────────────────────────────────────────
-    # Conversation-Specific Operations (Minimal Set)
-    # ─────────────────────────────────────────────────────────────
-
-    async def send_notification(
-        self,
-        content: str,
-        *,
-        level: Literal["info", "warning", "urgent"] = "info",
-        source: str = "system",
-        interjection_id: Optional[str] = None,
-        pinned: bool = False,
-    ) -> dict:
-        """Simulates sending a notification to the conversation."""
-        if self._stopped:
-            return {"status": "error", "message": "Handle is stopped."}
-
-        # Generate ID if not provided
-        if interjection_id is None:
-            interjection_id = str(uuid.uuid4().hex[:12])
-
-        prompt = f"""A notification has been sent to the conversation. Acknowledge it by updating your internal state and returning a JSON confirmation.
-- **Content:** {content}
-- **Level:** {level}
-- **Source:** {source}
-- **Pinned:** {pinned}
-- **Interjection ID:** {interjection_id}
-"""
-        response = await self._llm.generate(prompt)
-
-        try:
-            result = json.loads(response)
-            result["interjection_id"] = interjection_id
-            return result
-        except json.JSONDecodeError:
-            # Fallback for non-JSON LLM responses
-            return {
-                "status": "ok",
-                "interjection_id": interjection_id,
-                "timestamp": "2024-01-01T00:00:00Z",
-                "acknowledged": True,
-            }
 
     # ─────────────────────────────────────────────────────────────
     # Standard SteerableToolHandle Methods
@@ -155,7 +120,6 @@ class SimulatedConversationManagerHandle(
         question: str,
         *,
         response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """
         Asks a question to the simulated user in the conversation.
@@ -174,7 +138,7 @@ class SimulatedConversationManagerHandle(
         if response_format:
             prompt += "\n**FORMAT INSTRUCTIONS:** Your response MUST be a JSON object that strictly conforms to the provided Pydantic model schema."
 
-        class _AnswerHandle(SteerableToolHandle, SimulatedHandleMixin):
+        class _AnswerHandle(SimulatedHandleMixin, SteerableToolHandle):
             def __init__(
                 inner_self,
                 stateful_llm: unillm.AsyncUnify,
@@ -191,32 +155,19 @@ class SimulatedConversationManagerHandle(
 
             async def result(inner_self) -> Any:
                 if inner_self._result_cache is None:
-                    response_str = await simulated_llm_roundtrip(
+                    inner_self._result_cache = await simulated_llm_roundtrip(
                         inner_self._llm,
                         label=inner_self._log_label,
                         prompt=inner_self._prompt,
                         response_format=inner_self._model,
                     )
-                    if inner_self._model:
-                        try:
-                            inner_self._result_cache = (
-                                inner_self._model.model_validate_json(
-                                    response_str,
-                                )
-                            )
-                        except Exception as e:
-                            raise ValueError(
-                                f"Failed to parse LLM response into {inner_self._model.__name__}: {e}\nResponse: {response_str}",
-                            )
-                    else:
-                        inner_self._result_cache = response_str
                     inner_self._done = True
                 return inner_self._result_cache
 
             def done(inner_self) -> bool:
                 return inner_self._done
 
-            def stop(inner_self, reason: str | None = None, *args, **kwargs):
+            async def stop(inner_self, reason: str | None = None, *args, **kwargs):
                 inner_self._log_stop(reason)
 
             async def pause(inner_self):
@@ -231,12 +182,6 @@ class SimulatedConversationManagerHandle(
             async def ask(inner_self, *args, **kwargs):
                 return inner_self
 
-            async def next_clarification(inner_self) -> dict:
-                return {}
-
-            async def next_notification(inner_self) -> dict:
-                return {}
-
             async def answer_clarification(
                 inner_self,
                 call_id: str,
@@ -246,31 +191,30 @@ class SimulatedConversationManagerHandle(
 
         return _AnswerHandle(self._llm, prompt, response_format, ask_label)
 
-    async def interject(
-        self,
-        message: str,
-        *,
-        pinned: bool = False,
-        interjection_id: Optional[str] = None,
-    ) -> dict:
-        """
-        Send an interjection to the conversation.
+    async def interject(self, message: str, **kwargs) -> str:
+        """Provide additional information or instructions to the conversation.
 
-        Args:
-            message: The message content to inject
-            pinned: If True, the interjection persists for the entire session
-            interjection_id: Optional explicit ID (auto-generated if not provided)
+        Feeds ``message`` into the stateful LLM so subsequent ``ask`` calls
+        reflect the new information.  Plumbing kwargs (e.g.
+        ``_parent_chat_context_cont``) are accepted but unused.
 
-        Returns:
-            Dict with status and the interjection_id
+        Returns
+        -------
+        str
+            A synthetic ``interjection_id`` for parity with the real handle.
         """
+        if self._stopped:
+            return ""
         self._log_interject(message)
-        return await self.send_notification(
-            message,
-            source="external_interjection",
-            interjection_id=interjection_id,
-            pinned=pinned,
+        prompt = (
+            "An interjection has been received. Incorporate the following "
+            "information into your internal state for future questions.\n"
+            f"- **Content:** {message}"
         )
+        await self._llm.generate(prompt)
+        import uuid as _uuid
+
+        return _uuid.uuid4().hex[:12]
 
     async def unpin_interjection(self, interjection_id: str) -> dict:
         """
@@ -301,14 +245,13 @@ class SimulatedConversationManagerHandle(
         self._paused = False
         return "Simulated conversation is resumed."
 
-    def stop(self, reason: Optional[str] = None) -> str:
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         """Stops the simulated conversation."""
         self._log_stop(reason)
         self._stopped = True
         self._final_result = (
             f"Conversation stopped. Reason: {reason or 'No reason provided.'}"
         )
-        return self._final_result
 
     def done(self) -> bool:
         """Checks if the conversation is stopped."""
@@ -319,12 +262,6 @@ class SimulatedConversationManagerHandle(
         while not self._stopped:
             await asyncio.sleep(0.1)
         return self._final_result
-
-    async def next_clarification(self) -> dict:
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         pass

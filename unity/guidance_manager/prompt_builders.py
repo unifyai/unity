@@ -20,9 +20,9 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # Standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -132,7 +132,7 @@ def build_ask_prompt(
     columns: Union[List[Dict[str, str]], List[str], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *ask* using the shared composer."""
     # Extract custom columns (not in Guidance model)
     custom_cols = get_custom_columns(Guidance, columns)
@@ -278,7 +278,7 @@ def build_update_prompt(
     columns: Union[List[Dict[str, str]], List[str], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *update* using schema-first approach."""
     # Extract custom columns (not in Guidance model)
     custom_cols = get_custom_columns(Guidance, columns)
@@ -425,6 +425,7 @@ def build_simulated_method_prompt(
     finished, avoiding responses like "I'll process that now".
     """
     import json  # local import
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
@@ -443,7 +444,7 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
 
     return "\n".join(parts)

@@ -447,7 +447,12 @@ class KnowledgeManager(BaseKnowledgeManager):
     # English-Text Command
 
     @functools.wraps(BaseKnowledgeManager.refactor, updated=())
-    @log_manager_call("KnowledgeManager", "refactor", payload_key="request")
+    @log_manager_call(
+        "KnowledgeManager",
+        "refactor",
+        payload_key="request",
+        display_label="Reorganizing Notes",
+    )
     async def refactor(
         self,
         text: str,
@@ -517,7 +522,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # 3️⃣  Launch interactive tool-use loop
@@ -545,7 +550,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.update, updated=())
-    @log_manager_call("KnowledgeManager", "update", payload_key="request")
+    @log_manager_call(
+        "KnowledgeManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Notes",
+    )
     async def update(
         self,
         text: str,
@@ -619,7 +629,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
-            ),
+            ).to_list(),
         )
 
         handle = start_async_tool_loop(
@@ -647,7 +657,12 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
     @manager_tool
-    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
+    @log_manager_call(
+        "KnowledgeManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Notes",
+    )
     async def ask(
         self,
         text: str,
@@ -727,7 +742,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
                 include_join_info=include_join_info,
-            ),
+            ).to_list(),
         )
 
         tool_policy_fn = self._default_ask_tool_policy

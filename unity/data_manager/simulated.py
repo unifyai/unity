@@ -50,7 +50,7 @@ class SimulatedDataManager(BaseDataManager):
     >>> print(rows)  # [{"id": 1, "name": "Alice"}]
     """
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize simulated DataManager with empty in-memory stores."""
         super().__init__()
 

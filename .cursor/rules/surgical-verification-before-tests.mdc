@@ -1,6 +1,6 @@
 ---
 description: Write quick verification scripts before running slow tests
-globs: ["tests/**/*"]
+globs: ["**/*"]
 alwaysApply: true
 ---
 

@@ -8,8 +8,6 @@ import logging
 import sys
 from typing import Awaitable, Callable, Iterable, Optional
 
-import unillm
-
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
     PhoneCallStarted,
@@ -17,94 +15,106 @@ from unity.conversation_manager.events import (
     UnifyMeetEnded,
     UnifyMeetStarted,
 )
+from unity.conversation_manager.domains.ipc_socket import (
+    get_socket_client,
+    send_event_to_parent,
+    start_socket_receive_loop,
+    stop_socket_client,
+)
 from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
 
-# Shared event broker instance
-event_broker = get_event_broker()
 
-
-# ---------------------------------------------------------------------------
-# STS (Speech-to-Speech) Usage Tracking
-# ---------------------------------------------------------------------------
-#
-# We estimate audio token usage from call duration and bill using LiteLLM's
-# pricing data for the gpt-4o-realtime-preview model.
-#
-# Key assumptions (all approximate):
-#   - Audio is processed at ~150 tokens/second (OpenAI's internal tokenization)
-#   - We assume 50% of call duration is active speech (conservative estimate)
-#   - We split usage 50/50 between input (user speech) and output (assistant)
-#
-# This uses deduct_credits_for_usage from unillm which leverages LiteLLM's
-# comprehensive pricing table for accurate Realtime API billing.
-# ---------------------------------------------------------------------------
-
-# Configuration for STS usage estimation
-_STS_BILLING_MODEL = "gpt-4o-realtime-preview"
-_STS_TOKENS_PER_SECOND = 150  # Approximate audio tokenization rate
-_STS_SPEECH_RATIO = 0.5  # Assume 50% of call is active speech
-_STS_INPUT_OUTPUT_SPLIT = 0.5  # Assume roughly equal speaking time
-
-
-def log_sts_usage(
-    call_duration_seconds: float,
-    contact: Optional[dict] = None,
-    tags: Optional[list[str]] = None,
-) -> None:
+class SocketAwareEventBroker:
     """
-    Log estimated usage for an STS (Speech-to-Speech) call and deduct credits.
+    Simple event broker for cross-process communication via Unix socket.
 
-    Estimates audio token usage from call duration and deducts credits using
-    LiteLLM's pricing data for the Realtime API.
+    When running as a subprocess (detected via CM_EVENT_SOCKET env var):
+    - Outbound: publish() sends events to parent via socket
+    - Inbound: register_callback() handlers are invoked when events arrive
 
-    Args:
-        call_duration_seconds: Total duration of the call in seconds.
-        contact: Optional contact dict for tagging/identification (unused, kept for API compat).
-        tags: Optional additional tags (unused, kept for API compatibility).
+    Otherwise, falls back to in-memory broker for outbound events.
     """
-    if call_duration_seconds <= 0:
-        logger.warning("Skipping STS usage logging: call duration <= 0")
-        return
 
-    # Estimate active speech time
-    speech_seconds = call_duration_seconds * _STS_SPEECH_RATIO
+    def __init__(self):
+        self._socket_client = get_socket_client()
+        self._fallback_broker = get_event_broker()
+        self._receive_started = False
+        self._callbacks: dict[str, Callable[[dict], None]] = {}
 
-    # Convert to estimated audio tokens
-    total_audio_tokens = int(speech_seconds * _STS_TOKENS_PER_SECOND)
+    def register_callback(self, channel: str, handler: Callable[[dict], None]) -> None:
+        """
+        Register a callback for events on a channel.
 
-    # Split between input (user) and output (assistant)
-    input_audio_tokens = int(total_audio_tokens * _STS_INPUT_OUTPUT_SPLIT)
-    output_audio_tokens = total_audio_tokens - input_audio_tokens
+        The handler is invoked immediately when an event arrives on the channel.
+        Handler receives the parsed JSON data (dict).
+        """
+        self._callbacks[channel] = handler
 
-    # Build response body in Realtime API format for billing
-    response_body = {
-        "usage": {
-            "input_tokens": input_audio_tokens,
-            "output_tokens": output_audio_tokens,
-            "input_token_details": {
-                "text_tokens": 0,
-                "audio_tokens": input_audio_tokens,
-            },
-            "output_token_details": {
-                "text_tokens": 0,
-                "audio_tokens": output_audio_tokens,
-            },
-        },
-    }
+    async def start_receiving(self) -> bool:
+        """
+        Start receiving events from the parent process via socket.
 
-    try:
-        cost = unillm.deduct_credits_for_usage(_STS_BILLING_MODEL, response_body)
-        logger.info(
-            f"Logged STS usage: {call_duration_seconds:.1f}s call → "
-            f"{total_audio_tokens} audio tokens "
-            f"({input_audio_tokens} in / {output_audio_tokens} out), "
-            f"cost: ${cost:.6f}",
-        )
-    except Exception as e:
-        # Don't let billing failures crash the call cleanup
-        logger.error(f"Failed to log STS usage: {e}")
+        Returns:
+            True if started (or already started), False if no socket available.
+        """
+        if self._receive_started:
+            return True
+
+        if not self._socket_client:
+            print("[SocketAwareEventBroker] No socket client, receive disabled")
+            return False
+
+        async def on_event(channel: str, event_json: str) -> None:
+            """Invoke registered callback when event arrives."""
+            print(f"[SocketAwareEventBroker] Received: {channel}")
+            if channel in self._callbacks:
+                try:
+                    data = json.loads(event_json)
+                    self._callbacks[channel](data)
+                except Exception as e:
+                    print(f"[SocketAwareEventBroker] Callback error: {e}")
+
+        success = await start_socket_receive_loop(on_event)
+        if success:
+            self._receive_started = True
+            print("[SocketAwareEventBroker] Now receiving events from parent")
+        return success
+
+    async def stop(self) -> None:
+        """Stop receiving events and close the socket."""
+        await stop_socket_client()
+        self._receive_started = False
+
+    async def publish(self, channel: str, message: str) -> int:
+        """Publish an event, using socket if available."""
+        if self._socket_client:
+            success = await send_event_to_parent(channel, message)
+            if success:
+                print(f"[SocketAwareEventBroker] Sent via socket: {channel}")
+                return 1
+            else:
+                print(
+                    f"[SocketAwareEventBroker] Socket send failed, using fallback: {channel}",
+                )
+
+        # Fall back to in-memory broker (won't work cross-process but useful for testing)
+        return await self._fallback_broker.publish(channel, message)
+
+
+# Shared event broker instance - socket-aware for cross-process communication
+event_broker = SocketAwareEventBroker()
+
+
+async def start_event_broker_receive() -> bool:
+    """
+    Start receiving events from parent process.
+
+    Call this at the start of call scripts to enable receiving
+    inbound events (call_guidance, call_status, etc.) from the parent.
+    """
+    return await event_broker.start_receiving()
 
 
 # Default inactivity timeout used by both agents
@@ -142,6 +152,8 @@ def create_end_call(
       - calls optional pre_shutdown_callback (e.g., for usage logging)
       - publishes the call ended event
       - cancels all other asyncio tasks
+
+    The process will be terminated by SIGTERM from the parent when cleanup is called.
 
     Args:
         contact: Contact dictionary for the call.
@@ -251,10 +263,10 @@ def configure_from_cli(
       argv[5] = OUTBOUND
       argv[6...] = extra_env[...]
 
-    Returns the computed agent_name ("unity_<assistant_number>").
+    Returns the computed livekit_agent_name ("unity_<assistant_number>").
     """
     assistant_number = ""
-    agent_name = ""
+    livekit_agent_name = ""
     room_name = ""
     print("sys.argv", sys.argv)
 
@@ -262,11 +274,13 @@ def configure_from_cli(
     required_len = 6 + len(extra_env)
     if len(sys.argv) > required_len:
         assistant_number = sys.argv[2]
-        if " " in assistant_number:
-            agent_name, room_name = assistant_number.split(":")
+        if ":" in assistant_number:
+            # UnifyMeet: caller passes "livekit_agent_name:room_name" with prefix already applied
+            livekit_agent_name, room_name = assistant_number.split(":")
         else:
-            agent_name = f"unity_{assistant_number}"
-            room_name = agent_name
+            # Phone: caller passes raw assistant_number, we add the unity_ prefix
+            livekit_agent_name = f"unity_{assistant_number}"
+            room_name = livekit_agent_name
 
         # Populate SESSION_DETAILS with voice config
         SESSION_DETAILS.voice.provider = (
@@ -307,11 +321,134 @@ def configure_from_cli(
         print("Not enough arguments provided")
         sys.exit(1)
 
-    return agent_name, room_name
+    return livekit_agent_name, room_name
 
 
-def should_dispatch_agent() -> bool:
+def should_dispatch_livekit_agent() -> bool:
     """
-    True when we should actually call dispatch_agent() for this process.
+    True when we should actually call dispatch_livekit_agent() for this process.
     """
     return len(sys.argv) > 1 and sys.argv[1] != "download-files"
+
+
+# -------- User screen share capture -------- #
+
+
+class UserScreenCaptureManager:
+    """Captures frames from a remote participant's screen share track in a LiveKit room.
+
+    Registers track_subscribed/track_unsubscribed handlers on the room to
+    automatically start and stop frame capture when a screen share track
+    appears or disappears. Stores the latest frame as raw RGBA bytes and
+    converts to base64 JPEG on demand (lazy conversion to avoid per-frame cost).
+
+    Usage::
+
+        capture_mgr = UserScreenCaptureManager(ctx.room)
+        # ... later, on user utterance ...
+        b64 = capture_mgr.capture_screenshot()  # None if no active share
+        # ... on cleanup ...
+        await capture_mgr.close()
+    """
+
+    def __init__(self, room) -> None:
+        self._latest_frame_data: tuple[bytes, int, int] | None = None
+        self._capture_task: asyncio.Task | None = None
+        self._stream = None
+
+        @room.on("track_subscribed")
+        def _on_track_subscribed(track, publication, participant):
+            self._handle_track_subscribed(track, publication)
+
+        @room.on("track_unsubscribed")
+        def _on_track_unsubscribed(track, publication, participant):
+            self._handle_track_unsubscribed(publication)
+
+    def _handle_track_subscribed(self, track, publication) -> None:
+        from livekit import rtc
+
+        if (
+            track.kind == rtc.TrackKind.KIND_VIDEO
+            and publication.source == rtc.TrackSource.SOURCE_SCREENSHARE
+        ):
+            print("[UserScreenCapture] Screen share track subscribed, starting capture")
+            stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
+            self._stream = stream
+            self._capture_task = asyncio.create_task(self._capture_loop(stream))
+
+    def _handle_track_unsubscribed(self, publication) -> None:
+        from livekit import rtc
+
+        if publication.source == rtc.TrackSource.SOURCE_SCREENSHARE:
+            print(
+                "[UserScreenCapture] Screen share track unsubscribed, stopping capture",
+            )
+            self._latest_frame_data = None
+            if self._capture_task and not self._capture_task.done():
+                self._capture_task.cancel()
+                self._capture_task = None
+            self._stream = None
+
+    async def _capture_loop(self, stream) -> None:
+        """Continuously capture frames, rate-limited to 1 per second."""
+        import time
+
+        last_capture = 0.0
+        try:
+            async for frame_event in stream:
+                now = time.monotonic()
+                if now - last_capture < 1.0:
+                    continue
+                last_capture = now
+                frame = frame_event.frame
+                from livekit import rtc
+
+                if frame.type != rtc.VideoBufferType.RGBA:
+                    frame = frame.convert(rtc.VideoBufferType.RGBA)
+                self._latest_frame_data = (
+                    bytes(frame.data),
+                    frame.width,
+                    frame.height,
+                )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[UserScreenCapture] Frame capture error: {e}")
+        finally:
+            try:
+                await stream.aclose()
+            except Exception:
+                pass
+
+    def capture_screenshot(self) -> str | None:
+        """Convert the latest captured frame to a base64-encoded JPEG string.
+
+        Returns None if no screen share track is active or no frame has
+        been captured yet.
+        """
+        if self._latest_frame_data is None:
+            return None
+
+        import base64
+        import io
+
+        from PIL import Image
+
+        rgba_bytes, width, height = self._latest_frame_data
+        img = Image.frombytes("RGBA", (width, height), rgba_bytes, "raw")
+        rgb = img.convert("RGB")
+        buf = io.BytesIO()
+        rgb.save(buf, format="JPEG", quality=85)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    async def close(self) -> None:
+        """Cancel the capture loop and release resources."""
+        if self._capture_task and not self._capture_task.done():
+            self._capture_task.cancel()
+            try:
+                await self._capture_task
+            except asyncio.CancelledError:
+                pass
+        self._capture_task = None
+        self._latest_frame_data = None
+        self._stream = None

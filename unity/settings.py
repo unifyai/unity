@@ -29,20 +29,6 @@ from unity.transcript_manager.settings import TranscriptSettings
 from unity.web_searcher.settings import WebSettings
 
 
-def _parse_bool_or_str(v: Any) -> bool | str:
-    """Parse a value that can be bool, bool-string, or pass-through string."""
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str):
-        lower = v.lower()
-        if lower in ("true", "yes", "1"):
-            return True
-        if lower in ("false", "no", "0"):
-            return False
-        return v  # Pass through for special cache modes like "read-only"
-    return bool(v)
-
-
 def _parse_bool(v: Any) -> bool:
     """Parse a value as boolean."""
     if isinstance(v, bool):
@@ -60,10 +46,17 @@ class ProductionSettings(BaseSettings):
     """
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Local Workspace
+    # ─────────────────────────────────────────────────────────────────────────
+    # Root directory for local file operations, CodeActActor working directory,
+    # virtual environments, and .env storage.  Defaults to ~/Unity/Local when
+    # empty.  Override via UNITY_LOCAL_ROOT env var.
+    UNITY_LOCAL_ROOT: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_MODEL: str = "gpt-5.2@openai"
-    UNIFY_CACHE: bool | str = True
+    UNIFY_MODEL: str = "claude-4.6-opus@anthropic"
 
     # ─────────────────────────────────────────────────────────────────────────
     # LLM Provider Credentials
@@ -80,7 +73,7 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_BASE_URL: str = "https://api.unify.ai/v0"
+    ORCHESTRA_URL: str = "https://api.unify.ai/v0"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging / Observability
@@ -90,6 +83,14 @@ class ProductionSettings(BaseSettings):
     # When set, logs are written to {UNITY_LOG_DIR}/unity.log
     # Default: None (console only)
     UNITY_LOG_DIR: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EventBus Publishing
+    # ─────────────────────────────────────────────────────────────────────────
+    # Controls whether EventBus publishes events (logging to Unify and local
+    # subscriptions/callbacks). Disabled by default for local development to
+    # reduce noise. Enable in production deployments.
+    EVENTBUS_PUBLISHING_ENABLED: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # OpenTelemetry Tracing
@@ -134,9 +135,11 @@ class ProductionSettings(BaseSettings):
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_READONLY_ASK_GUARD: bool = True
-    FIRST_ASK_TOOL_IS_SEARCH: bool = True
-    FIRST_MUTATION_TOOL_IS_ASK: bool = True
+    FIRST_ASK_TOOL_IS_SEARCH: bool = False
+    FIRST_MUTATION_TOOL_IS_ASK: bool = False
     STAGING: bool = False
+    DEMO_MODE: bool = False
+    DEMO_ID: int | None = None  # Demo assistant metadata ID (if DEMO_MODE is True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Manager Configuration
@@ -145,7 +148,7 @@ class ProductionSettings(BaseSettings):
     #   - Actor, ContactManager, TranscriptManager, TaskScheduler, ConversationManager
     # Optional managers (can be disabled via ENABLED=False):
     #   - KnowledgeManager, GuidanceManager, SecretManager,
-    #     WebSearcher, GlobalFileManager
+    #     WebSearcher
 
     # ─────────────────────────────────────────────────────────────────────────
     # Composed Manager Settings
@@ -170,14 +173,11 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
-    @field_validator("UNIFY_CACHE", mode="before")
-    @classmethod
-    def parse_cache(cls, v: Any) -> bool | str:
-        return _parse_bool_or_str(v)
-
     @field_validator(
         "ASYNCIO_DEBUG",
         "ASYNCIO_DEBUG_VERBOSE",
+        "DEMO_MODE",
+        "EVENTBUS_PUBLISHING_ENABLED",
         "PYTEST_LOG_TO_FILE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",

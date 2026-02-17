@@ -63,11 +63,29 @@ jobs:
         PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
       run: |
         # Helper function to extract [parallel_run.sh ...] content
+        # Matches ALL occurrences and combines their arguments
         extract_parallel_cmd() {
           local msg="$1"
-          # Extract content between [parallel_run.sh and ]
-          if [[ "$msg" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; then
-            echo "${BASH_REMATCH[1]}"
+          local result=""
+          local remaining="$msg"
+
+          # Loop through all matches of [parallel_run.sh ...]
+          while [[ "$remaining" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; do
+            local match="${BASH_REMATCH[1]}"
+            # Skip literal "..." which is just documentation/example text
+            if [[ "$match" != "..." ]]; then
+              if [[ -n "$result" ]]; then
+                result="$result $match"
+              else
+                result="$match"
+              fi
+            fi
+            # Remove the matched portion and continue searching
+            remaining="${remaining#*"${BASH_REMATCH[0]}"}"
+          done
+
+          if [[ -n "$result" ]]; then
+            echo "$result"
           fi
         }
 
@@ -151,7 +169,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install black
-      run: pip install black
+      run: pip install black==26.1.0
 
     - name: Run black check
       run: black --diff --color --check .
@@ -190,7 +208,8 @@ jobs:
         #
         # Leaf discovery (Option A algorithm):
         # - Leaf directories (test files, no test subdirs) → one job per directory
-        # - Non-leaf directories with test files → one job per individual test file
+        # - Mixed directories (test files AND test subdirs) → one bundled job for
+        #   all direct test files (space-separated), plus recursive jobs for subdirs
         # This maximizes parallelism regardless of how paths are specified.
 
         PARALLEL_CMD="${{ needs.should-run-tests.outputs.parallel_run_cmd }}"
@@ -277,7 +296,7 @@ jobs:
 
         # CI defaults for project management (can be overridden)
         # With local orchestra (default), these are ignored - each job has fresh DB
-        # Only relevant when UNIFY_BASE_URL is set to a non-local URL (staging/production)
+        # Only relevant when ORCHESTRA_URL is set to a non-local URL (staging/production)
         DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
@@ -470,9 +489,9 @@ jobs:
       needs.discover.outputs.delete_on_start == 'true' &&
       needs.discover.outputs.random_projects != 'true'
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
-      # No fallback - if delete_on_start is enabled, UNIFY_BASE_URL must be set
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # No fallback - if delete_on_start is enabled, ORCHESTRA_URL must be set
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
     - uses: actions/checkout@v2
 
@@ -521,22 +540,28 @@ jobs:
       UNIFY_TESTS_RAND_PROJ: "false"              # Shared project mode
       UNIFY_TESTS_DELETE_PROJ_ON_START: "false"   # Handled by setup job at workflow level
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
+      # LLM response caching (owned by unillm, read from env)
+      UNILLM_CACHE: "true"
       # Local orchestra path (cloned into workspace, not sibling directory)
       ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
       # API credentials
-      # UNIFY_BASE_URL: if repo variable set, use remote; otherwise local orchestra sets it
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      # ORCHESTRA_URL: if repo variable set, use remote; otherwise local orchestra sets it
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Communication service URL (auto-selected based on branch: main→production, else→staging)
+      UNITY_COMMS_URL: ${{ github.ref_name == 'main' && 'https://unity-comms-app-262420637606.us-central1.run.app' || 'https://unity-comms-app-staging-262420637606.us-central1.run.app' }}
       # Orchestra GCP configuration (set by google-github-actions/auth step)
-      # ORCHESTRA_VERTEXAI_SERVICE_ACC_JSON is set via GOOGLE_APPLICATION_CREDENTIALS by auth action
-      ORCHESTRA_VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-      ORCHESTRA_VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
+      # GOOGLE_APPLICATION_CREDENTIALS is set automatically by the google-github-actions/auth action
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_LOCATION: ${{ vars.GCP_LOCATION }}
       # GCP bucket names (passed to orchestra server)
       ORCHESTRA_GCP_BUCKET_NAME: ${{ vars.GCP_BUCKET_LOGS }}
       ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
       ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      # Unify API key for _prepare_shared_project.py and tests
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
       # Ensure local unillm/unify packages are found correctly
       # The repos are cloned to ./unillm/ and ./unify/, with packages inside
       PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
@@ -623,8 +648,14 @@ jobs:
                   "$key_upper" == *_PASSWORD || "$key_upper" == *_TOKEN || \
                   "$key_upper" == *_CREDENTIAL* || "$key_upper" == *_API_* || \
                   "$key_upper" == *APIKEY* ]]; then
-              echo "::add-mask::$value"
-              echo "Masked: $key"
+              # Skip values shorter than 4 characters to avoid catastrophic masking
+              # (e.g. a value of "3" would replace every digit 3 with *** everywhere)
+              if (( ${#value} >= 4 )); then
+                echo "::add-mask::$value"
+                echo "Masked: $key"
+              else
+                echo "Skipped masking $key (value too short: ${#value} chars)"
+              fi
             fi
           fi
         done < .env
@@ -634,13 +665,28 @@ jobs:
     - name: Normalize test path
       id: normalize-path
       run: |
-        # Each matrix entry is a single test path
-        echo "test_args=${{ matrix.test_path }}" >> $GITHUB_OUTPUT
+        # Each matrix entry is either a single test path or a space-separated
+        # bundle of files (from mixed directories with both files and subdirs)
+        RAW_PATH='${{ matrix.test_path }}'
+        echo "test_args=$RAW_PATH" >> $GITHUB_OUTPUT
 
-        # Normalize for artifact naming
-        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | sed 's|^tests/||' | tr '/' '_')
+        # Normalize for artifact naming and display
+        if [[ "$RAW_PATH" == *" "* ]]; then
+          # Bundled multi-file entry: derive name from common parent directory
+          first_file="${RAW_PATH%% *}"
+          parent_dir=$(dirname "$first_file")
+          file_count=$(echo "$RAW_PATH" | wc -w | tr -d ' ')
+          normalized=$(echo "$parent_dir" | sed 's|^tests/||' | tr '/' '_')
+          normalized="${normalized}_${file_count}_files"
+          display_name="${parent_dir} (${file_count} files)"
+        else
+          normalized=$(echo "$RAW_PATH" | sed 's|^tests/||' | tr '/' '_')
+          display_name="$RAW_PATH"
+        fi
+
         if [[ -z "$normalized" || "$normalized" == "." ]]; then normalized="all"; fi
         echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
+        echo "display_name=$display_name" >> $GITHUB_OUTPUT
 
         # Calculate timeout in seconds (default 120 minutes)
         TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
@@ -715,8 +761,8 @@ jobs:
         print('✓ Local packages verified successfully')
         "
 
-    # Cache Playwright browsers (~500MB) to avoid re-downloading on every run
-    - name: Cache Playwright browsers
+    # Cache Playwright assets (~500MB) to avoid re-downloading on every run
+    - name: Cache Playwright assets
       uses: actions/cache@v4
       id: playwright-cache
       with:
@@ -725,7 +771,7 @@ jobs:
         restore-keys: |
           playwright-${{ runner.os }}-
 
-    - name: Install Playwright browsers
+    - name: Install Playwright assets
       if: steps.playwright-cache.outputs.cache-hit != 'true'
       run: |
         uv run playwright install --with-deps
@@ -779,8 +825,9 @@ jobs:
         # parallel_run.sh handles starting local orchestra automatically
         # Note: TEST_PATH must come before EXTRA_ARGS because EXTRA_ARGS may contain
         # "-- pytest-args" and everything after -- is treated as pytest arguments
+        # TEST_PATH is unquoted to allow word splitting for bundled multi-file entries
         echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $EXTRA_ARGS"
-        tests/parallel_run.sh --timeout "$TIMEOUT" "$TEST_PATH" $EXTRA_ARGS
+        tests/parallel_run.sh --timeout "$TIMEOUT" $TEST_PATH $EXTRA_ARGS
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
@@ -791,15 +838,10 @@ jobs:
         echo "=== Orchestra Server Logs ==="
         if [ -f /tmp/orchestra-local-server.log ]; then
           cat /tmp/orchestra-local-server.log
-          # Also copy to logs/orchestra/ so it gets uploaded with artifacts
-          if [ -d logs/orchestra ]; then
-            # Find the session directory (most recent timestamp)
-            session_dir=$(ls -td logs/orchestra/*/ 2>/dev/null | head -1)
-            if [ -n "$session_dir" ]; then
-              cp /tmp/orchestra-local-server.log "$session_dir/server.log"
-              echo "(Copied to $session_dir/server.log for artifact upload)"
-            fi
-          fi
+          # Copy to logs/orchestra/ so it gets uploaded with artifacts
+          mkdir -p logs/orchestra
+          cp /tmp/orchestra-local-server.log logs/orchestra/server.log
+          echo "(Copied to logs/orchestra/server.log for artifact upload)"
         else
           echo "No orchestra log file found at /tmp/orchestra-local-server.log"
         fi
@@ -856,7 +898,7 @@ jobs:
         echo "Download logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
-        echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## ❌ Test Failures: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -891,7 +933,7 @@ jobs:
 
         # Fail if no tests ran - this indicates a problem (path resolution, collection error, etc.)
         if [ "$log_count" -eq 0 ]; then
-          echo "## ⚠️ No Tests Ran: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚠️ No Tests Ran: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**0 tests executed** — this likely indicates a problem with test discovery." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -909,7 +951,7 @@ jobs:
         echo "View logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
-        echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ All Tests Passed: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
@@ -1044,9 +1086,9 @@ jobs:
       needs.discover.outputs.random_projects != 'true' &&
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
-      # No fallback - if delete_on_exit is enabled, UNIFY_BASE_URL must be set
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # No fallback - if delete_on_exit is enabled, ORCHESTRA_URL must be set
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
     - uses: actions/checkout@v2
 

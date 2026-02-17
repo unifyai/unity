@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 import time
-import inspect
 from typing import Optional, Type, TypeVar, TYPE_CHECKING
 from pydantic import BaseModel
 from enum import Enum
@@ -18,7 +16,6 @@ from .events import (
 )
 from .prompt_builders import build_ask_handle_prompt
 import logging
-
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -108,40 +105,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             "count": len(messages),
         }
 
-    async def send_notification(
-        self,
-        content: str,
-        *,
-        source: str = "system",
-        interjection_id: Optional[str] = None,
-        pinned: bool = False,
-    ) -> dict:
-        """
-        Sends a notification to the live conversation by publishing an event.
-        """
-        if self._stopped:
-            return {"status": "error", "message": "Handle is stopped."}
-
-        # Generate ID if not provided
-        if interjection_id is None:
-            interjection_id = str(uuid.uuid4().hex[:12])
-
-        event = NotificationInjectedEvent(
-            content=content,
-            source=source,
-            target_conversation_id=self.conversation_id,
-            interjection_id=interjection_id,
-            pinned=pinned,
-        )
-        # Publish to unified steering channel (picked up by app:comms:* subscription)
-        await self.event_broker.publish(self._steering_channel, event.to_json())
-
-        return {
-            "status": "ok",
-            "message": "Notification event published.",
-            "interjection_id": interjection_id,
-        }
-
     # ─────────────────────────────────────────────────────────────
     # Standard SteerableToolHandle Methods
     # ─────────────────────────────────────────────────────────────
@@ -151,8 +114,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         question: str,
         *,
         response_format: Optional[Type[T]] = None,
-        overall_timeout: int = 300,
-        task_instructions: Optional[str] = None,
     ) -> SteerableToolHandle:
         """
         Asks a question to the user and returns a handle to the running sub-conversation.
@@ -160,8 +121,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         Args:
             question: The question to ask the user
             response_format: Optional Pydantic model or Enum type for structured responses
-            overall_timeout: Maximum time to wait for a response (seconds)
-            task_instructions: Optional specific instructions for this task to be injected into the prompt
         """
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped handle.")
@@ -200,33 +159,10 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             recent_transcript_for_prompt = "Recent Transcript: (error)"
 
         # Build prompts using prompt_builders
-        static_prompt, dynamic_prompt = build_ask_handle_prompt(
+        prompt_parts = build_ask_handle_prompt(
             question=question,
             recent_transcript=recent_transcript_for_prompt,
-            task_instructions=task_instructions,
         )
-
-        # Build content array with optional handler context
-        content_parts = [
-            {
-                "type": "text",
-                "text": static_prompt,
-            },
-            {
-                "type": "text",
-                "text": dynamic_prompt,
-            },
-        ]
-
-        system_header_msg = {
-            "role": "system",
-            "content": content_parts,
-        }
-        kickoff_user_msg = {
-            "role": "user",
-            "content": f"Answer the question: '{question}'",
-        }
-        seeded_messages: list[dict] = [system_header_msg, kickoff_user_msg]
 
         user_reply_future = asyncio.Future()
 
@@ -254,6 +190,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                     return f"User replied: {user_msg}"
 
                 user_msg = await asyncio.wait_for(user_reply_future, timeout=120)
+                # Reset for potential future questions
+                user_reply_future = asyncio.Future()
                 return f"User replied: {user_msg}"
             except asyncio.TimeoutError:
                 return "Timed out waiting for user reply."
@@ -269,6 +207,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         llm = new_llm_client(
             return_full_completion=False,
         )
+        llm.set_system_message(prompt_parts.to_list())
 
         # Get the parent lineage from the ConversationManager's session logger
         parent_lineage: list[str] = []
@@ -279,7 +218,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         # final_answer tool injection automatically
         inner_handle = start_async_tool_loop(
             client=llm,
-            message=seeded_messages,
+            message=f"Answer the question: '{question}'",
             tools=tools,
             response_format=response_format,
             interrupt_llm_with_interjections=True,
@@ -295,8 +234,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                 pass
 
             # Delegate standard lifecycle methods
-            def stop(self, reason: Optional[str] = None, **kwargs):
-                return inner_handle.stop(reason, **kwargs)
+            async def stop(self, reason: Optional[str] = None, **kwargs):
+                await inner_handle.stop(reason, **kwargs)
 
             async def pause(self):
                 return await inner_handle.pause()
@@ -322,15 +261,19 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
             # INTERJECT HANDLER (Triggered by ConversationManager)
             async def interject(self, message: str, **kwargs):
-                await inner_handle.interject(
-                    message,
-                    trigger_immediate_llm_turn=False,
-                    **kwargs,
-                )
                 if not user_reply_future.done():
+                    # ask_question is blocking — deliver the reply via the
+                    # future so it surfaces as a tool result, not as a
+                    # duplicate user message in the conversation.
                     user_reply_future.set_result(message)
-
-                return "Interjection processed"
+                else:
+                    # No ask_question pending — forward as a regular
+                    # interjection into the tool loop.
+                    await inner_handle.interject(
+                        message,
+                        trigger_immediate_llm_turn=False,
+                        **kwargs,
+                    )
 
             async def result(self):
                 try:
@@ -344,43 +287,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
                     if raw_result is None:
                         return None
 
-                    # Convert result to dict for processing
-                    if hasattr(raw_result, "model_dump"):
-                        final_payload = raw_result.model_dump()
-                    # Parse result if response_format was specified
-                    if response_format:
-                        if isinstance(raw_result, str):
-                            # Parse JSON string into the Pydantic model
-                            if inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                BaseModel,
-                            ):
-                                return response_format.model_validate_json(raw_result)
-                            elif inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                Enum,
-                            ):
-                                import json
-
-                                data = json.loads(raw_result)
-                                if isinstance(data, dict) and "value" in data:
-                                    return response_format(data["value"])
-                                return response_format(data)
-                        elif isinstance(raw_result, dict):
-                            if inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                BaseModel,
-                            ):
-                                return response_format.model_validate(raw_result)
-                            elif inspect.isclass(response_format) and issubclass(
-                                response_format,
-                                Enum,
-                            ):
-                                if "value" in raw_result:
-                                    return response_format(raw_result["value"])
-                                return response_format(raw_result)
-                        elif isinstance(raw_result, response_format):
-                            return raw_result
                     return raw_result
 
                 finally:
@@ -393,30 +299,29 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         return wrapped_handle
 
-    async def interject(
-        self,
-        message: str,
-        *,
-        pinned: bool = False,
-        interjection_id: Optional[str] = None,
-    ) -> dict:
-        """
-        Send an interjection to the conversation.
+    async def interject(self, message: str, **kwargs) -> str:
+        """Provide additional information or instructions to the conversation.
 
-        Args:
-            message: The message content to inject
-            pinned: If True, the interjection persists for the entire session
-            interjection_id: Optional explicit ID (auto-generated if not provided)
+        Publishes a ``NotificationInjectedEvent`` to the steering channel so
+        the CM brain can incorporate the message.  Plumbing kwargs (e.g.
+        ``_parent_chat_context_cont``) are accepted but unused -- the CM handle
+        does not maintain an LLM loop to inject context into.
 
-        Returns:
-            Dict with status and the interjection_id
+        Returns
+        -------
+        str
+            The ``interjection_id`` assigned to this interjection.  Pass it to
+            :pymeth:`unpin_interjection` to remove a pinned interjection later.
         """
-        return await self.send_notification(
-            message,
+        if self._stopped:
+            return ""
+        event = NotificationInjectedEvent(
+            content=message,
             source="interjection",
-            interjection_id=interjection_id,
-            pinned=pinned,
+            target_conversation_id=self.conversation_id,
         )
+        await self.event_broker.publish(self._steering_channel, event.to_json())
+        return event.interjection_id
 
     async def unpin_interjection(self, interjection_id: str) -> dict:
         """
@@ -443,15 +348,14 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             "interjection_id": interjection_id,
         }
 
-    def stop(self, reason: Optional[str] = None) -> str:
+    async def stop(self, reason: Optional[str] = None, **kwargs) -> None:
         """Stops the handle."""
         if self._stopped:
-            return "Handle already stopped."
+            return
         self._stopped = True
         self._final_result = (
             f"Handle stopped. Reason: {reason or 'No reason provided.'}"
         )
-        return self._final_result
 
     def done(self) -> bool:
         return self._stopped

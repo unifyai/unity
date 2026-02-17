@@ -12,26 +12,20 @@ from unity.settings import SETTINGS
 DEFAULT_MODEL = SETTINGS.UNIFY_MODEL
 
 
-def get_cache_setting() -> bool | str:
-    """Return the cache setting from SETTINGS.
-
-    Backward-compatible wrapper. New code should use SETTINGS.UNIFY_CACHE directly.
-    """
-    return SETTINGS.UNIFY_CACHE
-
-
 def new_llm_client(
     model: str | None = None,
     *,
     async_client: bool = True,
     stateful: bool = False,
+    debug_marker: str | None = None,
     **kwargs: Any,
 ) -> "unillm.AsyncUnify | unillm.Unify":
     """
     Create a configured Unify client.
 
-    If model is not specified, uses UNIFY_MODEL from settings (default: gpt-5.2@openai).
-    Defaults to high reasoning_effort and priority service_tier where applicable.
+    If model is not specified, uses UNIFY_MODEL from settings (default: claude-4.6-opus@anthropic).
+    Defaults to low reasoning_effort and priority service_tier where applicable.
+    Caching is controlled by the UNILLM_CACHE env var (owned by unillm).
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
     """
@@ -39,10 +33,10 @@ def new_llm_client(
         model = SETTINGS.UNIFY_MODEL
 
     config = {
-        "cache": SETTINGS.UNIFY_CACHE,
-        "reasoning_effort": "high",
+        "reasoning_effort": "low",
         "service_tier": "priority",
         "stateful": stateful,
+        "debug_marker": debug_marker,
     }
     config.update(kwargs)
 

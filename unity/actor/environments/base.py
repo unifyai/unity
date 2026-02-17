@@ -3,9 +3,56 @@ from __future__ import annotations
 import asyncio
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from pydantic import BaseModel
+
+
+def matches_segment(pattern: str, canonical_name: str) -> bool:
+    """Check if *pattern* matches *canonical_name* using dotted-segment rules.
+
+    A pattern matches a canonical name if it is either an exact match or a
+    dotted ancestor (i.e., a complete prefix up to a ``.`` boundary).
+
+    Examples::
+
+        matches_segment("primitives", "primitives.contacts.ask")      # True
+        matches_segment("primitives.contacts", "primitives.contacts.ask")  # True
+        matches_segment("primitives.contacts.ask", "primitives.contacts.ask")  # True
+        matches_segment("primitives.con", "primitives.contacts.ask")   # False
+        matches_segment("functions", "functions.alpha")                 # True
+        matches_segment("functions.alpha", "functions.alpha")           # True
+    """
+    return canonical_name == pattern or canonical_name.startswith(pattern + ".")
+
+
+def resolve_directly_callable(
+    patterns: List[str],
+    all_tool_names: Set[str],
+) -> Set[str]:
+    """Expand a list of dotted-segment patterns into matching canonical tool names.
+
+    Args:
+        patterns: List of patterns (e.g., ``["primitives.contacts", "alpha"]``).
+        all_tool_names: Complete set of canonical tool names across all environments.
+
+    Returns:
+        Set of canonical tool names matched by the patterns.
+
+    Raises:
+        ValueError: If any pattern matches zero tool names (likely a typo or
+            a function the agent hasn't encountered).
+    """
+    matched: Set[str] = set()
+    for pat in patterns:
+        hits = {name for name in all_tool_names if matches_segment(pat, name)}
+        if not hits:
+            raise ValueError(
+                f"environment pattern {pat!r} did not match any known "
+                f"tool. Available tools: {sorted(all_tool_names)}",
+            )
+        matched |= hits
+    return matched
 
 
 class ToolMetadata(BaseModel):
@@ -17,6 +64,17 @@ class ToolMetadata(BaseModel):
         is_steerable: True if calling the tool may return a steerable handle.
         docstring: Tool documentation string (if available).
         signature: Human-readable signature string (if available).
+        function_id: Optional cross-reference to a stored FunctionManager function.
+            When set, indicates this environment tool corresponds to a function in
+            the FunctionManager backend, enabling automatic exclusion from
+            FunctionManager search/list/filter results to prevent overlap.
+            Must be paired with ``function_context`` to identify which DB context
+            the ID belongs to (IDs are only unique within a context).
+        function_context: Which FunctionManager DB context ``function_id``
+            belongs to. Required when ``function_id`` is set.
+            ``"primitive"`` for state manager methods (``Functions/Primitives``),
+            ``"compositional"`` for user-defined functions
+            (``Functions/Compositional``).
     """
 
     name: str
@@ -24,6 +82,8 @@ class ToolMetadata(BaseModel):
     is_steerable: bool = False
     docstring: Optional[str] = None
     signature: Optional[str] = None
+    function_id: Optional[int] = None
+    function_context: Optional[Literal["primitive", "compositional"]] = None
 
 
 def _callable_accepts_clarification_kwargs(fn: Any) -> bool:
@@ -155,7 +215,7 @@ class _ClarificationQueueInjector:
 class BaseEnvironment(ABC):
     """Abstract interface for execution environments.
 
-    An environment encapsulates a domain of tools (browser control, state managers,
+    An environment encapsulates a domain of tools (computer/web control, state managers,
     custom adapters) and provides:
     - a namespace to inject into the plan execution sandbox
     - metadata for tools (purity/steerability)

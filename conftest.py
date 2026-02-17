@@ -18,11 +18,11 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 # Early Environment Setup (MUST be before any unity/unify imports)
 # ─────────────────────────────────────────────────────────────────────────────
-# Set UNIFY_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
+# Set UNILLM_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
 # This ensures all worktrees share the same LLM cache (.cache.ndjson) for
-# consistent cache hits. This must happen before unify is imported because
+# consistent cache hits. This must happen before unillm is imported because
 # the cache directory is captured at class definition time.
-if "UNIFY_CACHE_DIR" not in os.environ:
+if "UNILLM_CACHE_DIR" not in os.environ:
     repo_root = Path(__file__).resolve().parent
     git_path = repo_root / ".git"
     # Check if we're in a worktree (.git is a file, not a directory)
@@ -38,10 +38,9 @@ if "UNIFY_CACHE_DIR" not in os.environ:
                     repo_root = main_repo
         except Exception:
             pass  # Fall back to current repo root
-    os.environ["UNIFY_CACHE_DIR"] = str(repo_root)
+    os.environ["UNILLM_CACHE_DIR"] = str(repo_root)
 
 from unity.settings import SETTINGS
-
 
 _TEE_FILE_HANDLE: Optional[object] = None
 _TEE_ORIG_STREAM: Optional[object] = None
@@ -58,9 +57,9 @@ def _path_to_name(path: str) -> str:
     """Convert a test path to a filename-safe string.
 
     Examples:
-        tests/test_contact_manager/test_ask.py → test_contact_manager-test_ask
+        tests/contact_manager/test_ask.py → contact_manager-test_ask
         test_foo.py → test_foo
-        /abs/path/to/workspace/tests/test_foo.py → test_foo
+        /abs/path/to/workspace/tests/foo.py → foo
     """
     name = path.rstrip("/\\")
 
@@ -219,12 +218,12 @@ def _derive_log_name_from_args(args: list) -> str:
     """Derive a semantic log filename from pytest command-line args.
 
     Examples:
-        ['tests/test_contact_manager/test_ask.py']
-            → 'test_contact_manager-test_ask'
-        ['tests/test_contact_manager/test_ask.py::test_foo']
-            → 'test_contact_manager-test_ask--test_foo'
-        ['tests/test_contact_manager/']
-            → 'test_contact_manager'
+        ['tests/contact_manager/test_ask.py']
+            → 'contact_manager-test_ask'
+        ['tests/contact_manager/test_ask.py::test_foo']
+            → 'contact_manager-test_ask--test_foo'
+        ['tests/contact_manager/']
+            → 'contact_manager'
         ['tests/']
             → 'tests'
         [] (no args)
@@ -232,7 +231,7 @@ def _derive_log_name_from_args(args: list) -> str:
         Multiple from same file:
             → 'test_session_behavior--TestA-test_x+1more'
         Multiple from same directory:
-            → 'test_contact_manager--test_ask+2more'
+            → 'contact_manager--test_ask+2more'
     """
     if not args:
         return "all"
@@ -590,7 +589,7 @@ def pytest_unconfigure(config):
             f"📁 This run's logs: {root_path / 'logs' / 'pytest' / subdir}/",
         )
         tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
-        tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'llm' / subdir}/")
+        tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'unillm' / subdir}/")
         tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.

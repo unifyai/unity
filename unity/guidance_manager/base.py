@@ -40,6 +40,14 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
         Interrogate the existing Guidance table (read-only) and obtain a live
         SteerableToolHandle.
 
+        Parameters
+        ----------
+        text : str
+            The query in plain English
+            (e.g. "How should I handle a database failover?").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured answer.
+
         Purpose
         -------
         Use this to search for guidance by title/content and to retrieve
@@ -75,6 +83,14 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
         Apply a mutation request – create, edit, or delete guidance entries –
         expressed in plain English and receive a steerable LLM handle.
+
+        Parameters
+        ----------
+        text : str
+            The mutation request in plain English
+            (e.g. "Add a runbook for handling API outages").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured outcome.
 
         Ask vs Clarification
         --------------------

@@ -315,11 +315,25 @@ class Subscription(BaseModel):
 class EventBus:
     _LOGGER = unify.AsyncLoggerManager(name="EventBus", num_consumers=16)
 
-    # Class-level flag to control event publishing. Defaults to True for production.
-    # Tests disable this by default and opt-in via @pytest.mark.enable_eventbus.
-    _publishing_enabled: bool = True
+    # Class-level flag to control event publishing. Initialized from SETTINGS on
+    # first EventBus instantiation. Can be overridden (e.g., tests use markers).
+    _publishing_enabled: bool | None = None
+
+    @classmethod
+    def _init_publishing_enabled(cls) -> None:
+        """Initialize _publishing_enabled from settings if not already set."""
+        if cls._publishing_enabled is None:
+            try:
+                from ..settings import SETTINGS
+
+                cls._publishing_enabled = SETTINGS.EVENTBUS_PUBLISHING_ENABLED
+            except Exception:
+                # Fallback to disabled if settings can't be loaded
+                cls._publishing_enabled = False
 
     def __init__(self):
+        # Initialize publishing flag from settings (once, on first instantiation)
+        EventBus._init_publishing_enabled()
 
         # private attributes
         self._deques: Dict[str, Deque[Event]] = {}
@@ -764,7 +778,10 @@ class EventBus:
             self._next_row_ids.setdefault(event_type, 0)
 
     async def publish(self, event: Event, *, blocking: bool = False) -> None:
-        # Skip publishing if disabled (e.g., during tests)
+        # Initialize publishing flag from settings if not already done
+        if EventBus._publishing_enabled is None:
+            EventBus._init_publishing_enabled()
+        # Skip publishing if disabled (e.g., during local dev or tests)
         if not EventBus._publishing_enabled:
             return
 
@@ -870,7 +887,6 @@ class EventBus:
         limit: Union[int, Dict[str, int]] = 100,
         grouped_by_type: bool = False,
     ) -> Union[List[Event], Dict[str, List[Event]]]:
-        await self.join_initialization()
         """
         Return events that satisfy *filter*, applying *offset*/**limit** rules as
         follows
@@ -903,22 +919,26 @@ class EventBus:
         # 0. Work out which semantics we're in ---------------------------------
         combined_window = isinstance(offset, int) and isinstance(limit, int)
 
+        # Use all known event types (not just those with populated deques)
+        # so search works before hydration completes.
+        all_types = set(self._deques) | set(self._specific_ctxs)
+
         # ----- per-type helpers ----------------------------------------------
         if combined_window:
             # grab *enough* from every queue (offset + limit) so the global
             # pass later has material to slice from
-            per_type_limit = {t: offset + limit for t in self._deques}
-            per_type_offset = {t: 0 for t in self._deques}  # skip globally later
+            per_type_limit = {t: offset + limit for t in all_types}
+            per_type_offset = {t: 0 for t in all_types}  # skip globally later
         else:
             if isinstance(limit, int):
-                per_type_limit = {t: limit for t in self._deques}
+                per_type_limit = {t: limit for t in all_types}
             else:
-                per_type_limit = {t: limit.get(t, 0) for t in self._deques}
+                per_type_limit = {t: limit.get(t, 0) for t in all_types}
 
             if isinstance(offset, int):
-                per_type_offset = {t: offset for t in self._deques}
+                per_type_offset = {t: offset for t in all_types}
             else:
-                per_type_offset = {t: offset.get(t, 0) for t in self._deques}
+                per_type_offset = {t: offset.get(t, 0) for t in all_types}
 
         # ----------------------------------------------------------------------
         # 1. scan the deque -----------------------------------------------------

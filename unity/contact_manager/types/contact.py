@@ -70,7 +70,7 @@ class Contact(BaseModel):
         "phone_number": "phone",
         "bio": "bio",
         "rolling_summary": "rs",
-        "respond_to": "resp",
+        "should_respond": "resp",
         "response_policy": "policy",
         "timezone": "tz",
         "is_system": "sys",
@@ -114,8 +114,8 @@ class Contact(BaseModel):
         default=None,
         description="Short rolling conversation summary and current objectives with this contact.",
     )
-    respond_to: bool = Field(
-        default=False,
+    should_respond: bool = Field(
+        default=True,
         description="Whether the assistant should respond to inbound messages or calls from this contact.",
     )
     response_policy: Optional[str] = Field(

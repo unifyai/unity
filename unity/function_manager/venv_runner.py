@@ -34,11 +34,11 @@ import signal
 import sys
 import threading
 import traceback
+import types
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from queue import Queue
 from typing import Any, Dict
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # Signal Handling for Graceful Shutdown
@@ -210,7 +210,7 @@ class ComputerPrimitivesProxy:
     """
     Proxy for the computer_primitives object.
 
-    Provides access to browser/desktop control methods via RPC.
+    Provides access to web/desktop control methods via RPC.
     Usage: await computer_primitives.click(selector="...")
     """
 
@@ -375,7 +375,13 @@ def create_safe_globals(is_async: bool = True):
     except ImportError:
         pass
 
-    return globals_dict
+    # Register the globals as a proper module in sys.modules
+    mod_name = f"__sandbox_{uuid.uuid4()}__"
+    mod = types.ModuleType(mod_name)
+    mod.__dict__.update(globals_dict)
+    sys.modules[mod_name] = mod
+    mod.__dict__["__name__"] = mod_name
+    return mod.__dict__
 
 
 def execute_sync(implementation: str, call_kwargs: dict) -> dict:

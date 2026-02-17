@@ -18,18 +18,235 @@ from .tools_utils import ToolCallMetadata, create_tool_call_message
 from .time_context import perf_counter
 from .messages import (
     insert_tool_message_after_assistant,
-    chat_context_repr,
     _normalise_kwargs_for_bound_method,
 )
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema
 from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
 from contextlib import suppress
+from .propagation_mode import ChatContextPropagation
+from .context_tracker import LoopContextState
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
     from .message_dispatcher import LoopMessageDispatcher
     from .time_context import TimeContext
+
+
+# Sentinel for bare top-level handles (no label needed).
+_HANDLE_SENTINEL = "<steerable handle — now in-flight>"
+
+
+def _handle_label_sentinel(label: str) -> str:
+    """Labeled sentinel for a handle inside a composite return."""
+    return f"[{label}: steerable]"
+
+
+@dataclasses.dataclass
+class _MultiHandleState:
+    """Shared state for multiple handles spawned from one tool return."""
+
+    parent_call_id: str
+    parent_name: str
+    placeholder_msg: dict
+    template: Any  # cleaned structure with labeled sentinels
+    results: dict  # label -> raw result (None while pending)
+
+    def update_placeholder(self) -> None:
+        """Rebuild the shared placeholder with any completed results merged in."""
+        updated = _rebuild_multi_handle_content(self.template, self.results)
+        all_done = all(v is not None for v in self.results.values())
+        self.placeholder_msg["content"] = serialize_tool_content(
+            tool_name=self.parent_name,
+            payload=updated,
+            is_final=all_done,
+        )
+
+
+def _rebuild_multi_handle_content(template, results):
+    """Replace labeled sentinels in *template* with completed results."""
+
+    def _walk(node):
+        if isinstance(node, str):
+            for label, raw in results.items():
+                if node == _handle_label_sentinel(label) and raw is not None:
+                    return raw
+            return node
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        if isinstance(node, tuple):
+            return tuple(_walk(v) for v in node)
+        return node
+
+    return _walk(template)
+
+
+def _extract_nested_handle(obj):
+    """Walk *obj* (dict / list / tuple / Pydantic model) looking for ``SteerableToolHandle`` instances.
+
+    Returns ``(result, cleaned_obj)`` where:
+
+    - **Bare top-level handle**: ``result`` is the handle itself, ``cleaned_obj``
+      is :data:`_HANDLE_SENTINEL`.
+    - **Handles nested in containers** (one or more): ``result`` is a list of
+      ``(handle, label)`` tuples (``"h0"``, ``"h1"``, …), ``cleaned_obj`` is a
+      copy of *obj* with handles replaced by labeled sentinels.
+    - **No handles**: ``(None, obj)`` unchanged.
+    """
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    if isinstance(obj, SteerableToolHandle):
+        return obj, _HANDLE_SENTINEL
+
+    found: list = []
+    counter = [0]
+
+    def _walk(node):
+        if isinstance(node, SteerableToolHandle):
+            label = f"h{counter[0]}"
+            counter[0] += 1
+            found.append((node, label))
+            return _handle_label_sentinel(label)
+
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+
+        if isinstance(node, tuple):
+            return tuple(_walk(v) for v in node)
+
+        # Pydantic BaseModel: walk public field values so handles inside
+        # e.g. ExecutionResult.result are detected.
+        try:
+            from pydantic import BaseModel
+
+            if isinstance(node, BaseModel):
+                changed = False
+                updates = {}
+                for field_name in node.model_fields:
+                    val = getattr(node, field_name)
+                    cleaned_val = _walk(val)
+                    if cleaned_val is not val:
+                        updates[field_name] = cleaned_val
+                        changed = True
+                if changed:
+                    return node.model_copy(update=updates)
+                return node
+        except ImportError:
+            pass
+
+        return node
+
+    cleaned = _walk(obj)
+
+    if found:
+        return found, cleaned
+
+    return None, obj
+
+
+def compute_context_injection(
+    *,
+    args: dict,
+    propagate_chat_context: ChatContextPropagation,
+    context_state: LoopContextState,
+    client_messages: list,
+    call_id: str,
+    accepts_parent_ctx: bool,
+    accepts_parent_ctx_cont: bool,
+    target_context_opted_in: Optional[bool] = None,
+    is_continuation_only: bool = False,
+) -> Tuple[dict, bool]:
+    """
+    Shared helper for computing context injection kwargs.
+
+    This is used by both base tool dispatch and dynamic tool dispatch to ensure
+    consistent handling of include_parent_chat_context and include_parent_chat_context_cont.
+
+    Parameters
+    ----------
+    args : dict
+        The tool call arguments (will be mutated to pop context control params).
+    propagate_chat_context : ChatContextPropagation
+        The loop's propagation mode (ALWAYS, NEVER, or LLM_DECIDES).
+    context_state : LoopContextState
+        The loop's context tracking state.
+    client_messages : list
+        The current conversation messages (filtered for _ctx_header if needed).
+    call_id : str
+        Unique identifier for this tool call (used for context tracking).
+    accepts_parent_ctx : bool
+        Whether the target function accepts _parent_chat_context.
+    accepts_parent_ctx_cont : bool
+        Whether the target function accepts _parent_chat_context_cont.
+    target_context_opted_in : Optional[bool]
+        For steering tools: whether the target tool initially opted into context.
+        If None, this is treated as a new tool call (not steering).
+    is_continuation_only : bool
+        If True, only compute continuation context (for interject_*).
+        If False, compute full initial context (for base tools and ask_*).
+
+    Returns
+    -------
+    Tuple[dict, bool]
+        (extra_kwargs, context_opted_in) where extra_kwargs contains the context
+        params to inject and context_opted_in indicates the opt-in decision.
+    """
+    extra_kwargs: dict = {}
+
+    # Pop the LLM control parameters from args
+    llm_include_ctx = args.pop("include_parent_chat_context", True)
+    llm_include_ctx_cont = args.pop("include_parent_chat_context_cont", True)
+
+    # Determine whether to inject context based on propagation mode
+    should_inject_ctx = False
+
+    if is_continuation_only:
+        # For steering tools like interject_*, check if the target tool opted in
+        if target_context_opted_in:
+            if propagate_chat_context == ChatContextPropagation.ALWAYS:
+                should_inject_ctx = True
+            elif propagate_chat_context == ChatContextPropagation.LLM_DECIDES:
+                should_inject_ctx = llm_include_ctx_cont
+            # NEVER mode: should_inject_ctx stays False
+    else:
+        # For base tools and ask_*, use the standard logic
+        if accepts_parent_ctx or accepts_parent_ctx_cont:
+            if propagate_chat_context == ChatContextPropagation.ALWAYS:
+                should_inject_ctx = True
+            elif propagate_chat_context == ChatContextPropagation.NEVER:
+                should_inject_ctx = False
+            elif propagate_chat_context == ChatContextPropagation.LLM_DECIDES:
+                should_inject_ctx = llm_include_ctx
+
+    # Compute and inject context if needed
+    if should_inject_ctx:
+        cur_msgs = [m for m in client_messages if not m.get("_ctx_header")]
+
+        if is_continuation_only:
+            # For steering tools, only compute continuation
+            _, ctx_cont = context_state.compute_context_for_inner_tool(
+                call_id,
+                cur_msgs,
+            )
+            if ctx_cont and accepts_parent_ctx_cont:
+                extra_kwargs["_parent_chat_context_cont"] = ctx_cont
+        else:
+            # For base tools / ask_*, compute full context
+            parent_ctx, parent_ctx_cont = context_state.compute_context_for_inner_tool(
+                call_id,
+                cur_msgs,
+            )
+            if parent_ctx is not None and accepts_parent_ctx:
+                extra_kwargs["_parent_chat_context"] = parent_ctx
+            if parent_ctx_cont is not None and accepts_parent_ctx_cont:
+                extra_kwargs["_parent_chat_context_cont"] = parent_ctx_cont
+
+    return extra_kwargs, should_inject_ctx
 
 
 class ToolsData:
@@ -54,6 +271,8 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
+        # Tool name for every completed tool (steerable or not), keyed by call_id.
+        self._completed_tool_names: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
         # Time context for tracking tool execution timings
@@ -61,6 +280,26 @@ class ToolsData:
         self._time_ctx_msg: Optional[dict] = time_ctx_msg
         # Runtime context parts list for updating time context (set by loop)
         self._runtime_context_parts: Optional[list] = None
+        # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
+        # Set by the loop after the factory is initialised each turn.
+        self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
+        self._completed_ask_handles: Dict[str, Callable] = {}
+        self._task_ask_keys: Dict[asyncio.Task, str] = {}
+        # Metadata for completed steerable tools, keyed by call_id.
+        # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable, "handle": Any}
+        self._completed_askable_tools: Dict[str, dict] = {}
+
+    def get_ask_tools(self) -> Dict[str, Callable]:
+        """Return a snapshot of currently available ``ask_*`` dynamic tools.
+
+        Merges retained ask tools from completed tasks with live ones,
+        giving precedence to live entries when keys overlap.
+        """
+        result = dict(self._completed_ask_handles)
+        dt = self._dynamic_tools_ref
+        if dt and isinstance(dt, dict):
+            result.update({k: v for k, v in dt.items() if k.startswith("ask_")})
+        return result
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
@@ -138,6 +377,31 @@ class ToolsData:
         self.info[coro] = metadata
 
     def pop_task(self, coro: asyncio.Task) -> ToolCallMetadata:
+        # Before removing, retain the ask_* dynamic tool handle for this task
+        # so handle.ask() can propagate post-completion.
+        info = self.info.get(coro)
+        ask_name = self._task_ask_keys.pop(coro, None)
+        if ask_name is not None:
+            dt = self._dynamic_tools_ref
+            if dt and isinstance(dt, dict) and ask_name in dt:
+                ask_fn = dt[ask_name]
+                self._completed_ask_handles[ask_name] = ask_fn
+                # Store metadata for the ask_about_completed_tool dispatcher.
+                if info is not None:
+                    call_id = info.call_id
+                    arg_json = info.call_dict["function"].get("arguments", "{}")
+                    try:
+                        arg_dict = json.loads(arg_json)
+                        arg_repr = ", ".join(f"{k}={v!r}" for k, v in arg_dict.items())
+                    except Exception:
+                        arg_repr = arg_json
+                    self._completed_askable_tools[call_id] = {
+                        "name": info.name,
+                        "call_id": call_id,
+                        "arg_repr": arg_repr,
+                        "ask_fn": ask_fn,
+                        "handle": info.handle,
+                    }
         self.pending.discard(coro)
         return self.info.pop(coro, None)
 
@@ -224,7 +488,7 @@ class ToolsData:
         args_json: Any,
         call_id: str,
         call_idx: int,
-        parent_chat_context,
+        context_state: LoopContextState,
         propagate_chat_context,
         assistant_meta,
         initial_paused: bool = False,
@@ -242,18 +506,39 @@ class ToolsData:
             if lim is not None and self.call_counts.get(name, 0) >= lim:
                 return
 
-        # Build extra kwargs (chat context, interject/clarification/pause)
-        extra_kwargs: dict = {}
-        if propagate_chat_context:
-            cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
-            ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
-            extra_kwargs["_parent_chat_context"] = ctx_repr
-
         sig = inspect.signature(fn)
         params = sig.parameters
         has_varkw = any(
             p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
         )
+
+        # Parse args early so we can check include_parent_chat_context
+        with suppress(Exception):
+            call_args = (
+                json.loads(args_json)
+                if isinstance(args_json, str)
+                else (args_json or {})
+            )
+        if "call_args" not in locals():
+            call_args = {}
+
+        sig_accepts_parent_ctx = "_parent_chat_context" in params or has_varkw
+        sig_accepts_parent_ctx_cont = "_parent_chat_context_cont" in params or has_varkw
+
+        # Use shared helper for context injection logic
+        ctx_extra_kwargs, context_opted_in = compute_context_injection(
+            args=call_args,
+            propagate_chat_context=propagate_chat_context,
+            context_state=context_state,
+            client_messages=self._client.messages,
+            call_id=call_id,
+            accepts_parent_ctx=sig_accepts_parent_ctx,
+            accepts_parent_ctx_cont=sig_accepts_parent_ctx_cont,
+            is_continuation_only=False,
+        )
+
+        # Build extra kwargs (chat context, interject/clarification/pause)
+        extra_kwargs: dict = dict(ctx_extra_kwargs)
 
         sig_accepts_interject_q = "_interject_queue" in params or has_varkw
         sig_accepts_pause_event = "_pause_event" in params or has_varkw
@@ -288,16 +573,6 @@ class ToolsData:
         if sig_accepts_interject_q:
             sub_q = asyncio.Queue()
             extra_kwargs["_interject_queue"] = sub_q
-
-        # Parse args
-        with suppress(Exception):
-            call_args = (
-                json.loads(args_json)
-                if isinstance(args_json, str)
-                else (args_json or {})
-            )
-        if "call_args" not in locals():
-            call_args = {}
 
         # Filter extras to match fn signature, and normalise base call args via shared helper
         filtered_extras = {
@@ -340,6 +615,8 @@ class ToolsData:
             tool_schema=method_to_schema(fn, name),
             llm_arguments=allowed_call_args,
             raw_arguments_json=args_json,
+            # Track context opt-in for steering method context propagation
+            context_opted_in=context_opted_in,
         )
         self.save_task(t, metadata)
 
@@ -448,15 +725,32 @@ class ToolsData:
             raw = task.result()
 
             # ───────────────────────────────────────────────────────────────
-            #  NEW:  the tool *did not really finish* – it returned *another*
-            #        AsyncToolLoopHandle.  We:
-            #        (1) schedule `handle.result()` as a *new* task,
-            #        (2) keep the **same** `call_id` so the continue/-cancel
-            #            helpers keep working,
-            #        (3) create / patch one placeholder "still running…"
-            #            tool-message in the transcript.
+            #  Multi-handle child: progressive placeholder update.
+            #  Each child completes independently; the shared placeholder
+            #  is rebuilt with the newly resolved result.
             # ───────────────────────────────────────────────────────────────
-            # treat ANY AsyncToolLoopHandle (or subclass) as a nested loop
+            mh_state = getattr(info, "_multi_handle_state", None)
+            if mh_state is not None:
+                label = info._multi_handle_label
+                mh_state.results[label] = raw
+                mh_state.update_placeholder()
+                self.completed_results[call_id] = serialize_tool_content(
+                    tool_name=name,
+                    payload=raw,
+                    is_final=True,
+                )
+                self._completed_tool_names[call_id] = name
+                consecutive_failures.reset_failures()
+                if self._logger.log_steps:
+                    self._logger.info(
+                        f"{name} [{label}] - {call_id}",
+                        prefix="✅  MultiHandle Child Completed",
+                    )
+                return True
+
+            # ───────────────────────────────────────────────────────────────
+            #  Bare handle: the tool returned a SteerableToolHandle directly.
+            # ───────────────────────────────────────────────────────────────
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
@@ -470,6 +764,23 @@ class ToolsData:
                 return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
+            #  Composite return: one or more handles nested inside a
+            #  dict/list/tuple alongside intermediate data surfaced to the
+            #  LLM as progress while each handle is steered independently.
+            # ───────────────────────────────────────────────────────────────
+            nested_handles, cleaned = _extract_nested_handle(raw)
+            if nested_handles is not None:
+                await self.adopt_multi_nested(
+                    info,
+                    nested_handles,
+                    cleaned,
+                    msg_dispatcher=msg_dispatcher,
+                    assistant_meta=assistant_meta,
+                    outer_handle_container=outer_handle_container,
+                )
+                return True  # ⬅️  LLM turn required — intermediate content to process
+
+            # ───────────────────────────────────────────────────────────────
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
             # ── finished successfully – promote any embedded images ─────────
@@ -478,6 +789,27 @@ class ToolsData:
 
             consecutive_failures.reset_failures()
         except Exception:
+            # Multi-handle child error: update shared placeholder and return early
+            mh_state = getattr(info, "_multi_handle_state", None)
+            if mh_state is not None:
+                label = info._multi_handle_label
+                error_tb = traceback.format_exc()
+                mh_state.results[label] = f"[{label}: error]\n{error_tb}"
+                mh_state.update_placeholder()
+                self.completed_results[call_id] = error_tb
+                self._completed_tool_names[call_id] = name
+                consecutive_failures.increment_failures()
+                if self._logger.log_steps:
+                    self._logger.error(
+                        f"{name} [{label}] - {call_id}\n{error_tb}",
+                        prefix="❌  MultiHandle Child Failed",
+                    )
+                if consecutive_failures.has_exceeded_failures():
+                    raise RuntimeError(
+                        "Aborted after too many consecutive tool failures.",
+                    )
+                return True
+
             consecutive_failures.increment_failures()
             result = traceback.format_exc()
             if self._logger.log_steps:
@@ -504,6 +836,7 @@ class ToolsData:
 
         # 3️⃣  remember so later lookups can answer instantly
         self.completed_results[call_id] = result
+        self._completed_tool_names[call_id] = name
 
         # 4️⃣  update / insert tool-result message --------------------------
         asst_msg = info.assistant_msg
@@ -602,12 +935,18 @@ class ToolsData:
         msg_dispatcher,
         assistant_meta,
         outer_handle_container,
+        intermediate_content: Any = None,
     ) -> None:
         """Adopt a child SteerableToolHandle returned by a tool into this loop.
 
         Creates/updates a single placeholder tool message, schedules the child's
         result as a nested task with inherited metadata, and wires clarification
         channels.
+
+        When *intermediate_content* is provided (from a composite return where
+        the handle was nested inside a data structure), the placeholder is
+        populated with the intermediate data formatted as a progress notification
+        so the LLM can react to it while steering continues.
         """
         # Upgrade interject flag based on child capability
         if hasattr(child_handle, "interject"):
@@ -628,13 +967,27 @@ class ToolsData:
             nested_coro = asyncio.to_thread(child_handle.result)
         nested_task = asyncio.create_task(nested_coro)
 
-        # Insert/update single placeholder for this call_id
+        # Insert/update single placeholder for this call_id.
+        # When intermediate_content is provided the placeholder carries
+        # the partial data formatted as progress so the LLM can react.
+        if intermediate_content is not None:
+            placeholder_content = serialize_tool_content(
+                tool_name=info.name,
+                payload=intermediate_content,
+                is_final=False,
+            )
+        else:
+            placeholder_content = json.dumps(
+                {"_placeholder": "nested_start"},
+                indent=4,
+            )
+
         ph = info.tool_reply_msg
         if ph is None:
             ph = create_tool_call_message(
                 name=info.name,
                 call_id=info.call_id,
-                content=json.dumps({"_placeholder": "nested_start"}, indent=4),
+                content=placeholder_content,
             )
             await insert_tool_message_after_assistant(
                 assistant_meta,
@@ -646,7 +999,7 @@ class ToolsData:
             )
             info.tool_reply_msg = ph
         else:
-            ph["content"] = json.dumps({"_placeholder": "nested_start"}, indent=4)
+            ph["content"] = placeholder_content
 
         # Book-keeping for the new task (inherit, share placeholder)
         metadata = dataclasses.replace(
@@ -665,3 +1018,96 @@ class ToolsData:
         if self._on_handle_adopted is not None:
             with suppress(Exception):
                 self._on_handle_adopted(nested_task)
+
+    # ── Helper: adopt multiple handles from a single composite return --------
+    async def adopt_multi_nested(
+        self,
+        info: "ToolCallMetadata",
+        handles: list,
+        intermediate_content: Any,
+        *,
+        msg_dispatcher,
+        assistant_meta,
+        outer_handle_container,
+    ) -> None:
+        """Adopt multiple handles from a single tool's composite return.
+
+        Creates one placeholder for the parent call_id with intermediate content
+        showing labeled sentinels (``[h0: steerable]``, etc.), then schedules
+        each handle as an independent child task with a synthesized call_id.
+
+        Each child completes independently, progressively updating the shared
+        placeholder via :class:`_MultiHandleState`.
+        """
+        parent_call_id = info.call_id
+
+        # Create / update placeholder with intermediate content
+        placeholder_content = serialize_tool_content(
+            tool_name=info.name,
+            payload=intermediate_content,
+            is_final=False,
+        )
+        ph = info.tool_reply_msg
+        if ph is None:
+            ph = create_tool_call_message(
+                name=info.name,
+                call_id=parent_call_id,
+                content=placeholder_content,
+            )
+            await insert_tool_message_after_assistant(
+                assistant_meta,
+                info.assistant_msg,
+                ph,
+                self._client,
+                msg_dispatcher,
+                skip_event_bus=True,
+            )
+        else:
+            ph["content"] = placeholder_content
+
+        # Shared state that all children reference
+        state = _MultiHandleState(
+            parent_call_id=parent_call_id,
+            parent_name=info.name,
+            placeholder_msg=ph,
+            template=intermediate_content,
+            results={label: None for _, label in handles},
+        )
+
+        for handle, label in handles:
+            # Append label directly (no underscore) so the 8-char safe_call_id
+            # includes both parent uniqueness and the handle label, avoiding
+            # collisions when multiple parents each have an h0.
+            synth_call_id = f"{parent_call_id}{label}"
+
+            # Schedule the handle's result coroutine
+            if inspect.iscoroutinefunction(handle.result):
+                nested_coro = handle.result()
+            else:
+                nested_coro = asyncio.to_thread(handle.result)
+            nested_task = asyncio.create_task(nested_coro)
+
+            # Wire clarification channels from the handle
+            h_up_q = getattr(handle, "clarification_up_q", None)
+            h_down_q = getattr(handle, "clarification_down_q", None)
+
+            metadata = dataclasses.replace(
+                info,
+                call_id=synth_call_id,
+                handle=handle,
+                is_interjectable=hasattr(handle, "interject"),
+                tool_reply_msg=ph,
+                clar_up_queue=h_up_q,
+                clar_down_queue=h_down_q,
+                notification_queue=None,
+                _multi_handle_state=state,
+                _multi_handle_label=label,
+            )
+            self.save_task(nested_task, metadata)
+
+            if h_up_q is not None:
+                self.clarification_channels[synth_call_id] = (h_up_q, h_down_q)
+
+            if self._on_handle_adopted is not None:
+                with suppress(Exception):
+                    self._on_handle_adopted(nested_task)

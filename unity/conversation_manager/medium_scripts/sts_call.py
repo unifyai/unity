@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import json
-import time
 from typing import AsyncIterable
 
 from dotenv import load_dotenv
@@ -30,12 +29,14 @@ try:
 except ImportError:
     openai_realtime = None
 
-from unity.conversation_manager.utils import dispatch_agent
+from unity.conversation_manager.utils import dispatch_livekit_agent
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.session_details import SESSION_DETAILS
 
 # Shared helpers
+import unillm
+
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,
@@ -43,8 +44,9 @@ from unity.conversation_manager.medium_scripts.common import (
     setup_participant_disconnect_handler,
     publish_call_started,
     configure_from_cli,
-    should_dispatch_agent,
-    log_sts_usage,
+    should_dispatch_livekit_agent,
+    start_event_broker_receive,
+    UserScreenCaptureManager,
 )
 
 logger = logging.getLogger("gpt-realtime-agent")
@@ -69,8 +71,13 @@ class Assistant(Agent):
         self.call_received = True
 
     async def on_user_turn_completed(self, turn_ctx, new_message):
-        print(turn_ctx)
-        print(new_message)
+        """
+        Hook called when user finishes speaking.
+
+        Note: User utterance publishing is handled by _on_chat_item_added
+        to keep all transcript logging in one place alongside assistant utterances.
+        """
+        print(f"[on_user_turn_completed] {new_message.text_content}")
 
     async def llm_node(
         self,
@@ -92,6 +99,15 @@ async def entrypoint(ctx: JobContext) -> None:
     print("Connecting to room...")
     await ctx.connect()
     print("Connected to room")
+
+    # User screen share capture (subscribes to LiveKit room tracks automatically)
+    screen_capture = UserScreenCaptureManager(ctx.room)
+
+    # Flag for call_answered that may arrive during initialization
+    call_answered_flag = asyncio.Event()
+
+    # Start receiving events from parent (callbacks registered later)
+    await start_event_broker_receive()
 
     # Populate SESSION_DETAILS from environment (set by configure_from_cli)
     SESSION_DETAILS.populate_from_env()
@@ -140,26 +156,8 @@ async def entrypoint(ctx: JobContext) -> None:
         user_utterance_event = InboundUnifyMeetUtterance
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
-    # Track call start time for usage logging
-    # See common.py for detailed comments on the STS billing heuristic
-    call_start_time = time.time()
-
-    def log_call_usage() -> None:
-        """Log STS usage when call ends (pre-shutdown callback)."""
-        call_duration = time.time() - call_start_time
-        log_sts_usage(
-            call_duration_seconds=call_duration,
-            contact=contact,
-            tags=[f"channel:{channel}"],
-        )
-
-    # NEW: shared end_call + inactivity + participant disconnect handler
-    # Pass usage logging callback to run before shutdown
-    end_call = create_end_call(
-        contact,
-        channel,
-        pre_shutdown_callback=log_call_usage,
-    )
+    # Shared end_call + inactivity + participant disconnect handler
+    end_call = create_end_call(contact, channel)
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
@@ -171,10 +169,28 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
+        """Publish both user and assistant utterances from a single location."""
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""  # reliably the final text
         if role == "user":
             event = user_utterance_event(contact, content=text)
+            # Capture the user's screen if they are sharing it.
+            b64 = screen_capture.capture_screenshot()
+            if b64:
+                from datetime import datetime, timezone
+
+                asyncio.create_task(
+                    event_broker.publish(
+                        "app:comms:user_screen_screenshot",
+                        json.dumps(
+                            {
+                                "b64": b64,
+                                "utterance": text,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        ),
+                    ),
+                )
         else:
             event = assistant_utterance_event(contact, content=text)
 
@@ -187,18 +203,26 @@ async def entrypoint(ctx: JobContext) -> None:
     rio = RoomInputOptions()
 
     # high-level behavior for the assistant.
+    from unity.settings import SETTINGS
+
+    assistant_name = SESSION_DETAILS.assistant.name
     system = build_voice_agent_prompt(
         bio=assistant_bio,
-        boss_first_name=boss["first_name"],
-        boss_surname=boss["surname"],
-        boss_email_address=boss["email_address"],
-        boss_phone_number=boss["phone_number"],
-        contact_first_name=contact["first_name"],
-        contact_surname=contact["surname"],
-        contact_phone_number=contact["phone_number"],
-        contact_email=contact["email_address"],
-        is_boss_user=contact["is_boss"],
-    )
+        assistant_name=assistant_name or None,
+        boss_first_name=boss.get("first_name", ""),
+        boss_surname=boss.get("surname", ""),
+        boss_email_address=boss.get("email_address", ""),
+        boss_phone_number=boss.get("phone_number", ""),
+        boss_bio=boss.get("bio") or None,
+        contact_first_name=contact.get("first_name", ""),
+        contact_surname=contact.get("surname", ""),
+        contact_phone_number=contact.get("phone_number", ""),
+        contact_email=contact.get("email_address", ""),
+        contact_bio=contact.get("bio") or None,
+        is_boss_user=contact.get("contact_id") == 1,
+        contact_rolling_summary=contact.get("rolling_summary", ""),
+        demo_mode=SETTINGS.DEMO_MODE,
+    ).flatten()
     print("PRINTING SYSTEM PROMPT")
     print(system)
 
@@ -213,58 +237,123 @@ async def entrypoint(ctx: JobContext) -> None:
     await publish_call_started(contact, channel)
     touch_activity()
 
-    async def wait_for_nudges():
-        print("waiting")
-        rt = agent.realtime_llm_session  # underlying OpenAI RealtimeSession
-        async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:call_guidance", "app:call:status")
-            while True:
-                msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True,
-                    timeout=None,
-                )
-                if msg is not None:
-                    print("got notif", msg)
-                    data = json.loads(msg["data"])
+    # Buffer for guidance that arrives before session is ready
+    pending_guidance: list[str] = []
+    session_ready = False
 
-                    # Handle status messages (call answered, stop)
-                    if data.get("type") == "call_answered":
-                        print("call received")
-                        agent.set_call_received()
-                        continue
-                    elif data.get("type") == "stop":
-                        print("STOPPING CALL")
-                        await end_call()
-                        break
+    def on_status(data: dict) -> None:
+        """Handle status events (call_answered, stop)."""
+        event_type = data.get("type", "")
+        print(f"[Status] {event_type}")
+        touch_activity()
 
-                    # Handle guidance from Main CM Brain
-                    payload = data.get("payload") or data
-                    msg = payload
-                    chat_ctx = rt.chat_ctx
-                    chat_ctx.add_message(
-                        role="user",
-                        content=[f"""[notification] {msg["content"]}"""],
-                    )
-                    await rt.update_chat_ctx(chat_ctx)
-                    print(rt.chat_ctx.items)
+        if event_type == "call_answered":
+            call_answered_flag.set()
+            agent.set_call_received()
+        elif event_type == "stop":
+            asyncio.create_task(end_call())
 
-                    nonlocal user_is_speaking
-                    touch_activity()
+    def apply_guidance(content: str) -> None:
+        """Apply guidance to chat context and optionally trigger reply."""
+        chat_ctx = rt.chat_ctx
+        chat_ctx.add_message(
+            role="system",
+            content=[f"[notification] {content}"],
+        )
 
-                    if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
-                        await session.generate_reply(allow_interruptions=True)
+        async def update_and_reply():
+            await rt.update_chat_ctx(chat_ctx)
+            nonlocal user_is_speaking
+            if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
+                session.generate_reply(allow_interruptions=True)
 
-                await asyncio.sleep(0.1)
+        asyncio.create_task(update_and_reply())
+
+    def on_guidance(data: dict) -> None:
+        """Handle guidance from conversation manager."""
+        payload = data.get("payload") or data
+        content = payload.get("content", "")
+        print(
+            (
+                f"[Guidance] {content[:50]}..."
+                if len(content) > 50
+                else f"[Guidance] {content}"
+            ),
+        )
+        touch_activity()
+
+        if content:
+            if not session_ready:
+                pending_guidance.append(content)
+            else:
+                apply_guidance(content)
+
+    event_broker.register_callback("app:call:status", on_status)
+    event_broker.register_callback("app:call:call_guidance", on_guidance)
+
+    # Handle call_answered that arrived during initialization
+    if call_answered_flag.is_set():
+        print("[Status] call_answered arrived during init - applying now")
+        agent.set_call_received()
 
     logger.info("starting AgentSession")
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
-    asyncio.create_task(wait_for_nudges())
+
+    # Get realtime session (only available after session.start())
+    rt = agent.realtime_llm_session
+
+    # Log real usage per turn via unillm (replaces duration-based heuristic)
+    @rt.on("metrics_collected")
+    def _on_metrics(metrics):
+        usage = {
+            "input_tokens": metrics.input_tokens,
+            "output_tokens": metrics.output_tokens,
+            "total_tokens": metrics.total_tokens,
+            "input_token_details": {
+                "audio_tokens": metrics.input_token_details.audio_tokens,
+                "text_tokens": metrics.input_token_details.text_tokens,
+                "cached_tokens": metrics.input_token_details.cached_tokens,
+            },
+            "output_token_details": {
+                "audio_tokens": metrics.output_token_details.audio_tokens,
+                "text_tokens": metrics.output_token_details.text_tokens,
+            },
+        }
+        transcript = [
+            {"role": item.role, "content": item.text_content or ""}
+            for item in rt.chat_ctx.items
+            if item.text_content
+        ]
+        unillm.log_usage(
+            metrics.model,
+            usage,
+            transcript=transcript,
+            label=metrics.model,
+        )
+
+    # For outbound calls, wait for call_answered before speaking.
+    # Unlike call.py, the Realtime API bypasses llm_node, so we must wait here.
+    # Note: await on an already-set Event returns immediately.
+    if outbound:
+        print("Outbound call: waiting for call_answered before speaking...")
+        await call_answered_flag.wait()
+        print("Outbound call: call answered, proceeding to speak")
+
+    # Mark session ready and process any buffered guidance BEFORE first utterance.
+    # After this, the on_guidance callback will apply guidance immediately.
+    session_ready = True
+    if pending_guidance:
+        print(f"[Guidance] Applying {len(pending_guidance)} buffered message(s)")
+        for content in pending_guidance:
+            apply_guidance(content)
+        pending_guidance.clear()
+
     await session.generate_reply(allow_interruptions=True)
 
 
 if __name__ == "__main__":
     # Shared CLI handling
-    agent_name, room_name = configure_from_cli(
+    livekit_agent_name, room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),
             ("BOSS", True),
@@ -272,18 +361,18 @@ if __name__ == "__main__":
         ],
     )
 
-    # dispatch agent
-    if should_dispatch_agent():
-        print(f"Dispatching agent {agent_name}")
-        dispatch_agent(agent_name, room_name)
-        print(f"Agent {agent_name} dispatched")
+    # Dispatch LiveKit agent
+    if should_dispatch_livekit_agent():
+        print(f"Dispatching LiveKit agent {livekit_agent_name}")
+        dispatch_livekit_agent(livekit_agent_name, room_name)
+        print(f"LiveKit agent {livekit_agent_name} dispatched")
 
+    # Run the agent using the standard CLI - this is the natural way to run LiveKit agents.
+    # The process will be terminated via SIGTERM when cleanup_call_proc() is called.
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=agent_name,
-            # Run jobs in-process to allow sharing the in-memory event broker.
-            job_executor_type=agents.JobExecutorType.THREAD,
+            agent_name=livekit_agent_name,
             initialize_process_timeout=60,
         ),
     )

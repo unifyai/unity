@@ -44,7 +44,19 @@ class Function(BaseModel):
     )
     depends_on: List[str] = Field(
         [],
-        description="A list of other functions that this function depends on.",
+        description=(
+            "Functions this function depends on.  Both bare and dotted names "
+            "are auto-detected from the AST at storage time (see "
+            "dependency_analysis.py) and injected into the execution namespace "
+            "at runtime (see FunctionManager._inject_dependencies).\n\n"
+            "Bare names (e.g. 'helper') refer to other compositional functions "
+            "whose implementations are exec'd into the namespace.\n\n"
+            "Dotted names (e.g. 'primitives.contacts.ask', 'actor.act') refer "
+            "to environment-provided namespaces.  The root segment (e.g. "
+            "'actor', 'primitives') is resolved via "
+            "registry.construct_sandbox_root() which constructs a fresh "
+            "instance of the appropriate class on demand."
+        ),
     )
     embedding_text: str = Field(
         ...,
@@ -98,6 +110,17 @@ class Function(BaseModel):
             "environment to use when executing this function. Only applicable when "
             "language='python'. Ignored for other languages. If None, the function "
             "runs in the project's default Python environment."
+        ),
+    )
+
+    windows_os_required: bool = Field(
+        False,
+        description=(
+            "Whether this function requires execution on a Windows OS. "
+            "When True and the assistant has desktop_mode='windows', "
+            "execution routes to the remote Windows VM. "
+            "Typically used for functions that depend on Windows-only libraries "
+            "like xlwings or other COM automation tools."
         ),
     )
 

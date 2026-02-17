@@ -18,14 +18,11 @@ from ..common.prompt_helpers import (
     tool_name,
     require_tools,
     get_custom_columns,
-    images_policy_block,
-    images_forwarding_block,
     # New standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
-    images_first_ask_for_tasks,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -42,7 +39,7 @@ def build_ask_prompt(
     columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """
     Build the **system** prompt for the `ask` method using the shared composer.
 
@@ -168,9 +165,6 @@ def build_ask_prompt(
     ]
     positioning_lines = [ln for ln in positioning_lines if ln]
 
-    # Images extras (images‑first workflow)
-    images_extras = images_first_ask_for_tasks(ask_image_name=None)
-
     spec = PromptSpec(
         manager="TaskScheduler",
         method="ask",
@@ -190,9 +184,9 @@ def build_ask_prompt(
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
-        include_images_policy=True,
-        include_images_forwarding=True,
-        images_extras_block=images_extras,
+        include_images_policy=False,
+        include_images_forwarding=False,
+        images_extras_block=None,
         include_parallelism=True,
         schemas=[("Task", Task)],  # Full schema defines table columns
         special_blocks=[],
@@ -209,7 +203,7 @@ def build_update_prompt(
     columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """
     Build the **system** prompt for the `update` method using schema-first approach.
     """
@@ -469,8 +463,8 @@ def build_update_prompt(
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
-        include_images_policy=True,
-        include_images_forwarding=True,
+        include_images_policy=False,
+        include_images_forwarding=False,
         images_extras_block=None,
         include_parallelism=True,
         schemas=[("Task", Task)],  # Full schema defines table columns
@@ -498,6 +492,7 @@ def build_simulated_method_prompt(
     finished (past tense, final outcome), not a description of intended steps.
     """
     import json  # local import
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     m = method.lower()
@@ -521,6 +516,6 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
     return "\n".join(parts)

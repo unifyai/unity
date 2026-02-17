@@ -7,7 +7,7 @@ Usage:
     python discover_test_paths.py
 
     # Expand specific paths to their leaf directories
-    python discover_test_paths.py tests/test_function_manager tests/test_actor
+    python discover_test_paths.py tests/function_manager tests/actor
 
 When explicit paths are provided:
 - Files are kept as-is (no expansion)
@@ -15,8 +15,10 @@ When explicit paths are provided:
 
 Option A algorithm:
 - Leaf directories (have test files, no test subdirs) → one job per directory
-- Non-leaf directories with test files → one job per individual test file
+- Mixed directories (test files AND test subdirs) → one bundled job for all
+  direct test files (space-separated), plus recursive jobs for subdirs
 """
+
 import os
 import sys
 from pathlib import Path
@@ -75,9 +77,9 @@ def collect_paths(directory, paths):
         # Pure leaf: add the directory
         paths.append(str(directory))
     elif has_files and has_subdirs:
-        # Mixed: add individual files from this level, then recurse
-        for f in get_direct_test_files(directory):
-            paths.append(str(f))
+        # Mixed: bundle all direct files into one job, then recurse into subdirs
+        direct_files = get_direct_test_files(directory)
+        paths.append(" ".join(str(f) for f in direct_files))
         for subdir in sorted(directory.iterdir()):
             if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
                 collect_paths(subdir, paths)
@@ -116,9 +118,9 @@ def expand_path(path_str):
             # Pure leaf directory - return as-is
             paths.append(str(path))
         elif has_files and has_subdirs:
-            # Mixed: add individual files from this level, then recurse into subdirs
-            for f in get_direct_test_files(path):
-                paths.append(str(f))
+            # Mixed: bundle all direct files into one job, then recurse into subdirs
+            direct_files = get_direct_test_files(path)
+            paths.append(" ".join(str(f) for f in direct_files))
             for subdir in sorted(path.iterdir()):
                 if subdir.is_dir() and subdir.name not in EXCLUDE_DIRS:
                     collect_paths(subdir, paths)

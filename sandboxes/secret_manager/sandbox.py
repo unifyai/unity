@@ -227,7 +227,9 @@ async def _main_async() -> None:
             # explicit from_placeholder/to_placeholder helpers (no LLM)
             if cmd_lower == "from_placeholder":
                 if not rest:
-                    print("⚠️  Provide text containing ${NAME} placeholders to resolve.")
+                    print(
+                        "⚠️  Provide text containing ${NAME} placeholders to resolve.",
+                    )
                     continue
                 try:
                     out = asyncio.get_event_loop().run_until_complete(

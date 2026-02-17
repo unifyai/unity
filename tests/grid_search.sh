@@ -21,13 +21,13 @@ set -euo pipefail
 #       completion). For truly parallel grid runs, launch in separate terminals.
 #
 # Example:
-#   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+#   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNILLM_CACHE="true|false" tests/
 #
 # Generates 4 runs with auto-tags:
-#   1. UNIFY_MODEL=gpt-4o UNIFY_CACHE=true   → tags: "UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true"
-#   2. UNIFY_MODEL=gpt-4o UNIFY_CACHE=false  → tags: "UNIFY_MODEL=gpt-4o,UNIFY_CACHE=false"
-#   3. UNIFY_MODEL=claude-3 UNIFY_CACHE=true → tags: "UNIFY_MODEL=claude-3,UNIFY_CACHE=true"
-#   4. UNIFY_MODEL=claude-3 UNIFY_CACHE=false→ tags: "UNIFY_MODEL=claude-3,UNIFY_CACHE=false"
+#   1. UNIFY_MODEL=gpt-4o UNILLM_CACHE=true   → tags: "UNIFY_MODEL=gpt-4o,UNILLM_CACHE=true"
+#   2. UNIFY_MODEL=gpt-4o UNILLM_CACHE=false  → tags: "UNIFY_MODEL=gpt-4o,UNILLM_CACHE=false"
+#   3. UNIFY_MODEL=claude-3 UNILLM_CACHE=true → tags: "UNIFY_MODEL=claude-3,UNILLM_CACHE=true"
+#   4. UNIFY_MODEL=claude-3 UNILLM_CACHE=false→ tags: "UNIFY_MODEL=claude-3,UNILLM_CACHE=false"
 
 # Resolve script directory and repo root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -75,8 +75,8 @@ Auto-Tagging:
 
 Examples:
   # Grid search across models and cache settings
-  # (auto-tags: UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true etc.)
-  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+  # (auto-tags: UNIFY_MODEL=gpt-4o,UNILLM_CACHE=true etc.)
+  ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNILLM_CACHE="true|false" tests/
 
   # With additional pass-through options
   ./grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --eval-only tests/

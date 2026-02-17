@@ -66,11 +66,7 @@ from .active_task import ActiveTask
 from .active_queue import ActiveQueue
 from dataclasses import dataclass
 
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
+from ..events.manager_event_logging import log_manager_call
 from ..common.search_utils import table_search_top_k
 from .types.schedule import (
     sched_prev,
@@ -83,10 +79,8 @@ from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from ..common.llm_client import new_llm_client
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
 from ..common.context_registry import ContextRegistry, TableContext
-
 
 # Sentinel for optional-argument presence detection
 _UNSET = _UnsetSentinel()
@@ -137,62 +131,6 @@ class TaskScheduler(BaseTaskScheduler):
                 ],
             ),
         ]
-
-    # ------------------------------------------------------------------ #
-    #  Decorator – uniform ManagerMethod logging                          #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _log_manager_call(method_name: str, payload_key: str):
-        """Decorator factory to publish incoming ManagerMethod and wrap handle.
-
-        Ensures a single call_id is used for both the incoming event and the
-        logging wrapper around the returned handle. The payload value is taken
-        from the positional/keyword argument named 'text' (the first arg after
-        self), matching existing method signatures.
-        """
-
-        def _decorator(func):
-            @functools.wraps(func, updated=())
-            async def _wrapper(self, *args, **kwargs):
-                # Determine the payload value for logging.
-                # For ask/update we log the 'text' argument.
-                # For execute we log the integer 'task_id' (not stringified).
-                if method_name == "execute":
-                    if "task_id" in kwargs:
-                        payload_value = kwargs["task_id"]
-                    elif len(args) >= 1:
-                        payload_value = args[0]
-                    else:
-                        payload_value = None
-                else:
-                    if "text" in kwargs:
-                        payload_value = kwargs["text"]
-                    elif len(args) >= 1:
-                        payload_value = args[0]
-                    else:
-                        payload_value = ""
-
-                call_id = new_call_id()
-                await publish_manager_method_event(
-                    call_id,
-                    "TaskScheduler",
-                    method_name,
-                    phase="incoming",
-                    **{payload_key: payload_value},
-                )
-
-                handle = await func(self, *args, **kwargs)
-                handle = wrap_handle_with_logging(
-                    handle,
-                    call_id,
-                    "TaskScheduler",
-                    method_name,
-                )
-                return handle
-
-            return _wrapper
-
-        return _decorator
 
     def __init__(
         self,
@@ -442,7 +380,12 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Question
 
     @functools.wraps(BaseTaskScheduler.ask, updated=())
-    @_log_manager_call.__func__("ask", "question")  # type: ignore[attr-defined]
+    @log_manager_call(
+        "TaskScheduler",
+        "ask",
+        payload_key="question",
+        display_label="Checking Tasks",
+    )
     async def ask(
         self,
         text: str,
@@ -459,7 +402,6 @@ class TaskScheduler(BaseTaskScheduler):
             Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             None,
         ] = "default",
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -485,18 +427,15 @@ class TaskScheduler(BaseTaskScheduler):
                 num_tasks=self._num_tasks(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
-        # Prepare effective tool_policy – prefer image-aware policy when images are present
-        if images:
-            effective_tool_policy = self._ask_tool_policy_with_images
+        # Prepare effective tool_policy
+        if tool_policy == "default":
+            effective_tool_policy = self._default_ask_tool_policy
         else:
-            if tool_policy == "default":
-                effective_tool_policy = self._default_ask_tool_policy
-            else:
-                # pass through callable or None
-                effective_tool_policy = tool_policy
+            # pass through callable or None
+            effective_tool_policy = tool_policy
 
         # Start the tool-use loop
         handle = self._start_loop(
@@ -510,7 +449,6 @@ class TaskScheduler(BaseTaskScheduler):
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            images=images,
             response_format=response_format,
         )
         # Logging wrapper applied by decorator
@@ -524,7 +462,12 @@ class TaskScheduler(BaseTaskScheduler):
     # English-Text Update Request
 
     @functools.wraps(BaseTaskScheduler.update, updated=())
-    @_log_manager_call.__func__("update", "request")  # type: ignore[attr-defined]
+    @log_manager_call(
+        "TaskScheduler",
+        "update",
+        payload_key="request",
+        display_label="Updating Tasks",
+    )
     async def update(
         self,
         text: str,
@@ -541,7 +484,6 @@ class TaskScheduler(BaseTaskScheduler):
             Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             None,
         ] = "default",
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -582,18 +524,12 @@ class TaskScheduler(BaseTaskScheduler):
                 num_tasks=self._num_tasks(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # Prepare effective tool_policy
         if tool_policy == "default":
-            # When images are present, require an explicit task lookup first.
-            # This avoids blind schedule mutations based only on ambiguous visual references.
-            effective_tool_policy = (
-                self._update_tool_policy_with_images
-                if images
-                else self._default_update_tool_policy
-            )
+            effective_tool_policy = self._default_update_tool_policy
         else:
             # pass through callable or None
             effective_tool_policy = tool_policy
@@ -607,7 +543,6 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
-            images=images,
             response_format=response_format,
         )
         # Logging wrapper applied by decorator
@@ -621,7 +556,12 @@ class TaskScheduler(BaseTaskScheduler):
     # Execute
 
     @functools.wraps(BaseTaskScheduler.execute, updated=())
-    @_log_manager_call.__func__("execute", "request")
+    @log_manager_call(
+        "TaskScheduler",
+        "execute",
+        payload_key="request",
+        display_label="Working on Task",
+    )
     async def execute(
         self,
         task_id: int,
@@ -631,9 +571,6 @@ class TaskScheduler(BaseTaskScheduler):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        images: Optional[
-            ImageRefs | list[RawImageRef | AnnotatedImageRef]
-        ] = None,  # kept for signature parity; unused here
     ) -> SteerableToolHandle:
         # Refuse execution when a task is already active.
         if self._active_task is not None:
@@ -3806,43 +3743,6 @@ class TaskScheduler(BaseTaskScheduler):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
-    @staticmethod
-    def _ask_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_tasks/ask_image/attach_image_raw (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_tasks", "ask_image", "attach_image_raw"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _update_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """
-        On step 0 of update(), require a tasks lookup tool when images are present.
-
-        Rationale: the first step should establish *which* tasks the images refer to
-        before any scheduling or queue mutations are attempted.
-        """
-        if step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_tasks", "filter_tasks"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
-        return ("auto", current_tools)
-
     # ------------------------------------------------------------------ #
     #  Small centralised write helper                                     #
     # ------------------------------------------------------------------ #
@@ -3914,7 +3814,6 @@ class TaskScheduler(BaseTaskScheduler):
             ]
         ] = None,
         handle_cls: Optional["type[SteerableToolHandle]"] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         response_format: Optional[Type[BaseModel]] = None,
     ) -> SteerableToolHandle:
         """Centralised wrapper around start_async_tool_loop."""
@@ -3928,7 +3827,6 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=log_steps,
             tool_policy=tool_policy,
             handle_cls=handle_cls,
-            images=images,
             response_format=response_format,
         )
 

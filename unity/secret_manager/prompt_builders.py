@@ -19,9 +19,9 @@ from ..common.prompt_helpers import (
     require_tools as _shared_require_tools,
     # Standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -48,7 +48,7 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
+def build_ask_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     """Return the system prompt used by SecretManager.ask using the shared composer.
 
     Emphasises: never reveal raw secret values; reference via ${name};
@@ -172,7 +172,7 @@ Anti‑patterns to avoid
     return compose_system_prompt(spec)
 
 
-def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
+def build_update_prompt(*, tools: Dict[str, Callable]) -> PromptParts:
     """Return the system prompt used by SecretManager.update using the shared composer.
 
     Emphasises mutation rules and strict non-disclosure of raw values.
@@ -326,6 +326,7 @@ def build_simulated_method_prompt(
     finished, avoiding responses like "I'll process that now".
     """
     import json  # local import
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
@@ -344,7 +345,7 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
 
     return "\n".join(parts)

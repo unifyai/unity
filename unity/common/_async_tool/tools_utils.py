@@ -30,6 +30,12 @@ class ToolCallMetadata:
     pause_event: asyncio.Event | None = None
     # Monotonic time when tool was scheduled (uses perf_counter for monkey-patchability)
     scheduled_time: float = field(default_factory=perf_counter)
+    # Whether the LLM opted in to receive parent chat context for this tool.
+    # When False, context continuations should NOT be forwarded to this tool.
+    context_opted_in: bool = True
+    # Multi-handle support: shared state and label for handles from a composite return.
+    _multi_handle_state: Any | None = None
+    _multi_handle_label: str | None = None
 
 
 class ToolCallMessage(TypedDict):

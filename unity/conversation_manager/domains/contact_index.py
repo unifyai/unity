@@ -1,199 +1,451 @@
+"""
+ContactIndex: Conversation state management for ConversationManager.
+
+All messages are stored in a single shared global deque. Per-contact and
+per-medium views are derived on demand. Contact information (name, email,
+phone, response_policy, etc.) is fetched from ContactManager, which is the
+single source of truth.
+"""
+
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
-from dataclasses import dataclass
-from typing import Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from pydantic import Field
-
-from unity.contact_manager.types.contact import Contact as ContactType
 from unity.common.prompt_helpers import now as prompt_now
+from unity.conversation_manager.types import Medium
 
 if TYPE_CHECKING:
     from unity.contact_manager.base import BaseContactManager
 
 
-class Contact(ContactType):
-    is_boss: bool = False
-    on_call: bool = False
-    global_thread: deque = Field(default_factory=lambda: deque(maxlen=50))
-    threads: dict[str, deque] = Field(
-        default_factory=lambda: {
-            "sms": deque(maxlen=25),
-            "email": deque(maxlen=25),
-            "voice": deque(maxlen=25),
-            "unify_message": deque(maxlen=25),
-        },
-    )
+class CommsMessage:
+    """Base class for actual communications with contacts.
 
-    @property
-    def full_name(self):
-        name = self.first_name + " " + self.surname if self.surname else ""
-        return name.strip()
+    All message types representing real user<->assistant communications inherit
+    from this class. Use isinstance(msg, CommsMessage) to distinguish actual
+    communications from internal orchestration messages (like GuidanceMessage).
+    """
 
 
 @dataclass
-class Message:
+class Message(CommsMessage):
+    """Simple text message (SMS, voice utterances)."""
+
     name: str
     content: str
     timestamp: datetime
+    role: str  # "user" or "assistant"
 
 
 @dataclass
-class EmailMessage:
+class EmailMessage(CommsMessage):
+    """Email message with subject, body, and optional attachments."""
+
     name: str
     subject: str
     body: str
     email_id: str | None
     timestamp: datetime
+    role: str  # "user" or "assistant"
+    attachments: list[str] = field(default_factory=list)
+    # Recipients (for reply-all functionality)
+    to: list[str] = field(default_factory=list)
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
+    # Contact's role in this email: "sender", "to", "cc", or "bcc"
+    # Used to clarify the contact's relationship to the email when rendered
+    # in their contact-specific thread (emails appear in threads for ALL
+    # contacts involved, not just the primary contact)
+    contact_role: str | None = None
+
+
+@dataclass
+class UnifyMessage(CommsMessage):
+    """A message from the Unify console chat interface, optionally with attachments.
+
+    Each attachment is a dict with keys: id, filename, gs_url, content_type, size_bytes.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+    role: str  # "user" or "assistant"
+    attachments: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class GuidanceMessage:
+    """Internal orchestration message (not an actual communication).
+
+    Used for internal guidance between components (e.g., CallGuidance from the
+    main ConversationManager brain to the voice agent). These should NOT appear
+    in transcripts shown to external systems or used for communication context.
+    """
+
+    name: str
+    content: str
+    timestamp: datetime
+
+
+# Message type -> Medium mapping for deriving per-medium views from the global deque.
+_MESSAGE_TYPE_TO_MEDIUM: dict[type, Medium] = {
+    EmailMessage: Medium.EMAIL,
+    UnifyMessage: Medium.UNIFY_MESSAGE,
+}
+
+
+@dataclass
+class GlobalThreadEntry:
+    """An entry in the shared global thread.
+
+    Wraps a message with its contact associations and medium, enabling
+    per-contact and per-medium views to be derived from the single deque.
+    """
+
+    message: Message | EmailMessage | UnifyMessage | GuidanceMessage
+    medium: Medium
+    # For most messages, a single contact. For emails, all involved contacts
+    # with their roles (sender, to, cc, bcc). role is None for non-email.
+    contact_roles: dict[int, str | None]
+
+
+@dataclass
+class ConversationState:
+    """Per-contact conversation metadata (not message storage).
+
+    Messages live in the shared global deque on ContactIndex. This class
+    stores only non-message state like call status.
+    """
+
+    contact_id: int
+    on_call: bool = False
 
 
 class ContactIndex:
-    def __init__(self):
-        self.active_conversations: dict[str, Contact] = {}
-        self.contacts: dict[int, Contact] = {}
+    """
+    Manages conversation state for active contacts.
+
+    All messages are stored in a single shared global deque. Per-contact and
+    per-medium views are derived on demand via helper methods.
+
+    Contact information (name, email, phone, response_policy, etc.) is ALWAYS
+    fetched from ContactManager - the single source of truth with DataStore-backed
+    caching.
+
+    Fallback Mechanism:
+    -------------------
+    Before ContactManager is initialized, inbound messages may arrive with contact
+    data. These contacts are cached in `_fallback_contacts` so get_contact() can
+    return them. Once ContactManager is set, the fallback cache is cleared and all
+    lookups go through ContactManager.
+    """
+
+    DEFAULT_GLOBAL_THREAD_SIZE = 100
+
+    def __init__(self, global_thread_size: int = DEFAULT_GLOBAL_THREAD_SIZE):
+        self.active_conversations: dict[int, ConversationState] = {}
+        self.global_thread: deque[GlobalThreadEntry] = deque(
+            maxlen=global_thread_size,
+        )
         self._contact_manager: "BaseContactManager | None" = None
+        # Fallback cache for contacts before ContactManager is initialized
+        self._fallback_contacts: dict[int, dict] = {}
 
     def set_contact_manager(self, contact_manager: "BaseContactManager") -> None:
         """Set the ContactManager to use as the source of truth for contact data.
 
-        When set, get_contact() will always query ContactManager first to ensure
-        up-to-date data, falling back to the local cache only if ContactManager
-        is unavailable.
+        Note: We do NOT clear the fallback cache here. Contacts cached from inbounds
+        that arrived before initialization should remain available until they can be
+        looked up in ContactManager. The fallback cache is checked first in get_contact().
         """
         self._contact_manager = contact_manager
 
     @property
-    def boss_contact(self):
-        # this will have empty threads
-        return self.contacts.get(1)
+    def is_contact_manager_initialized(self) -> bool:
+        """Check if ContactManager has been set."""
+        return self._contact_manager is not None
 
-    def set_contacts(self, contacts: list[dict]):
-        print(f"Setting contacts: {contacts}")
-        for c in contacts:
-            self.contacts[c["contact_id"]] = Contact(**c, is_boss=c["contact_id"] == 1)
+    @property
+    def contact_manager(self) -> "BaseContactManager":
+        """Get the ContactManager. Raises if not set."""
+        if self._contact_manager is None:
+            raise RuntimeError("ContactManager not set on ContactIndex")
+        return self._contact_manager
 
-        # only retain the -1 contact if it's different from the boss contact
-        c_neg1 = self.contacts.get(-1)
-        c_boss = self.contacts.get(1)
-        if c_neg1 and c_boss and c_neg1.first_name == c_boss.first_name:
-            self.contacts.pop(-1, None)
+    def set_fallback_contacts(self, contacts: list[dict]) -> None:
+        """
+        Cache contacts from inbound messages.
+
+        This is called when inbound messages arrive with contact data. These
+        contacts are checked first in get_contact() before ContactManager,
+        ensuring contacts from recent inbounds are always available even if
+        ContactManager hasn't synced them yet.
+
+        Args:
+            contacts: List of contact dicts from inbound message events.
+        """
+        for contact in contacts:
+            contact_id = contact.get("contact_id")
+            if contact_id is not None:
+                self._fallback_contacts[contact_id] = contact
 
     def clear_conversations(self):
         """Clear all active conversations for test isolation."""
         self.active_conversations.clear()
+        self.global_thread.clear()
 
-    # is this supposed to fail for any reason?
-    def push_message(
-        self,
-        contact: dict,
-        thread_name,
-        message_content=None,
-        subject=None,
-        body=None,
-        email_id=None,
-        timestamp=None,
-        role: Literal["user", "assistant"] = "user",
-    ):
-        if not timestamp:
-            timestamp = prompt_now(as_string=False)
-        contact_id = contact["contact_id"]
+    def get_conversation_state(self, contact_id: int) -> ConversationState | None:
+        """Get conversation state for a contact, or None if no active conversation."""
+        return self.active_conversations.get(contact_id)
+
+    def get_or_create_conversation(self, contact_id: int) -> ConversationState:
+        """Get or create conversation state for a contact."""
         if contact_id not in self.active_conversations:
-            self.active_conversations[contact_id] = Contact(**contact)
-        contact = self.active_conversations[contact_id]
-        if thread_name == "email":
-            message = EmailMessage(
-                (
-                    contact.full_name
-                    if role == "user"
-                    else "You" if role == "assistant" else role
-                ),
-                subject,
-                body,
-                email_id,
-                timestamp,
+            self.active_conversations[contact_id] = ConversationState(
+                contact_id=contact_id,
             )
-        else:
-            message = Message(
-                (
-                    contact.full_name
-                    if role == "user"
-                    else "You" if role == "assistant" else role
-                ),
-                message_content,
-                timestamp,
-            )
-        contact.threads[thread_name].append(message)
-        contact.global_thread.append(message)
+        return self.active_conversations[contact_id]
 
     def get_contact(
         self,
-        contact_id: int = None,
-        phone_number: str = None,
-        email: str = None,
+        contact_id: int | None = None,
+        phone_number: str | None = None,
+        email: str | None = None,
     ) -> dict | None:
-        """Get contact information, always querying ContactManager for fresh data.
+        """
+        Get contact information from fallback cache or ContactManager.
 
-        When a ContactManager is configured (via set_contact_manager), this method
-        queries it first to ensure up-to-date data. The ContactManager maintains
-        an auto-syncing cache backed by the database, so any updates made by other
-        components (e.g., Actor creating contacts) are immediately reflected.
-
-        Falls back to the local cache only if ContactManager is unavailable or
-        the query fails.
+        Checks the local fallback cache first (populated from inbound message
+        events). If not found, falls back to ContactManager.
 
         Args:
-            contact_id: The contact's unique ID.
-            phone_number: The contact's phone number (used if contact_id not provided).
-            email: The contact's email address (used if contact_id and phone_number not provided).
+            contact_id: Contact ID (preferred).
+            phone_number: Phone number to search by.
+            email: Email address to search by.
 
         Returns:
-            Contact data as a dict, or None if not found.
+            Contact dict or None if not found.
         """
-        # Always prefer ContactManager (source of truth with auto-syncing cache)
-        if self._contact_manager is not None:
+        if self._contact_manager is None:
+            # Check fallback cache first (contacts from inbound messages)
+            if contact_id is not None:
+                if contact_id in self._fallback_contacts:
+                    return self._fallback_contacts[contact_id]
+            elif phone_number is not None:
+                for c in self._fallback_contacts.values():
+                    if c.get("phone_number") == phone_number:
+                        return c
+            elif email is not None:
+                for c in self._fallback_contacts.values():
+                    if c.get("email_address") == email:
+                        return c
+        else:
             try:
                 if contact_id is not None:
                     result = self._contact_manager.get_contact_info(contact_id)
-                    if contact_id in result:
-                        return result[contact_id]
+                    return result.get(contact_id)
                 elif phone_number is not None:
-                    # Use filter_contacts to search by phone number
                     result = self._contact_manager.filter_contacts(
                         filter=f"phone_number == '{phone_number}'",
                         limit=1,
                     )
-                    # filter_contacts returns {"contacts": [Contact(...)]}
                     contacts = result.get("contacts", [])
                     if contacts:
                         c = contacts[0]
                         return c.model_dump() if hasattr(c, "model_dump") else c
                 elif email is not None:
-                    # Use filter_contacts to search by email
                     result = self._contact_manager.filter_contacts(
                         filter=f"email_address == '{email}'",
                         limit=1,
                     )
-                    # filter_contacts returns {"contacts": [Contact(...)]}
                     contacts = result.get("contacts", [])
                     if contacts:
                         c = contacts[0]
                         return c.model_dump() if hasattr(c, "model_dump") else c
             except Exception:
-                # Fall through to local cache on any error
-                pass
+                return None
+        return None
 
-        # Fallback to local cache (may be stale, but better than nothing)
-        c = None
-        if contact_id is not None:
-            c = self.contacts.get(contact_id)
-        elif phone_number is not None:
-            c = next(
-                (c for c in self.contacts.values() if c.phone_number == phone_number),
-                None,
+    # =========================================================================
+    # Message query helpers — derive views from the shared global deque
+    # =========================================================================
+
+    def get_messages_for_contact(
+        self,
+        contact_id: int,
+        medium: Medium | None = None,
+    ) -> list:
+        """Get messages for a contact, optionally filtered by medium.
+
+        Args:
+            contact_id: The contact to filter for.
+            medium: If provided, only return messages of this medium.
+
+        Returns:
+            List of messages (in chronological order) for this contact.
+        """
+        results = []
+        for entry in self.global_thread:
+            if contact_id not in entry.contact_roles:
+                continue
+            if medium is not None and entry.medium != medium:
+                continue
+            results.append(entry.message)
+        return results
+
+    def get_active_contact_ids(self) -> set[int]:
+        """Return the set of contact_ids present in the global thread."""
+        ids: set[int] = set()
+        for entry in self.global_thread:
+            ids.update(entry.contact_roles.keys())
+        return ids
+
+    def get_messages_grouped_by_contact(
+        self,
+    ) -> dict[int, list[GlobalThreadEntry]]:
+        """Group all global thread entries by contact_id.
+
+        Returns a dict mapping contact_id to a list of GlobalThreadEntry
+        in chronological order. An entry appears under every contact_id
+        in its contact_roles.
+        """
+        groups: dict[int, list[GlobalThreadEntry]] = {}
+        for entry in self.global_thread:
+            for cid in entry.contact_roles:
+                if cid not in groups:
+                    groups[cid] = []
+                groups[cid].append(entry)
+        return groups
+
+    # =========================================================================
+    # Message push
+    # =========================================================================
+
+    def build_message(
+        self,
+        contact_id: int,
+        sender_name: str,
+        thread_name: Medium,
+        message_content: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+        email_id: str | None = None,
+        attachments: list[str] | None = None,
+        timestamp: datetime | None = None,
+        role: str = "user",
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        contact_role: str | None = None,
+    ) -> "GlobalThreadEntry":
+        """
+        Build a GlobalThreadEntry without appending it to the global thread.
+
+        Accepts the same arguments as push_message. Also ensures that
+        conversation state exists for the contact.
+        """
+        if not timestamp:
+            timestamp = prompt_now(as_string=False)
+
+        # Ensure conversation state exists for this contact
+        self.get_or_create_conversation(contact_id)
+
+        # Determine display name (for rendering to brain)
+        name = sender_name if role == "user" else "You" if role == "assistant" else role
+
+        # Non-comms roles (e.g., "guidance") get a GuidanceMessage
+        if role not in ("user", "assistant"):
+            message = GuidanceMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
             )
-        elif email is not None:
-            c = next(
-                (c for c in self.contacts.values() if c.email_address == email),
-                None,
+        # Create appropriate comms message type based on medium
+        elif thread_name == Medium.EMAIL:
+            message = EmailMessage(
+                name=name,
+                subject=subject or "",
+                body=body or "",
+                email_id=email_id,
+                timestamp=timestamp,
+                role=role,
+                attachments=attachments or [],
+                to=to or [],
+                cc=cc or [],
+                bcc=bcc or [],
+                contact_role=contact_role,
             )
-        return c.model_dump(exclude={"threads", "global_thread"}) if c else None
+        elif thread_name == Medium.UNIFY_MESSAGE:
+            message = UnifyMessage(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+                attachments=attachments or [],
+            )
+        else:
+            message = Message(
+                name=name,
+                content=message_content or "",
+                timestamp=timestamp,
+                role=role,
+            )
+
+        return GlobalThreadEntry(
+            message=message,
+            medium=thread_name,
+            contact_roles={contact_id: contact_role},
+        )
+
+    def push_message(
+        self,
+        contact_id: int,
+        sender_name: str,
+        thread_name: Medium,
+        message_content: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+        email_id: str | None = None,
+        attachments: list[str] | None = None,
+        timestamp: datetime | None = None,
+        role: str = "user",
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        contact_role: str | None = None,
+    ):
+        """
+        Build a message and append it to the shared global thread.
+        """
+        entry = self.build_message(
+            contact_id=contact_id,
+            sender_name=sender_name,
+            thread_name=thread_name,
+            message_content=message_content,
+            subject=subject,
+            body=body,
+            email_id=email_id,
+            attachments=attachments,
+            timestamp=timestamp,
+            role=role,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            contact_role=contact_role,
+        )
+        self.global_thread.append(entry)
+
+    def prepend_entries(self, entries: list) -> None:
+        """Prepend entries to the front of the global thread.
+
+        Used by hydration to insert historical messages before any messages
+        that arrived during initialization. Respects the deque maxlen by
+        keeping the most recent entries when the combined size exceeds it.
+        """
+        if not entries:
+            return
+        existing = list(self.global_thread)
+        self.global_thread.clear()
+        # extend respects maxlen, dropping oldest (leftmost) if over capacity
+        self.global_thread.extend(entries + existing)

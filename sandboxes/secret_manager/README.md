@@ -16,7 +16,7 @@ What is the `SecretManager`?
 
 Additionally it offers non‑LLM helpers:
 
-- `from_placeholder(text)` – replace `${NAME}` placeholders with real values for trusted components (e.g., actor/browser), with value-free logging
+- `from_placeholder(text)` – replace `${NAME}` placeholders with real values for trusted components (e.g., actor/computer), with value-free logging
 - `to_placeholder(text)` – redact known raw values to their `${NAME}` placeholders
 
 Running the sandbox

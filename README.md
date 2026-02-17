@@ -114,7 +114,7 @@ Each manager owns a specific domain. The Actor plans and calls the appropriate m
 
 | Manager | Role |
 |---------|------|
-| **Actor** | Ephemeral, real-time action executor. Can invoke functions, control browsers, read files, or use any available capability. Returns a live steerable handle. |
+| **Actor** | Ephemeral, real-time action executor. Can invoke functions, control computer interfaces, read files, or use any available capability. Returns a live steerable handle. |
 | **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
 | **FunctionManager** | Catalogue of reusable Python functions (created by the Actor or provided by the user). |
 
@@ -179,7 +179,7 @@ Create a `.env` file in the project root:
 ```bash
 # Required
 UNIFY_KEY=<your-unify-api-key>
-UNIFY_BASE_URL=https://api.unify.ai/v0
+ORCHESTRA_URL=https://api.unify.ai/v0
 
 # LLM Providers
 OPENAI_API_KEY=<your-openai-key>
@@ -191,6 +191,12 @@ CARTESIA_API_KEY=<your-cartesia-key>
 LIVEKIT_URL=<your-livekit-url>
 LIVEKIT_API_KEY=<your-livekit-key>
 LIVEKIT_API_SECRET=<your-livekit-secret>
+
+# Communication Service (auto-detected if not set)
+# Staging (default for non-main branches):
+UNITY_COMMS_URL=https://unity-comms-app-staging-262420637606.us-central1.run.app
+# Production (main branch only):
+# UNITY_COMMS_URL=https://unity-comms-app-262420637606.us-central1.run.app
 
 # Assistant Configuration
 ASSISTANT_ID=<id>
@@ -207,17 +213,47 @@ brew install direnv
 # Add hook to ~/.zshrc
 echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
 
-# Silence verbose output (direnv 2.36+)
+# Silence verbose output and whitelist unity directories (direnv 2.36+)
 mkdir -p ~/.config/direnv
-echo '[global]
-hide_env_diff = true' > ~/.config/direnv/direnv.toml
+cat > ~/.config/direnv/direnv.toml << 'EOF'
+[global]
+hide_env_diff = true
+
+[whitelist]
+prefix = [
+  "/PATH/TO/unity"
+]
+EOF
 
 direnv allow  # run once in the repo
 ```
 
+Replace `/PATH/TO/unity` with your actual repo path (e.g. `/Users/you/unity`). The prefix whitelist auto-allows `.envrc` in the main repo **and** any adjacent clones (`unity_*`) created by `clone_adjacent.sh`, so you never need to run `direnv allow` per clone.
+
 Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs.
 
-The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
+The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees and clones.
+
+### Parallel Development with Clones
+
+Cursor's worktree mode (parallel agents) has a known limitation: `.cursor/rules/` files with `alwaysApply: true` are not injected into the agent's context. This means worktree agents operate without any of your project rules.
+
+The workaround is to run multiple independent clones in local mode, where rules work correctly:
+
+```bash
+./clone_adjacent.sh fix_loop_tests    # → ../unity_fix_loop_tests
+./clone_adjacent.sh refactor_actor    # → ../unity_refactor_actor
+```
+
+Each clone checks out `staging`, inits submodules, copies `.env`, and symlinks `.venv` — ready to open in a separate Cursor window with full rule support. The script uses `--reference` to borrow local git objects, so cloning is near-instant.
+
+To pull the latest changes across all adjacent clones at once:
+
+```bash
+./pull_adjacent.sh
+```
+
+This runs `git pull --ff-only` in the current repo and every sibling `unity_*` directory, so all clones stay up to date with a single command.
 
 ### Cursor Cloud Agent Secrets (Required)
 
@@ -273,22 +309,25 @@ source .venv/bin/activate
 python start.py
 ```
 
-### Browser Automation (Controller Mode)
+### Web Automation (Controller Mode)
 
-**Browser Mode** (default):
+**Desktop Mode** (default — full desktop automation):
+
+```bash
+# See desktop/README.md for Docker-based virtual desktop setup
+# Start the agent service
+npx ts-node agent-service/src/index.ts
+
+# The Actor uses desktop mode by default (agent_mode="desktop")
+```
+
+**Web Mode** (browser-only):
 
 ```bash
 # Start the agent service
 npx ts-node agent-service/src/index.ts
 
-# The Actor will use browser mode by default (agent_mode="browser")
-```
-
-**Desktop Mode** (for full desktop automation):
-
-```bash
-# See desktop/README.md for Docker-based virtual desktop setup
-# Then use agent_mode="desktop" in the Actor
+# Use agent_mode="web" for browser-only automation
 ```
 
 ### Pre-commit Hooks
@@ -323,12 +362,12 @@ Run tests locally or offload them to GitHub Actions (24 parallel jobs, no local 
 ```bash
 # Quick start (local)
 tests/parallel_run.sh tests/                    # Run all tests
-tests/parallel_run.sh tests/test_actor/         # Run one folder
+tests/parallel_run.sh tests/actor/         # Run one folder
 tests/parallel_run.sh --timeout 300 tests/      # With 5-minute timeout
 
 # CI trigger (via commit message)
 git commit -m "Fix bug [run-tests]"                           # All tests
-git commit -m "Fix bug [parallel_run.sh tests/test_actor]"    # Specific folder
+git commit -m "Fix bug [parallel_run.sh tests/actor]"    # Specific folder
 ```
 
 See **[tests/README.md](tests/README.md)** for complete documentation:
@@ -355,8 +394,6 @@ The container includes:
 - Virtual desktop (X11/VNC)
 - PipeWire audio
 - Agent service (Node.js)
-- CodeSandbox service
-
 ### Cloud Deployment
 
 Unity uses Google Cloud Build for CI/CD:
@@ -381,7 +418,7 @@ unity/
 │   ├── actor/               # Top Level orchestrator
 │   ├── contact_manager/     # Contact records
 │   ├── conversation_manager/ # Live chat orchestration
-│   ├── controller/          # Browser control layer
+│   ├── controller/          # Computer control layer
 │   ├── events/              # EventBus pub/sub
 │   ├── file_manager/        # File parsing/registry
 │   ├── function_manager/    # User functions
@@ -397,8 +434,7 @@ unity/
 │   └── common/              # Shared utilities
 │       └── _async_tool/     # Async tool loop infrastructure
 ├── tests/                   # Test suite
-├── agent-service/           # Node.js browser agent
-├── codesandbox-service/     # CodeSandbox integration
+├── agent-service/           # Node.js web/desktop agent
 ├── desktop/                 # Virtual desktop setup
 ├── scripts/                 # Utility scripts
 └── sandboxes/               # Interactive development sandboxes
@@ -411,7 +447,7 @@ unity/
 1. Create a feature branch
 2. Make your changes
 3. Run pre-commit hooks: `.venv/bin/python -m pre_commit run --all-files`
-4. Run relevant tests: `tests/parallel_run.sh tests/test_<manager>/`
+4. Run relevant tests: `tests/parallel_run.sh tests/<manager>/`
 5. Submit a pull request
 
 ### Code Style

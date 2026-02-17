@@ -15,7 +15,7 @@ The `ConversationManager` is the live orchestration layer that handles real-time
 ### Running Tests
 
 ```bash
-tests/parallel_run.sh tests/test_conversation_manager/
+tests/parallel_run.sh tests/conversation_manager/
 ```
 
 ---
@@ -82,8 +82,7 @@ Key methods:
 
 A steerable handle that external components (e.g., the Actor) use to interact with the live conversation:
 - `ask(question, response_format)` — Ask the user a question and wait for their answer
-- `interject(message)` — Inject a message into the conversation
-- `send_notification(content)` — Send a notification to the Main CM Brain
+- `interject(message)` — Inject information into the conversation (publishes a steering event)
 - `get_full_transcript()` — Retrieve recent conversation history
 
 ### `EventHandler` (`domains/event_handlers.py`)
@@ -120,7 +119,7 @@ User speaks → STT transcribes → Fast Brain (text LLM) → TTS speaks
     └──────── Main CM Brain provides CallGuidance ─────────┘
 ```
 
-Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-nano) for fast responses.
+Uses separate STT/TTS services with a lightweight text-based LLM (gpt-5-mini) for fast responses.
 
 ### 2. STS Mode (Speech-to-Speech)
 
@@ -237,7 +236,7 @@ conversation_manager/
 
 ## Testing
 
-Tests are located in `tests/test_conversation_manager/`:
+Tests are located in `tests/conversation_manager/`:
 
 | File | Description |
 |------|-------------|
@@ -255,13 +254,13 @@ Tests are located in `tests/test_conversation_manager/`:
 
 ```bash
 # Run all conversation_manager tests (with per-test parallelism)
-tests/parallel_run.sh tests/test_conversation_manager/
+tests/parallel_run.sh tests/conversation_manager/
 
 # Run a specific test file
-tests/parallel_run.sh tests/test_conversation_manager/test_comms.py
+tests/parallel_run.sh tests/conversation_manager/test_comms.py
 
 # Run directly with pytest (for debugging)
-.venv/bin/python -m pytest tests/test_conversation_manager/test_comms.py -v --timeout=300
+.venv/bin/python -m pytest tests/conversation_manager/test_comms.py -v --timeout=300
 ```
 
 ### Test Categories

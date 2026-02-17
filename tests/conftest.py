@@ -6,7 +6,7 @@ Global pytest configuration for Unity test suite.
 
 Sections:
   1. Imports and logging guard
-  2. Test stubs (Redis, BrowserWorker, DateTime)
+  2. Test stubs (Redis, ComputerWorker, DateTime)
   3. Singleton isolation
   4. Command-line options
   5. Custom logging helpers
@@ -24,6 +24,7 @@ import os
 import random
 import re
 import threading
+import hashlib
 
 import httpx
 import pytest
@@ -42,18 +43,123 @@ if not _root_logger_early.handlers:
 
 from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
+from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
+
+
+# --------------------------------------------------------------------------- #
+# Orchestra availability check for requires_orchestra marker                   #
+# --------------------------------------------------------------------------- #
+def _check_orchestra_available() -> bool:
+    """Check if Orchestra server is reachable. Cached after first call."""
+    if hasattr(_check_orchestra_available, "_cached"):
+        return _check_orchestra_available._cached
+
+    orchestra_url = os.environ.get("ORCHESTRA_URL", "http://localhost:8000")
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            # Check a known endpoint - /v0/projects works and 404 on root is fine
+            resp = client.get(f"{orchestra_url}/v0/projects")
+            # 200 = success, 401/403 = auth required but server is up
+            _check_orchestra_available._cached = resp.status_code in (200, 401, 403)
+    except Exception:
+        _check_orchestra_available._cached = False
+
+    return _check_orchestra_available._cached
+
+
+def _derive_test_context(item: pytest.Item) -> str:
+    """
+    Derive a per-test Unify context path that is stable and unique.
+
+    Matches the intent of tests.helpers._TestContext.setup(), but runs early enough
+    (pytest_runtest_setup) to wrap fixture setup + teardown, preventing cross-test
+    interference when fixtures create/clear managers that delete contexts.
+    """
+    # Build "tests/<relpath-without-.py>/<func_name>" prefix
+    file_path = str(getattr(item, "fspath", "") or "")
+    parts = file_path.split(f"{os.sep}tests{os.sep}")
+    if len(parts) > 1:
+        rel_path = parts[1].replace(os.sep, "/")
+        if rel_path.endswith(".py"):
+            rel_path = rel_path[:-3]
+        test_path = f"tests/{rel_path}"
+    else:
+        # Fallback (should be rare): use nodeid as the "path"
+        test_path = "tests/unknown"
+
+    func_name = getattr(item, "originalname", None) or getattr(item, "name", "test")
+
+    # Parametrized tests: include a stable suffix so contexts don't collide
+    nodeid = getattr(item, "nodeid", "")
+    if "[" in nodeid:
+        normalized = _normalize_pytest_nodeid(nodeid)
+        if normalized is None:
+            normalized = hashlib.md5(nodeid.encode("utf-8")).hexdigest()[:8]
+        func_name = f"{func_name}/{normalized}"
+
+    # Mirror production-like hierarchy: .../<DefaultUser>/<Assistant>
+    return f"{test_path}/{func_name}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+
+
+def _set_unify_context_for_test(item: pytest.Item) -> None:
+    """Set a unique per-test Unify context early (before fixtures)."""
+    ctx = _derive_test_context(item)
+    setattr(item, "_unity_unify_test_ctx", ctx)
+
+    # Clean slate unless contexts are pre-created during collection.
+    skip_ctx_create = False
+    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
+        skip_ctx_create = ctx in PRECREATED_CONTEXTS
+    else:
+        try:
+            unify.delete_context(ctx)
+        except Exception:
+            pass
+
+    unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+
+    # Ensure singleton registries don't leak across tests and that fixtures see
+    # the correct context for any context-derived subcontexts (e.g. FunctionManager).
+    try:
+        from unity.common.context_registry import ContextRegistry
+        from unity.manager_registry import ManagerRegistry
+        from unity.events.event_bus import EVENT_BUS
+
+        ManagerRegistry.clear()
+        ContextRegistry.clear()
+        EVENT_BUS.clear(delete_contexts=False)
+    except Exception:
+        pass
+
+
+def _unset_unify_context_for_test(item: pytest.Item) -> None:
+    """Unset (and optionally delete) the per-test Unify context after fixture teardown."""
+    ctx = getattr(item, "_unity_unify_test_ctx", None)
+    try:
+        if ctx and SETTINGS.UNIFY_DELETE_CONTEXT_ON_EXIT:
+            try:
+                unify.delete_context(ctx)
+            except Exception:
+                pass
+    finally:
+        try:
+            unify.unset_context()
+        except Exception:
+            pass
 
 
 def pytest_report_header(config):
     settings_str = [f"{k}={v}" for k, v in SETTINGS.model_dump().items()]
     return [
-        f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
+        f"orchestra_url={os.environ.get('ORCHESTRA_URL')}",
+        f"unity_comms_url={os.environ.get('UNITY_COMMS_URL')}",
         f"unify_project={unify.active_project()}",
+        f"UNILLM_CACHE={os.environ.get('UNILLM_CACHE', 'not set')}",
     ] + settings_str
 
 
 # --------------------------------------------------------------------------- #
-# 2. Test stubs (Redis, BrowserWorker, DateTime)                              #
+# 2. Test stubs (Redis, ComputerWorker, DateTime)                              #
 # --------------------------------------------------------------------------- #
 
 _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
@@ -155,6 +261,7 @@ def stub_external_deps(monkeypatch):
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.file_manager.prompt_builders.now", _static_now)
+    monkeypatch.setattr("unity.conversation_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.conversation_manager.events.prompt_now", _static_now)
     monkeypatch.setattr(
         "unity.conversation_manager.domains.contact_index.prompt_now",
@@ -430,8 +537,21 @@ def pytest_sessionfinish(session, exitstatus):
         unify.delete_project(unify.active_project())
 
 
+def pytest_unconfigure(config):
+    """Restore HOME and clean up the temporary test home directory."""
+    import shutil
+
+    test_home = os.environ.get("HOME", "")
+    if _original_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = _original_home
+    if test_home.startswith("/tmp/") and "unity_test_home_" in test_home:
+        shutil.rmtree(test_home, ignore_errors=True)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    if SETTINGS.UNIFY_CACHE_STATS:
+    if SETTINGS.UNITY_CACHE_STATS:
         import unillm
 
         stats = unillm.get_cache_stats()
@@ -445,7 +565,23 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 # --------------------------------------------------------------------------- #
 
 
+_original_home: str | None = None
+
+
 def pytest_configure(config):
+    # ------------------------------------------------------------------
+    # Isolate HOME so that tests never touch the real home directory.
+    # get_local_root() defaults to ~/Unity/Local, and the process cwd
+    # is set to the same path at startup.  By pointing HOME at a temp
+    # dir we keep Downloads/, .env, snapshots, etc. sandboxed.
+    # ------------------------------------------------------------------
+    import tempfile
+
+    global _original_home
+    _original_home = os.environ.get("HOME")
+    test_home = tempfile.mkdtemp(prefix="unity_test_home_")
+    os.environ["HOME"] = test_home
+
     config.addinivalue_line(
         "markers",
         "requires_real_unify: mark test as requiring the real unify implementation",
@@ -457,6 +593,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "enable_eventbus: enable EventBus publishing for this test",
+    )
+    config.addinivalue_line(
+        "markers",
+        "requires_orchestra: mark test as requiring a running Orchestra server",
     )
 
     # Required to disable explicit log level if set from pytest.ini or command line options
@@ -489,8 +629,15 @@ def pytest_configure(config):
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
+# Skip tests marked with requires_orchestra when Orchestra is not available
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
+    _set_unify_context_for_test(item)
+
+    # Skip requires_orchestra tests if Orchestra is not running
+    if item.get_closest_marker("requires_orchestra"):
+        if not _check_orchestra_available():
+            pytest.skip("Orchestra server not available")
 
 
 def _normalize_pytest_nodeid(nodeid):
@@ -539,12 +686,13 @@ def pytest_runtest_call(item):
     setattr(target_obj, "_unity_pytest_nodeid", func_name)
 
 
-def pytest_runtest_teardown(item):
+def pytest_runtest_teardown(item, nextitem=None):
+    _unset_unify_context_for_test(item)
     test_name_log_filter.reset_test_name()
 
 
 def pytest_html_results_summary(prefix, summary, postfix):
-    if SETTINGS.UNIFY_CACHE_STATS:
+    if SETTINGS.UNITY_CACHE_STATS:
         import unillm
 
         stats = unillm.get_cache_stats()

@@ -22,11 +22,7 @@ from ..common.async_tool_loop import (
 from ..settings import SETTINGS
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import (
-    log_manager_call,
-    new_call_id,
-    publish_manager_method_event,
-)
+from ..events.manager_event_logging import log_manager_call
 from ..common.tool_outcome import ToolOutcome
 from ..common.embed_utils import ensure_vector_column
 from ..common.context_store import TableStore
@@ -191,7 +187,11 @@ class SecretManager(BaseSecretManager):
         """
         import os as _os
 
-        return SETTINGS.secret.DOTENV_PATH or _os.path.join(_os.getcwd(), ".env")
+        if SETTINGS.secret.DOTENV_PATH:
+            return SETTINGS.secret.DOTENV_PATH
+        from unity.file_manager.settings import get_local_root
+
+        return _os.path.join(get_local_root(), ".env")
 
     def _ensure_dotenv_synced_on_init(self) -> None:
         """Create .env if missing and merge existing Unify secrets into it."""
@@ -288,12 +288,6 @@ class SecretManager(BaseSecretManager):
     async def from_placeholder(self, text: str) -> str:
         """Resolve ${name} placeholders in text to raw secret values (no LLM).
 
-        Notes
-        -----
-        - Logs a single incoming ManagerMethod event and returns the resolved
-          string without publishing any outgoing event to avoid leaking values.
-        - Never persists or logs secret values.
-
         Parameters
         ----------
         text : str
@@ -304,39 +298,10 @@ class SecretManager(BaseSecretManager):
         str
             String with placeholders substituted with their secret values.
         """
-        call_id: str | None = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "from_placeholder",
-                phase="incoming",
-                query=text,
-            )
-        except Exception:
-            # Logging is best-effort – failures must not impact resolution
-            pass
-
-        resolved = self._resolve_placeholders(text)
-
-        # Publish an outgoing event that does NOT include sensitive data
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "from_placeholder",
-                    phase="outgoing",
-                    status="resolved",
-                )
-        except Exception:
-            pass
-
-        return resolved
+        return self._resolve_placeholders(text)
 
     async def to_placeholder(self, text: str) -> str:
-        """Convert a secret values in text to a placeholder.
+        """Convert secret values in text to placeholders.
 
         Parameters
         ----------
@@ -348,20 +313,6 @@ class SecretManager(BaseSecretManager):
         str
             The text with secret values converted to placeholders.
         """
-        # Best-effort metadata-only logging; never include raw text or values
-        call_id: str | None = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "to_placeholder",
-                phase="incoming",
-                info="start",
-            )
-        except Exception:
-            pass
-
         # Build a mapping from raw value → name using current storage
         try:
             rows = unify.get_logs(
@@ -392,36 +343,22 @@ class SecretManager(BaseSecretManager):
         import re
 
         ordered_values = sorted(value_to_name.keys(), key=len, reverse=True)
-        replaced_names: set[str] = set()
         result = text
-        total_replacements = 0
         for val in ordered_values:
             name = value_to_name[val]
             pattern = re.escape(val)
             placeholder = f"${{{name}}}"
-            result, count = re.subn(pattern, placeholder, result)
-            if count:
-                total_replacements += count
-                replaced_names.add(name)
-
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "to_placeholder",
-                    phase="outgoing",
-                    status="converted",
-                    replacements=total_replacements,
-                    names=sorted(replaced_names),
-                )
-        except Exception:
-            pass
+            result = re.sub(pattern, placeholder, result)
 
         return result
 
     @functools.wraps(BaseSecretManager.ask, updated=())
-    @log_manager_call("SecretManager", "ask", payload_key="question")
+    @log_manager_call(
+        "SecretManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Credentials",
+    )
     async def ask(
         self,
         text: str,
@@ -482,7 +419,7 @@ class SecretManager(BaseSecretManager):
 
         # System message via prompt builder
         client.set_system_message(
-            build_ask_prompt(tools=tools),
+            build_ask_prompt(tools=tools).to_list(),
         )
 
         handle = start_async_tool_loop(
@@ -511,7 +448,12 @@ class SecretManager(BaseSecretManager):
         return handle
 
     @functools.wraps(BaseSecretManager.update, updated=())
-    @log_manager_call("SecretManager", "update", payload_key="request")
+    @log_manager_call(
+        "SecretManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Credentials",
+    )
     async def update(
         self,
         text: str,
@@ -570,7 +512,7 @@ class SecretManager(BaseSecretManager):
             )
 
         client.set_system_message(
-            build_update_prompt(tools=tools),
+            build_update_prompt(tools=tools).to_list(),
         )
 
         handle = start_async_tool_loop(

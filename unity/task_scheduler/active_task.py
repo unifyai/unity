@@ -18,6 +18,7 @@ from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.task_execution_context import current_task_execution_delegate
+from unity.common._async_tool.messages import forward_handle_call
 from .types.status import Status
 from ..common.llm_client import new_llm_client
 import logging
@@ -32,7 +33,7 @@ async def classify_steering_intent(
 ) -> tuple[str, str]:
     """Classify steering into: cancel | defer | pause | resume | continue | none."""
     try:
-        client = new_llm_client()
+        client = new_llm_client(debug_marker="ActiveTask.classify_steering_intent")
         system = (
             "You are a router that classifies an in-flight steering message.\n"
             "Labels: cancel | defer | pause | resume | continue | none.\n"
@@ -155,7 +156,6 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 parent_chat_context=_parent_chat_context,
                 clarification_up_q=_clarification_up_q,
                 clarification_down_q=_clarification_down_q,
-                images=None,
             )
         else:
             actor_steerable_handle = await actor.act(
@@ -177,20 +177,19 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(
         self,
-        message: str,
+        question: str,
         *,
         _return_reasoning_steps: bool = False,
     ) -> SteerableToolHandle:
         """Answer a read-only question about the live activity and return a handle."""
-        return await self._actor_handle.ask(message)
+        return await self._actor_handle.ask(question)
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: object | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
         intent: Optional[str] = None
@@ -216,14 +215,14 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             else:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=parent_chat_context_cont,
+                    parent_chat_context=_parent_chat_context_cont,
                 )
         except Exception as e:
             # Robust fallback: use built-in classifier to avoid losing the steering signal entirely
             try:
                 intent, reason = await classify_steering_intent(
                     message,
-                    parent_chat_context=parent_chat_context_cont,
+                    parent_chat_context=_parent_chat_context_cont,
                 )
             except Exception as _e:
                 intent, reason = None, None
@@ -233,24 +232,20 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
 
         # If the interjection semantically requests stopping, enforce correct lifecycle handling.
         if intent in ("cancel", "defer"):
-            # Stop the underlying actor handle. Some handle implementations expose stop() as async;
-            # we must not drop the coroutine. Also, some stop() variants accept (reason=..., cancel=...).
+            # Forward stop to the underlying actor handle via forward_handle_call
+            # which introspects the target signature and handles kwargs the actor
+            # may not accept (e.g. ``cancel``).  Fire-and-forget via create_task
+            # since the interject path should not block on the stop completing.
             stop_reason = reason or message
-            try:
-                if hasattr(self._actor_handle, "stop"):
-                    try:
-                        ret = self._actor_handle.stop(  # type: ignore[call-arg]
-                            reason=stop_reason,
-                            cancel=(intent == "cancel"),
-                        )
-                    except TypeError:
-                        # Legacy signature: stop(reason: str | None = None)
-                        ret = self._actor_handle.stop(stop_reason)  # type: ignore[call-arg]
-
-                    if asyncio.iscoroutine(ret):
-                        asyncio.create_task(ret)
-            except Exception:
-                pass
+            if hasattr(self._actor_handle, "stop"):
+                asyncio.create_task(
+                    forward_handle_call(
+                        self._actor_handle,
+                        "stop",
+                        {"reason": stop_reason, "cancel": (intent == "cancel")},
+                        fallback_positional_keys=("reason",),
+                    ),
+                )
 
             self._was_stopped = True  # prevents result() from marking 'completed'
 
@@ -295,41 +290,33 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             return
 
         # No stop/defer/cancel intent ⇒ forward interjection to the actor.
-        # Avoid passing images kwarg when None to preserve compatibility with wrappers
-        # that don't declare the images kwarg (e.g., some test monkeypatches).
-        if images is None:
-            await self._actor_handle.interject(message)  # type: ignore[arg-type]
-        else:
-            await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
+        await self._actor_handle.interject(message)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(
+    async def stop(
         self,
         *,
         cancel: bool = False,
         reason: Optional[str] = None,
-    ) -> Optional[str]:
+        **kwargs,
+    ) -> None:
         """Stop the running activity with explicit intent.
 
         When ``cancel`` is True the task instance is marked cancelled. When False, the
         task is deferred and we attempt to reinstate it to its previous queue/schedule
         position using the stored reintegration plan (when available).
         """
-        # Be tolerant if the underlying actor has already finished; treat stop as a no-op.
-        try:
-            # Some actor handles implement stop() as async. We must not drop the coroutine.
-            # Prefer passing cancel/reason when supported, but fall back for compatibility.
-            try:
-                ret = self._actor_handle.stop(reason=reason, cancel=cancel)  # type: ignore[call-arg]
-            except TypeError:
-                # Legacy signature: stop(reason: str | None = None)
-                ret = self._actor_handle.stop(reason)  # type: ignore[call-arg]
-
-            if asyncio.iscoroutine(ret):
-                asyncio.create_task(ret)
-                ret = "Stopping."
-        except Exception:
-            ret = "Stopped."
+        # Forward stop to the underlying actor handle.  forward_handle_call
+        # introspects the target signature and silently drops kwargs the actor
+        # does not accept (e.g. ``cancel``), avoiding fragile try/except
+        # TypeError cascades.  See the signature extension contract documented
+        # on SteerableToolHandle.
+        await forward_handle_call(
+            self._actor_handle,
+            "stop",
+            {"reason": reason, "cancel": cancel},
+            fallback_positional_keys=("reason",),
+        )
         self._was_stopped = True
 
         final_status = "cancelled" if cancel else "stopped"
@@ -349,7 +336,6 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         asyncio.create_task(self._save_final_summary(final_status))
 
         self._clear_active_pointer()
-        return ret
 
     @functools.wraps(BaseActiveTask.pause, updated=())
     async def pause(self) -> Optional[str]:
@@ -371,7 +357,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         """
         Generates a concise, human-readable summary of the execution from the Actor's action_log which captures a trace of the task's execution.
         """
-        client = new_llm_client()
+        client = new_llm_client(debug_marker="ActiveTask.generate_summary")
         prompt = textwrap.dedent(
             f"""
             You are an assistant summarizing a complex task's execution log.
@@ -409,7 +395,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         ):
             summary = "No execution log was available to generate a summary."
             try:
-                # The _actor_handle is the HierarchicalActorHandle, which has the action_log
+                # The _actor_handle may have an action_log attribute
                 if (
                     hasattr(self._actor_handle, "action_log")
                     and self._actor_handle.action_log

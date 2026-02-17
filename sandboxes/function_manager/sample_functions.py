@@ -94,51 +94,6 @@ async def search_and_extract_links(
     return urls
 
 
-async def summarize_text(text_to_summarize: str, length: str = "one paragraph") -> str:
-    """
-    Summarizes a given block of text to a specified length.
-
-    Args:
-        text_to_summarize (str): The text content to be summarized.
-        length (str): The desired length of the summary (e.g., 'one sentence', 'three bullet points').
-
-    Returns:
-        str: The summarized text.
-    """
-    print(f"Summarizing text to {length}...")
-    summary = await computer_primitives.reason(  # type: ignore
-        request=f"Summarize the following text in {length}. Respond with only the summary.",
-        context=text_to_summarize,
-    )
-    return summary
-
-
-async def translate_text(text_to_translate: str, target_language: str) -> str:
-    """
-    Translates a given block of text to a target language.
-
-    Args:
-        text_to_translate (str): The text content to be translated.
-        target_language (str): The language to translate the text into (e.g., 'French', 'Japanese').
-
-    Returns:
-        str: The translated text.
-    """
-    print(f"Translating text to {target_language}...")
-
-    class Translation(BaseModel):
-        translated_text: str = Field(description="The translated text.")
-
-    Translation.model_rebuild()
-
-    result = await computer_primitives.reason(  # type: ignore
-        request=f"Translate the following text into {target_language}. Respond with only the translation.",
-        context=text_to_translate,
-        response_format=Translation,
-    )
-    return result.translated_text
-
-
 def calculate_list_statistics22(data: List[Union[int, float]]) -> Dict[str, float]:
     """
     Calculates basic statistics (mean, median, standard deviation) for a list of numbers.

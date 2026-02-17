@@ -1,23 +1,69 @@
+"""AST-based dependency detection for stored functions.
+
+This module is the **storage-time** half of the dependency pipeline.  It
+analyses a function's AST to discover which other functions and environment
+namespaces the code calls, and records those names in the ``depends_on``
+field of the stored function record.
+
+The **runtime** counterpart is ``FunctionManager._inject_dependencies``,
+which reads ``depends_on`` and injects the corresponding objects into the
+execution namespace:
+
+* Bare names (``"helper"``) → the stored implementation is exec'd.
+* Dotted names (``"actor.act"``) → the root namespace object is constructed
+  via ``registry.construct_sandbox_root()``.
+
+The set of recognised environment namespace roots (``"primitives"``,
+``"computer_primitives"``, ``"actor"``) is passed in as
+*environment_namespaces* by the caller (``FunctionManager.add_functions``).
+"""
+
 from __future__ import annotations
 
 import ast
-from typing import Optional, Set
+from typing import FrozenSet, Optional, Set
 
 
 class DependencyVisitor(ast.NodeVisitor):
-    """
-    Stateful dependency collector for FunctionManager functions.
+    """AST visitor that collects dependency names from a function body.
 
     Captures:
-    - Direct calls: `foo()`
-    - Indirect calls via variable assignment: `f = foo; f()`
-    - Returned function references: `return foo` or `return f` (where f maps to foo)
+    - Direct calls: ``foo()``
+    - Indirect calls via variable assignment: ``f = foo; f()``
+    - Returned function references: ``return foo``
+    - Callables passed as arguments: ``bar(callback=foo)``
+    - Dotted environment calls: ``primitives.contacts.ask(...)``,
+      ``computer_primitives.screenshot(...)``, ``actor.act(...)``
+
+    Dotted calls are only captured when the root segment matches one of the
+    *environment_namespaces* provided at construction time.  The full dotted
+    name (e.g. ``"actor.act"``) is recorded in ``depends_on`` so that
+    ``_inject_dependencies`` can resolve the root namespace at runtime.
     """
 
-    def __init__(self, known_function_names: Set[str]):
+    def __init__(
+        self,
+        known_function_names: Set[str],
+        *,
+        environment_namespaces: FrozenSet[str] = frozenset(),
+    ):
         self.known_function_names = known_function_names
+        self.environment_namespaces = environment_namespaces
         self.dependencies: Set[str] = set()
         self._assignment_map: dict[str, str] = {}
+
+    @staticmethod
+    def _resolve_dotted_name(node: ast.AST) -> Optional[str]:
+        """Resolve an ast.Attribute chain to a dotted string like 'primitives.contacts.ask'."""
+        parts: list[str] = []
+        current = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(current.id)
+            return ".".join(reversed(parts))
+        return None
 
     def visit_Assign(self, node: ast.Assign):
         # Only track simple assignments: target_var = potential_func_name
@@ -47,10 +93,36 @@ class DependencyVisitor(ast.NodeVisitor):
             elif func_name in self._assignment_map:
                 called_name = self._assignment_map[func_name]
 
+        # Dotted call -> primitives.contacts.ask(), computer_primitives.act(), etc.
+        elif isinstance(func_node, ast.Attribute) and self.environment_namespaces:
+            dotted = self._resolve_dotted_name(func_node)
+            if dotted:
+                root = dotted.split(".")[0]
+                if root in self.environment_namespaces:
+                    called_name = dotted
+
         if called_name:
             self.dependencies.add(called_name)
 
+        self._collect_callable_args(node)
         self.generic_visit(node)
+
+    def _collect_callable_args(self, node: ast.Call):
+        """Collect function references passed as positional or keyword arguments."""
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                if arg.id in self.known_function_names:
+                    self.dependencies.add(arg.id)
+                elif arg.id in self._assignment_map:
+                    self.dependencies.add(self._assignment_map[arg.id])
+
+        for keyword in node.keywords:
+            if isinstance(keyword.value, ast.Name):
+                name = keyword.value.id
+                if name in self.known_function_names:
+                    self.dependencies.add(name)
+                elif name in self._assignment_map:
+                    self.dependencies.add(self._assignment_map[name])
 
     def visit_Return(self, node: ast.Return):
         # Return statement -> return func_name or return var
@@ -80,6 +152,8 @@ def _collect_known_names(
 def collect_dependencies_from_function_node(
     fn_node: ast.FunctionDef | ast.AsyncFunctionDef,
     known_function_names: Set[str],
+    *,
+    environment_namespaces: FrozenSet[str] = frozenset(),
 ) -> Set[str]:
     """
     Collect dependencies for a single top-level function node.
@@ -88,8 +162,15 @@ def collect_dependencies_from_function_node(
     must resolve at *definition time*:
     - Decorators (e.g. `@my_decorator`)
     - Annotations (e.g. `x: typing.Annotated[int, validator]`)
+
+    When *environment_namespaces* is provided, dotted calls whose root segment matches
+    one of the namespaces (e.g. ``primitives.contacts.ask``, ``actor.act``) are also
+    captured as dependencies.
     """
-    visitor = DependencyVisitor(known_function_names)
+    visitor = DependencyVisitor(
+        known_function_names,
+        environment_namespaces=environment_namespaces,
+    )
     visitor.visit(fn_node)
     deps: Set[str] = set(visitor.dependencies)
 
@@ -124,6 +205,8 @@ def collect_dependencies_from_function_node(
 def collect_dependencies_from_source(
     source: str,
     known_function_names: Set[str],
+    *,
+    environment_namespaces: FrozenSet[str] = frozenset(),
 ) -> Set[str]:
     """Parse a single-function source string and return its dependency names."""
     try:
@@ -136,4 +219,8 @@ def collect_dependencies_from_source(
     ):
         return set()
     node: ast.FunctionDef | ast.AsyncFunctionDef = tree.body[0]
-    return collect_dependencies_from_function_node(node, known_function_names)
+    return collect_dependencies_from_function_node(
+        node,
+        known_function_names,
+        environment_namespaces=environment_namespaces,
+    )

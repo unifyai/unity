@@ -17,13 +17,14 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER
+from ...logger import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
+from .propagation_mode import ChatContextPropagation
+from .context_tracker import LoopContextState
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
 from .messages import (
     find_unreplied_assistant_entries,
-    chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
 )
@@ -31,17 +32,6 @@ from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
     create_tool_call_message,
     ToolCallMetadata,
-)
-from .images import (
-    set_live_images_context,
-    reset_live_images_context,
-    build_live_image_tools,
-    append_images_with_source,
-    get_image_log_entries,
-    has_live_images_context,
-    LIVE_IMAGES_REGISTRY,
-    LIVE_IMAGES_LOG,
-    build_live_images_overview_msgs,
 )
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
@@ -56,13 +46,14 @@ from .messages import (
     schedule_missing_for_message,
     build_helper_ack_content,
 )
-from .tools_data import ToolsData
+from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 from .time_context import create_time_context, TimeContext
+from ..context_dump import make_messages_safe_for_context_dump
 
 if TYPE_CHECKING:
-    from ...image_manager.types.image_refs import ImageRefs
     from .multi_handle import MultiHandleCoordinator
+    from unillm.types import PromptCacheParam
 
 
 def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
@@ -85,6 +76,26 @@ def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
         else:
             pruned_ids.add(call.get("id", ""))
     return unique_calls, pruned_ids
+
+
+def _transform_context_roles(messages: list[dict]) -> list[dict]:
+    """
+    Transform 'user' and 'assistant' roles to 'outer_user' and 'outer_assistant'.
+
+    This disambiguates parent context messages from the current conversation,
+    making it clear these are legitimate system-provided context from an outer
+    conversation rather than user-injected content attempting prompt injection.
+    """
+    transformed = []
+    for msg in messages:
+        new_msg = dict(msg)
+        role = new_msg.get("role", "")
+        if role == "user":
+            new_msg["role"] = "outer_user"
+        elif role == "assistant":
+            new_msg["role"] = "outer_assistant"
+        transformed.append(new_msg)
+    return transformed
 
 
 def _sort_completed_tasks_by_call_id(
@@ -188,7 +199,7 @@ async def async_tool_loop_inner(
     max_consecutive_failures: int = 3,
     prune_tool_duplicates: bool = True,
     interrupt_llm_with_interjections: bool = True,
-    propagate_chat_context: bool = True,
+    propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
     parent_chat_context: Optional[list[dict]] = None,
     caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
@@ -203,9 +214,9 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    images: "ImageRefs | None" = None,
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
+    prompt_caching: Optional["PromptCacheParam"] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -256,7 +267,7 @@ async def async_tool_loop_inner(
         Thread-safe channel through which the *outer* application can push
         additional user turns at any time (e.g. the human changes their
         mind mid-generation). When a dict is provided it should follow the
-        shape {"message": str, "parent_chat_context_continuted": list[dict]}.
+        shape {"message": str, "_parent_chat_context_continued": list[dict]}.
 
     cancel_event : ``asyncio.Event``
         Flips to *set* when the outer caller wants graceful shutdown.  The
@@ -299,9 +310,9 @@ async def async_tool_loop_inner(
 
     parent_chat_context : ``list[dict] | None``
         Nested chat structure passed from an **outer** loop.  When
-        ``propagate_chat_context`` is on, the helper
-        :pyfunc:`_chat_context_repr` merges this with the current
-        ``client.messages`` and forwards the result downward.
+        ``propagate_chat_context`` is enabled, this initial context is forwarded
+        to inner tools on their first call, with subsequent calls receiving only
+        incremental updates (new messages since the last call) to avoid token waste.
 
     log_steps : ``bool | str``, default ``True``
         Controls verbosity of step logging to ``LOGGER``:
@@ -337,13 +348,16 @@ async def async_tool_loop_inner(
         The assistant's final plain-text reply *after* every tool result has
         been fed back into the conversation.
     """
-    # unique id / lineage
+    # Loop identity / lineage
     cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
-    # Expose the resolved human-friendly label (with 4-hex suffix) to the outer handle
-    # so that any steering logs (stop/pause/resume/interject/ask) include the same suffix.
+    # Expose the resolved label (with 4-hex suffix) to the outer handle so steering logs
+    # (stop/pause/resume/interject/ask) share the same label as the tool loop.
     with suppress(Exception):
         if outer_handle_container and outer_handle_container[0] is not None:
             setattr(outer_handle_container[0], "_log_label", cfg.label)
+            # Also expose the resolved lineage list so event payloads can include the full
+            # parent->child stack even when called outside the tool loop ContextVar scope.
+            setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
     logger = LoopLogger(cfg, log_steps)
 
     # ── Time context for time-awareness ──────────────────────────────────────
@@ -363,54 +377,6 @@ async def async_tool_loop_inner(
         """Handle reasoning model compatibility. Returns effective preprocess."""
         # All provider-specific compliance is handled by unillm's preprocessing.
         return preprocess_msgs
-
-    _img_token = None
-    _imglog_token = None
-    # Track already-logged image entries to avoid repeated 🖼️ spam
-    image_log_last_len: int = 0
-
-    # Helper: append image refs (if any) and log only newly appended entries
-    def _append_and_log_images_safely(images_any) -> bool:
-        nonlocal image_log_last_len
-        with suppress(Exception):
-            prev_len = image_log_last_len
-            append_images_with_source(images_any)
-            try:
-                _logs = get_image_log_entries()
-                for _iid, _annotation in _logs[image_log_last_len:]:
-                    logger.info(
-                        f"Image id={_iid}, annotation={_annotation!r}",
-                        prefix="🖼️",
-                    )
-                image_log_last_len = len(_logs)
-                return image_log_last_len > prev_len
-            except Exception:
-                pass
-        return False
-
-    # Helper moved to images.py: build_live_images_overview_msgs(reason)
-
-    # If explicit images are provided, seed them; otherwise, isolate this loop
-    # from any parent images by setting an empty images context.
-    _img_token, _imglog_token = None, None
-    try:
-        if images is not None:
-            if images:
-                _img_token, _imglog_token = set_live_images_context(
-                    images,
-                    message,
-                )
-            else:
-                # Explicitly provided empty images → isolate
-                _img_token = LIVE_IMAGES_REGISTRY.set({})
-                _imglog_token = LIVE_IMAGES_LOG.set([])
-        else:
-            # No images provided → do not inherit parent loop images
-            _img_token = LIVE_IMAGES_REGISTRY.set({})
-            _imglog_token = LIVE_IMAGES_LOG.set([])
-    except Exception:
-        _img_token = None
-        _imglog_token = None
 
     # normalise optional graceful stop event
     stop_event = stop_event or asyncio.Event()
@@ -474,34 +440,19 @@ async def async_tool_loop_inner(
         client=client,
     )
     _msg_dispatcher = LoopMessageDispatcher(client, cfg, timer)
+    parent_chat_context_safe = make_messages_safe_for_context_dump(parent_chat_context)
 
     if log_steps:
         if log_steps == "full":
-            if parent_chat_context:
+            if parent_chat_context_safe:
                 logger.info(
-                    f"Parent Context: {json.dumps(parent_chat_context, indent=4)}",
+                    f"Parent Context: {json.dumps(parent_chat_context_safe, indent=4)}",
                     prefix="⬇️",
                 )
             logger.info(f"System Message: {client.system_message}", prefix="📋")
-        # Combine user message + any aligned images into a single log entry
-        try:
-            # Avoid dumping a whole list when resuming with a seeded batch; per-item logs are emitted below.
-            if isinstance(message, list):
-                pass
-            else:
-                combined_lines = [f"User Message: {message}"]
-                logs = get_image_log_entries()
-                if logs:
-                    for _iid, _annotation in logs:
-                        combined_lines.append(
-                            f"🖼️ Image id={_iid}, annotation={_annotation!r}",
-                        )
-                    # mark images up to current length as already logged
-                    image_log_last_len = len(logs)
-                logger.info("\n".join(combined_lines), prefix="🧑‍💻")
-        except Exception:
-            if not isinstance(message, list):
-                logger.info(f"User Message: {message}", prefix="🧑‍💻")
+        # Log user message (skip if seeding with a batch - per-item logs are emitted below)
+        if not isinstance(message, list):
+            logger.info(f"User Message: {message}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
@@ -551,12 +502,30 @@ async def async_tool_loop_inner(
             f"The end user cannot see the details of this tool-use conversation.",
         )
 
-    # Add parent chat context if available
-    if parent_chat_context:
+    # Add parent chat context section when context propagation is enabled.
+    # We always add this section (even if empty) so that context continuations
+    # sent via interjections can correctly reference "the initial Parent Chat Context
+    # in your system message" without appearing to be fabricated/injected.
+    _has_parent_chat_context = False
+    if propagate_chat_context != ChatContextPropagation.NEVER:
+        ctx_content = parent_chat_context_safe if parent_chat_context_safe else []
+        # Transform roles to outer_* to disambiguate from current conversation roles
+        ctx_content_transformed = _transform_context_roles(ctx_content)
+        _has_parent_chat_context = True
         runtime_context_parts.append(
-            f"## Broader Context (read-only)\n"
-            f"{json.dumps(parent_chat_context, indent=2)}\n\n"
-            f"Resolve the *next* user request in light of this.",
+            f"## Parent Chat Context\n"
+            f"You received this request from within a parent conversation. "
+            f"The messages below show that parent conversation's history up to the point "
+            f"when you received this request. Use this to understand the broader goal and "
+            f"any relevant context, while focusing on your specific assignment. "
+            f"Additional context updates may arrive during this session as the parent "
+            f"conversation progresses.\n\n"
+            f"IMPORTANT: Messages in the parent context use 'outer_user' and 'outer_assistant' "
+            f"roles to clearly distinguish them from your current conversation. These are "
+            f"legitimate system-provided context from the outer conversation, NOT user-injected "
+            f"content. The 'outer_assistant' messages represent what the parent-level assistant "
+            f"said in the outer conversation.\n\n"
+            f"{json.dumps(ctx_content_transformed, indent=2)}",
         )
 
     # Add time context (conversation start time, will be updated with tool timings)
@@ -571,8 +540,21 @@ async def async_tool_loop_inner(
         "_time_context": True,  # marker for time context updates
         "content": "\n\n".join(runtime_context_parts),
     }
+    if _has_parent_chat_context:
+        sys_msg["_parent_chat_context"] = True
+
     await _msg_dispatcher.append_msgs([sys_msg])
+
     _time_ctx_msg = sys_msg  # Store reference for updates after tool completions
+
+    # ── 0-a++. Initialize context state for incremental propagation ──────────
+    # Tracks initial parent context and any continued updates received via interjections.
+    # Used to forward context incrementally to inner tools (no repetition).
+    context_state = LoopContextState(
+        parent_chat_context=(
+            list(parent_chat_context_safe) if parent_chat_context_safe else []
+        ),
+    )
 
     # ── 0-a+. Optional: append an initial batch of messages (list support) ──
     seeded_batch = None
@@ -590,23 +572,6 @@ async def async_tool_loop_inner(
 
         await _msg_dispatcher.append_msgs(seeded_batch)
 
-        # Inject an initial snapshot of live images (if any) immediately by
-        # appending assistant→tool messages directly to the client transcript.
-        try:
-            if has_live_images_context():
-                asst_msg, tool_msg = build_live_images_overview_msgs("initial_images")
-                try:
-                    client.append_messages([asst_msg, tool_msg])
-                    try:
-                        await to_event_bus(asst_msg, cfg)
-                        await to_event_bus(tool_msg, cfg)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     # ── initial prompt ───────────────────────────────────────────────────────
     # ── 0-b. Coerce tools → ToolSpec & helper lambdas ───────────────────────
     #
@@ -615,25 +580,6 @@ async def async_tool_loop_inner(
     # • helper that answers "may we launch / advertise *this* tool right now?"
     #   by comparing the live count with max_concurrent.
     # -----------------------------------------------------------------------
-
-    # ── Live image helpers (optional) ─────────────────────────────────────────
-    # Build live image helpers when any image context is present. Expose only
-    # actionable helpers to the LLM; the dummy overview tool is no longer exposed.
-    live_image_tools: Dict[str, Callable] = {}
-    if has_live_images_context():
-        live_image_tools = build_live_image_tools(
-            reference_message=message,
-            append_user_messages=_msg_dispatcher.append_msgs,
-            client=client,
-            parent_chat_context=parent_chat_context,
-            propagate_chat_context=propagate_chat_context,
-        )
-        # Remove the dummy overview helper; image overview is injected synthetically
-        with suppress(Exception):
-            live_image_tools.pop("live_images_overview", None)
-
-    # Merge helpers (if any) with base tools before normalisation
-    tools = {**tools, **(live_image_tools or {})}
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(
@@ -662,8 +608,10 @@ async def async_tool_loop_inner(
                 "clarification_channels",
                 tools_data.clarification_channels,
             )
-
-    # (Initial live-images overview already injected directly when seeding messages.)
+            # Expose ask_tools snapshot so handle.ask() can propagate to inner handles.
+            setattr(_self_task, "get_ask_tools", tools_data.get_ask_tools)  # type: ignore[attr-defined]
+            # Expose completed tool metadata (including handle refs) for downstream consumers.
+            setattr(_self_task, "get_completed_tool_metadata", lambda: dict(tools_data._completed_askable_tools))  # type: ignore[attr-defined]
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
@@ -689,73 +637,12 @@ async def async_tool_loop_inner(
                     amsg,
                     missing_ids,
                     tools_data=tools_data,
-                    parent_chat_context=parent_chat_context,
+                    context_state=context_state,
                     propagate_chat_context=propagate_chat_context,
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
                 )
-
-    # Helper: inject a synthetic image-overview tool call/result so the full
-    # set of live images persists in the transcript (independent of tool policy).
-    async def _inject_live_images_overview(reason: str = "") -> None:
-        try:
-            asst_msg, tool_msg = build_live_images_overview_msgs(reason)
-
-            await _msg_dispatcher.append_msgs([asst_msg])
-            try:
-                await to_event_bus(asst_msg, cfg)
-            except Exception:
-                pass
-
-            # Ensure assistant_meta bookkeeping before inserting tool result
-            assistant_meta[id(asst_msg)] = {"results_count": 0}
-            await insert_tool_message_after_assistant(
-                assistant_meta,
-                asst_msg,
-                tool_msg,
-                client,
-                _msg_dispatcher,
-            )
-            try:
-                await to_event_bus(tool_msg, cfg)
-            except Exception:
-                pass
-
-            if log_steps:
-                try:
-                    # Log the synthetic assistant tool selection in the same style as real LLM output
-                    from .utils import (
-                        try_parse_json as _try_parse_json,
-                    )  # local import to avoid cycles
-
-                    _msg_for_logging = copy.deepcopy(asst_msg)
-                    _tcs = _msg_for_logging.get("tool_calls") or []
-                    for _tc in _tcs:
-                        _fn = _tc.get("function", {})
-                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
-                    logger.info(
-                        f"{json.dumps(_msg_for_logging, indent=4)}",
-                        prefix="🤖",
-                    )
-
-                    # Log the synthetic tool response to mirror a normal tool result (pretty content)
-                    _tool_for_logging = copy.deepcopy(tool_msg)
-                    try:
-                        _tool_for_logging["content"] = _try_parse_json(
-                            _tool_for_logging.get("content"),
-                        )
-                    except Exception:
-                        pass
-                    logger.info(
-                        f"{json.dumps(_tool_for_logging, indent=4)}",
-                        prefix=f"✅  ToolCall Completed [0.00s]",
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            # Never let synthetic injection crash the loop
-            pass
 
     # ── helper: synthesize mirrored helper tool_calls (no LLM step) ───────────
     # Centralized steering: target selection + per-child dispatcher
@@ -1025,8 +912,6 @@ async def async_tool_loop_inner(
                         msg = payload.get("message") or payload.get("content")
                         if msg is not None:
                             args_json["content"] = msg
-                        if "images" in payload:
-                            args_json["images_present"] = True
                     elif base == "stop" and "reason" in payload:
                         args_json["reason"] = payload.get("reason")
                 except Exception:
@@ -1095,14 +980,10 @@ async def async_tool_loop_inner(
                     msg = payload.get("message") or payload.get("content")
                     if msg is not None:
                         args_json["content"] = msg
-                    if "images" in payload:
-                        args_json["images_present"] = True
                 elif base == "ask":
                     q = payload.get("question")
                     if q is not None:
                         args_json["question"] = q
-                    if "images" in payload:
-                        args_json["images_present"] = True
                 elif base == "stop":
                     if "reason" in payload:
                         args_json["reason"] = payload.get("reason")
@@ -1134,12 +1015,6 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             await to_event_bus(assistant_msg, cfg)
         assistant_meta[id(assistant_msg)] = {"results_count": 0}
-
-        # If images accompany interject/ask, append to live registry and inject overview
-        with suppress(Exception):
-            imgs = payload.get("images")
-            if imgs is not None and append_images_with_source(imgs):
-                await _inject_live_images_overview(f"{method}_helper_images")
 
         # Insert ack tool messages and forward steering immediately to target handles
         for call in tool_calls:
@@ -1176,12 +1051,6 @@ async def async_tool_loop_inner(
         else:
             initial_user_msg = {"role": "user", "content": message}
         await _msg_dispatcher.append_msgs([initial_user_msg])
-        # Inject an initial snapshot of live images (if any)
-        try:
-            if has_live_images_context():
-                await _inject_live_images_overview("initial_images")
-        except Exception:
-            pass
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
     async def _handle_limit_reached(reason: str) -> str:
@@ -1219,11 +1088,9 @@ async def async_tool_loop_inner(
         src_task: asyncio.Task,
         question_payload: Any,
     ) -> None:
-        images_from_child = None
         question_text = ""
         try:
             if isinstance(question_payload, dict):
-                images_from_child = question_payload.get("images")
                 question_text = question_payload.get("question", "")
             else:
                 question_text = str(question_payload)
@@ -1281,10 +1148,6 @@ async def async_tool_loop_inner(
                     },
                 )
 
-        # Append any images sent alongside the clarification request
-        if _append_and_log_images_safely(images_from_child):
-            await _inject_live_images_overview("clarification_images")
-
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
         call_id = tools_data.info[src_task].call_id
         tool_name = tools_data.info[src_task].name
@@ -1339,14 +1202,6 @@ async def async_tool_loop_inner(
                         **event_payload,
                     },
                 )
-
-        # Append images provided with the notification payload
-        with suppress(Exception):
-            images_from_child = None
-            if isinstance(payload, dict):
-                images_from_child = payload.get("images", payload.get("images"))
-            if _append_and_log_images_safely(images_from_child):
-                await _inject_live_images_overview("notification_images")
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -1424,7 +1279,7 @@ async def async_tool_loop_inner(
                                     amsg,
                                     missing_ids,
                                     tools_data=tools_data,
-                                    parent_chat_context=parent_chat_context,
+                                    context_state=context_state,
                                     propagate_chat_context=propagate_chat_context,
                                     assistant_meta=assistant_meta,
                                     client=client,
@@ -1498,7 +1353,7 @@ async def async_tool_loop_inner(
                                     amsg,
                                     missing_ids,
                                     tools_data=tools_data,
-                                    parent_chat_context=parent_chat_context,
+                                    context_state=context_state,
                                     propagate_chat_context=propagate_chat_context,
                                     assistant_meta=assistant_meta,
                                     client=client,
@@ -1563,7 +1418,7 @@ async def async_tool_loop_inner(
                             amsg,
                             missing_ids,
                             tools_data=tools_data,
-                            parent_chat_context=parent_chat_context,
+                            context_state=context_state,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
                             client=client,
@@ -1685,18 +1540,40 @@ async def async_tool_loop_inner(
                 # topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
-                    _ctx_cont = extra.get("parent_chat_context_continuted")
-                    _incoming_images = extra.get("images")
+                    _ctx_cont = extra.get(
+                        "_parent_chat_context_continued",
+                    ) or extra.get(
+                        "_parent_chat_context_continuted",  # legacy typo support
+                    )
                 else:
                     _msg_text = str(extra)
                     _ctx_cont = None
-                    _incoming_images = None
 
                 # Log a single concise interjection line
                 try:
                     logger.info(f"Interjection received: {_msg_text}", prefix="💬")
                 except Exception:
                     pass
+
+                # Record continued context in our state for incremental propagation
+                if _ctx_cont:
+                    _ctx_cont = make_messages_safe_for_context_dump(_ctx_cont)
+                    context_state.receive_context_continuation(_ctx_cont)
+                    # Forward to active inner tool handles that opted into context
+                    # Tools that set include_parent_chat_context=False initially
+                    # should not receive context continuations either.
+                    for task, info in tools_data.info.items():
+                        if info.interject_queue is not None and info.context_opted_in:
+                            with suppress(Exception):
+                                # Forward the continued context to the inner handle
+                                info.interject_queue.put_nowait(
+                                    {
+                                        "message": "",  # Empty message, just context update
+                                        "_parent_chat_context_continued": _ctx_cont,
+                                        "_context_only": True,  # Flag to indicate context-only update
+                                    },
+                                )
+                                context_state.mark_cont_forwarded_to_tool(info.call_id)
 
                 # On the FIRST interjection, inject user visibility guidance as a
                 # system message so the model understands why a user message is
@@ -1713,14 +1590,40 @@ async def async_tool_loop_inner(
                     )
                     _visibility_guidance_injected = True
 
-                # Send interjection as a simple user message
-                interjection_msg = {"role": "user", "content": _msg_text}
-                await _msg_dispatcher.append_msgs([interjection_msg])
-                last_valid_user_history = history_lines + [f"user: {_msg_text}"]
-
-                # If images accompany this interjection, accept source-scoped keys and append
-                if _append_and_log_images_safely(_incoming_images):
-                    await _inject_live_images_overview("interjection_images")
+                # Send interjection as user message(s).
+                # If context continuation is present, inject it as a separate user message
+                # tagged with _ctx_header so the current LLM sees it but it's filtered out
+                # when building cur_msgs for inner tool forwarding.
+                msgs_to_append: list[dict] = []
+                if _ctx_cont:
+                    # Transform roles to outer_* to disambiguate from current conversation
+                    ctx_cont_transformed = _transform_context_roles(_ctx_cont)
+                    ctx_cont_content = (
+                        "## Parent Chat Context (continued)\n"
+                        "This is the next incremental chunk of the parent conversation since the "
+                        "last context update (either the initial Parent Chat Context in your system "
+                        "message, or the previous continued context chunk). These messages arrived "
+                        "while you have been working on this request and may be relevant. Use this "
+                        "to stay informed of any updates or new information from the parent conversation. "
+                        "As explained in the system message, 'outer_user' and 'outer_assistant' roles "
+                        "indicate messages from the parent conversation.\n\n"
+                        f"{json.dumps(ctx_cont_transformed, indent=2)}"
+                    )
+                    msgs_to_append.append(
+                        {
+                            "role": "user",
+                            "_ctx_header": True,
+                            "content": ctx_cont_content,
+                        },
+                    )
+                # Only append user message if there's actual content
+                if _msg_text:
+                    msgs_to_append.append({"role": "user", "content": _msg_text})
+                if msgs_to_append:
+                    await _msg_dispatcher.append_msgs(msgs_to_append)
+                # Update history only if there was user message content
+                if _msg_text:
+                    last_valid_user_history = history_lines + [f"user: {_msg_text}"]
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1731,11 +1634,9 @@ async def async_tool_loop_inner(
                                 "content": (
                                     {
                                         "message": _msg_text,
-                                        "parent_chat_context_continuted": extra.get(
-                                            "parent_chat_context_continuted",
-                                        ),
+                                        "_parent_chat_context_continued": _ctx_cont,
                                     }
-                                    if isinstance(extra, dict)
+                                    if isinstance(extra, dict) and _ctx_cont
                                     else _msg_text
                                 ),
                             },
@@ -1930,25 +1831,63 @@ async def async_tool_loop_inner(
                 policy_tools_norm = tools_data.normalized
 
             # Force tool usage when a response_format is required so the model
-            # must submit the final JSON via the strongly-typed `final_answer` tool.
+            # must submit the final JSON via the response-submission tool.
             # This preserves flexible tool use while guaranteeing typed completion.
             if response_format is not None and tool_choice_mode != "required":
                 tool_choice_mode = "required"
 
-            # No-op: overview is now injected synthetically when images change
+            # When tools are in-flight, force tool_choice=required so the LLM
+            # must call a real tool (check_status_*, cancel_*, etc.) rather
+            # than ending the loop.  The response tool is masked in this
+            # situation (see below), so the only options are real tools.
+            _has_pending_tools = bool(tools_data.pending)
+            if _has_pending_tools and tool_choice_mode != "required":
+                tool_choice_mode = "required"
 
             visible_base_tools_schema = [
-                method_to_schema(spec.fn, name)
+                method_to_schema(
+                    spec.fn,
+                    name,
+                    expose_context_control=(
+                        propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+                    ),
+                    has_parent_context=bool(parent_chat_context),
+                )
                 for name, spec in policy_tools_norm.items()
                 if tools_data.concurrency_ok(name) and tools_data.quota_ok(name)
             ]
 
-            # Inject `final_answer` tool automatically whenever a `response_format` is
-            # supplied. The tool accepts a single `answer` argument whose schema matches
-            # the provided Pydantic model.
-            # IMPORTANT: Only expose `final_answer` when there are NO in‑flight tools,
-            # to ensure the loop cannot terminate while work is still pending.
-            if response_format is not None and not tools_data.pending:
+            # Inject the response-submission tool when response_format is set
+            # AND no other tools are in-flight.  This tool is semantically
+            # "end the current turn" (the tool-call analogue of a bare text
+            # response).  When tools are still running we intentionally mask
+            # it so the LLM must interact with them (via check_status_*,
+            # cancel_*, etc.) rather than silently killing them.
+            #
+            # Name varies by mode:
+            #   persist=True  → "send_response"  (signals turn completion,
+            #                    loop continues waiting for next interjection)
+            #   persist=False → "final_response"  (terminates the loop)
+            _response_tool_name = "send_response" if persist else "final_response"
+
+            if response_format is not None and not _has_pending_tools:
+                if persist:
+                    _response_tool_desc = (
+                        "Submit your structured response for the current "
+                        "request in the required JSON format. This signals "
+                        "that you have completed the current work and are "
+                        "ready for the next instruction. Do not use this "
+                        "for progress updates — those should be sent via "
+                        "notifications while work is still ongoing."
+                    )
+                else:
+                    _response_tool_desc = (
+                        "Submit your final response in the required JSON "
+                        "format. The response can be a complete result, a "
+                        "partial result, or a message indicating you cannot "
+                        "proceed (e.g., 'I cannot help with that.'). "
+                        "Calling this tool terminates the conversation."
+                    )
                 try:
                     _answer_schema = _check_valid_response_format(response_format)
 
@@ -1957,11 +1896,8 @@ async def async_tool_loop_inner(
                             "type": "function",
                             "strict": True,
                             "function": {
-                                "name": "final_answer",
-                                "description": (
-                                    "Submit your final answer in the required JSON format. "
-                                    "Calling this tool marks the conversation as complete."
-                                ),
+                                "name": _response_tool_name,
+                                "description": _response_tool_desc,
                                 "parameters": {
                                     "type": "object",
                                     "properties": {"answer": _answer_schema},
@@ -1972,10 +1908,10 @@ async def async_tool_loop_inner(
                     )
                 except Exception as _injection_exc:  # noqa: BLE001
                     logger.error(
-                        f"Failed to inject final_answer tool: {_injection_exc!r}",
+                        f"Failed to inject {_response_tool_name} tool: {_injection_exc!r}",
                     )
 
-            # Inject multi-handle `final_answer` tool when coordinator is present.
+            # Inject multi-handle `final_response` tool when coordinator is present.
             # This tool requires request_id to specify which request is being answered.
             # Unlike response_format mode, this is always available (tools may be shared).
             if multi_handle_coordinator is not None:
@@ -1983,10 +1919,10 @@ async def async_tool_loop_inner(
                     {
                         "type": "function",
                         "function": {
-                            "name": "final_answer",
+                            "name": "final_response",
                             "description": (
-                                "Submit the final answer for a specific request. "
-                                "Use this to complete a request when you have the final response. "
+                                "Submit the final response for a specific request. "
+                                "Use this to complete a request when you have the result. "
                                 "Each request must be answered exactly once."
                             ),
                             "parameters": {
@@ -2054,6 +1990,9 @@ async def async_tool_loop_inner(
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+            # Keep ToolsData's reference to dynamic_tools up-to-date so
+            # get_ask_tools() always reflects the latest set of helpers.
+            tools_data._dynamic_tools_ref = dynamic_tools
 
             # Register callback to refresh helpers when a handle is adopted mid-loop
             def _refresh_helpers_for_task(task: asyncio.Task) -> None:
@@ -2086,10 +2025,29 @@ async def async_tool_loop_inner(
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
+            # For steering methods (ask/interject) on tools that opted into context,
+            # expose include_parent_chat_context_cont in LLM_DECIDES mode
+            _expose_ctx_cont_control = (
+                propagate_chat_context == ChatContextPropagation.LLM_DECIDES
+            )
             tmp_tools = visible_base_tools_schema + [
                 method_to_schema(
                     fn,
                     include_class_name=include_class_in_dynamic_tool_names,
+                    # Expose include_parent_chat_context for dynamic tools that accept
+                    # _parent_chat_context (currently only ask_* tools). This lets the
+                    # LLM opt out of context propagation for inspection loops.
+                    expose_context_control=_expose_ctx_cont_control,
+                    has_parent_context=bool(parent_chat_context),
+                    # Expose context continuation control for steering methods when:
+                    # 1. Propagation mode is LLM_DECIDES
+                    # 2. The function is a steering method (ask/interject)
+                    # 3. The underlying tool opted into context initially
+                    expose_context_cont_control=(
+                        _expose_ctx_cont_control
+                        and getattr(fn, "__supports_context_propagation__", False)
+                        and getattr(fn, "__context_opted_in__", False)
+                    ),
                 )
                 for fn in dynamic_tools.values()
             ]
@@ -2107,6 +2065,7 @@ async def async_tool_loop_inner(
                     "tools": tmp_tools,
                     "tool_choice": tool_choice_mode,
                     "stateful": True,
+                    "prompt_caching": prompt_caching,
                 }
                 if max_parallel_tool_calls is not None:
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
@@ -2291,7 +2250,7 @@ async def async_tool_loop_inner(
                         llm_task.result()
                     except Exception as e:
                         raise Exception(
-                            f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
+                            f"LLM call failed: {type(e).__name__}: {e}",
                         ) from e
 
                     # Clarification request bubbled up while LLM thinking
@@ -2314,6 +2273,7 @@ async def async_tool_loop_inner(
                         "tools": tmp_tools,
                         "tool_choice": tool_choice_mode,
                         "stateful": True,
+                        "prompt_caching": prompt_caching,
                     }
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
@@ -2323,10 +2283,10 @@ async def async_tool_loop_inner(
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         **_gen_kwargs,
                     )
-                except Exception:
+                except Exception as e:
                     raise Exception(
-                        f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
-                    )
+                        f"LLM call failed: {type(e).__name__}: {e}",
+                    ) from e
 
             msg = client.messages[-1]
             await to_event_bus(msg, cfg)
@@ -2406,6 +2366,11 @@ async def async_tool_loop_inner(
                     }
                     await _msg_dispatcher.append_msgs([sys_notice])
 
+                _persist_response_emitted = False
+                _persist_response_content = (
+                    None  # captured by send_response for surfacing
+                )
+
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
@@ -2416,8 +2381,13 @@ async def async_tool_loop_inner(
                     else:
                         args = _raw_args if isinstance(_raw_args, dict) else {}
 
-                    # Special-case: handle synthetic `final_answer` tool
-                    if name == "final_answer" and response_format is not None:
+                    # Special-case: handle response-submission tool
+                    # (send_response in persist mode, final_response otherwise)
+                    _is_response_tool = (
+                        name in ("final_response", "send_response")
+                        and response_format is not None
+                    )
+                    if _is_response_tool:
                         try:
                             payload = (
                                 args.get("answer") if isinstance(args, dict) else None
@@ -2428,8 +2398,20 @@ async def async_tool_loop_inner(
                             # Validate payload with the provided Pydantic model.
                             response_format.model_validate(payload)
 
+                            # Cancel any in-flight tools before returning.
+                            # In persist mode this block should be unreachable
+                            # (response tool is masked while tools are pending)
+                            # but guard defensively.
+                            if tools_data.pending and not persist:
+                                logger.info(
+                                    f"{name} called while {len(tools_data.pending)} "
+                                    f"task(s) are in-flight. Auto-cancelling to terminate.",
+                                    prefix="🔚",
+                                )
+                                await tools_data.cancel_pending_tasks()
+
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
                                 content=_dumps(payload, indent=4),
                             )
@@ -2442,10 +2424,15 @@ async def async_tool_loop_inner(
                                 _msg_dispatcher,
                             )
 
+                            if persist:
+                                # Treat as current-turn response; don't terminate.
+                                _persist_response_emitted = True
+                                _persist_response_content = json.dumps(payload)
+                                break  # exit the for-loop over tool_calls
                             return json.dumps(payload)
                         except Exception as _exc:
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
                                 content=(
                                     "⚠️ Validation failed – proceeding with standard formatting step.\n"
@@ -2461,8 +2448,54 @@ async def async_tool_loop_inner(
                             )
                             continue
 
-                    # Special-case: handle multi-handle `final_answer` tool
-                    if name == "final_answer" and multi_handle_coordinator is not None:
+                    # Special-case: handle generic response tool (no response_format)
+                    # With the injection branch removed, this path is only reachable
+                    # if the LLM hallucinates a response tool call.  Handle defensively.
+                    _is_generic_response = (
+                        name in ("final_response", "send_response")
+                        and response_format is None
+                        and multi_handle_coordinator is None
+                    )
+                    if _is_generic_response:
+                        answer = args.get("answer") if isinstance(args, dict) else None
+                        if answer is None:
+                            answer = str(args) if args else ""
+
+                        # Cancel any in-flight tools before returning.
+                        if tools_data.pending and not persist:
+                            logger.info(
+                                f"{name} called while {len(tools_data.pending)} "
+                                f"task(s) are in-flight. Auto-cancelling to terminate.",
+                                prefix="🔚",
+                            )
+                            await tools_data.cancel_pending_tasks()
+
+                        tool_msg = create_tool_call_message(
+                            name=name,
+                            call_id=call["id"],
+                            content=answer,
+                        )
+
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
+
+                        if persist:
+                            _persist_response_emitted = True
+                            _persist_response_content = answer
+                            break
+                        return answer
+
+                    # Special-case: handle multi-handle response tool
+                    _is_multi_response = (
+                        name == "final_response"
+                        and multi_handle_coordinator is not None
+                    )
+                    if _is_multi_response:
                         try:
                             request_id = args.get("request_id")
                             answer = args.get("answer")
@@ -2482,7 +2515,7 @@ async def async_tool_loop_inner(
                             )
                             if error_msg:
                                 tool_msg = create_tool_call_message(
-                                    name="final_answer",
+                                    name=name,
                                     call_id=call["id"],
                                     content=f"⚠️ Error: {error_msg}",
                                 )
@@ -2502,7 +2535,7 @@ async def async_tool_loop_inner(
                             )
 
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
                                 content=f"Request {request_id} completed successfully.",
                             )
@@ -2525,9 +2558,9 @@ async def async_tool_loop_inner(
 
                         except Exception as _exc:
                             tool_msg = create_tool_call_message(
-                                name="final_answer",
+                                name=name,
                                 call_id=call["id"],
-                                content=f"⚠️ Error processing final_answer: {_exc}",
+                                content=f"⚠️ Error processing {name}: {_exc}",
                             )
                             await insert_tool_message_after_assistant(
                                 assistant_meta,
@@ -2707,7 +2740,6 @@ async def async_tool_loop_inner(
                         if task_to_cancel:
                             tools_data.pop_task(task_to_cancel)
 
-                    # Record any images provided with the stop helper and capture reason text
                     # Acknowledge only when a live target was actually affected
                     if lname_cf.startswith("stop_") and task_to_cancel:
                         with suppress(Exception):
@@ -2715,10 +2747,6 @@ async def async_tool_loop_inner(
                                 reason_txt = payload.get("reason")
                             except Exception:
                                 reason_txt = ""
-                            if _append_and_log_images_safely(
-                                payload.get("images", payload.get("images")),
-                            ):
-                                await _inject_live_images_overview("stop_helper_images")
 
                             tool_msg = create_tool_call_message(
                                 name=pretty_name,
@@ -2868,24 +2896,6 @@ async def async_tool_loop_inner(
                                         break
 
                         if tgt_task:
-                            # Record any images provided with the clarification answer
-                            with suppress(Exception):
-                                if _append_and_log_images_safely(
-                                    (
-                                        args.get("images")
-                                        if isinstance(args, dict)
-                                        else None
-                                    )
-                                    or (
-                                        args.get("images")
-                                        if isinstance(args, dict)
-                                        else None
-                                    ),
-                                ):
-                                    await _inject_live_images_overview(
-                                        "clarify_helper_images",
-                                    )
-
                             # Always publish a tool reply acknowledging the clarify helper
                             tool_reply_msg = create_tool_call_message(
                                 name=name,
@@ -2949,14 +2959,6 @@ async def async_tool_loop_inner(
                                     tools_data.info[tgt_task],
                                 )
 
-                            # Record any images provided with the interjection helper
-                            with suppress(Exception):
-                                if _append_and_log_images_safely(
-                                    payload.get("images", payload.get("images")),
-                                ):
-                                    await _inject_live_images_overview(
-                                        "interject_helper_images",
-                                    )
                             # ― emit a tool message so the chat log stays tidy ---
                             tool_msg = create_tool_call_message(
                                 name=pretty_name,
@@ -3003,32 +3005,41 @@ async def async_tool_loop_inner(
 
                     # first check any dynamic helpers we generated for long-running handles
                     if name in dynamic_tools:
+                        # Global dispatchers (e.g. ask_about_completed_tool) are not
+                        # tied to any specific live call — skip the suffix check.
+                        _is_global_dispatcher = name == "ask_about_completed_tool"
                         # Disambiguation: only treat as a dynamic helper when its suffix targets a live call
                         _helper_targets_live = True
-                        try:
-                            _suffix = str(name).split("_")[-1]
-                            _helper_targets_live = any(
-                                str(inf.call_id).endswith(_suffix)
-                                for inf in tools_data.info.values()
-                            )
-                        except Exception:
-                            _helper_targets_live = True
+                        if not _is_global_dispatcher:
+                            try:
+                                _suffix = str(name).split("_")[-1]
+                                _helper_targets_live = any(
+                                    str(inf.call_id).endswith(_suffix)
+                                    for inf in tools_data.info.values()
+                                )
+                            except Exception:
+                                _helper_targets_live = True
                         if _helper_targets_live:
                             fn = dynamic_tools[name]
 
                             # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
-                            extra_kwargs: dict = {}
-                            if propagate_chat_context:
-                                cur_msgs = [
-                                    m
-                                    for m in client.messages
-                                    if not m.get("_ctx_header")
-                                ]
-                                ctx_repr = chat_context_repr(
-                                    parent_chat_context,
-                                    cur_msgs,
-                                )
-                                extra_kwargs["_parent_chat_context"] = ctx_repr
+                            #
+                            # Context propagation for dynamic helpers:
+                            # - ask_* tools: Need FULL initial context (like base tools), since they
+                            #   spawn new inspection loops. Use is_continuation_only=False.
+                            # - interject_* tools: Need only continuation context (tool already has
+                            #   initial context). Use is_continuation_only=True.
+                            # - stop_*, pause_*, resume_*: No context needed.
+                            #
+                            target_call_id = (
+                                name.split("_")[-1] if "_" in name else call["id"]
+                            )
+                            # Find the target tool's metadata to check context_opted_in
+                            target_info = None
+                            for _t, _inf in tools_data.info.items():
+                                if str(_inf.call_id).endswith(target_call_id):
+                                    target_info = _inf
+                                    break
 
                             sig = inspect.signature(fn)
                             params = sig.parameters
@@ -3036,6 +3047,58 @@ async def async_tool_loop_inner(
                                 p.kind == inspect.Parameter.VAR_KEYWORD
                                 for p in params.values()
                             )
+
+                            # Determine if this is an ask_* tool (needs full context) vs
+                            # interject_* (needs continuation only) vs other (no context)
+                            is_ask_tool = name.startswith("ask_")
+                            is_interject_tool = name.startswith("interject_")
+                            accepts_parent_ctx = (
+                                "_parent_chat_context" in params or has_varkw
+                            )
+                            accepts_parent_ctx_cont = (
+                                "_parent_chat_context_cont" in params or has_varkw
+                            )
+
+                            # Use shared helper for context injection
+                            if is_ask_tool:
+                                # ask_* tools spawn new loops - need full initial context
+                                extra_kwargs, context_opted_in = (
+                                    compute_context_injection(
+                                        args=args,
+                                        propagate_chat_context=propagate_chat_context,
+                                        context_state=context_state,
+                                        client_messages=client.messages,
+                                        call_id=f"ask_{target_call_id}_{call['id']}",
+                                        accepts_parent_ctx=accepts_parent_ctx,
+                                        accepts_parent_ctx_cont=accepts_parent_ctx_cont,
+                                        is_continuation_only=False,
+                                    )
+                                )
+                            elif is_interject_tool:
+                                # interject_* tools add to existing loops - need continuation only
+                                extra_kwargs, _ = compute_context_injection(
+                                    args=args,
+                                    propagate_chat_context=propagate_chat_context,
+                                    context_state=context_state,
+                                    client_messages=client.messages,
+                                    call_id=f"interject_{target_call_id}_{call['id']}",
+                                    accepts_parent_ctx=False,  # Don't inject full context
+                                    accepts_parent_ctx_cont=accepts_parent_ctx_cont,
+                                    target_context_opted_in=(
+                                        target_info.context_opted_in
+                                        if target_info
+                                        else None
+                                    ),
+                                    is_continuation_only=True,
+                                )
+                            else:
+                                # Other steering tools (stop, pause, resume) - no context
+                                # Still pop the control params so they don't get forwarded
+                                args.pop("include_parent_chat_context", None)
+                                args.pop("include_parent_chat_context_cont", None)
+                                extra_kwargs = {}
+                                context_opted_in = False
+
                             filtered_extras = {
                                 k: v
                                 for k, v in extra_kwargs.items()
@@ -3101,6 +3164,8 @@ async def async_tool_loop_inner(
                                 ),
                                 llm_arguments=allowed_call_args,
                                 raw_arguments_json=call["function"]["arguments"],
+                                # Track context opt-in for adopted handles (important for ask_*)
+                                context_opted_in=context_opted_in,
                             )
                             tools_data.save_task(
                                 coro=t,
@@ -3158,33 +3223,36 @@ async def async_tool_loop_inner(
                             args_json=call["function"]["arguments"],
                             call_id=call["id"],
                             call_idx=idx,
-                            parent_chat_context=parent_chat_context,
+                            context_state=context_state,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
                             initial_paused=not pause_event.is_set(),
                         )
 
-                # metadata for orderly insertion
-                assistant_meta[id(msg)] = {
-                    "results_count": 0,
-                }
+                if _persist_response_emitted:
+                    pass  # fall through to section F → persist wait
+                else:
+                    # metadata for orderly insertion
+                    assistant_meta[id(msg)] = {
+                        "results_count": 0,
+                    }
 
-                # Immediately insert placeholder tool replies for every newly scheduled call
-                #  to satisfy API ordering even if a user interjection arrives instantly.
-                try:
-                    await ensure_placeholders_for_pending(
-                        assistant_msg=msg,
-                        tools_data=tools_data,
-                        assistant_meta=assistant_meta,
-                        client=client,
-                        msg_dispatcher=_msg_dispatcher,
-                    )
-                except Exception as _ph_exc:
-                    logger.error(
-                        f"Failed to insert immediate placeholders: {_ph_exc!r}",
-                    )
+                    # Immediately insert placeholder tool replies for every newly scheduled call
+                    #  to satisfy API ordering even if a user interjection arrives instantly.
+                    try:
+                        await ensure_placeholders_for_pending(
+                            assistant_msg=msg,
+                            tools_data=tools_data,
+                            assistant_meta=assistant_meta,
+                            client=client,
+                            msg_dispatcher=_msg_dispatcher,
+                        )
+                    except Exception as _ph_exc:
+                        logger.error(
+                            f"Failed to insert immediate placeholders: {_ph_exc!r}",
+                        )
 
-                continue  # finished scheduling tools, back to the very top
+                    continue  # finished scheduling tools, back to the very top
 
             # ── F.  No new tool calls  ──────────────────────────────────────
             # NOTE: Three scenarios reach this block:
@@ -3227,8 +3295,22 @@ async def async_tool_loop_inner(
                         tools_data.pending.discard(t)
                     # Fall through to return the final answer
                 else:
-                    # Some tasks are still actively running - wait for them
-                    continue
+                    if persist:
+                        # In persist mode, never cancel in-flight tools due
+                        # to a bare text response.  Loop back to Section A
+                        # which properly races tool completions,
+                        # notifications, interjections, and cancellation.
+                        continue
+                    # LLM gave text-only response while tools are in-flight.
+                    # This is a valid termination signal - cancel all running
+                    # tasks and return the LLM's response.
+                    logger.info(
+                        f"LLM returned text-only response while {len(not_blocked)} "
+                        f"task(s) are in-flight. Auto-cancelling to terminate.",
+                        prefix="🔚",
+                    )
+                    await tools_data.cancel_pending_tasks()
+                    # Fall through to return the final answer
 
             # If a patient interjection arrived during the last LLM step, or if there
             # are unprocessed interjections queued, process them before returning.
@@ -3250,7 +3332,7 @@ async def async_tool_loop_inner(
                     f"max_steps ({max_steps}) exceeded",
                 )
 
-            final_answer = msg["content"]
+            final_content = msg["content"]
 
             # ── multi-handle mode: check if all requests are done ──
             if multi_handle_coordinator is not None:
@@ -3261,7 +3343,7 @@ async def async_tool_loop_inner(
                         prefix="✅",
                     )
                     multi_handle_coordinator.close()
-                    return final_answer  # Return last assistant content (may be empty)
+                    return final_content  # Return last assistant content (may be empty)
                 else:
                     # Still have pending requests - continue waiting
                     logger.info(
@@ -3273,6 +3355,30 @@ async def async_tool_loop_inner(
 
             # ── persist mode: wait for next interjection instead of returning ──
             if persist:
+                # Surface the turn-complete response to the outer handle so the
+                # ConversationManager can distinguish "response (awaiting input)"
+                # from in-progress "notification" events.
+                _response_to_surface = (
+                    _persist_response_content
+                    if _persist_response_content is not None
+                    else final_content
+                )
+                _outer = outer_handle_container[0] if outer_handle_container else None
+                if (
+                    _outer is not None
+                    and hasattr(_outer, "_notification_q")
+                    and _response_to_surface
+                ):
+                    await _outer._notification_q.put(
+                        {
+                            "type": "response",
+                            "content": _response_to_surface,
+                        },
+                    )
+                # Reset for the next turn
+                _persist_response_content = None
+                _persist_response_emitted = False
+
                 logger.info(
                     "Persist mode: waiting for next interjection...",
                     prefix="⏸️",
@@ -3315,7 +3421,7 @@ async def async_tool_loop_inner(
                 timer.reset()
                 continue  # Back to top of loop to process the interjection
 
-            return final_answer  # DONE!
+            return final_content  # DONE!
 
     except asyncio.CancelledError:  # graceful shutdown
         # NOTE: Caller (or parent task) requested cancellation.  We propagate
@@ -3328,4 +3434,3 @@ async def async_tool_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
-        reset_live_images_context(_img_token, _imglog_token)

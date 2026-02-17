@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Dict, Optional, Callable, Any, Tuple, Type
+from typing import FrozenSet, List, Dict, Optional, Callable, Any, Tuple, Type
 import base64
 import asyncio
 import functools
@@ -68,7 +68,13 @@ class GuidanceManager(BaseGuidanceManager):
             ),
         ]
 
-    def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        rolling_summary_in_prompts: bool = True,
+        filter_scope: Optional[str] = None,
+        exclude_ids: Optional[FrozenSet[int]] = None,
+    ) -> None:
         super().__init__()
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
@@ -89,6 +95,9 @@ class GuidanceManager(BaseGuidanceManager):
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Guidance")
 
+        self._filter_scope = filter_scope
+        self._exclude_ids = frozenset(exclude_ids) if exclude_ids else None
+
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
@@ -97,8 +106,8 @@ class GuidanceManager(BaseGuidanceManager):
         ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
-                self._filter,
-                self._search,
+                self.filter,
+                self.search,
                 # Image-aware tools (read-only / persistent context helpers)
                 self._get_images_for_guidance,
                 self._ask_image,
@@ -114,9 +123,9 @@ class GuidanceManager(BaseGuidanceManager):
         update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
-                self._add_guidance,
-                self._update_guidance,
-                self._delete_guidance,
+                self.add_guidance,
+                self.update_guidance,
+                self.delete_guidance,
                 self._create_custom_column,
                 self._delete_custom_column,
                 include_class_name=False,
@@ -136,7 +145,12 @@ class GuidanceManager(BaseGuidanceManager):
 
     # ------------------------------- Public API -------------------------------
     @functools.wraps(BaseGuidanceManager.ask, updated=())
-    @log_manager_call("GuidanceManager", "ask", payload_key="question")
+    @log_manager_call(
+        "GuidanceManager",
+        "ask",
+        payload_key="question",
+        display_label="Reviewing Guidelines",
+    )
     async def ask(
         self,
         text: str,
@@ -201,7 +215,7 @@ class GuidanceManager(BaseGuidanceManager):
                 num_items=self._num_items(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
         handle = start_async_tool_loop(
             client,
@@ -229,7 +243,12 @@ class GuidanceManager(BaseGuidanceManager):
         return handle
 
     @functools.wraps(BaseGuidanceManager.update, updated=())
-    @log_manager_call("GuidanceManager", "update", payload_key="request")
+    @log_manager_call(
+        "GuidanceManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Guidelines",
+    )
     async def update(
         self,
         text: str,
@@ -294,7 +313,7 @@ class GuidanceManager(BaseGuidanceManager):
                 num_items=self._num_items(),
                 columns=self._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
         handle = start_async_tool_loop(
             client,
@@ -319,10 +338,60 @@ class GuidanceManager(BaseGuidanceManager):
         return handle
 
     # ------------------------------- Helpers ---------------------------------
+
+    # -- Scope / exclusion properties ----------------------------------------
+
+    @property
+    def filter_scope(self) -> Optional[str]:
+        """A boolean expression permanently applied to all read queries."""
+        return self._filter_scope
+
+    @filter_scope.setter
+    def filter_scope(self, value: Optional[str]) -> None:
+        self._filter_scope = value
+
+    @property
+    def exclude_ids(self) -> Optional[FrozenSet[int]]:
+        """Guidance IDs excluded from all read queries."""
+        return self._exclude_ids
+
+    @exclude_ids.setter
+    def exclude_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_ids = frozenset(value) if value else None
+
+    @staticmethod
+    def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
+        """Build a ``guidance_id != X and ...`` filter clause from a set of IDs."""
+        if not ids:
+            return None
+        clauses = [f"guidance_id != {gid}" for gid in sorted(ids)]
+        return " and ".join(clauses)
+
+    def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
+        """Compose *caller_filter* with ``_filter_scope`` and id exclusions.
+
+        Returns ``None`` when all parts are absent, meaning "no filter".
+        """
+        parts = [
+            p
+            for p in [
+                caller_filter,
+                self._filter_scope,
+                self._build_id_exclusion(self._exclude_ids),
+            ]
+            if p
+        ]
+        if not parts:
+            return None
+        if len(parts) == 1:
+            return parts[0]
+        return " and ".join(f"({p})" for p in parts)
+
     def _num_items(self) -> int:
         ret = unify.get_logs_metric(
             metric="count",
             key="guidance_id",
+            filter=self._scoped_filter(None),
             context=self._ctx,
         )
         if ret is None:
@@ -500,7 +569,7 @@ class GuidanceManager(BaseGuidanceManager):
         This tool is read-only and returns metadata only. It never exposes raw
         image bytes.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
         guidance_row = rows[0]
@@ -647,7 +716,7 @@ class GuidanceManager(BaseGuidanceManager):
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
             Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and an ``annotations`` list.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return {"attached_count": 0, "images": []}
         guidance_row = rows[0]
@@ -700,7 +769,7 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return {"attached_count": len(images), "images": images}
 
-    def _add_guidance(
+    def add_guidance(
         self,
         *,
         title: Optional[str] = None,
@@ -758,7 +827,7 @@ class GuidanceManager(BaseGuidanceManager):
             "details": {"guidance_id": log.entries["guidance_id"]},
         }
 
-    def _update_guidance(
+    def update_guidance(
         self,
         *,
         guidance_id: int,
@@ -865,7 +934,7 @@ class GuidanceManager(BaseGuidanceManager):
             One item per related function, including ``function_id``, ``name``,
             ``argspec``, ``docstring``, ``calls``, and ``precondition`` fields.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
         fids = list(dict.fromkeys(int(fid) for fid in (rows[0].function_ids or [])))
@@ -922,7 +991,7 @@ class GuidanceManager(BaseGuidanceManager):
                 funcs = funcs[:limit]
         return {"attached_count": len(funcs), "functions": funcs}
 
-    def _delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
+    def delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
         """Delete a guidance entry by id.
 
         Parameters
@@ -952,7 +1021,7 @@ class GuidanceManager(BaseGuidanceManager):
         unify.delete_logs(context=self._ctx, logs=ids[0])
         return {"outcome": "guidance deleted", "details": {"guidance_id": guidance_id}}
 
-    def _search(
+    def search(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
@@ -981,10 +1050,11 @@ class GuidanceManager(BaseGuidanceManager):
             k=k,
             allowed_fields=allowed_fields,
             unique_id_field="guidance_id",
+            row_filter=self._scoped_filter(None),
         )
         return [Guidance(**r) for r in rows]
 
-    def _filter(
+    def filter(
         self,
         *,
         filter: Optional[str] = None,
@@ -1010,7 +1080,7 @@ class GuidanceManager(BaseGuidanceManager):
             Matching guidance records as Guidance models.
         """
         from_fields = list(self._BUILTIN_FIELDS)
-        normalized = normalize_filter_expr(filter)
+        normalized = self._scoped_filter(normalize_filter_expr(filter))
         logs = unify.get_logs(
             context=self._ctx,
             filter=normalized,

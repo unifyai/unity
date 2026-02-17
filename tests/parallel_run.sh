@@ -193,18 +193,20 @@ _NUM_CORES=$DETECTED_CPU_CORES
 # ---------------------------------------------------------------------------
 # Local Orchestra Setup
 # ---------------------------------------------------------------------------
-# UNIFY_BASE_URL is the single source of truth:
+# ORCHESTRA_URL is the single source of truth:
 # - Unset or localhost (127.0.0.1/localhost): use local orchestra
 # - Any other URL: use it directly (staging, production, etc.)
 #
 # Local orchestra is started via the orchestra repo's scripts/local.sh.
 # Set ORCHESTRA_REPO_PATH to override the default location (../orchestra).
 #
-# WORKTREE HANDLING:
-# When running from a git worktree (e.g., Cursor Background Agents), we don't
-# restart orchestra just to change log directories. Instead, we create symlinks
-# from the worktree's logs/ to wherever orchestra is currently logging. This
-# avoids disrupting concurrent tests in the main repo or other worktrees.
+# SHARED ORCHESTRA HANDLING:
+# When running from a git worktree (e.g., Cursor Background Agents) or an
+# adjacent clone (created by clone_adjacent.sh), we don't restart orchestra
+# just to change log directories. Instead, we create symlinks from the
+# worktree/clone's logs/ to wherever orchestra is currently logging. This
+# avoids disrupting concurrent tests in the main repo, other worktrees, or
+# other clones.
 
 _is_local_url() {
   local url="${1:-}"
@@ -217,49 +219,29 @@ _is_git_worktree() {
   [[ -f "$REPO_ROOT/.git" ]]
 }
 
+_is_adjacent_clone() {
+  # Adjacent clones (created by clone_adjacent.sh) symlink .venv to the main repo.
+  # They share the same orchestra instance and should not restart it.
+  [[ -L "$REPO_ROOT/.venv" ]]
+}
+
 _create_orchestra_log_symlinks() {
-  # Create symlinks from worktree's log directories to the main repo's log directories.
-  # This ensures all orchestra logs (and OTEL traces) go to a single shared location,
-  # while allowing the worktree to "see" them via symlinks.
+  # Create symlinks from this repo's log directories to wherever orchestra is logging.
+  # This ensures all OTEL traces go to a single shared location, while allowing
+  # this repo (worktree or adjacent clone) to access them via symlinks.
   #
-  # Only called when:
-  # 1. We're in a git worktree
-  # 2. Orchestra is already running with logs pointing elsewhere
+  # Called when orchestra is already running with logs pointing elsewhere and we
+  # don't want to restart it (worktree or adjacent clone).
 
   local config_file="/tmp/orchestra-local-server.config"
 
   [[ -f "$config_file" ]] || return 0
 
-  local current_log_dir current_otel_dir
-  current_log_dir=$(grep "^ORCHESTRA_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
+  local current_otel_dir
   current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
 
   # Ensure logs/ directory exists in worktree
   mkdir -p "$REPO_ROOT/logs"
-
-  # Symlink logs/orchestra/ → main repo's logs/orchestra/
-  # ORCHESTRA_LOG_DIR includes timestamp subfolder, so we go up one level
-  if [[ -n "$current_log_dir" ]]; then
-    local target_dir
-    target_dir=$(dirname "$current_log_dir")  # Strip timestamp subfolder
-    local link_path="$REPO_ROOT/logs/orchestra"
-
-    if [[ -L "$link_path" ]]; then
-      # Symlink exists - update if pointing elsewhere
-      local current_target
-      current_target=$(readlink "$link_path")
-      if [[ "$current_target" != "$target_dir" ]]; then
-        rm "$link_path"
-        ln -s "$target_dir" "$link_path"
-        echo "  Updated symlink: logs/orchestra → $target_dir"
-      fi
-    elif [[ ! -e "$link_path" ]]; then
-      # Create new symlink
-      ln -s "$target_dir" "$link_path"
-      echo "  Created symlink: logs/orchestra → $target_dir"
-    fi
-    # If it's a real directory, leave it alone (user may have customized)
-  fi
 
   # Symlink logs/all/ → main repo's logs/all/ (for OTEL trace correlation)
   # This ensures unity/unify/unillm spans from worktree end up in same dir as orchestra spans
@@ -301,17 +283,17 @@ _orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$_orchestra_search_base/../orchestr
 _local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
 unset _git_common_dir _main_repo_git _orchestra_search_base
 
-if _is_local_url "${UNIFY_BASE_URL:-}"; then
+if _is_local_url "${ORCHESTRA_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
     # Set up orchestra configuration for tests
     export ORCHESTRA_SEED_USER=1
     export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
     export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
 
-    # Set up log directories (created lazily by local.sh)
-    _orchestra_logs_dir="$REPO_ROOT/logs/orchestra"
-    _timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
-    export ORCHESTRA_LOG_DIR="$_orchestra_logs_dir/$_timestamp"
+    # Set up OTEL log directory for cross-repo trace correlation (logs/all/).
+    # Note: ORCHESTRA_LOG_DIR (per-request JSON traces to logs/orchestra/) is
+    # intentionally NOT set. Those traces duplicate the OTEL spans in logs/all/
+    # and add ~370MB to CI artifacts. Orchestra's own CI still uses it.
     export ORCHESTRA_OTEL_LOG_DIR="$REPO_ROOT/logs/all"
 
     # Check if local orchestra is already running
@@ -322,15 +304,10 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
 
       if [[ -f "$_config_file" ]]; then
         # Read current config and compare with desired logging dirs
-        _current_log_dir=$(grep "^ORCHESTRA_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
         _current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
 
         # Check if OTEL dir points to our logs/all directory
         if [[ "$_current_otel_dir" != "$ORCHESTRA_OTEL_LOG_DIR" ]]; then
-          _needs_restart=true
-        fi
-        # Check if per-request log dir points inside our logs/orchestra directory
-        if [[ -z "$_current_log_dir" || "$_current_log_dir" != "$_orchestra_logs_dir"/* ]]; then
           _needs_restart=true
         fi
       else
@@ -339,12 +316,12 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
       fi
 
       if [[ "$_needs_restart" == "true" ]]; then
-        if _is_git_worktree; then
-          # WORKTREE MODE: Don't restart orchestra (would disrupt other worktrees/main repo).
+        if _is_git_worktree || _is_adjacent_clone; then
+          # SHARED MODE: Don't restart orchestra (would disrupt other worktrees/clones).
           # Instead, create symlinks so logs appear in expected locations.
-          echo "Worktree detected: Using existing orchestra, creating log symlinks..."
+          echo "Shared orchestra: using existing instance, creating log symlinks..."
           _create_orchestra_log_symlinks
-          export UNIFY_BASE_URL="$_local_url"
+          export ORCHESTRA_URL="$_local_url"
         else
           # MAIN REPO MODE: Restart to pick up logging config. The restart wipes
           # the database, which is intentional for test runs to ensure isolation.
@@ -353,21 +330,19 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
           "$_local_orchestra_script" restart >/dev/null 2>&1 || true
           if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
             echo "Using local orchestra: $_local_url"
-            export UNIFY_BASE_URL="$_local_url"
+            export ORCHESTRA_URL="$_local_url"
           else
             echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
-            export UNIFY_BASE_URL="$_original_url"
+            export ORCHESTRA_URL="$_original_url"
           fi
           unset _original_url
         fi
       else
         # Logging already configured correctly, reuse existing instance
-        # Update ORCHESTRA_LOG_DIR to match what's currently configured
-        export ORCHESTRA_LOG_DIR="$_current_log_dir"
         echo "Local orchestra already running with logging enabled: $_local_url"
-        export UNIFY_BASE_URL="$_local_url"
+        export ORCHESTRA_URL="$_local_url"
       fi
-      unset _config_file _needs_restart _current_log_dir _current_otel_dir
+      unset _config_file _needs_restart _current_otel_dir
     else
       # Not running - need to start it
       # Stop any stale orchestra state first
@@ -398,7 +373,7 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
       if "$_local_orchestra_script" start >/dev/null 2>&1; then
         if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
           echo "Using local orchestra: $_local_url"
-          export UNIFY_BASE_URL="$_local_url"
+          export ORCHESTRA_URL="$_local_url"
         else
           echo "Warning: Local orchestra started but not responding" >&2
         fi
@@ -410,11 +385,33 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
     echo "Warning: Orchestra script not found at $_local_orchestra_script" >&2
     echo "  Set ORCHESTRA_REPO_PATH or clone orchestra repo to ../orchestra" >&2
   fi
-  unset _local_url _orchestra_logs_dir _timestamp
+  unset _local_url
 else
-  echo "Using remote orchestra: $UNIFY_BASE_URL"
+  echo "Using remote orchestra: $ORCHESTRA_URL"
 fi
 unset _orchestra_repo_path _local_orchestra_script
+
+# ---------------------------------------------------------------------------
+# Communication Service URL Setup
+# ---------------------------------------------------------------------------
+# UNITY_COMMS_URL is auto-selected based on git branch if not explicitly set:
+# - main branch → production: https://unity-comms-app-262420637606.us-central1.run.app
+# - other branches → staging: https://unity-comms-app-staging-262420637606.us-central1.run.app
+#
+# This mirrors the CI behavior in .github/workflows/tests.yml
+if [[ -z "${UNITY_COMMS_URL:-}" ]]; then
+  _current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+  if [[ "$_current_branch" == "main" ]]; then
+    export UNITY_COMMS_URL="https://unity-comms-app-262420637606.us-central1.run.app"
+    echo "Using production communication service (main branch)"
+  else
+    export UNITY_COMMS_URL="https://unity-comms-app-staging-262420637606.us-central1.run.app"
+    echo "Using staging communication service (branch: $_current_branch)"
+  fi
+  unset _current_branch
+else
+  echo "Using communication service: $UNITY_COMMS_URL"
+fi
 
 # Build pytest marker filter based on flags
 MARKER_FILTER=""
@@ -560,19 +557,6 @@ build_env_exports() {
   # Add all --env flag overrides
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
-  done
-
-  # Propagate relevant system environment variables if not already set via --env
-  # Note: UNIFY_TESTS_DELETE_PROJ_ON_START and UNIFY_TESTS_DELETE_PROJ_ON_EXIT are intentionally
-  # NOT propagated to individual sessions. They are handled at the script level to avoid race
-  # conditions where multiple sessions try to delete the shared project simultaneously.
-  # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP PYTHONPATH ANTHROPIC_API_KEY OPENAI_API_KEY"
-  for var_name in $propagate_vars; do
-    if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
-      # Quote values containing special characters (paths, URLs with colons/slashes)
-      exports="$exports ${var_name}='${!var_name}'"
-    fi
   done
 
   # Append UNIFY_TEST_TAGS if any tags were specified via --tags
@@ -768,6 +752,12 @@ run_cmd() {
   local env_exports
   # Always export UTF-8 locale for proper emoji handling in session names
   # Enable cache stats tracking (UNILLM_CACHE_STATS must be set before importing unillm)
+  #
+  # Note: tmux sessions use `bash -c` (not `bash -lc`) so they inherit the full
+  # environment from parallel_run.sh. This means all .env variables are available
+  # without an explicit whitelist. The only vars that need special handling are:
+  # - UNIFY_TESTS_DELETE_PROJ_ON_START/EXIT: explicitly unset in shared project mode
+  #   to prevent race conditions (multiple sessions deleting the same project).
   env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 UNILLM_CACHE_STATS=true'
   if is_random_projects_mode; then
     # Random projects mode: each session gets its own isolated project.
@@ -781,14 +771,19 @@ run_cmd() {
       env_exports="$env_exports UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True"
     fi
   else
-    # Shared project mode: skip session setup (already done by prepare script)
+    # Shared project mode: skip session setup (already done by prepare script).
+    # Blocklist: unset delete flags to prevent race conditions where multiple
+    # sessions try to delete the shared project simultaneously.
     env_exports="$env_exports UNIFY_SKIP_SESSION_SETUP=True"
+    env_exports="$env_exports; unset UNIFY_TESTS_DELETE_PROJ_ON_START UNIFY_TESTS_DELETE_PROJ_ON_EXIT"
   fi
   # Append user-provided --env overrides (includes UNITY_TEST_SOCKET for log scoping)
+  # Uses a separate `export` statement because in shared-project mode env_exports
+  # ends with `; unset ...` and bare NAME=VALUE pairs would be swallowed by unset.
   local user_overrides
   user_overrides="$(build_env_exports)"
   if [[ -n "$user_overrides" ]]; then
-    env_exports="$env_exports$user_overrides"
+    env_exports="$env_exports; export$user_overrides"
   fi
   # Build pytest command with optional marker filter, scenario overwrite, and extra args
   local pytest_cmd
@@ -817,7 +812,7 @@ run_cmd() {
   # The session ID is captured BEFORE pytest runs and exported as UNITY_TMUX_SESSION_ID
   # so pytest's conftest.py can write cache stats to a known temp file location.
   inner=$(printf '%s; export UNITY_TMUX_SESSION_ID=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$UNITY_TMUX_SESSION_ID" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$TMUX_SOCKET" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
-  printf 'bash -lc %q' "$inner"
+  printf 'bash -c %q' "$inner"
 }
 
 # Ensure we don't collide with existing sessions.
@@ -1133,6 +1128,39 @@ collect_nodes_batch() {
   echo "$result"
 }
 
+# Validate direct_nodes against pytest collection and add valid ones to $tmp.
+# Extracts unique base files, runs collection, and checks each node exists.
+# Prints warnings for nodes that don't exist (e.g., typos in test function names).
+validate_and_add_direct_nodes() {
+  if (( ${#direct_nodes[@]} == 0 )); then
+    return 0
+  fi
+
+  # Extract unique base files from direct_nodes
+  local -a base_files=()
+  local seen_files=""
+  for node in "${direct_nodes[@]}"; do
+    local base_file="${node%%::*}"
+    if [[ "$seen_files" != *"|${base_file}|"* ]]; then
+      base_files+=( "$base_file" )
+      seen_files="${seen_files}|${base_file}|"
+    fi
+  done
+
+  # Collect all valid nodes from those files (no marker filter — just checking existence)
+  local collected
+  collected=$(collect_nodes_batch "" "${base_files[@]}")
+
+  # Validate each direct_node against collected output
+  for node in "${direct_nodes[@]}"; do
+    if echo "$collected" | grep -qxF "$node"; then
+      printf '%s\0' "$node" >> "$tmp"
+    else
+      echo "Error: Test node not found (skipping): $node" >&2
+    fi
+  done
+}
+
 # Gather recursive .py files from roots (NUL-delimited, sorted)
 declare -a found_files=()
 if (( ${#roots[@]} )); then
@@ -1186,9 +1214,7 @@ if (( ! SERIAL )); then
       [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
     done < <(collect_nodes_batch "$MARKER_FILTER" "${all_targets[@]}")
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 elif [[ -n "$MARKER_FILTER" ]]; then
   # Default mode WITH marker filter: collect nodes first to find which files
   # have matching tests, then create one session per file (not per-node).
@@ -1217,9 +1243,7 @@ elif [[ -n "$MARKER_FILTER" ]]; then
     done < <(sort -u "$tmp_files")
     rm -f "$tmp_files"
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 else
   # Default mode without marker filter: one session per file
   if (( ${#direct_files[@]} )); then
@@ -1228,9 +1252,7 @@ else
   if (( ${#found_files[@]} )); then
     printf '%s\0' "${found_files[@]}" >> "$tmp"
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 fi
 
 files=()

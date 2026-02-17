@@ -158,7 +158,7 @@ def create_contact(
     bio: Optional[str] = None,
     timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
-    respond_to: bool = False,
+    should_respond: bool = True,
     response_policy: Optional[str] = None,
     **kwargs: Any,
 ) -> ToolOutcome:
@@ -173,7 +173,7 @@ def create_contact(
         "bio": bio,
         "timezone": timezone,
         "rolling_summary": rolling_summary,
-        "respond_to": respond_to,
+        "should_respond": should_respond,
         "response_policy": response_policy,
         "is_system": False,
     }
@@ -240,7 +240,7 @@ def update_contact(
     bio: Optional[str] = None,
     timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
-    respond_to: Optional[bool] = None,
+    should_respond: Optional[bool] = None,
     response_policy: Optional[str] = None,
     _log_id: Optional[int] = None,
     **kwargs: Any,
@@ -256,7 +256,7 @@ def update_contact(
         "bio": bio,
         "timezone": timezone,
         "rolling_summary": rolling_summary,
-        "respond_to": respond_to,
+        "should_respond": should_respond,
         "response_policy": response_policy,
     }
     if kwargs:

@@ -8,7 +8,7 @@ from ..manager_registry import SingletonABCMeta
 
 class BaseMemoryManager(ABC, metaclass=SingletonABCMeta):
     """
-    *Offline* memory-maintenance helper that is invoked every 30 messages (by default).
+    *Offline* memory-maintenance helper that is invoked every 50 messages (by default).
 
     All public methods consume **one** request and return a final value
     (they do **not** expose live, steerable handles).
@@ -25,32 +25,22 @@ class BaseMemoryManager(ABC, metaclass=SingletonABCMeta):
         guidance: Optional[str] = None,
     ) -> str: ...
 
-    async def update_contact_bio(
+    @abstractmethod
+    async def update_knowledge(
         self,
         transcript: str,
-        *,
-        contact_id: int,
-        guidance: Optional[str] = None,
-    ) -> str: ...
-
-    async def update_contact_rolling_summary(
-        self,
-        transcript: str,
-        *,
-        contact_id: int,
-        guidance: Optional[str] = None,
-    ) -> str: ...
-
-    async def update_contact_response_policy(
-        self,
-        transcript: str,
-        *,
-        contact_id: int,
         guidance: Optional[str] = None,
     ) -> str: ...
 
     @abstractmethod
-    async def update_knowledge(
+    async def update_tasks(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str: ...
+
+    @abstractmethod
+    async def process_chunk(
         self,
         transcript: str,
         guidance: Optional[str] = None,

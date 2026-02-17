@@ -122,6 +122,7 @@ def _compute_function_hash(
     venv_id: Optional[int],
     verify: bool,
     precondition: Optional[Dict[str, Any]],
+    windows_os_required: bool = False,
 ) -> str:
     """
     Compute a hash for a custom function based on its metadata.
@@ -142,6 +143,7 @@ def _compute_function_hash(
         str(venv_id) if venv_id is not None else "",
         str(verify),
         json.dumps(precondition, sort_keys=True) if precondition else "",
+        str(windows_os_required),
     ]
     combined = "\n".join(components)
     return hashlib.sha256(combined.encode()).hexdigest()[:16]
@@ -235,6 +237,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
         - precondition: Optional[dict]
         - custom_hash: str
         - embedding_text: str
+        - windows_os_required: bool (route to Windows VM when True)
     """
     functions_folder = _get_custom_functions_folder()
     if not functions_folder.exists():
@@ -271,6 +274,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
     # Second pass: compute dependency graph now that we know all custom names.
     functions: Dict[str, Dict[str, Any]] = {}
     known_names = {name for name, *_rest in staged}
+    env_namespaces = frozenset({"primitives", "computer_primitives", "actor"})
 
     for name, _func, metadata, argspec, docstring, implementation in staged:
         deps = sorted(
@@ -278,6 +282,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
                 collect_dependencies_from_source(
                     implementation,
                     known_names,
+                    environment_namespaces=env_namespaces,
                 ),
             ),
         )
@@ -292,6 +297,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
             venv_id=metadata.venv_id,
             verify=metadata.verify,
             precondition=metadata.precondition,
+            windows_os_required=metadata.windows_os_required,
         )
 
         # Rebuild embedding text (deterministic)
@@ -313,6 +319,7 @@ def collect_custom_functions() -> Dict[str, Dict[str, Any]]:
             "depends_on": deps,
             "is_primitive": False,
             "guidance_ids": [],
+            "windows_os_required": metadata.windows_os_required,
         }
 
     logger.debug(f"Collected {len(functions)} custom functions")

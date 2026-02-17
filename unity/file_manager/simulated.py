@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from unity.file_manager.types.ingest import IngestPipelineResult
     from unity.data_manager.base import BaseDataManager as DataManager
 
-from .base import BaseFileManager, BaseGlobalFileManager
+from .base import BaseFileManager
 from unity.data_manager.types import PlotResult as _VizPlotResult
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.llm_client import new_llm_client
@@ -29,13 +29,13 @@ from ..common.simulated import (
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
 )
-from ..constants import LOGGER
+from ..logger import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Handle returned by SimulatedFileManager.ask_about_file.
     """
@@ -172,40 +172,33 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(
+    async def interject(
         self,
         message: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
-    ) -> str:
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:
         """Interject a message into the in-flight handle.
 
         Args:
             message: The interjection message to inject.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            _parent_chat_context_cont: Optional continuation of parent chat context.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         if self._cancelled:
-            return "Interaction stopped."
+            return
         self._log_interject(message)
         self._extra_msgs.append(message)
-        return "Acknowledged."
 
-    def stop(
+    async def stop(
         self,
         reason: str | None = None,
-        *,
-        parent_chat_context_cont: list[dict] | None = None,
-    ) -> str:
+        **kwargs,
+    ) -> None:
         """Stop the in-flight handle.
 
         Args:
             reason: Optional reason for stopping.
-            parent_chat_context_cont: Optional continuation of parent chat context.
-                Accepted for API parity with real handles but not currently used.
         """
         self._log_stop(reason)
         self._cancelled = True
@@ -214,7 +207,6 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         except Exception:
             pass
         self._done_event.set()
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:
@@ -237,17 +229,14 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         self,
         question: str,
         *,
-        parent_chat_context_cont: list[dict] | None = None,
-        images: list | dict | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ) -> "SteerableToolHandle":
         """Ask a follow-up question about the current operation.
 
         Args:
             question: The question to ask.
-            parent_chat_context_cont: Optional continuation of parent chat context.
+            parent_chat_context: Optional parent chat context for the inspection loop.
                 Accepted for API parity with real handles but not currently used.
-            images: Optional image references. Accepted for API parity with real handles
-                but not currently used.
         """
         q_msg = (
             f"Your only task is to simulate an answer to the following question: {question}\n\n"
@@ -284,14 +273,9 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -303,10 +287,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -333,11 +314,16 @@ class SimulatedFileManager(BaseFileManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        self._hold_completion = hold_completion
         # In-memory storage for simulated files
         self._files: Dict[str, Dict[str, Any]] = {}
         # Track protected files by display name (read-only from simulated API)
@@ -350,7 +336,7 @@ class SimulatedFileManager(BaseFileManager):
         self.__data_manager: Optional["DataManager"] = None
 
         # Shared, *stateful* **asynchronous** LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedFileManager")
 
         # Mirror the real file manager's tool exposure programmatically
         try:
@@ -376,7 +362,7 @@ class SimulatedFileManager(BaseFileManager):
         about_msg = build_file_manager_ask_about_file_prompt(
             ask_about_file_tools,
             include_activity=self._rolling_summary_in_prompts,
-        )
+        ).flatten()
 
         self._llm.set_system_message(
             "You are a *simulated* file manager assistant. "
@@ -508,6 +494,7 @@ class SimulatedFileManager(BaseFileManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
         return handle
 
@@ -728,6 +715,7 @@ class SimulatedFileManager(BaseFileManager):
         group_by: Optional[str] = None,
         filter: Optional[str] = None,
         title: Optional[str] = None,
+        metric: Optional[str] = None,
         aggregate: Optional[str] = None,
         scale_x: Optional[str] = None,
         scale_y: Optional[str] = None,
@@ -957,9 +945,7 @@ class SimulatedFileManager(BaseFileManager):
     @functools.wraps(BaseFileManager.describe, updated=())
     def describe(
         self,
-        *,
-        file_path: Optional[str] = None,
-        file_id: Optional[int] = None,
+        file_path: str,
     ) -> Any:
         """Simulated counterpart of describe().
 
@@ -967,16 +953,7 @@ class SimulatedFileManager(BaseFileManager):
         """
         from unity.file_manager.types.describe import FileStorageMap
 
-        if file_path is None and file_id is None:
-            raise ValueError("Either file_path or file_id must be provided")
-
-        # Find in simulated storage
         target_path = file_path
-        if file_id is not None:
-            for fp, meta in self._files.items():
-                if meta.get("file_id") == file_id:
-                    target_path = fp
-                    break
 
         if target_path and target_path in self._files:
             meta = self._files[target_path]
@@ -996,6 +973,7 @@ class SimulatedFileManager(BaseFileManager):
             )
 
         # File not found - return minimal map
+        file_id = 0
         return FileStorageMap(
             file_path=file_path or f"unknown_file_{file_id}",
             file_id=file_id,
@@ -1146,30 +1124,3 @@ class SimulatedFileManager(BaseFileManager):
         Returns an empty list to satisfy the API contract.
         """
         return []
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Simulated GlobalFileManager
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class SimulatedGlobalFileManager(BaseGlobalFileManager):
-    """
-    Simulated counterpart to GlobalFileManager. Aggregates multiple FileManagers
-    and provides the list_filesystems helper. For filesystem‑wide operations,
-    use ``FunctionManager`` to compose bespoke logic.
-    """
-
-    def __init__(self, managers: List[BaseFileManager]):
-        self._managers: List[BaseFileManager] = list(managers)
-
-    def list_filesystems(self) -> List[str]:
-        names = [
-            getattr(m.__class__, "__name__", "FileManager") for m in self._managers
-        ]
-        return sorted(set(names))
-
-    @functools.wraps(BaseGlobalFileManager.clear, updated=())
-    def clear(self) -> None:  # type: ignore[override]
-        """Re-initialise the simulated manager."""
-        type(self).__init__(self, managers=self._managers)

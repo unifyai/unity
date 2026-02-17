@@ -6,16 +6,16 @@ Trigger CI tests on GitHub Actions with the current local code state—even if c
 
 ```bash
 # Run specific tests on CI
-parallel_cloud_run.sh tests/test_contact_manager
+parallel_cloud_run.sh tests/contact_manager
 
 # Run all tests on CI
 parallel_cloud_run.sh .
 
 # Run multiple folders
-parallel_cloud_run.sh tests/test_actor tests/test_contact_manager
+parallel_cloud_run.sh tests/actor tests/contact_manager
 
 # Override a .env setting
-parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
+parallel_cloud_run.sh --env UNILLM_CACHE=false tests/
 ```
 
 The script automatically:
@@ -117,21 +117,21 @@ parallel_cloud_run.sh [--env KEY=VALUE ...] [test_paths...]
 
 ```bash
 # Single folder
-parallel_cloud_run.sh tests/test_contact_manager
+parallel_cloud_run.sh tests/contact_manager
 
 # Multiple folders (run concurrently in single CI job)
-parallel_cloud_run.sh tests/test_actor tests/test_contact_manager
+parallel_cloud_run.sh tests/actor tests/contact_manager
 
 # Specific test file
-parallel_cloud_run.sh tests/test_actor/test_code_act.py
+parallel_cloud_run.sh tests/actor/code_act.py
 
 # All tests
 parallel_cloud_run.sh .
 parallel_cloud_run.sh   # equivalent
 
 # Override settings
-parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
-parallel_cloud_run.sh --env UNIFY_CACHE=false --env UNIFY_MODEL=gpt-4o tests/
+parallel_cloud_run.sh --env UNILLM_CACHE=false tests/
+parallel_cloud_run.sh --env UNILLM_CACHE=false --env UNIFY_MODEL=gpt-4o tests/
 ```
 
 ---
@@ -144,7 +144,7 @@ This means CI runs use your personal settings without exposing secrets:
 
 - `UNIFY_KEY` — your API key (masked)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. (masked)
-- `UNIFY_BASE_URL`, `UNIFY_CACHE`, etc. (visible, non-sensitive)
+- `ORCHESTRA_URL`, `UNILLM_CACHE`, etc. (visible, non-sensitive)
 
 **What appears in logs:**
 - ✅ Explicit `--env` overrides you pass on the command line
@@ -154,9 +154,9 @@ This means CI runs use your personal settings without exposing secrets:
 **Override order**: `.env` values are sourced first on the runner, then explicit `--env` args take precedence.
 
 ```bash
-# .env has UNIFY_CACHE=true, but this overrides it to false
+# .env has UNILLM_CACHE=true, but this overrides it to false
 # Only the explicit override is visible in CI logs
-parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
+parallel_cloud_run.sh --env UNILLM_CACHE=false tests/
 ```
 
 ---
@@ -218,7 +218,7 @@ Click the link to go directly to your run—no need to search through the Action
 vim unity/contact_manager/manager.py
 
 # 2. Test them on CI without committing
-parallel_cloud_run.sh tests/test_contact_manager
+parallel_cloud_run.sh tests/contact_manager
 # Output includes direct link to the run
 
 # 3. Click the link or watch via CLI

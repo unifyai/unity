@@ -5,7 +5,7 @@ This folder contains an **interactive playground** for the `FunctionManager` com
 
 What is the `FunctionManager`?
 ------------------------------
-`FunctionManager` is an abstraction that serves as the agent's persistent memory for reusable Python functions. It stores function implementations, signatures, docstrings, and dependency information, making them searchable and retrievable through both semantic similarity and structured queries. This allows more advanced actors, like the `HierarchicalActor`, to discover and incorporate existing code into their execution plans.
+`FunctionManager` is an abstraction that serves as the agent's persistent memory for reusable Python functions. It stores function implementations, signatures, docstrings, and dependency information, making them searchable and retrievable through both semantic similarity and structured queries. This allows actors like the `CodeActActor` to discover and incorporate existing code into their execution plans.
 
 The manager provides comprehensive function lifecycle management with built-in security validation:
 
@@ -168,7 +168,7 @@ def caller_function():
 - A dedicated Unify Request log file is also written to `.logs_unify_requests.txt`.
 
 ### Troubleshooting
-* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **Python file parsing** – When adding functions via `add <file>`, ensure the file contains valid Python syntax with functions starting at column 0 (no indentation).
 * **Function validation errors** – Functions that call dangerous built-ins or other user-defined functions will be rejected with specific error messages.
 * **Memory persistence** – Functions are stored persistently in the chosen project. Use `--overwrite` to start fresh if needed.

@@ -13,7 +13,7 @@ What is the `TaskScheduler`?
 * **`update(text)`**    – mutations such as *"Move task 7 behind task 3 and set its priority to high."*
 * **`execute(text)`** – begin **working** on a task inferred from free‑form text (e.g., *"Start task 12"* or *"Start researching ACME now"*). If the text is a numeric id, it is started directly; otherwise the scheduler identifies (or creates) the task before launching it.
 
-Under the hood all three methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_create_task`, `_update_task_status`, `_get_task_queue`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/test_task_scheduler/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
+Under the hood all three methods launch a _tool-loop_ where an LLM can call a small, strongly-typed tool-kit (`_create_task`, `_update_task_status`, `_get_task_queue`, …) until it reaches a final answer.  The extensive unit-test suite in `tests/task_scheduler/` exercises all public and private helpers – skim through those tests if you want concrete examples of typical usage patterns, clarification flows, vector search, event logging, etc.
 
 Running the sandbox
 -------------------
@@ -91,7 +91,7 @@ Pause the active task.
 Troubleshooting
 ---------------
 * **Deepgram / Cartesia keys** – if you use `--voice`, make sure the environment variables `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` are set.
-* **Unify backend access** – the sandbox will attempt to create contexts and logs in your configured Unify project.  If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – the sandbox will attempt to create contexts and logs in your configured Unify project.  If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **Linter complaints** – the interactive session is powered by an LLM; if you hit a bug look at the `--debug` reasoning trace first.
 
 Happy scheduling! 🎉

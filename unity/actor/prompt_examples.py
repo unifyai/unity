@@ -15,7 +15,7 @@ class Example:
     title: str
     code: str
     description: str
-    environment_tags: List[str]  # e.g., ["browser"], ["primitives"], ["mixed"]
+    environment_tags: List[str]  # e.g., ["computer"], ["primitives"], ["mixed"]
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +106,29 @@ async def run_with_steering() -> str:
     # Wait for completion
     result = await handle.result()
     return result
+"""
+
+
+def get_handle_mode_selection_example() -> str:
+    """Example: choosing between return-handle and await modes."""
+
+    return """
+# Example: Choose return-handle vs await based on task shape
+async def long_running_status_visible() -> object:
+    # Long-running or externally dependent work: return the handle so
+    # the outer loop can expose progress and steering.
+    return await primitives.tasks.execute(task_id=123)
+
+async def neutral_intent_defaults_to_handle() -> object:
+    # Neutral or uncertain intent: return the handle by default so
+    # outer-loop steering and progress visibility stay available.
+    return await primitives.contacts.ask("Find contacts in Berlin")
+
+async def compose_immediately() -> str:
+    # Immediate composition: await the result for same-block logic.
+    handle = await primitives.contacts.ask("Who is Alice?")
+    answer = await handle.result()
+    return f"Contact lookup complete: {answer}"
 """
 
 
@@ -222,15 +245,15 @@ async def main_plan():
 
 
 # ---------------------------------------------------------------------------
-# 3. Browser Examples
+# 3. Computer Examples
 # ---------------------------------------------------------------------------
 
 
-def get_browser_navigation_example() -> str:
+def get_computer_navigation_example() -> str:
     """Example: navigate and extract data from a webpage."""
 
     return '''
-# Example: Browser navigation and extraction
+# Example: Computer navigation and extraction
 async def fetch_product_price(product_url: str) -> float:
     """Navigate to product page and extract price."""
     await computer_primitives.navigate(product_url)
@@ -252,11 +275,11 @@ async def fetch_product_price(product_url: str) -> float:
 '''
 
 
-def get_browser_multistep_example() -> str:
-    """Example: multi-step browser workflow with verification."""
+def get_computer_multistep_example() -> str:
+    """Example: multi-step computer workflow with verification."""
 
     return '''
-# Example: Multi-step browser workflow
+# Example: Multi-step computer workflow
 async def complete_checkout(cart_items: list) -> str:
     """Complete e-commerce checkout flow."""
     # Navigate to checkout
@@ -281,10 +304,10 @@ async def complete_checkout(cart_items: list) -> str:
 '''
 
 
-def get_browser_screenshot_driven_example() -> str:
-    """Example: screenshot-driven implementation (within a browser loop).
+def get_computer_screenshot_driven_example() -> str:
+    """Example: screenshot-driven implementation using get_screenshot() + display().
 
-    UI actions are guided by the current page state (captured as screenshots/evidence).
+    UI actions are guided by the current page state (captured via explicit screenshot calls).
     """
 
     return """
@@ -292,13 +315,202 @@ def get_browser_screenshot_driven_example() -> str:
 async def proceed_using_screenshot() -> str:
     await computer_primitives.navigate("https://example.com/setup")
 
-    # The Actor captures the page screenshot as evidence; use observe to read UI state from it.
-    visible = await computer_primitives.observe("From the screenshot, is there a 'Continue' button visible?")
-    if "no" in str(visible).lower():
-        raise ValueError("Expected a 'Continue' button in the screenshot")
+    # Use get_screenshot() + display() to see the current screen state.
+    # Prefer acting directly from that visual context, and only use observe
+    # for structured extraction or when a precise, machine-checkable answer is required.
+    display(await computer_primitives.get_screenshot())
 
-    await computer_primitives.act("Using the screenshot, click the 'Continue' button.")
-    return await computer_primitives.observe("From the new screenshot, confirm we reached the next step.")
+    await computer_primitives.act("Click the 'Continue' button.")
+    display(await computer_primitives.get_screenshot())
+
+    return await computer_primitives.observe("Confirm we reached the next step.")
+"""
+
+
+def get_computer_session_execution_example() -> str:
+    """Example: web navigation and structured data extraction using session-based execution."""
+
+    return """
+**Example: Web Navigation and Structured Data Extraction**
+
+*User Request*: "What is the main heading and the text of the first paragraph on playwright.dev?"
+
+*Turn 1: Navigate to the website and view the page*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev. I\'ll take a screenshot to see the page.",
+          "code": "await computer_primitives.navigate(\'https://playwright.dev/\')\\ndisplay(await computer_primitives.get_screenshot())",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- stdout ---
+    [screenshot image of the playwright.dev homepage]
+    ```
+
+*Turn 2: Observe the content using a Pydantic model*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "Great, I can see the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
+          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await computer_primitives.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\n\\nprint(page_info.model_dump_json(indent=2))",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- stdout ---
+    {
+      "heading": "Playwright enables reliable end-to-end testing for modern web apps.",
+      "first_paragraph": "Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API."
+    }
+    ```
+
+*Turn 3: Provide the final answer*
+* **Thought**: I have successfully extracted the information. I will now provide the final answer to the user without using any tools.
+* **Final Answer (tool-less response)**:
+    The main heading on playwright.dev is \'Playwright enables reliable end-to-end testing for modern web apps.\', and the first paragraph is \'Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API.\'
+"""
+
+
+def get_computer_stateful_workflow_example() -> str:
+    """Example: stateful computation with helper functions persisting across turns."""
+
+    return """
+**Example: Stateful Computation and Helper Functions**
+
+*User Request*: "On `fakestore.example.com`, find the average price of all products that cost less than $100."
+
+*Turn 1: Define a helper function and extract all product data*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "This is a multi-step task. First, I\'ll extract all products. I know I\'ll need to parse prices that might be strings (e.g., \'$25.99\'), so I\'ll define a helper function to clean them. This function will persist in the sandbox for later.",
+          "code": "import re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nall_products_data = await computer_primitives.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- STDOUT ---
+    Extracted 20 products.
+    ```
+
+*Turn 2: Use the helper function and the stored variable to compute the average*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "I have the product data in the `all_products_data` variable and my `parse_price` function is defined. Now I can perform the calculation in pure Python.",
+          "code": "prices_under_100 = []\\nfor product in all_products_data.products:\\n    price = parse_price(product.price_text)\\n    if price < 100.0:\\n        prices_under_100.append(price)\\n\\nif prices_under_100:\\n    average = sum(prices_under_100) / len(prices_under_100)\\n    result_text = f\\"The average price of products under $100 is ${average:.2f}.\\"\\nelse:\\n    result_text = \\"No products found under $100.\\"\\n\\nprint(result_text)",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- STDOUT ---
+    The average price of products under $100 is $42.75.
+    ```
+* **Final Answer (tool-less)**: The average price of products under $100 on the site is $42.75.
+"""
+
+
+def get_computer_interactive_workflow_example() -> str:
+    """Example: multi-step web form workflow with handle-based state manager interaction."""
+
+    return """
+**Example: Web Research and State Manager Persistence**
+
+*User Request*: "Find the support email on example.com and save it to our knowledge base."
+
+*Turn 1: Navigate to the website and view the page*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "I\'ll navigate to the website to find the support email and take a screenshot to see the page.",
+          "code": "await computer_primitives.navigate(\'https://example.com/contact\')\\ndisplay(await computer_primitives.get_screenshot())",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- stdout ---
+    [screenshot image of the example.com contact page]
+    ```
+
+*Turn 2: Extract the support email using structured observation*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "I can see the contact page. I\'ll extract the support email using a Pydantic model for reliable structured extraction.",
+          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\ninfo = await computer_primitives.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nprint(f\\"Support email: {info.support_email}\\")",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- STDOUT ---
+    Support email: help@example.com
+    ```
+
+*Turn 3: Persist the extracted info to the knowledge base*
+* **Tool Call**:
+    ```json
+    {
+      "tool_calls": [{
+        "name": "execute_code",
+        "arguments": {
+          "thought": "I have the support email. Now I\'ll save it to the knowledge base using the state manager.",
+          "code": "handle = await primitives.knowledge.update(\\n    f\\"Store that Example Corp\'s support email is {info.support_email}\\"\\n)\\nresult = await handle.result()\\nprint(result)",
+          "language": "python",
+          "state_mode": "stateful"
+        }
+      }]
+    }
+    ```
+* **Observation**:
+    ```text
+    --- STDOUT ---
+    Successfully stored: Example Corp support email is help@example.com
+    ```
+* **Final Answer (tool-less)**: I found the support email on example.com — it\'s help@example.com — and saved it to the knowledge base.
 """
 
 
@@ -405,46 +617,11 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 
     # Stop early if needed
     if "error" in status.lower():
-        handle.stop(reason="Detected error in status")
+        await handle.stop(reason="Detected error in status")
 
     # Wait for completion
     result = await handle.result()
     return result
-'''
-
-
-def get_primitives_task_lookup_and_execute_example() -> str:
-    """Example: Task lookup via ask(response_format=...) then execute(task_id=...).
-
-    TaskScheduler.execute requires task_id: int.
-    """
-
-    return '''
-# Example: Task lookup and execution pattern
-from pydantic import BaseModel
-
-class TaskIdResult(BaseModel):
-    task_id: int
-    task_name: str
-    task_description: str
-
-TaskIdResult.model_rebuild()
-
-async def find_and_execute_task(search_query: str) -> str:
-    """Locate a task by description and execute it."""
-    # Step 1: Use ask with response_format to get structured task info
-    lookup_handle = await primitives.tasks.ask(
-        f"Find the task matching: {search_query}",
-        response_format=TaskIdResult,
-    )
-    task = await lookup_handle.result()
-
-    # Step 2: Execute the task using its task_id
-    exec_handle = await primitives.tasks.execute(task_id=task.task_id)
-
-    # Wait for completion
-    result = await exec_handle.result()
-    return f"Executed task '{task.task_name}': {result}"
 '''
 
 
@@ -476,56 +653,97 @@ async def execute_task_and_append(task_a_id: int, task_b_id: int) -> str:
 '''
 
 
-def get_primitives_files_ask_example() -> str:
-    """Example: read-only file inventory query.
-
-    Shows how to use the File manager via `primitives.files.ask(...)`.
-    """
+def get_primitives_files_describe_example() -> str:
+    """Example: discovering file storage layout via `primitives.files.describe(...)`."""
 
     return '''
-# Example: Read-only files query (inventory)
-async def list_available_filesystems() -> str:
-    """List available filesystems/roots and summarize what is available."""
-    handle = await primitives.files.ask(
-        "List available filesystems/roots and provide a brief inventory overview."
+# Example: Discover file storage layout
+async def discover_file_structure(file_path: str) -> dict:
+    """Discover what tables/contexts are available in a file."""
+    storage = await primitives.files.describe(file_path=file_path)
+
+    # storage contains:
+    # - indexed_exists: bool (whether file has been indexed)
+    # - has_tables: bool (whether tables were extracted)
+    # - tables: list of table info with context_path, name, description
+
+    if storage.has_tables:
+        for table in storage.tables:
+            print(f"Table: {table.name}")
+            print(f"  Context: {table.context_path}")
+            print(f"  Description: {table.description}")
+    return storage
+'''
+
+
+def get_primitives_files_reduce_example() -> str:
+    """Example: aggregating data via `primitives.files.reduce(...)`."""
+
+    return '''
+# Example: Aggregate data from a file table
+async def count_records_by_category(table_context: str) -> dict:
+    """Count records grouped by a category column."""
+    result = await primitives.files.reduce(
+        context=table_context,
+        metric="count",
+        columns="id",
+        group_by="category",
+        filter="status == 'active'",
     )
-    return await handle.result()
+    return result
 '''
 
 
-def get_primitives_files_organize_example() -> str:
-    """Example: file organization (rename/move/delete) via `primitives.files.organize(...)`."""
+def get_primitives_files_filter_example() -> str:
+    """Example: filtering rows via `primitives.files.filter_files(...)`."""
 
     return '''
-# Example: File organization (rename/move)
-async def organize_project_files() -> str:
-    """Rename/move files using the File manager."""
-    # File-manager paths are typically root-relative to the active filesystem adapter.
-    # Avoid leading "/" unless you truly intend an absolute host path.
-    instruction = "Rename docs/notes.txt to docs/notes-2024.txt and move reports/q1.pdf to archive/q1.pdf."
-    handle = await primitives.files.organize(instruction)
-    return await handle.result()
+# Example: Filter rows from a file table
+async def get_recent_records(table_context: str) -> list:
+    """Get recent records matching a filter."""
+    rows = await primitives.files.filter_files(
+        context=table_context,
+        filter="created_date > '2024-01-01'",
+        columns=["id", "name", "created_date", "status"],
+        limit=50,
+    )
+    return rows
 '''
 
 
-def get_primitives_files_get_tools_example() -> str:
-    """Example: passing FileManager tools to functions that accept a tools parameter."""
+def get_primitives_files_search_example() -> str:
+    """Example: semantic search via `primitives.files.search_files(...)`."""
 
     return '''
-# primitives.files provides TWO interfaces:
-#
-# 1. DIRECT METHOD CALLS (use for your own data operations):
-#    storage = await primitives.files.describe(file_path="path/to/file.xlsx")
-#    result = await primitives.files.reduce(context=storage.tables[0].context_path, ...)
-#
-# 2. GET_TOOLS (use ONLY when passing to functions that accept `tools: FileTools`):
-#    tools = primitives.files.get_tools()
-#    result = await some_function(tools, other_args...)
+# Example: Semantic search over file data
+async def search_for_topic(table_context: str, query: str) -> list:
+    """Search for records semantically matching a query."""
+    hits = await primitives.files.search_files(
+        context=table_context,
+        references={"description": query},  # column → reference text for semantic matching
+        limit=10,
+    )
+    return hits
+'''
 
-async def call_function_with_tools(target_fn, **kwargs):
-    """When a function signature shows `tools: FileTools`, pass get_tools()."""
-    tools = primitives.files.get_tools()
-    return await target_fn(tools, **kwargs)
+
+def get_primitives_files_visualize_example() -> str:
+    """Example: generating charts via `primitives.files.visualize(...)`."""
+
+    return '''
+# Example: Generate a chart from file data
+async def plot_distribution(table_context: str) -> str:
+    """Generate a bar chart showing distribution by category."""
+    result = await primitives.files.visualize(
+        tables=table_context,
+        plot_type="bar",
+        x_axis="category",
+        y_axis="amount",
+        metric="sum",
+        title="Amount by Category",
+    )
+    # result contains the plot URL
+    return result.get("url") if isinstance(result, dict) else result
 '''
 
 
@@ -570,7 +788,7 @@ async def research_latest_news() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 5. Mixed Examples (Browser + Primitives)
+# 5. Mixed Examples (Computer + Primitives)
 # ---------------------------------------------------------------------------
 
 
@@ -608,16 +826,16 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
 
 
 def get_mixed_concurrent_example() -> str:
-    """Example: concurrent browser and state manager operations."""
+    """Example: concurrent computer and state manager operations."""
 
     return '''
-# Example: Concurrent browser + state manager operations
+# Example: Concurrent computer + state manager operations
 import asyncio
 
 async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
     """Gather contact info from multiple sources concurrently."""
     # Start both operations concurrently
-    contact_handle = primitives.contacts.ask(f"Find {name}'s email and phone")
+    contact_handle = await primitives.contacts.ask(f"Find {name}'s email and phone")
 
     # Navigate and extract company info in parallel
     async def fetch_company_info():
@@ -644,8 +862,8 @@ def get_mixed_interjection_routing_example() -> str:
 # Example: Interjection routing to in-flight handles
 async def search_multiple_sources_with_correction(query: str) -> dict:
     # Start multiple concurrent searches
-    contact_handle = primitives.contacts.ask(query)
-    transcript_handle = primitives.transcripts.ask(query)
+    contact_handle = await primitives.contacts.ask(query)
+    transcript_handle = await primitives.transcripts.ask(query)
 
     # If user interjects with clarification (e.g., "I meant David Smith"),
     # the Actor's pane can broadcast the interjection to all in-flight handles
@@ -843,10 +1061,10 @@ def get_verification_strategic_failure_example() -> str:
 """.strip()
 
 
-def get_browser_verification_extraction_example() -> str:
-    """Verification example: browser extraction (browser environment)."""
+def get_computer_verification_extraction_example() -> str:
+    """Verification example: extraction (computer environment)."""
     return """
-### Browser Verification Example: extraction
+### Computer Verification Example: extraction
 - **Goal**: "Find the product price."
 - **Intent**: `extract_price()`
 - **Agent Trace**:
@@ -860,10 +1078,10 @@ def get_browser_verification_extraction_example() -> str:
 """.strip()
 
 
-def get_browser_verification_multistep_example() -> str:
-    """Verification example: browser multi-step success (browser environment)."""
+def get_computer_verification_multistep_example() -> str:
+    """Verification example: multi-step success (computer environment)."""
     return """
-### Browser Verification Example: multistep ok
+### Computer Verification Example: multistep ok
 - **Goal**: "Submit the signup form."
 - **Intent**: `submit_signup(email='a@corp.com')`
 - **Agent Trace**:
@@ -914,7 +1132,7 @@ def get_primitives_verification_cross_manager_example() -> str:
 
 
 def get_mixed_verification_browse_persist_example() -> str:
-    """Verification example: mixed browse + persist success (browser + primitives)."""
+    """Verification example: mixed browse + persist success (computer + primitives)."""
     return """
 ### Mixed Verification Example: browse + persist ok
 - **Goal**: "Find support email on the site and save it to Knowledge."
@@ -926,13 +1144,13 @@ def get_mixed_verification_browse_persist_example() -> str:
 - **Evidence**: Screenshot shows the extracted email; update return value indicates persistence succeeded.
 - **Decision**:
 ```json
-{"status": "ok", "reason": "The browser evidence matches the extracted email, and the state-manager update confirms it was saved."}
+{"status": "ok", "reason": "The computer evidence matches the extracted email, and the state-manager update confirms it was saved."}
 ```
 """.strip()
 
 
 def get_verification_examples_for_environments(
-    has_browser: bool,
+    has_computer: bool,
     has_primitives: bool,
 ) -> str:
     """Return verification examples appropriate for the given environment combination."""
@@ -949,13 +1167,13 @@ def get_verification_examples_for_environments(
         ),
     )
 
-    if has_browser:
+    if has_computer:
         sections.append(
-            "### Browser Verification Examples\n"
+            "### Computer Verification Examples\n"
             + "\n\n".join(
                 [
-                    get_browser_verification_extraction_example().strip(),
-                    get_browser_verification_multistep_example().strip(),
+                    get_computer_verification_extraction_example().strip(),
+                    get_computer_verification_multistep_example().strip(),
                 ],
             ),
         )
@@ -971,7 +1189,7 @@ def get_verification_examples_for_environments(
             ),
         )
 
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         sections.append(
             "### Mixed Verification Examples\n"
             + get_mixed_verification_browse_persist_example().strip(),
@@ -981,46 +1199,46 @@ def get_verification_examples_for_environments(
 
 
 # ---------------------------------------------------------------------------
-# 7. Example Tags (for filtering by manager/capability)
+# 7. Example Function Map (for ToolSurfaceRegistry)
 # ---------------------------------------------------------------------------
 
-# Maps manager names to their associated example function names
-EXAMPLE_TAGS: dict[str, list[str]] = {
-    "contacts": [
-        "get_primitives_contact_ask_example",
-        "get_primitives_contact_update_example",
-    ],
-    "tasks": [
-        "get_primitives_task_execute_example",
-        "get_primitives_task_lookup_and_execute_example",
-        "get_primitives_dynamic_methods_example",
-    ],
-    "knowledge": [
-        "get_primitives_cross_manager_example",
-    ],
-    "files": [
-        "get_primitives_files_ask_example",
-        "get_primitives_files_organize_example",
-        "get_primitives_files_get_tools_example",
-    ],
-    "guidance": [
-        "get_primitives_guidance_ask_example",
-        "get_primitives_guidance_update_example",
-    ],
-    "web": [
-        "get_primitives_web_ask_example",
-    ],
-    "core": [
-        "get_library_function_reuse_example",
-        "get_library_function_composition_example",
-        "get_library_function_adaptation_example",
-        "get_confidence_based_stubbing_example",
-        "get_structured_output_example",
-        "get_error_handling_example",
-        "get_handle_steering_example",
-        "get_clarification_example",
-    ],
-}
+
+def get_example_function_map() -> dict[str, callable]:
+    """Get a mapping of example function names to their callables.
+
+    This is used by ToolSurfaceRegistry.prompt_examples() to generate
+    examples for exposed managers.
+    """
+    return {
+        # Contacts
+        "get_primitives_contact_ask_example": get_primitives_contact_ask_example,
+        "get_primitives_contact_update_example": get_primitives_contact_update_example,
+        # Tasks
+        "get_primitives_task_execute_example": get_primitives_task_execute_example,
+        "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
+        # Knowledge
+        "get_primitives_knowledge_ask_example": get_primitives_cross_manager_example,
+        "get_primitives_knowledge_update_example": lambda: "",  # placeholder
+        # Transcripts
+        "get_primitives_transcript_ask_example": lambda: "",  # placeholder
+        # Files (using real FileManager primitives)
+        "get_primitives_files_describe_example": get_primitives_files_describe_example,
+        "get_primitives_files_reduce_example": get_primitives_files_reduce_example,
+        "get_primitives_files_filter_example": get_primitives_files_filter_example,
+        "get_primitives_files_search_example": get_primitives_files_search_example,
+        "get_primitives_files_visualize_example": get_primitives_files_visualize_example,
+        # Guidance
+        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
+        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
+        # Web
+        "get_primitives_web_ask_example": get_primitives_web_ask_example,
+        # Secrets
+        "get_primitives_secrets_ask_example": lambda: "",  # placeholder
+        "get_primitives_secrets_update_example": lambda: "",  # placeholder
+        # Data
+        "get_primitives_data_filter_example": lambda: "",  # placeholder
+        "get_primitives_data_reduce_example": lambda: "",  # placeholder
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1037,11 +1255,23 @@ def get_function_first_pattern_example() -> str:
 # BEFORE writing custom logic with raw primitives.
 #
 # Step 1 (JSON TOOL CALL): search for an existing function
-#   FunctionManager_search_functions(query="contacts prefer phone", n=5)
+# {
+#   "name": "FunctionManager_search_functions",
+#   "arguments": {"query": "contacts prefer phone", "n": 5}
+# }
 #
-# Step 2 (PYTHON): call the injected function by name (it becomes available automatically)
-#   result = await ask_contacts_question("Which of our contacts prefers phone contact?")
-#   print(result)
+# Step 2 (JSON TOOL CALL): execute with state_mode="stateful" (REQUIRED!)
+# {
+#   "name": "execute_code",
+#   "arguments": {
+#     "language": "python",
+#     "state_mode": "stateful",
+#     "code": "result = await ask_contacts_question('Which of our contacts prefers phone contact?')\nprint(result)"
+#   }
+# }
+#
+# IMPORTANT: You MUST use state_mode="stateful" because functions are injected into Session 0.
+# Using stateless creates a fresh session where the function is NOT available!
 #
 # If no function exists, THEN fall back to composing with primitives directly in Python.
 """
@@ -1051,7 +1281,7 @@ def get_function_first_anti_pattern_example() -> str:
     """Anti-pattern: skipping FunctionManager search when it exists (CodeAct style)."""
 
     return r"""
-# ❌ ANTI-PATTERN: Skipping FunctionManager when it's available
+# ❌ ANTI-PATTERN #1: Skipping FunctionManager when it's available
 #
 # DON'T do this:
 #   - immediately call raw primitives
@@ -1061,9 +1291,22 @@ def get_function_first_anti_pattern_example() -> str:
 #   handle = await primitives.contacts.ask("Which contacts prefer phone?")
 #   result = await handle.result()
 #
+# ❌ ANTI-PATTERN #2: Using stateless mode after FunctionManager search
+#
+# DON'T do this:
+# {
+#   "name": "execute_code",
+#   "arguments": {
+#     "language": "python",
+#     "state_mode": "stateless",
+#     "code": "result = await ask_contacts_question(...)"
+#   }
+# }
+# ERROR: NameError - function not available in fresh session!
+#
 # ✅ CORRECT:
 #   1) Call FunctionManager_search_functions(...) as a JSON tool call
-#   2) Call the injected function in Python (e.g. ask_contacts_question(...))
+#   2) Call execute_code with state_mode="stateful" and invoke the injected function
 """
 
 
@@ -1101,6 +1344,108 @@ def get_code_act_function_first_examples() -> str:
 
 
 # ---------------------------------------------------------------------------
+# 8b. Multi-language + multi-session execution examples (for CodeActActor)
+# ---------------------------------------------------------------------------
+
+
+def get_code_act_session_examples() -> str:
+    """Examples: using execute_code with sessions across Python + shell.
+
+    These examples are written in JSON tool-call form (not Python), because
+    `execute_code` is itself a tool call.
+    """
+
+    return r"""
+### Multi-Language + Multi-Session Execution (CodeActActor)
+
+**Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
+to preserve state across multiple tool calls.
+
+> **Reminder**: FunctionManager functions are injected into Session 0 — always use `state_mode="stateful"` to access them (see Critical Rules).
+
+#### Example A — Stateful shell session for repo navigation
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Create or reuse a persistent bash session for navigating the repo.",
+      "language": "bash",
+      "state_mode": "stateful",
+      "session_name": "repo_nav",
+      "code": "pwd && ls"
+    }
+  }]
+}
+```
+
+#### Example B — Continue the same shell session (cd persists)
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Continue in the same session so cwd is preserved.",
+      "language": "bash",
+      "state_mode": "stateful",
+      "session_name": "repo_nav",
+      "code": "cd unity && ls && git status -sb"
+    }
+  }]
+}
+```
+
+#### Example C — Stateful Python session for iterative work
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Use a stateful Python session so variables persist between calls.",
+      "language": "python",
+      "state_mode": "stateful",
+      "session_name": "analysis",
+      "code": "x = 41\nx += 1\nprint(x)"
+    }
+  }]
+}
+```
+
+#### Example D — Session discovery and inspection
+```json
+{
+  "tool_calls": [
+    { "name": "list_sessions", "arguments": {} },
+    {
+      "name": "inspect_state",
+      "arguments": {
+        "detail": "names",
+        "session_name": "analysis",
+        "language": "python"
+      }
+    }
+  ]
+}
+```
+
+#### Example E — Stateless execution (no persistence)
+```json
+{
+  "tool_calls": [{
+    "name": "execute_code",
+    "arguments": {
+      "thought": "Run a one-off command with no session/persistence.",
+      "language": "bash",
+      "state_mode": "stateless",
+      "code": "echo hello"
+    }
+  }]
+}
+```
+""".strip()
+
+
+# ---------------------------------------------------------------------------
 # 9. Helper Functions for Prompt Composition
 # ---------------------------------------------------------------------------
 
@@ -1130,24 +1475,30 @@ def get_code_act_pattern_examples() -> str:
 
     examples = [
         get_error_handling_example().strip(),
+        get_handle_mode_selection_example().strip(),
         get_clarification_example().strip(),
     ]
     return "\n\n".join(examples)
 
 
-def get_browser_examples() -> str:
-    """Get all browser-specific examples."""
+def get_computer_examples() -> str:
+    """Get all computer-specific examples."""
 
     examples = [
-        get_browser_navigation_example().strip(),
-        get_browser_multistep_example().strip(),
-        get_browser_screenshot_driven_example().strip(),
+        get_computer_navigation_example().strip(),
+        get_computer_multistep_example().strip(),
+        get_computer_screenshot_driven_example().strip(),
+        get_computer_session_execution_example().strip(),
+        get_computer_stateful_workflow_example().strip(),
+        get_computer_interactive_workflow_example().strip(),
     ]
     return "\n\n".join(examples)
 
 
 def get_primitives_examples(*, managers: set[str] | None = None) -> str:
     """Get state manager examples, optionally filtered by manager.
+
+    DEPRECATED: Use ToolSurfaceRegistry.prompt_examples(scope) instead.
 
     Args:
         managers: If provided, only include examples for these managers.
@@ -1156,37 +1507,22 @@ def get_primitives_examples(*, managers: set[str] | None = None) -> str:
     Returns:
         Formatted string with relevant examples.
     """
-    # Map function names to their callables
-    all_fns: dict[str, callable] = {
-        "get_primitives_contact_ask_example": get_primitives_contact_ask_example,
-        "get_primitives_contact_update_example": get_primitives_contact_update_example,
-        "get_primitives_cross_manager_example": get_primitives_cross_manager_example,
-        "get_primitives_task_lookup_and_execute_example": get_primitives_task_lookup_and_execute_example,
-        "get_primitives_task_execute_example": get_primitives_task_execute_example,
-        "get_primitives_dynamic_methods_example": get_primitives_dynamic_methods_example,
-        "get_primitives_files_ask_example": get_primitives_files_ask_example,
-        "get_primitives_files_organize_example": get_primitives_files_organize_example,
-        "get_primitives_files_get_tools_example": get_primitives_files_get_tools_example,
-        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
-        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
-        "get_primitives_web_ask_example": get_primitives_web_ask_example,
-    }
+    from unity.function_manager.primitives import (
+        PrimitiveScope,
+        VALID_MANAGER_ALIASES,
+        get_registry,
+    )
 
     if managers is None:
-        # Return all examples
-        return "\n\n".join(fn().strip() for fn in all_fns.values())
+        scope = PrimitiveScope.all_managers()
+    else:
+        # Filter to valid aliases only
+        valid = managers & VALID_MANAGER_ALIASES
+        if not valid:
+            return ""
+        scope = PrimitiveScope(scoped_managers=frozenset(valid))
 
-    # Filter by manager tags
-    included_fn_names: set[str] = set()
-    for mgr in managers:
-        included_fn_names.update(EXAMPLE_TAGS.get(mgr, []))
-
-    examples = []
-    for fn_name, fn in all_fns.items():
-        if fn_name in included_fn_names:
-            examples.append(fn().strip())
-
-    return "\n\n".join(examples)
+    return get_registry().prompt_examples(scope)
 
 
 def get_mixed_examples() -> str:
@@ -1201,7 +1537,7 @@ def get_mixed_examples() -> str:
 
 
 def get_examples_for_environments(
-    has_browser: bool,
+    has_computer: bool,
     has_primitives: bool,
     include_core: bool = True,
     *,
@@ -1210,7 +1546,7 @@ def get_examples_for_environments(
     """Get examples appropriate for the given environment combination.
 
     Args:
-        has_browser: Whether computer_primitives environment is active
+        has_computer: Whether computer_primitives environment is active
         has_primitives: Whether primitives environment is active
         include_core: Whether to include core patterns (default: True)
         managers: If provided, only include examples for these managers
@@ -1226,15 +1562,15 @@ def get_examples_for_environments(
             "### Core Patterns (Environment-Agnostic)\n" + get_core_pattern_examples(),
         )
 
-    if has_browser:
-        sections.append("### Browser Examples\n" + get_browser_examples())
+    if has_computer:
+        sections.append("### Computer Examples\n" + get_computer_examples())
 
     if has_primitives:
         sections.append(
             "### State Manager Examples\n" + get_primitives_examples(managers=managers),
         )
 
-    if has_browser and has_primitives:
+    if has_computer and has_primitives:
         sections.append("### Mixed-Mode Examples\n" + get_mixed_examples())
 
     return "\n\n".join(sections)

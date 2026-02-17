@@ -10,6 +10,7 @@ from ..common.prompt_helpers import (
     require_tools as _shared_require_tools,
     render_tools_block,
     clarification_top_sentence,
+    PromptParts,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 from ..common.business_context import BusinessContextPayload
@@ -50,7 +51,7 @@ def build_cross_tool_orchestration(tools: Dict[str, Callable]) -> str:
             "------------------------",
             "",
             "Discovery phase (ALWAYS start here):",
-            f"• `{describe_fname}` → get file_id, context paths, schemas (REQUIRED before filter/search/reduce)",
+            f"• `{describe_fname}` → get context paths and schemas (REQUIRED before filter/search/reduce)",
             f"• `{list_columns_fname}` → detailed column inspection for a specific context",
             "",
             "Retrieval phase (use context paths from describe):",
@@ -102,7 +103,7 @@ def build_file_manager_ask_about_file_prompt(
     *,
     include_activity: bool = True,
     business_payload: Optional[BusinessContextPayload] = None,
-) -> str:
+) -> PromptParts:
     """
     Build the focused system prompt for AdapterFileManager.ask_about_file.
 
@@ -123,86 +124,85 @@ def build_file_manager_ask_about_file_prompt(
         tools,
     )
 
-    # Assemble prompt using slot-filling pattern
-    parts: list[str] = []
+    # Assemble prompt using PromptParts for structured output
+    parts = PromptParts()
 
     # LAYER 1: Business role FIRST (primacy effect)
     if business_payload and business_payload.role_description:
-        parts.append(business_payload.role_description)
+        parts.add(business_payload.role_description)
     else:
-        parts.append(
+        parts.add(
             "You are an assistant specializing in analyzing the content of a specific file.",
         )
-    parts.append("")
-    parts.append(clarification_top_sentence(tools))
-    parts.append("")
+    parts.add(clarification_top_sentence(tools))
 
     # File-scoped focus guidance
-    parts.append(
+    parts.add(
         "Important: When calling tools, use the filename exactly as provided in the user message. Do not construct or modify file paths.",
     )
     if describe_fname:
-        parts.append(
+        parts.add(
             f"ALWAYS call `{describe_fname}` first to get exact context paths before using filter/search/reduce.",
+            separator=False,
         )
-    parts.append("")
 
     # LAYER 2: Generic capabilities block (slim)
-    parts.append(GENERIC_FILE_MANAGER_ASK_BLOCK)
-    parts.append("")
+    parts.add(GENERIC_FILE_MANAGER_ASK_BLOCK)
 
     # Structured extraction support
-    parts.append("Structured extraction")
-    parts.append("---------------------")
-    parts.append(
-        "• When a response_format is provided, return strictly the requested JSON schema (no prose, no extra keys).",
+    structured_extraction = "\n".join(
+        [
+            "Structured extraction",
+            "---------------------",
+            "• When a response_format is provided, return strictly the requested JSON schema (no prose, no extra keys).",
+            "• Use joins/search over content/tables contexts to collect only what is required to populate the schema.",
+        ],
     )
-    parts.append(
-        "• Use joins/search over content/tables contexts to collect only what is required to populate the schema.",
-    )
-    parts.append("")
+    parts.add(structured_extraction)
 
     # LAYER 3: Cross-tool orchestration (slim)
-    parts.append(build_cross_tool_orchestration(tools))
-    parts.append("")
+    parts.add(build_cross_tool_orchestration(tools))
 
-    parts.append(render_tools_block(tools))
-    parts.append("")
+    parts.add(render_tools_block(tools))
 
     # LAYER 4: Domain context (business-only, from payload)
     if business_payload:
         if business_payload.domain_rules:
-            parts.append("Domain context & data rules")
-            parts.append("---------------------------")
-            parts.append(business_payload.domain_rules)
-            parts.append("")
+            domain_block = "\n".join(
+                [
+                    "Domain context & data rules",
+                    "---------------------------",
+                    business_payload.domain_rules,
+                ],
+            )
+            parts.add(domain_block)
 
         data_overview = getattr(business_payload, "data_overview", None)
         if data_overview:
-            parts.append(data_overview)
-            parts.append("")
+            parts.add(data_overview)
 
         if business_payload.retrieval_hints:
-            parts.append(business_payload.retrieval_hints)
-            parts.append("")
+            parts.add(business_payload.retrieval_hints)
 
     # LAYER 5: Response guidelines (from payload or generic)
     if business_payload and business_payload.response_guidelines:
-        parts.append("Answering guidelines")
-        parts.append("--------------------")
-        parts.append(business_payload.response_guidelines)
-        parts.append("")
+        response_block = "\n".join(
+            [
+                "Answering guidelines",
+                "--------------------",
+                business_payload.response_guidelines,
+            ],
+        )
+        parts.add(response_block)
 
     # LAYER 6: Parallelism guidance
-    parts.append(parallelism_guidance())
-    parts.append("")
+    parts.add(parallelism_guidance())
 
-    # Runtime: Clarification guidance + timestamp
-    parts.append(clarification_guidance(tools))
-    parts.append("")
-    parts.append(f"Current UTC time is {now()}.")
+    # Runtime: Clarification guidance + timestamp (dynamic content)
+    parts.add(clarification_guidance(tools), static=False)
+    parts.add(f"Current UTC time is {now()}.", static=False)
 
-    return "\n".join(parts)
+    return parts
 
 
 def build_simulated_method_prompt(
@@ -217,6 +217,7 @@ def build_simulated_method_prompt(
     Optionally accepts business_payload for consistency with production builders.
     """
     import json
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     m = (method or "").lower()
 
@@ -242,7 +243,7 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
 
     return "\n".join(parts)

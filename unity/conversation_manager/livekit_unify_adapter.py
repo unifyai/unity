@@ -32,13 +32,14 @@ class UnifyLLM(llm.LLM):
     - Consistent routing through our standard LLM client
 
     Usage:
-        llm_model = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="none")
+        from unity.settings import SETTINGS
+        llm_model = UnifyLLM(model=SETTINGS.conversation.FAST_BRAIN_MODEL)
         session = AgentSession(llm=llm_model, ...)
     """
 
     def __init__(
         self,
-        model: str = "gpt-5-nano@openai",
+        model: str = "gpt-5-mini@openai",
         *,
         reasoning_effort: str | None = None,
         service_tier: str | None = None,
@@ -110,19 +111,19 @@ class UnifyLLMStream(llm.LLMStream):
     async def _run(self) -> None:
         """Stream responses from Unify and emit ChatChunk events."""
         # Convert LiveKit ChatContext to Unify message format
-        messages = []
-        system_message = None
+        messages: list[dict[str, str]] = []
+        system_messages: list[str] = []
 
         for item in self._chat_ctx.items:
-            if item.role == "system":
-                system_message = item.text_content
+            role = getattr(item, "role", None)
+            content = getattr(item, "text_content", None)
+            if role is None or not content:
+                continue
+
+            if role == "system":
+                system_messages.append(content)
             else:
-                messages.append(
-                    {
-                        "role": item.role,
-                        "content": item.text_content,
-                    },
-                )
+                messages.append({"role": role, "content": content})
 
         # Build client kwargs
         client_kwargs = dict(self._extra_kwargs)
@@ -132,13 +133,17 @@ class UnifyLLMStream(llm.LLMStream):
             client_kwargs["service_tier"] = self._service_tier
 
         # Create Unify client
-        client = new_llm_client(self._model, **client_kwargs)
+        client = new_llm_client(
+            self._model,
+            debug_marker="ConversationManager.livekit",
+            **client_kwargs,
+        )
         client.set_stream(True)
 
         # Stream the response
         generate_kwargs: dict[str, Any] = {}
-        if system_message:
-            generate_kwargs["system_message"] = system_message
+        if system_messages:
+            generate_kwargs["system_message"] = "\n\n".join(system_messages)
         if messages:
             generate_kwargs["messages"] = messages
         if self._temperature is not None:

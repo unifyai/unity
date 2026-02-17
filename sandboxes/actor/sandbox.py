@@ -3,19 +3,15 @@
 An interactive, steerable sandbox for running and testing Actor implementations.
 
 This sandbox serves as a sophisticated command-line environment to launch,
-monitor, and interact with any of the core actor classes (Hierarchical and
-CodeAct). It fully supports advanced interactive features like in-flight
-interjection, clarification, and steering commands.
+monitor, and interact with the CodeActActor. It fully supports advanced
+interactive features like in-flight interjection, clarification, and steering commands.
 
 Usage examples:
-    # CodeAct without browser (data analysis, state managers only)
-    python -m sandboxes.actor.sandbox --actor code_act --no-browser -p MyProject
+    # CodeAct without computer tools (data analysis, state managers only)
+    python -m sandboxes.actor.sandbox --actor code_act --no-computer -p MyProject
 
-    # CodeAct with browser automation
+    # CodeAct with web automation
     python -m sandboxes.actor.sandbox --actor code_act -p MyProject
-
-    # Hierarchical actor with browser
-    python -m sandboxes.actor.sandbox --actor hierarchical -p MyProject
 """
 
 from __future__ import annotations
@@ -26,7 +22,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 from datetime import datetime
-
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -49,7 +44,6 @@ from sandboxes.utils import (
 )
 from unity.actor.base import BaseActor
 from unity.actor.code_act_actor import CodeActActor
-from unity.actor.hierarchical_actor import HierarchicalActor
 
 LG = logging.getLogger("actor_sandbox")
 
@@ -81,19 +75,9 @@ def _create_actor(args) -> BaseActor:
     actor_choice = args.actor.lower()
     LG.info(f"Instantiating actor: {actor_choice}")
 
-    if actor_choice == "hierarchical":
-        if args.no_browser:
-            LG.warning(
-                "HierarchicalActor requires browser - ignoring --no-browser flag",
-            )
-        return HierarchicalActor(
-            headless=args.headless,
-            agent_server_url=args.agent_url,
-            computer_mode="magnitude",
-        )
-    elif actor_choice == "code_act":
-        if args.no_browser:
-            # No browser - just state managers via Primitives
+    if actor_choice == "code_act":
+        if args.no_computer:
+            # No computer tools - just state managers via Primitives
             from unity.actor.environments import StateManagerEnvironment
             from unity.function_manager.primitives import Primitives
             from unity.manager_registry import ManagerRegistry
@@ -113,11 +97,26 @@ def _create_actor(args) -> BaseActor:
                 function_manager=function_manager,
             )
         else:
-            # Full browser mode
-            return CodeActActor(
+            # Full computer mode (web/desktop)
+            from unity.actor.environments import (
+                ComputerEnvironment,
+                StateManagerEnvironment,
+            )
+            from unity.function_manager.primitives import (
+                ComputerPrimitives,
+                Primitives,
+            )
+
+            cp = ComputerPrimitives(
                 headless=args.headless,
                 agent_server_url=args.agent_url,
                 computer_mode="magnitude",
+            )
+            return CodeActActor(
+                environments=[
+                    ComputerEnvironment(cp),
+                    StateManagerEnvironment(),
+                ],
             )
     else:
         raise ValueError(f"Unknown actor type: {actor_choice}")
@@ -131,19 +130,19 @@ async def _main_async() -> None:
         "--actor",
         "-a",
         type=str,
-        choices=["hierarchical", "code_act"],
+        choices=["code_act"],
         default="code_act",
         help="Select the actor implementation to run.",
     )
     parser.add_argument(
-        "--no-browser",
+        "--no-computer",
         action="store_true",
-        help="Disable browser environment (CodeAct only - uses state managers only).",
+        help="Disable computer environment (CodeAct only - uses state managers only).",
     )
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run the browser in headless mode (no visible UI).",
+        help="Run the web view in headless mode (no visible UI).",
     )
     parser.add_argument(
         "--agent-url",
@@ -182,7 +181,7 @@ async def _main_async() -> None:
 
     # 2. Initialize the selected Actor
     actor = _create_actor(args)
-    mode_desc = "no-browser" if args.no_browser else "browser-enabled"
+    mode_desc = "no-computer" if args.no_computer else "computer-enabled"
     LG.info(f"Actor '{args.actor}' initialized successfully ({mode_desc}).")
     print(f"\n🎭 Actor '{args.actor}' initialized ({mode_desc})")
 
@@ -269,7 +268,7 @@ async def _main_async() -> None:
                 print(f"❌ An unexpected error occurred: {e}")
 
     finally:
-        # Ensure resources like the browser are closed gracefully
+        # Ensure resources like the computer backend are closed gracefully
         print("Shutting down actor resources...")
         if hasattr(actor, "close") and asyncio.iscoroutinefunction(actor.close):
             await actor.close()

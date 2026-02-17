@@ -257,9 +257,7 @@ class BaseFileManager(BaseStateManager):
     @abstractmethod
     def describe(
         self,
-        *,
-        file_path: Optional[str] = None,
-        file_id: Optional[int] = None,
+        file_path: str,
     ) -> Any:
         """
         Return a complete storage representation of a file in the Unify backend.
@@ -273,14 +271,8 @@ class BaseFileManager(BaseStateManager):
 
         Parameters
         ----------
-        file_path : str, optional
+        file_path : str
             The filesystem path of the file as used in FileRecords.
-            Either file_path or file_id must be provided.
-
-        file_id : int, optional
-            The stable unique identifier from FileRecords. Either file_path or
-            file_id must be provided. Using file_id is preferred when available
-            as it's more efficient and survives file renames.
 
         Returns
         -------
@@ -302,11 +294,6 @@ class BaseFileManager(BaseStateManager):
             - **has_document** (bool): Quick check if /Content exists.
             - **has_tables** (bool): Quick check if any /Tables exist.
 
-        Raises
-        ------
-        ValueError
-            If neither file_path nor file_id is provided, or if the file is not found.
-
         Usage Examples
         --------------
         Basic discovery by file path:
@@ -316,39 +303,20 @@ class BaseFileManager(BaseStateManager):
         File ID: 42
         >>> print(f"Has tables: {storage.has_tables}")
         Has tables: True
-        >>> print(f"Table names: {storage.table_names}")
-        Table names: ['Sheet1']
 
         Get context path for querying:
 
         >>> storage = file_manager.describe(file_path="/reports/Q4.csv")
-        >>> # Use the exact context path from describe()
         >>> results = file_manager.filter_files(
         ...     context=storage.tables[0].context_path,
         ...     filter="revenue > 1000000",
         ...     columns=["region", "revenue"]
         ... )
 
-        Check schema before building queries:
-
-        >>> storage = file_manager.describe(file_path="/docs/report.pdf")
-        >>> if storage.has_document:
-        ...     print("Searchable columns:", storage.document.column_schema.searchable_columns)
-        ...     # Use semantic search on document content
-        ...     results = file_manager.search_files(
-        ...         context=storage.document.context_path,
-        ...         references="quarterly performance metrics"
-        ...     )
-
-        Describe by file_id (faster, no resolution needed):
-
-        >>> storage = file_manager.describe(file_id=42)
-
         Anti-patterns
         -------------
         - WRONG: Guessing context paths without calling describe()
 
-          >>> # Don't do this - path format may vary
           >>> filter_files(context="Files/Local/reports/Q4.csv/Tables/Sheet1")
 
           CORRECT: Always use describe() to get exact paths
@@ -358,8 +326,7 @@ class BaseFileManager(BaseStateManager):
 
         - WRONG: Assuming all files have both document and tables
 
-          >>> # Will fail if file has no tables
-          >>> storage.tables[0].context_path
+          >>> storage.tables[0].context_path  # Will fail if no tables
 
           CORRECT: Check has_tables/has_document first
 
