@@ -18,6 +18,7 @@ import unify
 from tests.conversation_manager.cm_helpers import filter_events_by_type
 from unity.conversation_manager.events import (
     ActorHandleStarted,
+    ActorNotification,
     ActorResult,
     ActorClarificationRequest,
     Event,
@@ -229,6 +230,24 @@ async def inject_actor_clarification_request(
 
     cm = cm_driver.cm
     evt = ActorClarificationRequest(handle_id=handle_id, query=query, call_id=call_id)
+    await EventHandler.handle_event(
+        evt,
+        cm,
+        is_voice_call=cm.call_manager.uses_realtime_api,
+    )
+
+
+async def inject_actor_notification(
+    cm_driver: Any,
+    *,
+    handle_id: int,
+    response: str,
+) -> None:
+    """Deterministically apply an ActorNotification to CM state."""
+    from unity.conversation_manager.domains.event_handlers import EventHandler
+
+    cm = cm_driver.cm
+    evt = ActorNotification(handle_id=handle_id, response=response)
     await EventHandler.handle_event(
         evt,
         cm,
