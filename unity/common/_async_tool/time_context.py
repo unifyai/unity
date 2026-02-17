@@ -175,7 +175,7 @@ class TimeContext:
                 started = f"+{tool.started_offset_secs:.1f}s"
                 duration = f"{tool.duration_secs:.2f}s"
                 lines.append(
-                    f"| {tool.call_id} | {tool.name} | {started} | {duration} |",
+                    f"| {tool.call_id} | {tool.name[:32]} | {started} | {duration} |",
                 )
 
         return "\n".join(lines)
