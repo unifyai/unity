@@ -1024,6 +1024,9 @@ class Renderer:
 
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tz_block_line}"
 
+        if isinstance(message, GuidanceMessage):
+            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
+
         # Simple Message (SMS, phone call utterances)
         # Show timezone info for the contact
         tz_block_line = ""
