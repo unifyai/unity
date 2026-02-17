@@ -990,6 +990,11 @@ def start_async_tool_loop(
         setattr(task, "task_info", {})  # asyncio.Task -> ToolCallMetadata
         setattr(task, "clarification_channels", {})  # call_id -> (up_q, down_q)
         setattr(task, "get_ask_tools", lambda: {})  # snapshot of ask_* dynamic tools
+        setattr(
+            task,
+            "get_completed_tool_metadata",
+            lambda: {},
+        )  # completed tool metadata with handle refs
     except Exception:
         pass
 
