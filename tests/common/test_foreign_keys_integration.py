@@ -843,7 +843,7 @@ def test_delete_exchange_cascades_messages():
     )
 
     # Log first message (creates exchange)
-    exchange_id = tm.log_first_message_in_new_exchange(
+    exchange_id, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": "sms_message",
             "sender_id": alice_id,

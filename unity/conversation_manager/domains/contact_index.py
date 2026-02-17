@@ -38,6 +38,7 @@ class Message(CommsMessage):
     role: str  # "user" or "assistant"
     message_id: int = field(default=0, compare=False)
     screenshots: list[str] = field(default_factory=list, compare=False)
+    image_ids: list[int] = field(default_factory=list, compare=False)
 
 
 @dataclass

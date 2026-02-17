@@ -1036,6 +1036,54 @@ class TestContactIndex:
         assert "Screenshots/User/" in msg.screenshots[0]
         assert "Screenshots/Assistant/" in msg.screenshots[1]
 
+    def test_message_image_ids_field_defaults_empty(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Message.image_ids defaults to an empty list."""
+        contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello",
+        )
+        msg = contact_index.global_thread[0].message
+        assert msg.image_ids == []
+
+    def test_message_image_ids_mutable_after_creation(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Image IDs can be attached to a Message after it is created."""
+        contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Click the button",
+        )
+        msg = contact_index.global_thread[0].message
+        msg.image_ids.extend([101, 202])
+        assert msg.image_ids == [101, 202]
+
+    def test_cm_to_tm_message_id_mapping(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """The _cm_to_tm_message_ids mapping can store and retrieve cm->tm links."""
+        mapping: dict[int, int] = {}
+        mid = contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello",
+        )
+        mapping[mid] = 9999
+        assert mapping[mid] == 9999
+        assert mapping.get(mid + 1) is None
+
 
 # =============================================================================
 # Tool name length guarantee tests

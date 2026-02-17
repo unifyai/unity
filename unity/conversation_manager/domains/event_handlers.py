@@ -277,7 +277,6 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         "event",
         f"Publishing transcript: {event.__class__.__name__}",
     )
-    await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -297,6 +296,13 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         thread_name=medium,
         message_content=event.content,
         role=role,
+    )
+
+    await managers_utils.queue_operation(
+        managers_utils.log_message,
+        cm,
+        event,
+        cm_message_id=message_id,
     )
 
     if role == "user":

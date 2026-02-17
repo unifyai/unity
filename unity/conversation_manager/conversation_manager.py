@@ -192,6 +192,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
+        # mapping from local CM message_id to backend TM message_id,
+        # populated by log_message() for post-hoc screenshot image updates.
+        self._cm_to_tm_message_ids: dict[int, int] = {}
 
         # recently-published guidance content for redundancy detection
         self._recent_guidance: deque[str] = deque(maxlen=5)
@@ -693,20 +696,81 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # by filepath for programmatic operations (OCR, comparison, etc.).
         screenshot_paths = [_save_screenshot(s) for s in screenshots]
 
-        # Attach saved filepaths to the corresponding Message objects so they
-        # persist in the rendered conversation history across slow brain turns.
+        # Register screenshots with ImageManager and attach filepaths + image_ids
+        # to the corresponding Message objects in the global thread.
+        image_ids: list[int] = []
         if screenshots:
+            # Register with backend to get persistent image_ids (auto-caption enabled).
+            try:
+                from unity.manager_registry import ManagerRegistry
+
+                image_manager = ManagerRegistry.get_image_manager()
+                items = [
+                    {"data": entry.b64, "timestamp": entry.timestamp}
+                    for entry in screenshots
+                ]
+                image_ids = await asyncio.to_thread(
+                    image_manager.add_images,
+                    items,
+                    synchronous=True,
+                )
+            except Exception as e:
+                self._session_logger.warning(
+                    "screenshot_registration",
+                    f"ImageManager registration failed, skipping: {e}",
+                )
+                image_ids = []
+
+            # Build per-message groupings for filepaths, image_ids, and TM refs.
             msg_to_paths: dict[int, list[str]] = {}
-            for entry, path in zip(screenshots, screenshot_paths):
-                if entry.message_id is not None:
-                    msg_to_paths.setdefault(entry.message_id, []).append(path)
+            msg_to_image_ids: dict[int, list[int]] = {}
+            msg_to_image_refs: dict[int, list[dict]] = {}
+            source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
+            for i, (entry, path) in enumerate(zip(screenshots, screenshot_paths)):
+                if entry.message_id is None:
+                    continue
+                mid = entry.message_id
+                msg_to_paths.setdefault(mid, []).append(path)
+                if i < len(image_ids):
+                    img_id = image_ids[i]
+                    msg_to_image_ids.setdefault(mid, []).append(img_id)
+                    label = source_labels.get(entry.source, "Screenshot")
+                    msg_to_image_refs.setdefault(mid, []).append(
+                        {
+                            "raw_image_ref": {"image_id": img_id},
+                            "annotation": f"{label} -- '{entry.utterance}'",
+                        },
+                    )
+
+            # Annotate CM Message objects with filepaths and image_ids.
             if msg_to_paths:
                 for gte in self.contact_index.global_thread:
                     msg = gte.message
                     if isinstance(msg, Message) and msg.message_id in msg_to_paths:
                         msg.screenshots.extend(msg_to_paths.pop(msg.message_id))
+                        if msg.message_id in msg_to_image_ids:
+                            msg.image_ids.extend(
+                                msg_to_image_ids.pop(msg.message_id),
+                            )
                     if not msg_to_paths:
                         break
+
+            # Post-hoc update TM messages with AnnotatedImageRefs.
+            if msg_to_image_refs and self.transcript_manager is not None:
+                for cm_msg_id, refs in msg_to_image_refs.items():
+                    tm_msg_id = self._cm_to_tm_message_ids.get(cm_msg_id)
+                    if tm_msg_id is not None:
+                        try:
+                            await asyncio.to_thread(
+                                self.transcript_manager.update_message_images,
+                                tm_msg_id,
+                                refs,
+                            )
+                        except Exception as e:
+                            self._session_logger.warning(
+                                "screenshot_tm_update",
+                                f"TM image update failed for msg {tm_msg_id}: {e}",
+                            )
 
         self.snapshot()
         brain_spec = build_brain_spec(
