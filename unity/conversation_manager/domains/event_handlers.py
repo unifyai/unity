@@ -416,6 +416,31 @@ async def _(
     await cm.request_llm_run(delay=0, cancel_running=True)
 
 
+@EventHandler.register(RecordingReady)
+async def _(
+    event: RecordingReady,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    name = event.conference_name
+    exchanges = cm.transcript_manager.filter_exchanges(
+        filter=f'metadata["conference_name"] == "{name}" '
+        f'or metadata["room_name"] == "{name}"',
+    )
+    if exchanges:
+        cm.transcript_manager.update_exchange_metadata(
+            exchanges[0].exchange_id,
+            {"recording_url": event.recording_url},
+        )
+        print(
+            f"[RecordingReady] Stored recording_url on exchange "
+            f"{exchanges[0].exchange_id} for {name}",
+        )
+    else:
+        print(f"[RecordingReady] No exchange found for conference_name={name}")
+
+
 @EventHandler.register(
     (
         ActorResponse,

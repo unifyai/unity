@@ -579,6 +579,16 @@ class CommsManager:
                 except Exception as e:
                     print(f"Error processing pre-hire logs: {e}")
                     message.nack()
+            elif thread == "recording_ready":
+                recording_event = RecordingReady(
+                    conference_name=event.get("conference_name", ""),
+                    recording_url=event.get("recording_url", ""),
+                )
+                self._publish_from_callback(
+                    "app:comms:recording_ready",
+                    recording_event.to_json(),
+                )
+                message.ack()
             elif "call" in thread or "meet" in thread:
                 try:
                     # Get contacts for call routing

@@ -215,6 +215,16 @@ class UnifyMeetEnded(Event):
 
 
 @dataclass
+class RecordingReady(Event):
+    """A call/meet recording has been processed and is available in GCS."""
+
+    topic: ClassVar[str | None] = "app:comms:recording_ready"
+
+    conference_name: str
+    recording_url: str
+
+
+@dataclass
 class SMSReceived(Event):
     topic: ClassVar[str | None] = "app:comms:msg_message"
 
