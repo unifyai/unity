@@ -1050,8 +1050,12 @@ class TestInactivityTimeout:
 class TestFastBrainGuidanceFlow:
     """Coverage for guidance delivery in the TTS fast brain path."""
 
-    async def test_tts_guidance_reaches_agent_generation_context(self, monkeypatch):
-        """Guidance should be injected into the chat context used for generation."""
+    async def test_notify_only_guidance_injected_without_triggering_speech(
+        self,
+        monkeypatch,
+    ):
+        """Guidance with should_speak=False injects into chat context but does
+        NOT trigger session.say() or generate_reply()."""
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
 
@@ -1106,6 +1110,9 @@ class TestFastBrainGuidanceFlow:
                 self.current_agent = None
                 self._events = {}
                 self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
                 fake_session_holder["session"] = self
 
             def on(self, event_name):
@@ -1120,6 +1127,10 @@ class TestFastBrainGuidanceFlow:
 
             def generate_reply(self, **kwargs):
                 self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
         class _FakeAssistant:
@@ -1188,10 +1199,14 @@ class TestFastBrainGuidanceFlow:
 
         await call_script.entrypoint(_FakeJobContext())
 
+        session = fake_session_holder["session"]
+        baseline_reply_calls = session.generate_reply_calls
+
+        # Send notify-only guidance (should_speak=False, no response_text)
         guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
         guidance_cb({"payload": {"content": "No, there is no contact named Bob."}})
 
-        session = fake_session_holder["session"]
+        # Notification should be in both chat contexts
         mirror_texts = [
             item.text_content or ""
             for item in session._chat_ctx.items
@@ -1205,6 +1220,14 @@ class TestFastBrainGuidanceFlow:
             if getattr(item, "type", None) == "message"
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
+
+        # Neither say() nor generate_reply() should have been triggered
+        assert (
+            len(session.say_calls) == 0
+        ), "Notify-only guidance must NOT trigger session.say()."
+        assert (
+            session.generate_reply_calls == baseline_reply_calls
+        ), "Notify-only guidance must NOT trigger generate_reply()."
 
     async def test_unify_llm_preserves_base_system_prompt_with_notification(
         self,
@@ -1445,3 +1468,189 @@ class TestFastBrainGuidanceFlow:
             "via session.say() after the agent settles to listening."
         )
         assert session.say_calls[0] == "No, there's no contact named Bob."
+
+    async def test_queued_speech_waits_for_agent_thinking_and_speaking_cycle(
+        self,
+        monkeypatch,
+    ):
+        """Guidance arriving while the agent is thinking/speaking should wait
+        for the full cycle to complete before session.say() fires."""
+        from livekit.agents import llm
+        from unity.conversation_manager.medium_scripts import call as call_script
+
+        contact = {
+            "contact_id": 2,
+            "first_name": "Caller",
+            "surname": "Example",
+            "phone_number": "+15550100002",
+            "email_address": "caller@example.com",
+        }
+        boss = {
+            "contact_id": 1,
+            "first_name": "Manager",
+            "surname": "Example",
+            "phone_number": "+15550100001",
+            "email_address": "manager@example.com",
+        }
+
+        class _ImmediateAwaitable:
+            def __await__(self):
+                async def _done():
+                    return None
+
+                return _done().__await__()
+
+        class _FakeRoom:
+            def on(self, *args, **kwargs):
+                return lambda fn: fn
+
+        class _FakeJobContext:
+            def __init__(self):
+                self.room = _FakeRoom()
+
+            async def connect(self):
+                return None
+
+        class _FakeEventBroker:
+            def __init__(self):
+                self.callbacks = {}
+
+            def register_callback(self, channel, handler):
+                self.callbacks[channel] = handler
+
+            async def publish(self, channel, message):
+                return 1
+
+        fake_session_holder = {}
+
+        class _FakeSession:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.current_agent = None
+                self._events = {}
+                self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
+                fake_session_holder["session"] = self
+
+            def on(self, event_name):
+                def _decorator(fn):
+                    self._events[event_name] = fn
+                    return fn
+
+                return _decorator
+
+            async def start(self, room, agent, room_input_options=None):
+                self.current_agent = agent
+
+            def generate_reply(self, **kwargs):
+                self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
+                return _ImmediateAwaitable()
+
+        class _FakeAssistant:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.call_received = True
+
+            def set_call_received(self):
+                self.call_received = True
+
+        async def _noop_async(*args, **kwargs):
+            return None
+
+        async def _noop_end_call():
+            return None
+
+        fake_broker = _FakeEventBroker()
+        fake_session_details = SimpleNamespace(
+            populate_from_env=lambda: None,
+            voice=SimpleNamespace(provider="cartesia", id=""),
+            voice_call=SimpleNamespace(
+                outbound=False,
+                channel="meet",
+                contact_json=json.dumps(contact),
+                boss_json=json.dumps(boss),
+            ),
+            assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+        )
+
+        monkeypatch.setattr(call_script, "event_broker", fake_broker)
+        monkeypatch.setattr(call_script, "SESSION_DETAILS", fake_session_details)
+        monkeypatch.setattr(call_script, "AgentSession", _FakeSession)
+        monkeypatch.setattr(call_script, "Assistant", _FakeAssistant)
+        monkeypatch.setattr(call_script, "UnifyLLM", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            call_script,
+            "build_voice_agent_prompt",
+            lambda **kwargs: SimpleNamespace(flatten=lambda: "system prompt"),
+        )
+        monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_started", _noop_async)
+        monkeypatch.setattr(
+            call_script,
+            "create_end_call",
+            lambda *args, **kwargs: _noop_end_call,
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_inactivity_timeout",
+            lambda end_call: (lambda: None),
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_participant_disconnect_handler",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(call_script, "RoomInputOptions", lambda **kwargs: object())
+        monkeypatch.setattr(call_script, "EnglishModel", lambda: object())
+        monkeypatch.setattr(call_script.cartesia, "TTS", lambda **kwargs: object())
+        monkeypatch.setattr(call_script.elevenlabs, "TTS", lambda **kwargs: object())
+        if hasattr(call_script, "noise_cancellation"):
+            monkeypatch.setattr(call_script.noise_cancellation, "BVC", lambda: object())
+
+        monkeypatch.setattr(call_script, "STT", object())
+        monkeypatch.setattr(call_script, "VAD", object())
+
+        await call_script.entrypoint(_FakeJobContext())
+
+        session = fake_session_holder["session"]
+        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        agent_state_cb = session._events["agent_state_changed"]
+
+        # Simulate agent in "thinking" state (processing a user turn)
+        session.agent_state = "thinking"
+
+        # Guidance arrives while agent is thinking
+        guidance_cb(
+            {
+                "payload": {
+                    "content": "The meeting is at 3pm.",
+                    "response_text": "It's at 3pm.",
+                    "should_speak": True,
+                },
+            },
+        )
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire while agent is thinking."
+
+        # Agent starts speaking (its reply to the user)
+        agent_state_cb(SimpleNamespace(new_state="speaking"))
+        session.agent_state = "speaking"
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire while agent is speaking."
+
+        # Agent finishes speaking → transitions to listening
+        session.agent_state = "listening"
+        agent_state_cb(SimpleNamespace(new_state="listening"))
+
+        assert (
+            len(session.say_calls) == 1
+        ), "Queued speech should fire after agent returns to listening."
+        assert session.say_calls[0] == "It's at 3pm."

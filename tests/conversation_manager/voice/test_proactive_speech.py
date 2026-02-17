@@ -320,7 +320,8 @@ class TestProactiveSpeechLoop:
         mock_cm.schedule_proactive_speech.assert_not_called()
 
     async def test_loop_publishes_guidance_when_should_speak(self, mock_cm):
-        """The loop publishes call_guidance when decision says to speak."""
+        """The loop publishes a CallGuidance event with should_speak=True and
+        response_text so the fast brain speaks it via session.say()."""
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
@@ -357,8 +358,13 @@ class TestProactiveSpeechLoop:
         assert guidance_call is not None
         channel, message = guidance_call.args
         assert channel == "app:call:call_guidance"
+
+        # Proactive speech publishes a CallGuidance event (not raw JSON)
         data = json.loads(message)
-        assert data["content"] == "Still with you!"
+        payload = data["payload"]
+        assert payload["content"] == "Still with you!"
+        assert payload["response_text"] == "Still with you!"
+        assert payload["should_speak"] is True
 
     async def test_loop_records_message_in_contact_index(self, mock_cm):
         """The loop records the proactive message in contact_index."""
