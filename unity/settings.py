@@ -93,6 +93,16 @@ class ProductionSettings(BaseSettings):
     EVENTBUS_PUBLISHING_ENABLED: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
+    # EventBus Pub/Sub Streaming (Live Actions)
+    # ─────────────────────────────────────────────────────────────────────────
+    # When enabled, EventBus.publish() also streams ManagerMethod and ToolLoop
+    # events to the assistant's GCP Pub/Sub topic with thread="action_event".
+    # This enables real-time frontend rendering of the agent's activity tree
+    # without polling Orchestra. Requires GCP credentials and a provisioned
+    # Pub/Sub topic. Disabled by default; enable in production deployments.
+    EVENTBUS_PUBSUB_STREAMING: bool = False
+
+    # ─────────────────────────────────────────────────────────────────────────
     # OpenTelemetry Tracing
     # ─────────────────────────────────────────────────────────────────────────
     # Master switch for OTel tracing.
@@ -178,6 +188,7 @@ class ProductionSettings(BaseSettings):
         "ASYNCIO_DEBUG_VERBOSE",
         "DEMO_MODE",
         "EVENTBUS_PUBLISHING_ENABLED",
+        "EVENTBUS_PUBSUB_STREAMING",
         "PYTEST_LOG_TO_FILE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
