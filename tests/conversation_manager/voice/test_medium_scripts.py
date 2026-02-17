@@ -1296,7 +1296,7 @@ class TestFastBrainGuidanceFlow:
 
         class _FakeRoom:
             def on(self, *args, **kwargs):
-                return None
+                return lambda fn: fn
 
         class _FakeJobContext:
             def __init__(self):
