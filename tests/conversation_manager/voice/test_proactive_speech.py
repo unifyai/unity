@@ -7,24 +7,9 @@ Integration tests for the proactive speech system in ConversationManager.
 Tests cover:
 1. schedule_proactive_speech() - scheduling behavior, mode restrictions
 2. cancel_proactive_speech() - cancellation logic, edge cases
-3. _proactive_speech_loop() - main loop behavior, decision flow, adaptive wait
+3. _proactive_speech_loop() - main loop behavior, decision flow
 4. ProactiveSpeech.decide() - LLM decision making with real model calls
-5. Event handler integration - verifying handlers cancel proactive speech appropriately
-
-## Test Categories
-
-### Unit Tests (mocked dependencies)
-- Schedule/cancel mechanics
-- Mode restrictions
-- Task lifecycle management
-
-### Integration Tests (real LLM, mocked timers)
-- Decision making with conversation context
-- Adaptive wait logic
-- Event broker publishing
-
-### Eval Tests (real LLM)
-- Decision quality with realistic transcripts
+5. Event handler integration - verifying handlers reset/cancel proactive speech
 """
 
 from __future__ import annotations
@@ -332,10 +317,7 @@ class TestProactiveSpeechLoop:
             ),
         ):
             try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
+                await ConversationManager._proactive_speech_loop(mock_cm)
             except asyncio.CancelledError:
                 pass
 
@@ -381,10 +363,7 @@ class TestProactiveSpeechLoop:
             ),
         ):
             try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
+                await ConversationManager._proactive_speech_loop(mock_cm)
             except asyncio.CancelledError:
                 pass
 
@@ -429,15 +408,14 @@ class TestProactiveSpeechDecideIntegration:
         decision = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
-            elapsed_seconds=5,
         )
 
         assert isinstance(decision, ProactiveDecision)
         assert isinstance(decision.should_speak, bool)
         assert isinstance(decision.delay, int)
 
-    async def test_decide_respects_short_elapsed_time(self):
-        """decide() should NOT speak when elapsed time is very short."""
+    async def test_decide_does_not_speak_after_question(self):
+        """decide() should NOT speak when assistant just asked a question."""
         ps = ProactiveSpeech()
 
         chat_history = [
@@ -449,36 +427,10 @@ class TestProactiveSpeechDecideIntegration:
         decision = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
-            elapsed_seconds=3,  # Very short - should not speak
         )
 
-        # Per the prompt, < 10s should always be should_speak=false
+        # The assistant just asked a question; the user is likely thinking.
         assert decision.should_speak is False
-
-    async def test_decide_speaks_on_long_silence(self):
-        """decide() should speak when elapsed time is very long after assistant's question."""
-        ps = ProactiveSpeech()
-
-        # Scenario: Assistant asked a question, user hasn't responded for 35 seconds
-        # This is clearly awkward silence that needs to be filled
-        chat_history = [
-            {
-                "role": "assistant",
-                "content": "What time works best for your appointment?",
-            },
-        ]
-        system_prompt = "You are a helpful assistant scheduling an appointment."
-
-        decision = await ps.decide(
-            chat_history=chat_history,
-            system_prompt=system_prompt,
-            elapsed_seconds=35,  # Very long - should speak
-        )
-
-        # Per the prompt, >= 30s should ABSOLUTELY speak
-        assert decision.should_speak is True
-        assert decision.content is not None
-        assert len(decision.content) > 0
 
     async def test_decide_handles_empty_history(self):
         """decide() handles empty chat history gracefully."""
@@ -487,24 +439,9 @@ class TestProactiveSpeechDecideIntegration:
         decision = await ps.decide(
             chat_history=[],
             system_prompt="You are a helpful assistant.",
-            elapsed_seconds=15,
         )
 
         assert isinstance(decision, ProactiveDecision)
-
-    async def test_decide_handles_exception_gracefully(self):
-        """decide() returns should_speak=False on exception."""
-        ps = ProactiveSpeech(model="nonexistent-model@fake-provider")
-
-        # This should fail but return a safe default
-        decision = await ps.decide(
-            chat_history=[{"role": "user", "content": "Hello"}],
-            system_prompt="Test",
-            elapsed_seconds=15,
-        )
-
-        # Should return safe default on error
-        assert decision.should_speak is False
 
 
 # =============================================================================
@@ -516,12 +453,12 @@ class TestProactiveSpeechDecideIntegration:
 class TestEventHandlerProactiveSpeechIntegration:
     """Tests verifying event handlers properly cancel proactive speech."""
 
-    async def test_inbound_phone_utterance_cancels_proactive(self, mock_cm):
-        """InboundPhoneUtterance event cancels proactive speech."""
+    async def test_inbound_phone_utterance_resets_proactive(self, mock_cm):
+        """InboundPhoneUtterance event resets (reschedules) proactive speech."""
         from unity.conversation_manager.events import InboundPhoneUtterance
         from unity.conversation_manager.domains.event_handlers import EventHandler
 
-        mock_cm.cancel_proactive_speech = AsyncMock()
+        mock_cm.schedule_proactive_speech = AsyncMock()
         mock_cm.interject_or_run = AsyncMock()
 
         event = InboundPhoneUtterance(
@@ -531,7 +468,7 @@ class TestEventHandlerProactiveSpeechIntegration:
 
         await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
 
-        mock_cm.cancel_proactive_speech.assert_called_once()
+        mock_cm.schedule_proactive_speech.assert_called_once()
 
     async def test_phone_call_ended_cancels_proactive(self, mock_cm):
         """PhoneCallEnded event cancels proactive speech."""
@@ -643,10 +580,7 @@ class TestProactiveSpeechE2E:
 
         # Restore the real schedule_proactive_speech (test fixtures mock it to no-op)
         cm.schedule_proactive_speech = (
-            lambda **kw: ConversationManager.schedule_proactive_speech(
-                cm,
-                **kw,
-            )
+            lambda: ConversationManager.schedule_proactive_speech(cm)
         )
 
         # Ensure we're in text mode
@@ -669,10 +603,7 @@ class TestProactiveSpeechE2E:
 
         # Restore the real schedule_proactive_speech (test fixtures mock it to no-op)
         cm.schedule_proactive_speech = (
-            lambda **kw: ConversationManager.schedule_proactive_speech(
-                cm,
-                **kw,
-            )
+            lambda: ConversationManager.schedule_proactive_speech(cm)
         )
 
         # Switch to call mode
@@ -698,10 +629,7 @@ class TestProactiveSpeechE2E:
 
         # Restore the real schedule_proactive_speech (test fixtures mock it to no-op)
         cm.schedule_proactive_speech = (
-            lambda **kw: ConversationManager.schedule_proactive_speech(
-                cm,
-                **kw,
-            )
+            lambda: ConversationManager.schedule_proactive_speech(cm)
         )
 
         # Switch to call mode and schedule
@@ -755,10 +683,7 @@ class TestProactiveSpeechBlindSpots:
             ),
         ):
             try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
+                await ConversationManager._proactive_speech_loop(mock_cm)
             except asyncio.CancelledError:
                 pass
 
@@ -792,12 +717,12 @@ class TestProactiveSpeechBlindSpots:
     # Test: InboundUnifyMeetUtterance cancels proactive speech
     # -------------------------------------------------------------------------
 
-    async def test_inbound_unify_meet_utterance_cancels_proactive(self, mock_cm):
-        """InboundUnifyMeetUtterance event cancels proactive speech."""
+    async def test_inbound_unify_meet_utterance_resets_proactive(self, mock_cm):
+        """InboundUnifyMeetUtterance event resets (reschedules) proactive speech."""
         from unity.conversation_manager.events import InboundUnifyMeetUtterance
         from unity.conversation_manager.domains.event_handlers import EventHandler
 
-        mock_cm.cancel_proactive_speech = AsyncMock()
+        mock_cm.schedule_proactive_speech = AsyncMock()
         mock_cm.interject_or_run = AsyncMock()
 
         event = InboundUnifyMeetUtterance(
@@ -807,7 +732,7 @@ class TestProactiveSpeechBlindSpots:
 
         await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
 
-        mock_cm.cancel_proactive_speech.assert_called_once()
+        mock_cm.schedule_proactive_speech.assert_called_once()
 
     # -------------------------------------------------------------------------
     # Test: EmailReceived cancels proactive speech
@@ -889,12 +814,10 @@ class TestProactiveSpeechBlindSpots:
         mock_cm.proactive_speech.decide = mock_decide
 
         reschedule_called = False
-        reschedule_skip_initial_wait = None
 
-        async def mock_schedule(skip_initial_wait=False):
-            nonlocal reschedule_called, reschedule_skip_initial_wait
+        async def mock_schedule():
+            nonlocal reschedule_called
             reschedule_called = True
-            reschedule_skip_initial_wait = skip_initial_wait
             raise asyncio.CancelledError()
 
         mock_cm.schedule_proactive_speech = mock_schedule
@@ -907,19 +830,11 @@ class TestProactiveSpeechBlindSpots:
             ),
         ):
             try:
-                await ConversationManager._proactive_speech_loop(
-                    mock_cm,
-                    skip_initial_wait=True,
-                )
+                await ConversationManager._proactive_speech_loop(mock_cm)
             except asyncio.CancelledError:
                 pass
 
-        # Should have rescheduled (without skip_initial_wait for after speaking)
         assert reschedule_called, "Expected schedule_proactive_speech to be called"
-        # After speaking, reschedule should NOT skip initial wait
-        assert (
-            reschedule_skip_initial_wait is False
-        ), f"After speaking, should NOT skip initial wait. Got: {reschedule_skip_initial_wait}"
 
 
 @pytest.mark.asyncio
@@ -931,12 +846,9 @@ class TestProactiveSpeechLLMBehavior:
     # -------------------------------------------------------------------------
 
     async def test_decide_respects_user_asked_to_wait(self):
-        """When user explicitly asked to wait, LLM should NOT speak at 30s."""
+        """When user explicitly asked to wait, LLM should NOT speak."""
         ps = ProactiveSpeech()
 
-        # Scenario: User said "hold on a moment" and 30 seconds have passed
-        # Per the prompt, if user asked to wait, should_speak should be false
-        # until 60s+
         chat_history = [
             {"role": "assistant", "content": "How can I help you today?"},
             {"role": "user", "content": "Hold on a moment, I need to find something."},
@@ -946,35 +858,11 @@ class TestProactiveSpeechLLMBehavior:
         decision = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
-            elapsed_seconds=30,  # 30s - normally would speak, but user asked to wait
         )
 
-        # The prompt says: "Exception: User explicitly asked to wait → should_speak: false until 60s+"
-        # This test verifies the LLM follows this guidance
         assert (
             decision.should_speak is False
-        ), f"User asked to wait - should NOT speak at 30s. Decision: {decision}"
-
-    async def test_decide_speaks_after_long_wait_even_if_user_asked(self):
-        """After 60s+, even if user asked to wait, should check in."""
-        ps = ProactiveSpeech()
-
-        chat_history = [
-            {"role": "assistant", "content": "How can I help you today?"},
-            {"role": "user", "content": "Hold on a moment, I need to find something."},
-        ]
-        system_prompt = "You are a helpful assistant."
-
-        decision = await ps.decide(
-            chat_history=chat_history,
-            system_prompt=system_prompt,
-            elapsed_seconds=65,  # 65s - should check in even if user asked to wait
-        )
-
-        # After 60s+, should gently check in
-        assert (
-            decision.should_speak is True
-        ), f"After 65s even with user asking to wait, should check in. Decision: {decision}"
+        ), f"User asked to wait - should NOT speak. Decision: {decision}"
 
     # -------------------------------------------------------------------------
     # Test: Previous proactive messages - LLM should vary responses
@@ -984,11 +872,9 @@ class TestProactiveSpeechLLMBehavior:
         """LLM should generate different content from previous proactive messages."""
         ps = ProactiveSpeech()
 
-        # History includes a previous proactive message
         chat_history = [
             {"role": "assistant", "content": "How can I help you today?"},
             {"role": "user", "content": "I need to check something, one moment."},
-            # Previous proactive message
             {"role": "assistant", "content": "Still with you, take your time."},
         ]
         system_prompt = "You are a helpful assistant."
@@ -996,12 +882,9 @@ class TestProactiveSpeechLLMBehavior:
         decision = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
-            elapsed_seconds=25,
         )
 
         if decision.should_speak and decision.content:
-            # The content should be different from "Still with you, take your time."
-            # We can't check exact content, but we can verify it's not identical
             assert (
                 decision.content.lower() != "still with you, take your time."
             ), f"LLM should vary content. Got same as before: {decision.content}"
@@ -1023,11 +906,8 @@ class TestProactiveSpeechLLMBehavior:
         decision = await ps.decide(
             chat_history=chat_history,
             system_prompt=system_prompt,
-            elapsed_seconds=15,
         )
 
-        # Per the prompt: "If the conversation is clearly closing (e.g., 'goodbye'),
-        # always return should_speak: false"
         assert (
             decision.should_speak is False
         ), f"Should NOT speak during goodbye. Decision: {decision}"

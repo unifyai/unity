@@ -170,6 +170,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     # Mock async methods
     cm.request_llm_run = AsyncMock()
     cm.cancel_proactive_speech = AsyncMock()
+    cm.schedule_proactive_speech = AsyncMock()
     cm.interject_or_run = AsyncMock()
     cm.get_active_contact = MagicMock(return_value=sample_contacts[1])
 
@@ -789,8 +790,8 @@ class TestVoiceUtteranceHandlers:
         assert msgs[0].content == "Hello, can you hear me?"
 
     @pytest.mark.asyncio
-    async def test_inbound_utterance_cancels_proactive_speech(self, mock_cm):
-        """Inbound utterances cancel proactive speech."""
+    async def test_inbound_utterance_resets_proactive_speech(self, mock_cm):
+        """Inbound utterances reset (reschedule) proactive speech."""
         event = InboundPhoneUtterance(
             contact={"contact_id": 2},
             content="User speaking",
@@ -802,7 +803,7 @@ class TestVoiceUtteranceHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.cancel_proactive_speech.assert_called_once()
+        mock_cm.schedule_proactive_speech.assert_called()
 
     @pytest.mark.asyncio
     async def test_inbound_utterance_triggers_interject_or_run(self, mock_cm):
@@ -821,8 +822,8 @@ class TestVoiceUtteranceHandlers:
         mock_cm.interject_or_run.assert_called_once_with("What's the weather?")
 
     @pytest.mark.asyncio
-    async def test_outbound_utterance_does_not_cancel_proactive(self, mock_cm):
-        """Outbound utterances don't cancel proactive speech."""
+    async def test_outbound_utterance_resets_proactive_speech(self, mock_cm):
+        """Outbound utterances also reset (reschedule) proactive speech."""
         event = OutboundPhoneUtterance(
             contact={"contact_id": 2},
             content="Here's my response",
@@ -834,7 +835,7 @@ class TestVoiceUtteranceHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.cancel_proactive_speech.assert_not_called()
+        mock_cm.schedule_proactive_speech.assert_called()
 
     @pytest.mark.asyncio
     async def test_call_guidance_updates_contact_index(self, mock_cm):
@@ -1404,8 +1405,8 @@ class TestNotificationEventHandlers:
         )
 
     @pytest.mark.asyncio
-    async def test_notification_injected_cancels_proactive_speech(self, mock_cm):
-        """NotificationInjectedEvent cancels proactive speech."""
+    async def test_notification_injected_resets_proactive_speech(self, mock_cm):
+        """NotificationInjectedEvent resets (reschedules) proactive speech."""
         event = NotificationInjectedEvent(
             content="Interrupt notification",
             source="System",
@@ -1414,7 +1415,7 @@ class TestNotificationEventHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.cancel_proactive_speech.assert_called_once()
+        mock_cm.schedule_proactive_speech.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_notification_injected_triggers_immediate_llm(self, mock_cm):

@@ -1070,19 +1070,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     # Proactive speech related methods
 
-    async def schedule_proactive_speech(self, skip_initial_wait: bool = False):
-        """Decides if and when to speak proactively, and schedules it.
+    PROACTIVE_DEBOUNCE_SECONDS = 5
 
-        Args:
-            skip_initial_wait: If True, skip the initial 8s wait (used when rescheduling after a false decision)
+    async def schedule_proactive_speech(self):
+        """Cancel any pending proactive speech and start a fresh cycle.
+
+        Called on every user/assistant utterance event to reset the silence
+        timer.  Only operates in voice modes (call / meet).
         """
         self._session_logger.debug(
             "proactive_speech",
-            f"schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}",
+            f"schedule_proactive_speech called, mode={self.mode}",
         )
         await self.cancel_proactive_speech()
 
-        # Only schedule if we are in a call/voice mode where silence matters
         if not self.mode.is_voice:
             self._session_logger.debug(
                 "proactive_speech",
@@ -1091,15 +1092,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return
 
         self._session_logger.debug("proactive_speech", "Creating proactive speech task")
-        # Create a task to run the decision and potential wait
         self._proactive_speech_task = asyncio.create_task(
-            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait),
+            self._proactive_speech_loop(),
         )
         self._proactive_speech_task.add_done_callback(log_task_exc)
 
     async def cancel_proactive_speech(self):
         if self._proactive_speech_task and not self._proactive_speech_task.done():
-            # Don't cancel if we are running inside the task (recursion case)
             if self._proactive_speech_task == asyncio.current_task():
                 return
 
@@ -1108,52 +1107,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await self._proactive_speech_task
             self._proactive_speech_task = None
 
-    async def _proactive_speech_loop(self, skip_initial_wait: bool = False):
+    async def _proactive_speech_loop(self):
         try:
-            # Wait a reasonable amount of time first to allow for natural conversation flow
-            if not skip_initial_wait:
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Waiting 10s before checking for silence",
-                )
-                await asyncio.sleep(10)
-            else:
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Skipping initial wait (reschedule after false decision)",
-                )
-
+            # Debounce: wait for silence before consulting the LLM.
             self._session_logger.debug(
                 "proactive_speech",
-                "Entering _proactive_speech_loop",
+                f"Waiting {self.PROACTIVE_DEBOUNCE_SECONDS}s debounce",
             )
+            await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
 
-            # Get conversation turns and last message timestamp using helper
-            conversation_turns, last_message_timestamp = (
-                self.get_recent_voice_transcript()
-            )
-
-            # Calculate elapsed time from last message timestamp
-            if last_message_timestamp:
-                now = prompt_now(as_string=False)
-                if isinstance(last_message_timestamp, datetime):
-                    elapsed_seconds = (now - last_message_timestamp).total_seconds()
-                else:
-                    elapsed_seconds = 0
-            else:
-                elapsed_seconds = 0
-
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Elapsed time since last message: {elapsed_seconds:.1f}s",
-            )
-
-            # Build system prompt dynamically (there's no self.system_prompt attribute)
+            # Gather context for the decision.
+            conversation_turns, _ = self.get_recent_voice_transcript()
             brain_spec = build_brain_spec(self)
+
             decision = await self.proactive_speech.decide(
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
-                elapsed_seconds=elapsed_seconds,
             )
             self._session_logger.debug(
                 "proactive_speech",
@@ -1161,32 +1130,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
 
             if not decision.should_speak:
-                # Adaptive wait: if we're already past 10s, check more frequently (5s)
-                # Otherwise, wait until we hit ~12s threshold (but cap at 7s max wait)
-                if elapsed_seconds < 10:
-                    wait_time = min(
-                        12 - elapsed_seconds,
-                        7,
-                    )  # Wait until ~12s, but max 7s
-                else:
-                    wait_time = 5  # Already past 10s, check every 5s
-
+                # Go dormant.  The next utterance event will restart the cycle.
                 self._session_logger.debug(
                     "proactive_speech",
-                    f"Not speaking (delay={decision.delay}s), will check again in {wait_time:.1f}s",
+                    "Not speaking — going dormant until next utterance event",
                 )
-                await asyncio.sleep(wait_time)
-                # Skip initial wait when rescheduling since we just waited
-                await self.schedule_proactive_speech(skip_initial_wait=True)
                 return
 
-            self._session_logger.info(
-                "proactive_speech",
-                f"Speaking in {decision.delay}s: {decision.content}",
-            )
-            await asyncio.sleep(decision.delay)
+            # Wait the requested delay (cancellable if an utterance arrives).
+            if decision.delay > 0:
+                self._session_logger.info(
+                    "proactive_speech",
+                    f"Speaking in {decision.delay}s: {decision.content}",
+                )
+                await asyncio.sleep(decision.delay)
 
-            # Record in contact_index
+            # Record in contact_index.
             contact = self.get_active_contact()
             if contact:
                 contact_id = contact.get("contact_id")
@@ -1201,12 +1160,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            # Publish to Voice Agent via call_guidance channel
+            # Deliver to the fast brain via the call_guidance channel.
             await self.event_broker.publish(
                 "app:call:call_guidance",
                 json.dumps({"content": decision.content}),
             )
+            self._session_logger.info(
+                "proactive_speech",
+                f"Spoke: {decision.content}",
+            )
 
+            # Speaking is an event — restart the cycle.
             await self.schedule_proactive_speech()
 
         except asyncio.CancelledError:

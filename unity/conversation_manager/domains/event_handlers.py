@@ -316,6 +316,9 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         local_message_id=message_id,
     )
 
+    # Reset proactive speech on any utterance (user or assistant).
+    await cm.schedule_proactive_speech()
+
     if role == "user":
         # Link any pending user screenshot to this message by stamping it
         # with the local_message_id, then pass the same id to the assistant
@@ -326,7 +329,6 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
                 cm.capture_assistant_screenshot(event.content, message_id),
             )
 
-        await cm.cancel_proactive_speech()
         await cm.interject_or_run(event.content)
 
 
@@ -853,7 +855,7 @@ async def _(
         id=event.interjection_id,
     )
 
-    await cm.cancel_proactive_speech()
+    await cm.schedule_proactive_speech()
     await cm.request_llm_run(delay=0, cancel_running=True)
 
 
