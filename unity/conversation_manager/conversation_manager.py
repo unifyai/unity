@@ -1161,6 +1161,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
 
             # Deliver to the fast brain via the call_guidance channel.
+            # The fast brain will speak this via TTS, producing an OutboundUtterance
+            # event that restarts the proactive speech cycle through the event handler.
             await self.event_broker.publish(
                 "app:call:call_guidance",
                 json.dumps({"content": decision.content}),
@@ -1169,9 +1171,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "proactive_speech",
                 f"Spoke: {decision.content}",
             )
-
-            # Speaking is an event — restart the cycle.
-            await self.schedule_proactive_speech()
 
         except asyncio.CancelledError:
             self._session_logger.debug("proactive_speech", "Task cancelled")

@@ -301,13 +301,11 @@ class TestProactiveSpeechLoop:
         async def mock_decide(*args, **kwargs):
             return ProactiveDecision(
                 should_speak=True,
-                delay=0,  # No delay for test
+                delay=0,
                 content="Still with you!",
             )
 
         mock_cm.proactive_speech.decide = mock_decide
-        mock_cm.schedule_proactive_speech = AsyncMock()
-        mock_cm.schedule_proactive_speech.side_effect = asyncio.CancelledError()
 
         with (
             patch("asyncio.sleep", new=AsyncMock()),
@@ -316,10 +314,7 @@ class TestProactiveSpeechLoop:
                 return_value=MockBrainSpec(),
             ),
         ):
-            try:
-                await ConversationManager._proactive_speech_loop(mock_cm)
-            except asyncio.CancelledError:
-                pass
+            await ConversationManager._proactive_speech_loop(mock_cm)
 
         # Should have published to call_guidance channel
         mock_cm.event_broker.publish.assert_called()
@@ -352,8 +347,6 @@ class TestProactiveSpeechLoop:
             )
 
         mock_cm.proactive_speech.decide = mock_decide
-        mock_cm.schedule_proactive_speech = AsyncMock()
-        mock_cm.schedule_proactive_speech.side_effect = asyncio.CancelledError()
 
         with (
             patch("asyncio.sleep", new=AsyncMock()),
@@ -362,13 +355,9 @@ class TestProactiveSpeechLoop:
                 return_value=MockBrainSpec(),
             ),
         ):
-            try:
-                await ConversationManager._proactive_speech_loop(mock_cm)
-            except asyncio.CancelledError:
-                pass
+            await ConversationManager._proactive_speech_loop(mock_cm)
 
         # Should have recorded the message
-        # Check the active contact has a voice thread with the message
         contact = mock_cm.get_active_contact()
         contact_id = contact["contact_id"]
 
@@ -376,7 +365,6 @@ class TestProactiveSpeechLoop:
             contact_id,
             Medium.PHONE_CALL,
         )
-        # Find the proactive message
         proactive_msg = None
         for msg in voice_thread:
             if "Are you still there?" in (msg.content or ""):
@@ -672,8 +660,6 @@ class TestProactiveSpeechBlindSpots:
             )
 
         mock_cm.proactive_speech.decide = mock_decide
-        mock_cm.schedule_proactive_speech = AsyncMock()
-        mock_cm.schedule_proactive_speech.side_effect = asyncio.CancelledError()
 
         with (
             patch("asyncio.sleep", new=AsyncMock()),
@@ -682,10 +668,7 @@ class TestProactiveSpeechBlindSpots:
                 return_value=MockBrainSpec(),
             ),
         ):
-            try:
-                await ConversationManager._proactive_speech_loop(mock_cm)
-            except asyncio.CancelledError:
-                pass
+            await ConversationManager._proactive_speech_loop(mock_cm)
 
         # Verify the message was recorded with UNIFY_MEET medium
         contact = mock_cm.get_active_contact()
@@ -795,11 +778,16 @@ class TestProactiveSpeechBlindSpots:
         assert not task.cancelled()
 
     # -------------------------------------------------------------------------
-    # Test: Rescheduling after successful speech
+    # Test: Loop does not self-reschedule after speaking
     # -------------------------------------------------------------------------
 
-    async def test_loop_reschedules_after_speaking(self, mock_cm):
-        """After speaking, the loop should reschedule proactive speech."""
+    async def test_loop_does_not_self_reschedule(self, mock_cm):
+        """After speaking, the loop exits without calling schedule_proactive_speech.
+
+        The cycle restarts via the indirect path: the fast brain speaks the
+        guidance, producing an OutboundUtterance event whose handler calls
+        schedule_proactive_speech().
+        """
         from unity.conversation_manager.conversation_manager import ConversationManager
 
         mock_cm.mode = Mode.CALL
@@ -812,15 +800,7 @@ class TestProactiveSpeechBlindSpots:
             )
 
         mock_cm.proactive_speech.decide = mock_decide
-
-        reschedule_called = False
-
-        async def mock_schedule():
-            nonlocal reschedule_called
-            reschedule_called = True
-            raise asyncio.CancelledError()
-
-        mock_cm.schedule_proactive_speech = mock_schedule
+        mock_cm.schedule_proactive_speech = AsyncMock()
 
         with (
             patch("asyncio.sleep", new=AsyncMock()),
@@ -829,12 +809,9 @@ class TestProactiveSpeechBlindSpots:
                 return_value=MockBrainSpec(),
             ),
         ):
-            try:
-                await ConversationManager._proactive_speech_loop(mock_cm)
-            except asyncio.CancelledError:
-                pass
+            await ConversationManager._proactive_speech_loop(mock_cm)
 
-        assert reschedule_called, "Expected schedule_proactive_speech to be called"
+        mock_cm.schedule_proactive_speech.assert_not_called()
 
 
 @pytest.mark.asyncio
