@@ -10,11 +10,11 @@ which reads ``depends_on`` and injects the corresponding objects into the
 execution namespace:
 
 * Bare names (``"helper"``) → the stored implementation is exec'd.
-* Dotted names (``"actor.act"``) → the root namespace object is constructed
+* Dotted names (``"primitives.actor.act"``) → the root namespace object is constructed
   via ``registry.construct_sandbox_root()``.
 
-The set of recognised environment namespace roots (``"primitives"``,
-``"computer_primitives"``, ``"actor"``) is passed in as
+The set of recognised environment namespace roots (``"primitives"``)
+is passed in as
 *environment_namespaces* by the caller (``FunctionManager.add_functions``).
 """
 
@@ -33,11 +33,11 @@ class DependencyVisitor(ast.NodeVisitor):
     - Returned function references: ``return foo``
     - Callables passed as arguments: ``bar(callback=foo)``
     - Dotted environment calls: ``primitives.contacts.ask(...)``,
-      ``computer_primitives.screenshot(...)``, ``actor.act(...)``
+      ``primitives.computer.screenshot(...)``, ``primitives.actor.act(...)``
 
     Dotted calls are only captured when the root segment matches one of the
     *environment_namespaces* provided at construction time.  The full dotted
-    name (e.g. ``"actor.act"``) is recorded in ``depends_on`` so that
+    name (e.g. ``"primitives.actor.act"``) is recorded in ``depends_on`` so that
     ``_inject_dependencies`` can resolve the root namespace at runtime.
     """
 
@@ -93,7 +93,7 @@ class DependencyVisitor(ast.NodeVisitor):
             elif func_name in self._assignment_map:
                 called_name = self._assignment_map[func_name]
 
-        # Dotted call -> primitives.contacts.ask(), computer_primitives.act(), etc.
+        # Dotted call -> primitives.contacts.ask(), primitives.computer.act(), etc.
         elif isinstance(func_node, ast.Attribute) and self.environment_namespaces:
             dotted = self._resolve_dotted_name(func_node)
             if dotted:
@@ -164,7 +164,7 @@ def collect_dependencies_from_function_node(
     - Annotations (e.g. `x: typing.Annotated[int, validator]`)
 
     When *environment_namespaces* is provided, dotted calls whose root segment matches
-    one of the namespaces (e.g. ``primitives.contacts.ask``, ``actor.act``) are also
+    one of the namespaces (e.g. ``primitives.contacts.ask``, ``primitives.actor.act``) are also
     captured as dependencies.
     """
     visitor = DependencyVisitor(

@@ -11,9 +11,13 @@ from unity.function_manager.primitives import ComputerPrimitives, get_registry
 class ComputerEnvironment(BaseEnvironment):
     """Computer (web/desktop) control environment backed by `ComputerPrimitives`.
 
-    Exposes web control methods like `computer_primitives.act(instruction)` for use inside
-    generated plan code.
+    Exposes web control methods like `primitives.computer.act(instruction)` for use inside
+    generated plan code.  Lives under the unified ``primitives`` namespace alongside
+    state managers and actor delegation.
     """
+
+    NAMESPACE = "primitives"
+    MANAGER_ALIAS = "computer"
 
     def __init__(
         self,
@@ -22,20 +26,30 @@ class ComputerEnvironment(BaseEnvironment):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
+        from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+        self._computer_primitives = computer_primitives
+        primitives = Primitives(
+            primitive_scope=PrimitiveScope(
+                scoped_managers=frozenset({self.MANAGER_ALIAS}),
+            ),
+        )
+        # Pre-seed so primitives.computer returns the caller-provided instance
+        # (important when the instance is a mock or pre-configured singleton).
+        primitives._managers[self.MANAGER_ALIAS] = computer_primitives
         super().__init__(
-            instance=computer_primitives,
-            namespace="computer_primitives",
+            instance=primitives,
+            namespace=self.NAMESPACE,
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
         )
-        self._computer_primitives = computer_primitives
 
     @property
     def namespace(self) -> str:
-        return "computer_primitives"
+        return self.NAMESPACE
 
-    def get_instance(self) -> ComputerPrimitives:
-        return self._computer_primitives
+    def get_instance(self) -> Any:
+        return self._instance
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
         # Explicit categorization avoids brittle substring heuristics.
@@ -69,13 +83,14 @@ class ComputerEnvironment(BaseEnvironment):
             except Exception:
                 signature = None
 
-            tools[f"{self.namespace}.{name}"] = ToolMetadata(
-                name=f"{self.namespace}.{name}",
+            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.{name}"
+            tools[fq_name] = ToolMetadata(
+                name=fq_name,
                 is_impure=name in impure,
                 is_steerable=name in steerable,
                 docstring=getattr(fn, "__doc__", None),
                 signature=signature,
-                function_id=registry.get_function_id("computer", name),
+                function_id=registry.get_function_id(self.MANAGER_ALIAS, name),
                 function_context="primitive",
             )
 
@@ -93,7 +108,7 @@ class ComputerEnvironment(BaseEnvironment):
             "To see the current screen state after a computer action, call "
             "`get_screenshot()` and `display()` the result:\n\n"
             "```python\n"
-            "screenshot = await computer_primitives.get_screenshot()\n"
+            "screenshot = await primitives.computer.get_screenshot()\n"
             "display(screenshot)\n"
             "```\n\n"
             "`get_screenshot()` returns a PIL Image. `display()` renders it as "
@@ -104,7 +119,7 @@ class ComputerEnvironment(BaseEnvironment):
 
         parts.append(
             "### Progress Notifications for Computer Actions\n\n"
-            "- Treat `computer_primitives.*` calls as potentially long-running by default.\n"
+            "- Treat `primitives.computer.*` calls as potentially long-running by default.\n"
             "- Emit `notify({...})` before each major computer step (for example: navigate, act, observe).\n"
             "- If you await a computer step and continue with more work, emit a completion update with concrete progress.\n"
             "- Keep notification messages user-facing and high-level (what was accomplished and what happens next).\n"
@@ -124,8 +139,8 @@ class ComputerEnvironment(BaseEnvironment):
     async def capture_state(self) -> Dict[str, Any]:
         """Captures visual computer state (screenshot + URL)."""
         try:
-            screenshot = await self._computer_primitives.computer.get_screenshot()
-            url = await self._computer_primitives.computer.get_current_url()
+            screenshot = await self._computer_primitives.backend.get_screenshot()
+            url = await self._computer_primitives.backend.get_current_url()
             return {
                 "type": "visual",
                 "screenshot": screenshot,

@@ -408,9 +408,17 @@ class PythonExecutionSession:
                     # Keep sandbox usable even if a non-critical environment fails to inject.
                     continue
 
-        # Backward-compat: allow direct injection when environments weren't provided.
-        if computer_primitives and "computer_primitives" not in self.global_state:
-            self.global_state["computer_primitives"] = computer_primitives
+        # Backward-compat: if computer_primitives was passed directly and no
+        # "primitives" namespace is present, inject a Primitives wrapper so
+        # primitives.computer.* calls work.
+        if computer_primitives and "primitives" not in self.global_state:
+            from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+            self.global_state["primitives"] = Primitives(
+                primitive_scope=PrimitiveScope(
+                    scoped_managers=frozenset({"computer"}),
+                ),
+            )
 
     async def close(self) -> None:
         """
@@ -455,8 +463,8 @@ class PythonExecutionSession:
                 # injected environment globals (common failure mode in LLM-generated code).
                 #
                 # We do this via an AST rewrite (not brittle string heuristics):
-                # rewrite any assignment targets named `primitives` / `computer_primitives`
-                # to `_primitives_local` / `_computer_primitives_local`.
+                # rewrite any assignment targets named `primitives`
+                # to `_primitives_local`.
                 #
                 # This preserves the injected globals for the rest of the session.
                 try:
@@ -464,7 +472,6 @@ class PythonExecutionSession:
                     class _ShadowingGuard(ast.NodeTransformer):
                         _REMAP = {
                             "primitives": "_primitives_local",
-                            "computer_primitives": "_computer_primitives_local",
                         }
 
                         def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802

@@ -28,18 +28,25 @@ class _DummyEnv:
     def get_prompt_context(self) -> str:
         return self._prompt_context
 
+    def get_tools(self) -> dict:
+        return {}
+
 
 def _real_envs_mixed() -> Mapping[str, Any]:
     """Real environments that produce self-contained prompt context."""
     from unity.function_manager.primitives import ComputerPrimitives
     from unity.actor.environments.computer import ComputerEnvironment
     from unity.actor.environments.state_managers import StateManagerEnvironment
+    from unity.actor.environments.base import _CompositeEnvironment
 
     cp = ComputerPrimitives(computer_mode="mock")
-    return {
-        "computer_primitives": ComputerEnvironment(cp),
-        "primitives": StateManagerEnvironment(),
-    }
+    composite = _CompositeEnvironment(
+        [
+            ComputerEnvironment(cp),
+            StateManagerEnvironment(),
+        ],
+    )
+    return {"primitives": composite}
 
 
 @pytest.mark.timeout(30)
@@ -87,7 +94,7 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
 
     assert "Viewing Computer State" in prompt
     # Computer method documentation (from environment's get_prompt_context)
-    assert "computer_primitives" in prompt.lower()
+    assert "primitives.computer" in prompt.lower()
     assert "navigate" in prompt
     assert "act" in prompt
     assert "observe" in prompt
@@ -176,7 +183,7 @@ def test_computer_environment_prompt_context_from_registry():
     context = env.get_prompt_context()
 
     assert context  # Non-empty
-    assert "computer_primitives" in context.lower()
+    assert "primitives.computer" in context.lower()
     # All dynamic methods should be documented
     assert "navigate" in context
     assert "act" in context

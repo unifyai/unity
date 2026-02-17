@@ -29,8 +29,10 @@ def test_actor_env_installed_when_enabled():
         environments=[ActorEnvironment()],
         timeout=30,
     )
-    assert "actor" in actor.environments
-    assert isinstance(actor.environments["actor"], ActorEnvironment)
+    assert "primitives" in actor.environments
+    env = actor.environments["primitives"]
+    tools = env.get_tools()
+    assert "primitives.actor.act" in tools
 
 
 @pytest.mark.timeout(30)
@@ -39,7 +41,12 @@ def test_actor_env_absent_when_disabled():
     actor = CodeActActor(
         timeout=30,
     )
-    assert "actor" not in actor.environments
+    primitives_env = actor.environments.get("primitives")
+    if primitives_env is not None:
+        tools = primitives_env.get_tools()
+        assert not any(k.startswith("primitives.actor.") for k in tools)
+    else:
+        pass  # No primitives environment at all — actor tools are absent.
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +65,7 @@ def test_prompt_includes_actor_guidance_when_env_present():
     prompt = build_code_act_prompt(environments=actor.environments, tools=tools)
 
     assert "Actor Delegation" in prompt
-    assert "actor.act" in prompt
+    assert "primitives.actor.act" in prompt
     assert "When to use" in prompt
     assert "When NOT to use" in prompt
     assert "steerable" in prompt.lower()
@@ -147,11 +154,11 @@ def test_actor_discovery_scope_used_directly():
 
 @pytest.mark.timeout(30)
 def test_actor_env_namespace():
-    """ActorEnvironment.NAMESPACE should be 'actor' and match the instance property."""
-    assert ActorEnvironment.NAMESPACE == "actor"
+    """ActorEnvironment.NAMESPACE should be 'primitives' and match the instance property."""
+    assert ActorEnvironment.NAMESPACE == "primitives"
 
     env = ActorEnvironment()
-    assert env.namespace == "actor"
+    assert env.namespace == "primitives"
 
 
 @pytest.mark.timeout(30)
@@ -160,9 +167,9 @@ def test_actor_env_get_tools():
     env = ActorEnvironment()
     tools = env.get_tools()
 
-    assert set(tools.keys()) == {"actor.act"}
-    meta = tools["actor.act"]
-    assert meta.name == "actor.act"
+    assert set(tools.keys()) == {"primitives.actor.act"}
+    meta = tools["primitives.actor.act"]
+    assert meta.name == "primitives.actor.act"
     assert meta.is_impure is True
     assert meta.is_steerable is True
     assert meta.function_id is not None
@@ -176,7 +183,7 @@ def test_actor_env_get_prompt_context():
     ctx = env.get_prompt_context()
 
     assert "Actor Delegation" in ctx
-    assert "actor.act" in ctx
+    assert "primitives.actor.act" in ctx
     # Signature should include key parameters.
     assert "request" in ctx
     assert "prompt_functions" in ctx
@@ -276,52 +283,65 @@ async def test_actor_act_forwards_capability_flags():
 
 
 # ---------------------------------------------------------------------------
-# Symbolic tests — construct_sandbox_root("actor") round-trip
+# Symbolic tests — construct_sandbox_root("primitives") round-trip
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.timeout(30)
-def test_construct_sandbox_root_actor_returns_actor_runner():
-    """construct_sandbox_root("actor") should return a fresh _ActorRunner instance.
+def test_construct_sandbox_root_primitives_returns_primitives_with_actor():
+    """construct_sandbox_root("primitives") should return a Primitives instance
+    whose .actor attribute is an _ActorRunner.
 
     This is the factory used by _inject_dependencies to satisfy the
-    "actor.act" dependency at runtime when a stored function is executed
-    outside of a live CodeActActor sandbox.
+    "primitives.actor.act" dependency at runtime when a stored function is
+    executed outside of a live CodeActActor sandbox.
     """
     from unity.function_manager.primitives.registry import construct_sandbox_root
+    from unity.function_manager.primitives.runtime import Primitives
 
-    root = construct_sandbox_root("actor")
+    root = construct_sandbox_root("primitives")
     assert root is not None
-    assert isinstance(root, _ActorRunner)
-    assert hasattr(root, "act")
-    assert callable(root.act)
+    assert isinstance(root, Primitives)
+    assert hasattr(root.actor, "act")
+    assert callable(root.actor.act)
 
 
 @pytest.mark.timeout(30)
-def test_construct_sandbox_root_actor_is_stateless():
-    """Each call to construct_sandbox_root("actor") returns an independent instance.
+def test_construct_sandbox_root_primitives_is_stateless():
+    """Each call to construct_sandbox_root("primitives") returns an independent instance.
 
     Statelessness is load-bearing: stored compositional functions that call
-    actor.act(...) receive a freshly constructed _ActorRunner via
+    primitives.actor.act(...) receive a freshly constructed Primitives via
     _inject_dependencies, with no shared state between invocations.
     """
     from unity.function_manager.primitives.registry import construct_sandbox_root
+    from unity.function_manager.primitives.runtime import Primitives
 
-    root_a = construct_sandbox_root("actor")
-    root_b = construct_sandbox_root("actor")
+    root_a = construct_sandbox_root("primitives")
+    root_b = construct_sandbox_root("primitives")
     assert root_a is not root_b
-    assert type(root_a) is type(root_b) is _ActorRunner
+    assert isinstance(root_a, Primitives)
+    assert isinstance(root_b, Primitives)
 
 
 @pytest.mark.timeout(30)
-def test_construct_sandbox_root_actor_has_act_as_primitive_method():
-    """The _ActorRunner returned by construct_sandbox_root should expose
-    'act' in _PRIMITIVE_METHODS so the registry can discover it."""
+def test_construct_sandbox_root_primitives_has_act_as_primitive_method():
+    """The _ActorRunner exposed via construct_sandbox_root("primitives").actor
+    should have 'act' in _PRIMITIVE_METHODS so the registry can discover it."""
     from unity.function_manager.primitives.registry import construct_sandbox_root
 
-    root = construct_sandbox_root("actor")
-    assert hasattr(root, "_PRIMITIVE_METHODS")
-    assert "act" in root._PRIMITIVE_METHODS
+    root = construct_sandbox_root("primitives")
+    runner = root.actor
+    assert hasattr(runner, "_PRIMITIVE_METHODS")
+    assert "act" in runner._PRIMITIVE_METHODS
+
+
+@pytest.mark.timeout(30)
+def test_construct_sandbox_root_actor_returns_none():
+    """construct_sandbox_root("actor") is no longer a valid root and returns None."""
+    from unity.function_manager.primitives.registry import construct_sandbox_root
+
+    assert construct_sandbox_root("actor") is None
 
 
 @pytest.mark.timeout(30)
@@ -351,7 +371,7 @@ async def test_actor_completes_simple_task():
     )
     try:
         handle = await actor.act(
-            "Use actor.act() to delegate the following request: "
+            "Use primitives.actor.act() to delegate the following request: "
             "'Calculate the sum of all integers from 1 to 100 using Python and return the result.' "
             "Report the actor's answer.",
             persist=False,
@@ -369,7 +389,7 @@ async def test_actor_completes_simple_task():
 
 
 # ---------------------------------------------------------------------------
-# Eval test — stored function with actor.act dependency re-execution
+# Eval test — stored function with primitives.actor.act dependency re-execution
 # ---------------------------------------------------------------------------
 
 
@@ -377,20 +397,20 @@ async def test_actor_completes_simple_task():
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 async def test_stored_actor_function_reexecutes_successfully():
-    """A stored compositional function that calls actor.act() works when re-executed.
+    """A stored compositional function that calls primitives.actor.act() works when re-executed.
 
     This is the end-to-end test for the "store then re-execute" pipeline:
 
-    1. Programmatically store a function that calls actor.act(...)
+    1. Programmatically store a function that calls primitives.actor.act(...)
     2. Retrieve it and prepare it via _inject_callables_for_functions
-       (which calls _inject_dependencies -> construct_sandbox_root("actor"))
+       (which calls _inject_dependencies -> construct_sandbox_root("primitives"))
     3. Call the resulting callable with a trivially simple request
     4. Verify the inner actor (freshly constructed _ActorRunner) runs an
        LLM loop to completion and returns a meaningful result
 
-    This exercises the chain that was previously untested:
-    stored function -> _inject_dependencies -> construct_sandbox_root("actor")
-    -> _ActorRunner() -> _ActorRunner.act() -> inner CodeActActor -> result
+    This exercises the chain:
+    stored function -> _inject_dependencies -> construct_sandbox_root("primitives")
+    -> Primitives() -> .actor -> _ActorRunner.act() -> inner CodeActActor -> result
     """
     from tests.helpers import _handle_project
     from unity.function_manager.function_manager import FunctionManager
@@ -403,7 +423,7 @@ async def test_stored_actor_function_reexecutes_successfully():
         source = (
             "async def quick_compute(request: str):\n"
             '    """Delegate a computation to a sub-agent."""\n'
-            "    handle = await actor.act(\n"
+            "    handle = await primitives.actor.act(\n"
             "        request=request,\n"
             "        timeout=60,\n"
             "    )\n"
@@ -415,7 +435,7 @@ async def test_stored_actor_function_reexecutes_successfully():
 
         func_data = fm._get_function_data_by_name(name="quick_compute")
         assert func_data is not None
-        assert "actor.act" in func_data.get("depends_on", [])
+        assert "primitives.actor.act" in func_data.get("depends_on", [])
 
         namespace = create_base_globals()
         callables = fm._inject_callables_for_functions(
@@ -424,8 +444,9 @@ async def test_stored_actor_function_reexecutes_successfully():
         )
 
         assert len(callables) == 1
-        assert "actor" in namespace
-        assert isinstance(namespace["actor"], _ActorRunner)
+        assert "primitives" in namespace
+        assert hasattr(namespace["primitives"], "actor")
+        assert isinstance(namespace["primitives"].actor, _ActorRunner)
         assert "quick_compute" in namespace
 
         fn = namespace["quick_compute"]

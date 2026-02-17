@@ -1054,10 +1054,9 @@ class _InProcessFunctionProxy:
         # mode. Forward environment namespace objects (primitives, etc.) but
         # NOT user-defined state variables -- those are managed by state_mode.
         proxy_ns: Dict[str, Any] = {}
-        for key in ("primitives", "computer_primitives"):
-            val = self._namespace.get(key)
-            if val is not None:
-                proxy_ns[key] = val
+        val = self._namespace.get("primitives")
+        if val is not None:
+            proxy_ns["primitives"] = val
         result = await self._function_manager.execute_function(
             function_name=self.__name__,
             call_kwargs=kwargs,
@@ -1313,7 +1312,9 @@ class _VenvFunctionProxy:
 
         # Resolve RPC targets from the injected namespace (caller-controlled).
         primitives = self._namespace.get("primitives")
-        computer_primitives = self._namespace.get("computer_primitives")
+        computer_primitives = (
+            getattr(primitives, "computer", None) if primitives else None
+        )
 
         call_kwargs = self._map_positional_args(
             args=args,
@@ -2731,12 +2732,12 @@ class FunctionManager(BaseFunctionManager):
         log_id_to_name: Dict[int, str] = {}
 
         # Sandbox namespace roots whose dotted calls should be recorded in
-        # depends_on (e.g. "actor.act" → depends_on includes "actor.act").
-        # At runtime, _inject_dependencies reads these entries and calls
-        # construct_sandbox_root() to materialise the root object.  This set
-        # must stay in sync with the sandbox_root values in _MANAGER_SPECS
-        # (see primitives/registry.py).
-        env_namespaces = frozenset({"primitives", "computer_primitives", "actor"})
+        # depends_on (e.g. "primitives.actor.act" → depends_on includes
+        # "primitives.actor.act").  At runtime, _inject_dependencies reads
+        # these entries and calls construct_sandbox_root() to materialise
+        # the root object.  All primitives live under a single "primitives"
+        # namespace.
+        env_namespaces = frozenset({"primitives"})
 
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
@@ -3267,13 +3268,13 @@ class FunctionManager(BaseFunctionManager):
         The stored implementation is exec'd into the namespace so inter-
         function calls resolve naturally.
 
-        **Dotted names** (e.g. ``"actor.act"``, ``"primitives.contacts.ask"``)
-        — environment-provided namespaces.  Only the *root* segment matters
-        for injection (``"actor"``, ``"primitives"``).  If the root is not
-        already present in the namespace, ``construct_sandbox_root()`` from
-        the primitive registry constructs a fresh instance on demand.  The
-        classes backing each root (``_ActorRunner``, ``Primitives``, etc.)
-        are fully stateless, so a freshly constructed instance works in
+        **Dotted names** (e.g. ``"primitives.actor.act"``,
+        ``"primitives.contacts.ask"``) — environment-provided namespaces.
+        Only the *root* segment matters for injection (``"primitives"``).
+        If the root is not already present in the namespace,
+        ``construct_sandbox_root()`` from the primitive registry constructs
+        a fresh ``Primitives`` instance on demand.  ``Primitives`` is
+        fully stateless, so a freshly constructed instance works in
         isolation without any ambient ContextVars or parent actor state.
         """
         from collections import deque
@@ -3291,7 +3292,7 @@ class FunctionManager(BaseFunctionManager):
                 continue
             visited.add(dep_name)
 
-            # ── Dotted dependency (e.g. "actor.act", "primitives.contacts.ask") ──
+            # ── Dotted dependency (e.g. "primitives.actor.act", "primitives.contacts.ask") ──
             if "." in dep_name:
                 root = dep_name.split(".")[0]
                 if root not in namespace:
@@ -4793,8 +4794,8 @@ class FunctionManager(BaseFunctionManager):
             shell_pool: ShellPool for stateful/read_only modes with shell functions.
             extra_namespaces: Named objects to inject into the function's execution
                 namespace. For in-process execution, all entries are injected into
-                globals. For venv/subprocess execution, "primitives" and
-                "computer_primitives" entries are bridged via RPC.
+                globals. For venv/subprocess execution, the "primitives" entry
+                (including primitives.computer) is bridged via RPC.
 
         Returns:
             For composed functions: dict with keys result, error, stdout, stderr.
@@ -5447,7 +5448,6 @@ if __name__ == "__main__":
 
         # Extract RPC-bridgeable namespaces for subprocess execution paths.
         primitives = extra_namespaces.get("primitives")
-        computer_primitives = extra_namespaces.get("computer_primitives")
 
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
@@ -5547,7 +5547,6 @@ if __name__ == "__main__":
                 implementation=implementation,
                 language=language,
                 primitives=extra_namespaces.get("primitives"),
-                computer_primitives=extra_namespaces.get("computer_primitives"),
             )
 
         elif state_mode == "stateful":

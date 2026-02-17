@@ -124,30 +124,51 @@ class BaseActor(ABC):
         """
         Build the environment namespace dict from the provided list.
 
+        When multiple environments share a namespace (e.g. ``"primitives"``),
+        they are merged into a ``_CompositeEnvironment`` that aggregates
+        their tools, prompt context, and state capture.
+
         Returns:
             Dict keyed by environment namespace.
         """
+        from unity.actor.environments.base import _CompositeEnvironment
+
         if environments is None:
             environments = []
 
-        env_map: Dict[str, "BaseEnvironment"] = {}
+        # Group by namespace.
+        by_ns: Dict[str, list["BaseEnvironment"]] = {}
         for env in environments:
-            ns = env.namespace
-            if ns in env_map:
-                raise ValueError(
-                    f"Duplicate environment namespace detected: {ns!r}. "
-                    "Environment namespaces must be unique.",
-                )
-            env_map[ns] = env
+            by_ns.setdefault(env.namespace, []).append(env)
+
+        env_map: Dict[str, "BaseEnvironment"] = {}
+        for ns, envs in by_ns.items():
+            if len(envs) == 1:
+                env_map[ns] = envs[0]
+            else:
+                env_map[ns] = _CompositeEnvironment(envs)
         return env_map
 
     def _extract_computer_primitives(self) -> Optional[Any]:
-        """Extract computer primitives instance for backward compatibility."""
-        if "computer_primitives" in getattr(self, "environments", {}):
-            try:
-                return self.environments["computer_primitives"].get_instance()
-            except Exception:
-                return None
+        """Extract computer primitives instance from environments."""
+        from unity.actor.environments.base import _CompositeEnvironment
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        env = getattr(self, "environments", {}).get("primitives")
+        if env is None:
+            return None
+
+        # Composite: find the ComputerEnvironment sub-env.
+        if isinstance(env, _CompositeEnvironment):
+            for sub in env.sub_environments:
+                if isinstance(sub, ComputerEnvironment):
+                    return sub._computer_primitives
+            return None
+
+        # Direct ComputerEnvironment (standalone).
+        if isinstance(env, ComputerEnvironment):
+            return env._computer_primitives
+
         return None
 
     # ─────────────────────────── Work management ────────────────────────── #

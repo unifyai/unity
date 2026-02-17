@@ -247,7 +247,7 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         entire screen (desktop mode). Use ``display()`` to render the image as
         visual output the model can inspect::
 
-            screenshot = await computer_primitives.get_screenshot()
+            screenshot = await primitives.computer.get_screenshot()
             display(screenshot)
 
         Returns

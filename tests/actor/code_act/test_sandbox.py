@@ -171,16 +171,21 @@ print(r.model_dump_json())
 async def test_sandbox_computer_tool_execution(mock_computer_primitives):
     """
     Tests that the sandbox can execute code that calls computer tools via
-    the injected computer_primitives.
+    the injected primitives.computer namespace.
     """
-    sandbox = PythonExecutionSession(computer_primitives=mock_computer_primitives)
+    import types
 
-    nav_code = "await computer_primitives.navigate('https://example.com')"
+    sandbox = PythonExecutionSession()
+    sandbox.global_state["primitives"] = types.SimpleNamespace(
+        computer=mock_computer_primitives,
+    )
+
+    nav_code = "await primitives.computer.navigate('https://example.com')"
     nav_result = await sandbox.execute(nav_code)
     assert nav_result["error"] is None
     mock_computer_primitives.navigate.assert_awaited_once_with("https://example.com")
 
-    act_code = "await computer_primitives.act('Click login button')"
+    act_code = "await primitives.computer.act('Click login button')"
     act_result = await sandbox.execute(act_code)
     assert act_result["error"] is None
     mock_computer_primitives.act.assert_awaited_once_with("Click login button")
@@ -191,7 +196,7 @@ from pydantic import BaseModel
 class MyData(BaseModel):
     data: str
 
-result = await computer_primitives.observe('get data', response_format=MyData)
+result = await primitives.computer.observe('get data', response_format=MyData)
 print(result['data'])
 """
     observe_result = await sandbox.execute(observe_code)
@@ -437,7 +442,7 @@ async def test_get_screenshot_display_produces_image_in_stdout():
             language="python",
             state_mode="stateful",
             code=(
-                "screenshot = await computer_primitives.get_screenshot()\n"
+                "screenshot = await primitives.computer.get_screenshot()\n"
                 "display(screenshot)"
             ),
         )

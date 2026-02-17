@@ -435,7 +435,7 @@ async def fetch_product_price(product_url: str) -> float:
         "step": 1,
         "total": 2
     })
-    await computer_primitives.navigate(product_url)
+    await primitives.computer.navigate(product_url)
 
     # Extract structured data using observe
     from pydantic import BaseModel
@@ -451,7 +451,7 @@ async def fetch_product_price(product_url: str) -> float:
         "step": 2,
         "total": 2
     })
-    info = await computer_primitives.observe(
+    info = await primitives.computer.observe(
         "Extract product name, price, and stock status",
         response_format=ProductInfo
     )
@@ -479,7 +479,7 @@ async def complete_checkout(cart_items: list) -> str:
         "step": 1,
         "total": 4
     })
-    await computer_primitives.navigate("https://shop.example.com/checkout")
+    await primitives.computer.navigate("https://shop.example.com/checkout")
 
     # Fill shipping info
     notify({
@@ -488,7 +488,7 @@ async def complete_checkout(cart_items: list) -> str:
         "step": 2,
         "total": 4
     })
-    await computer_primitives.act("Fill shipping address: 123 Main St, City, 12345")
+    await primitives.computer.act("Fill shipping address: 123 Main St, City, 12345")
 
     # Verify shipping info was entered correctly
     notify({
@@ -497,7 +497,7 @@ async def complete_checkout(cart_items: list) -> str:
         "step": 3,
         "total": 4
     })
-    verification = await computer_primitives.observe(
+    verification = await primitives.computer.observe(
         "Is the shipping address '123 Main St, City, 12345' displayed?"
     )
     if "no" in verification.lower():
@@ -510,14 +510,14 @@ async def complete_checkout(cart_items: list) -> str:
         "step": 4,
         "total": 4
     })
-    await computer_primitives.act("Click 'Complete Order' button")
+    await primitives.computer.act("Click 'Complete Order' button")
 
     # Confirm order placed
     notify({
         "type": "progress",
         "message": "Checking for the order confirmation details."
     })
-    confirmation = await computer_primitives.observe("Extract order confirmation number")
+    confirmation = await primitives.computer.observe("Extract order confirmation number")
     notify({
         "type": "step_complete",
         "step_name": "checkout",
@@ -542,7 +542,7 @@ async def proceed_using_screenshot() -> str:
         "step": 1,
         "total": 3
     })
-    await computer_primitives.navigate("https://example.com/setup")
+    await primitives.computer.navigate("https://example.com/setup")
 
     # Use get_screenshot() + display() to see the current screen state.
     # Prefer acting directly from that visual context, and only use observe
@@ -553,10 +553,10 @@ async def proceed_using_screenshot() -> str:
         "step": 2,
         "total": 3
     })
-    display(await computer_primitives.get_screenshot())
+    display(await primitives.computer.get_screenshot())
 
-    await computer_primitives.act("Click the 'Continue' button.")
-    display(await computer_primitives.get_screenshot())
+    await primitives.computer.act("Click the 'Continue' button.")
+    display(await primitives.computer.get_screenshot())
 
     notify({
         "type": "progress",
@@ -564,7 +564,7 @@ async def proceed_using_screenshot() -> str:
         "step": 3,
         "total": 3
     })
-    result = await computer_primitives.observe("Confirm we reached the next step.")
+    result = await primitives.computer.observe("Confirm we reached the next step.")
     notify({
         "type": "step_complete",
         "step_name": "setup_navigation",
@@ -590,7 +590,7 @@ def get_computer_session_execution_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev. I\'ll take a screenshot to see the page.",
-          "code": "notify({\\"type\\": \\"progress\\", \\"message\\": \\"Opening the website and loading the page.\\"})\\nawait computer_primitives.navigate(\'https://playwright.dev/\')\\ndisplay(await computer_primitives.get_screenshot())\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"page_load\\", \\"result_summary\\": \\"The page is open and ready for extraction.\\"})",
+          "code": "notify({\\"type\\": \\"progress\\", \\"message\\": \\"Opening the website and loading the page.\\"})\\nawait primitives.computer.navigate(\'https://playwright.dev/\')\\ndisplay(await primitives.computer.get_screenshot())\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"page_load\\", \\"result_summary\\": \\"The page is open and ready for extraction.\\"})",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -611,7 +611,7 @@ def get_computer_session_execution_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "Great, I can see the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
-          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Reading the page to capture the requested content.\\"})\\npage_info = await computer_primitives.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_page_content\\", \\"result_summary\\": \\"Captured the heading and intro paragraph.\\"})\\n\\nprint(page_info.model_dump_json(indent=2))",
+          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Reading the page to capture the requested content.\\"})\\npage_info = await primitives.computer.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_page_content\\", \\"result_summary\\": \\"Captured the heading and intro paragraph.\\"})\\n\\nprint(page_info.model_dump_json(indent=2))",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -650,7 +650,7 @@ def get_computer_stateful_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "This is a multi-step task. First, I\'ll extract all products. I know I\'ll need to parse prices that might be strings (e.g., \'$25.99\'), so I\'ll define a helper function to clean them. This function will persist in the sandbox for later.",
-          "code": "import re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Collecting product names and prices from the page.\\"})\\nall_products_data = await computer_primitives.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"collect_products\\", \\"result_summary\\": f\\"Captured {len(all_products_data.products)} products for analysis.\\"})\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")",
+          "code": "import re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Collecting product names and prices from the page.\\"})\\nall_products_data = await primitives.computer.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"collect_products\\", \\"result_summary\\": f\\"Captured {len(all_products_data.products)} products for analysis.\\"})\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -703,7 +703,7 @@ def get_computer_interactive_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "I\'ll navigate to the website to find the support email and take a screenshot to see the page.",
-          "code": "notify({\\"type\\": \\"progress\\", \\"message\\": \\"Opening the contact page to find support details.\\"})\\nawait computer_primitives.navigate(\'https://example.com/contact\')\\ndisplay(await computer_primitives.get_screenshot())\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"open_contact_page\\", \\"result_summary\\": \\"The contact page is visible and ready to review.\\"})",
+          "code": "notify({\\"type\\": \\"progress\\", \\"message\\": \\"Opening the contact page to find support details.\\"})\\nawait primitives.computer.navigate(\'https://example.com/contact\')\\ndisplay(await primitives.computer.get_screenshot())\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"open_contact_page\\", \\"result_summary\\": \\"The contact page is visible and ready to review.\\"})",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -724,7 +724,7 @@ def get_computer_interactive_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "I can see the contact page. I\'ll extract the support email using a Pydantic model for reliable structured extraction.",
-          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Reading the page to capture support contact details.\\"})\\ninfo = await computer_primitives.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_support_contact\\", \\"result_summary\\": \\"Support contact details were captured.\\"})\\nprint(f\\"Support email: {info.support_email}\\")",
+          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Reading the page to capture support contact details.\\"})\\ninfo = await primitives.computer.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_support_contact\\", \\"result_summary\\": \\"Support contact details were captured.\\"})\\nprint(f\\"Support email: {info.support_email}\\")",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -1237,7 +1237,7 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
         "step": 1,
         "total": 3
     })
-    await computer_primitives.navigate(linkedin_url)
+    await primitives.computer.navigate(linkedin_url)
 
     # Extract structured data
     from pydantic import BaseModel
@@ -1254,7 +1254,7 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
         "step": 2,
         "total": 3
     })
-    profile = await computer_primitives.observe(
+    profile = await primitives.computer.observe(
         "Extract name, email, and current company from profile",
         response_format=LinkedInProfile
     )
@@ -1303,12 +1303,12 @@ async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
             "type": "progress",
             "message": "Opening the company page for background details."
         })
-        await computer_primitives.navigate(company_url)
+        await primitives.computer.navigate(company_url)
         notify({
             "type": "progress",
             "message": "Reading the company page for size and industry."
         })
-        return await computer_primitives.observe("Extract company size and industry")
+        return await primitives.computer.observe("Extract company size and industry")
 
     # Wait for both to complete
     contact_result, company_info = await asyncio.gather(
@@ -1555,7 +1555,7 @@ def get_computer_verification_extraction_example() -> str:
 - **Intent**: `extract_price()`
 - **Agent Trace**:
   - `notify({'type': 'progress', 'message': 'Reading the page to capture the current price.'})`
-  - `computer_primitives.observe('Extract price')`
+  - `primitives.computer.observe('Extract price')`
   - `returned: '$199'`
 - **Evidence**: Screenshot shows the price as `$299` (the `$199` is the crossed-out old price).
 - **Decision**:
@@ -1573,9 +1573,9 @@ def get_computer_verification_multistep_example() -> str:
 - **Intent**: `submit_signup(email='a@corp.com')`
 - **Agent Trace**:
   - `notify({'type': 'progress', 'message': 'Entering signup details.'})`
-  - `computer_primitives.act('Type email…')`
+  - `primitives.computer.act('Type email…')`
   - `notify({'type': 'progress', 'message': 'Submitting the signup form.'})`
-  - `computer_primitives.act('Click Sign up')`
+  - `primitives.computer.act('Click Sign up')`
   - `✓ done`
 - **Evidence**: Screenshot shows a confirmation banner 'Thanks for signing up'.
 - **Decision**:
@@ -1630,7 +1630,7 @@ def get_mixed_verification_browse_persist_example() -> str:
 - **Intent**: `scrape_support_email_and_save()`
 - **Agent Trace**:
   - `notify({'type': 'progress', 'message': 'Reading the site for the support email.'})`
-  - `computer_primitives.observe('Extract support email') -> 'help@company.com'`
+  - `primitives.computer.observe('Extract support email') -> 'help@company.com'`
   - `notify({'type': 'progress', 'message': 'Saving the support email to shared knowledge.'})`
   - `primitives.knowledge.update('Save support_email=help@company.com')`
   - `✓ done`
@@ -2046,7 +2046,7 @@ def get_examples_for_environments(
     """Get examples appropriate for the given environment combination.
 
     Args:
-        has_computer: Whether computer_primitives environment is active
+        has_computer: Whether primitives.computer environment is active
         has_primitives: Whether primitives environment is active
         include_core: Whether to include core patterns (default: True)
         managers: If provided, only include examples for these managers

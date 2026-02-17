@@ -188,7 +188,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
     """Execute a FunctionManager entrypoint function without invoking the CodeAct LLM loop.
 
     TaskScheduler delegates task execution to an actor via:
-    `actor.act(task_description, entrypoint=<function_id>, persist=False)`.
+    `primitives.actor.act(task_description, entrypoint=<function_id>, persist=False)`.
 
     When an `entrypoint` is provided, CodeActActor resolves the function by id,
     injects it into the sandbox namespace, and executes it in an asyncio task.
@@ -681,7 +681,7 @@ def _start_storage_check_loop(
         "## What Can Be Stored\n\n"
         "Any code that executed successfully in `execute_code` during "
         "this trajectory can be stored as a function. Environment-provided "
-        "namespaces (`actor`, `primitives`, `computer_primitives`) and "
+        "namespaces (`primitives`, `primitives.computer`, `primitives.actor`) and "
         "other stored functions referenced in the code are automatically "
         "detected from the source and injected at runtime — you do not "
         "need to add imports or worry about whether these names will be "
@@ -700,7 +700,7 @@ def _start_storage_check_loop(
         "without rediscovering the right setup.\n\n"
         "For example, if the trajectory contained:\n\n"
         "```python\n"
-        "handle = await actor.act(\n"
+        "handle = await primitives.actor.act(\n"
         '    request="Find Alice\'s work email",\n'
         '    guidelines="Check all contact fields including notes and metadata. ....",\n'
         '    prompt_functions=["primitives.contacts.ask"],\n'
@@ -714,7 +714,7 @@ def _start_storage_check_loop(
         "```python\n"
         "async def research_contact_info(request: str):\n"
         '    """Delegate contact research to a scoped sub-agent with curated tools."""\n'
-        "    handle = await actor.act(\n"
+        "    handle = await primitives.actor.act(\n"
         "        request=request,\n"
         '        guidelines="Check all contact fields including notes and metadata. ....",\n'
         '        prompt_functions=["primitives.contacts.ask"],\n'
@@ -782,9 +782,9 @@ def _start_storage_check_loop(
         "workflow that uses it, store the function first, then create a "
         "guidance entry referencing it via `function_ids`.\n\n"
         "## Sub-Agent Delegation Patterns\n\n"
-        "Calls to `actor.act(...)` in the trajectory are especially "
+        "Calls to `primitives.actor.act(...)` in the trajectory are especially "
         "high-value storage candidates because they represent **pre-configured "
-        "specialist agents**. Each `actor.act` invocation encodes a curated "
+        "specialist agents**. Each `primitives.actor.act` invocation encodes a curated "
         "combination of `prompt_functions` (which tools the sub-agent sees), "
         "`guidelines` (how it should reason and compose those tools), "
         "`discovery_scope` (what it can find via search), and permission "
@@ -792,7 +792,7 @@ def _start_storage_check_loop(
         "particular *class* of tasks, not just the single task it was "
         "originally invoked for.\n\n"
         "### When to store\n\n"
-        "Not every `actor.act` call is worth storing. Use this spectrum:\n\n"
+        "Not every `primitives.actor.act` call is worth storing. Use this spectrum:\n\n"
         "- **Low value** — broad, unscoped delegation: all state managers "
         "in `prompt_functions`, generic or no `guidelines`, no "
         "`discovery_scope`, trivial `request`. This is just a passthrough "
@@ -803,7 +803,7 @@ def _start_storage_check_loop(
         "task that the sub-agent solved successfully. The configuration "
         "required real reasoning to discover and would be hard to "
         "rediscover from scratch.\n\n"
-        "The more curation and domain knowledge went into the `actor.act` "
+        "The more curation and domain knowledge went into the `primitives.actor.act` "
         "parameters, the more valuable it is to store.\n\n"
         "### What to bake in vs expose\n\n"
         "The parameters split naturally into two categories:\n\n"
@@ -1290,7 +1290,7 @@ class CodeActActor(BaseCodeActActor):
         Args:
             environments: List of execution environments to install. Each environment
                 injects a namespace into the sandbox (e.g. ``primitives``,
-                ``computer_primitives``, ``actor``). Pass ``None`` or ``[]``
+                ``primitives.computer``, ``primitives.actor``). Pass ``None`` or ``[]``
                 for a bare actor with no environments.
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
@@ -1643,7 +1643,7 @@ class CodeActActor(BaseCodeActActor):
         ) -> str:
             """Inspect the in-flight computer action loop via browser-agent memory.
 
-            Use this to check progress/state of ongoing ``computer_primitives.act(...)``
+            Use this to check progress/state of ongoing ``primitives.computer.act(...)``
             work when the inspected transcript lacks enough detail (for example,
             placeholders or terse summaries). This is memory/history introspection,
             not a fresh page read and not a way to trigger new actions.
@@ -1890,10 +1890,6 @@ class CodeActActor(BaseCodeActActor):
                 try:
                     sb = _CURRENT_SANDBOX.get()
                     primitives = sb.global_state.get("primitives")
-                    computer_primitives = sb.global_state.get(
-                        "computer_primitives",
-                        computer_primitives,
-                    )
                 except Exception:
                     pass
 
@@ -2376,10 +2372,6 @@ class CodeActActor(BaseCodeActActor):
                     try:
                         sb = _CURRENT_SANDBOX.get()
                         primitives = sb.global_state.get("primitives")
-                        computer_primitives = sb.global_state.get(
-                            "computer_primitives",
-                            computer_primitives,
-                        )
                     except Exception:
                         pass
 
@@ -3098,23 +3090,34 @@ class CodeActActor(BaseCodeActActor):
         # Create per-call environments so clarification queues are not stored on shared actor environments.
         sandbox_envs: Dict[str, "BaseEnvironment"] = {}
         try:
+            from unity.actor.environments.base import (
+                _CompositeEnvironment as _CompositeEnv,
+            )
             from unity.actor.environments import (
                 ComputerEnvironment as _ComputerEnvironment,
                 StateManagerEnvironment as _StateManagerEnvironment,
             )
         except Exception:
+            _CompositeEnv = None  # type: ignore
             _ComputerEnvironment = None  # type: ignore
             _StateManagerEnvironment = None  # type: ignore
 
         for ns, env in self.environments.items():
             # Prefer explicit reconstruction for known env types.
             try:
+                if _CompositeEnv is not None and isinstance(env, _CompositeEnv):
+                    sandbox_envs[ns] = _CompositeEnv(
+                        env.sub_environments,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
+                    continue
                 if _ComputerEnvironment is not None and isinstance(
                     env,
                     _ComputerEnvironment,
                 ):
                     sandbox_envs[ns] = _ComputerEnvironment(
-                        env.get_instance(),
+                        env._computer_primitives,
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
                     )
