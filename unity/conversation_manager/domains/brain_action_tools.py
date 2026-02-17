@@ -1461,7 +1461,7 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "updated", "updates": updates}
 
-    async def wait(self) -> dict[str, Any]:
+    async def wait(self, delay: int | None = None) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
 
@@ -1474,8 +1474,18 @@ class ConversationManagerBrainActionTools:
         The user should usually have the last word. Do not send follow-up
         messages, additional information, or "anything else?" prompts unless
         the user explicitly asks for more.
+
+        Parameters
+        ----------
+        delay : int | None
+            Seconds to wait before automatically waking up for another thinking
+            turn.  When ``None`` (the default), wait indefinitely until the next
+            external event (new message, action completion, etc.).  When set to a
+            positive integer, the system schedules a follow-up thinking turn after
+            that many seconds — useful for probing a long-running action or
+            revisiting a situation after a reasonable interval.
         """
-        return {"status": "waiting"}
+        return {"status": "waiting", "delay": delay}
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the static tools dict for start_async_tool_loop."""
