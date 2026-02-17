@@ -19,6 +19,7 @@ __all__ = [
     "publish_manager_method_event",
     "wrap_handle_with_logging",
     "log_manager_call",
+    "log_manager_result",
 ]
 
 # ---------------------------------------------------------------------------
@@ -360,6 +361,123 @@ def log_manager_call(
                 method_name,
                 display_label=display_label,
             )
+
+        return _wrapper
+
+    return _decorator
+
+
+# ---------------------------------------------------------------------------
+#  4.  Decorator for methods that return plain results (not handles)
+# ---------------------------------------------------------------------------
+
+
+def log_manager_result(
+    manager_name: str,
+    method_name: str,
+    payload_key: str,
+    *,
+    display_label: str | None = None,
+):
+    """Decorator factory for manager methods that return a plain result (str,
+    dict, etc.) rather than a :class:`SteerableToolHandle`.
+
+    Publishes incoming/outgoing ``ManagerMethod`` events and sets
+    ``TOOL_LOOP_LINEAGE`` so that any inner tool loops or nested manager calls
+    inherit the correct parent lineage.
+
+    This is the counterpart to :func:`log_manager_call` for managers like
+    ``MemoryManager`` whose public methods ``await handle.result()`` internally
+    and return the final value directly.
+    """
+
+    def _decorator(func):
+        @functools.wraps(func, updated=())
+        async def _wrapper(self, *args, **kwargs):
+            # Extract the payload value for the incoming event
+            if payload_key in kwargs:
+                payload_value = kwargs[payload_key]
+            elif "text" in kwargs:
+                payload_value = kwargs["text"]
+            elif len(args) >= 1:
+                payload_value = args[0]
+            else:
+                payload_value = ""
+
+            call_id = new_call_id()
+
+            # Pre-compute the hierarchy for this method.  We need it in three
+            # places: (1) the incoming event, (2) the lineage frame for inner
+            # calls, and (3) the outgoing event.
+            parent_lineage: list[str] = []
+            try:
+                val = TOOL_LOOP_LINEAGE.get([])
+                if isinstance(val, list):
+                    parent_lineage = list(val)
+            except Exception:
+                pass
+            leaf = f"{manager_name}.{method_name}"
+            hierarchy = [*parent_lineage, leaf]
+
+            # ── 1. Publish incoming BEFORE modifying the lineage ──────────
+            # publish_manager_method_event reads TOOL_LOOP_LINEAGE and appends
+            # the leaf automatically.  If we set the lineage first, the leaf
+            # would be appended twice.  By publishing while the ContextVar is
+            # still at *parent_lineage*, the helper produces the correct
+            # hierarchy naturally.
+            await publish_manager_method_event(
+                call_id,
+                manager_name,
+                method_name,
+                phase="incoming",
+                display_label=display_label,
+                **{payload_key: payload_value},
+            )
+
+            # ── 2. Set the lineage frame so inner tool loops inherit it ───
+            lineage_token = TOOL_LOOP_LINEAGE.set(hierarchy)
+
+            try:
+                result = await func(self, *args, **kwargs)
+
+                # ── 3. Publish outgoing with EXPLICIT hierarchy ───────────
+                # Inner tool loops (start_async_tool_loop) modify
+                # TOOL_LOOP_LINEAGE and do not restore it.  Letting
+                # publish_manager_method_event derive the hierarchy from the
+                # ContextVar would produce a wrong/deep hierarchy.  Passing
+                # it explicitly mirrors what wrap_handle_with_logging does
+                # for handle-based managers (it reads _log_hierarchy from
+                # the handle, which was captured at loop start time).
+                await publish_manager_method_event(
+                    call_id,
+                    manager_name,
+                    method_name,
+                    phase="outgoing",
+                    display_label=display_label,
+                    answer=_coerce_text_value(result),
+                    hierarchy=hierarchy,
+                )
+                return result
+
+            except Exception as exc:
+                import traceback as _tb
+
+                await publish_manager_method_event(
+                    call_id,
+                    manager_name,
+                    method_name,
+                    phase="outgoing",
+                    display_label=display_label,
+                    status="error",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    traceback=_tb.format_exc()[:2000],
+                    hierarchy=hierarchy,
+                )
+                raise
+
+            finally:
+                TOOL_LOOP_LINEAGE.reset(lineage_token)
 
         return _wrapper
 
