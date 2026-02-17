@@ -3,6 +3,7 @@ import inspect
 import json
 import traceback
 import dataclasses
+import time
 
 
 from typing import (
@@ -878,14 +879,13 @@ class ToolsData:
 
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
-        duration_secs = perf_counter() - info.scheduled_time
         if self._logger.log_steps:
             # Log EXACLY what was inserted, but redact base64 data URLs for readability
             try:
                 safe_for_logs = sanitize_tool_msg_for_logging(tool_msg)
                 self._logger.info(
                     f"{json.dumps(safe_for_logs, indent=4)}",
-                    prefix=f"✅  ToolCall Completed [{duration_secs:.2f}s]",
+                    prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
                 )
             except Exception:
                 pass
@@ -899,7 +899,7 @@ class ToolsData:
                     call_id=call_id,
                     name=name,
                     start_offset=start_offset,
-                    duration=duration_secs,
+                    duration=perf_counter() - info.scheduled_time,
                 )
                 # Update the time context system message content
                 if self._time_ctx_msg is not None:
