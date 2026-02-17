@@ -1037,7 +1037,7 @@ class Renderer:
                 tz_block_line = f"\n{tz_block}"
 
         screenshots_line = ""
-        if message.screenshots:
+        if isinstance(message, Message) and message.screenshots:
             screenshots_line = f" [Screenshots: {', '.join(message.screenshots)}]"
 
         return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{screenshots_line}{tz_block_line}"
