@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -16,6 +16,21 @@ class _DummyLoopClient:
             {"role": "user", "content": "start"},
             {"role": "assistant", "content": "working"},
         ]
+
+
+def _make_actor_with_mock_computer(
+    *,
+    timeout: float,
+    query_return: str,
+) -> CodeActActor:
+    """Construct a CodeActActor with a mock _computer_primitives for testing."""
+    actor = CodeActActor(timeout=timeout)
+    mock_cp = MagicMock()
+    mock_cp.query = AsyncMock(return_value=query_return)
+    mock_cp.pause = AsyncMock()
+    mock_cp.resume = AsyncMock()
+    actor._computer_primitives = mock_cp
+    return actor
 
 
 @pytest.mark.asyncio
@@ -76,9 +91,9 @@ async def test_code_act_ask_includes_computer_progress_tool(monkeypatch):
         _fake_inspection_start_async_tool_loop,
     )
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=30)
-    actor._computer_primitives.query = AsyncMock(
-        return_value="browser-progress-details",
+    actor = _make_actor_with_mock_computer(
+        timeout=30,
+        query_return="browser-progress-details",
     )
 
     handle = None
@@ -182,9 +197,9 @@ async def test_code_act_ask_uses_computer_progress_for_inflight_action(monkeypat
         _fake_actor_start_async_tool_loop,
     )
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=40)
-    actor._computer_primitives.query = AsyncMock(
-        return_value=(
+    actor = _make_actor_with_mock_computer(
+        timeout=40,
+        query_return=(
             "Browser memory says: typed email and password, clicked submit, "
             "waiting for the post-login redirect."
         ),
