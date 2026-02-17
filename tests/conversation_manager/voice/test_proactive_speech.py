@@ -292,6 +292,33 @@ class TestCancelProactiveSpeech:
 class TestProactiveSpeechLoop:
     """Tests for the _proactive_speech_loop() method."""
 
+    async def test_loop_goes_dormant_when_should_not_speak(self, mock_cm):
+        """When the LLM decides should_speak=False, the loop exits without
+        rescheduling -- it goes dormant until the next utterance event."""
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm.mode = Mode.CALL
+
+        async def mock_decide(*args, **kwargs):
+            return ProactiveDecision(should_speak=False)
+
+        mock_cm.proactive_speech.decide = mock_decide
+        mock_cm.schedule_proactive_speech = AsyncMock()
+
+        with (
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch(
+                "unity.conversation_manager.conversation_manager.build_brain_spec",
+                return_value=MockBrainSpec(),
+            ),
+        ):
+            await ConversationManager._proactive_speech_loop(mock_cm)
+
+        # Loop should NOT have published any guidance
+        mock_cm.event_broker.publish.assert_not_called()
+        # Loop should NOT have self-rescheduled
+        mock_cm.schedule_proactive_speech.assert_not_called()
+
     async def test_loop_publishes_guidance_when_should_speak(self, mock_cm):
         """The loop publishes call_guidance when decision says to speak."""
         from unity.conversation_manager.conversation_manager import ConversationManager
@@ -431,6 +458,22 @@ class TestProactiveSpeechDecideIntegration:
 
         assert isinstance(decision, ProactiveDecision)
 
+    async def test_decide_returns_safe_default_on_error(self):
+        """decide() returns should_speak=False when the LLM call fails."""
+        ps = ProactiveSpeech()
+
+        # Force an error by patching new_llm_client to raise
+        with patch(
+            "unity.conversation_manager.domains.proactive_speech.new_llm_client",
+            side_effect=RuntimeError("connection failed"),
+        ):
+            decision = await ps.decide(
+                chat_history=[{"role": "user", "content": "Hello"}],
+                system_prompt="Test",
+            )
+
+        assert decision.should_speak is False
+
 
 # =============================================================================
 # 7. Event Handler Integration Tests
@@ -452,6 +495,26 @@ class TestEventHandlerProactiveSpeechIntegration:
         event = InboundPhoneUtterance(
             contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
             content="Hello?",
+        )
+
+        await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
+
+        mock_cm.schedule_proactive_speech.assert_called_once()
+
+    async def test_outbound_phone_utterance_resets_proactive(self, mock_cm):
+        """OutboundPhoneUtterance event resets (reschedules) proactive speech.
+
+        This is the indirect path that restarts the cycle after the fast brain
+        speaks proactive content via TTS.
+        """
+        from unity.conversation_manager.events import OutboundPhoneUtterance
+        from unity.conversation_manager.domains.event_handlers import EventHandler
+
+        mock_cm.schedule_proactive_speech = AsyncMock()
+
+        event = OutboundPhoneUtterance(
+            contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
+            content="Sure, give me a moment.",
         )
 
         await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
