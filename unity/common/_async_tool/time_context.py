@@ -38,7 +38,7 @@ def perf_counter() -> float:
 
 
 @dataclass
-class ToolTiming:
+class ToolTiming(frozen=True):
     """Record of a single tool execution."""
 
     call_id: str
@@ -66,8 +66,8 @@ class TimeContext:
         Chronological list of completed tool executions.
     """
 
-    loop_start_time: datetime  # Captured via now(as_string=False) at loop start
-    perf_counter_start: float  # Captured via time.perf_counter() at loop start
+    loop_start_time: datetime
+    perf_counter_start: float
     tool_history: List[ToolTiming] = field(default_factory=list)
 
     def elapsed_since_start(self) -> float:
