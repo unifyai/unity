@@ -102,6 +102,15 @@ class ComputerEnvironment(BaseEnvironment):
             "(e.g., navigate then observe).",
         )
 
+        parts.append(
+            "### Progress Notifications for Computer Actions\n\n"
+            "- Treat `computer_primitives.*` calls as potentially long-running by default.\n"
+            "- Emit `notify({...})` before each major computer step (for example: navigate, act, observe).\n"
+            "- If you await a computer step and continue with more work, emit a completion update with concrete progress.\n"
+            "- Keep notification messages user-facing and high-level (what was accomplished and what happens next).\n"
+            "- Avoid low-level diagnostics in notifications (internal IDs, schema/debug details, stack traces).",
+        )
+
         registry_ctx = get_registry().computer_prompt_context()
         if registry_ctx:
             parts.append(registry_ctx)
