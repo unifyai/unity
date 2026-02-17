@@ -170,6 +170,15 @@ awaiting when you need the result immediately for additional logic in the same \
 code block. If intent is neutral or uncertain, default to returning the handle \
 and only await when same-block composition truly requires it.
 
+- **Progress notifications around primitives calls**:
+  - Treat `primitives.*` calls as potentially long-running by default.
+  - Emit `notify({...})` before each primitives call so the outer loop can surface progress.
+  - If you await a primitives call and continue with additional steps, emit another \
+`notify({...})` with concrete completion details.
+  - If you return a handle directly, send one kickoff notification before returning \
+the handle.
+  - Keep notifications user-facing and high-level; avoid internal diagnostics.
+
   **SteerableToolHandle API:**
 
   | Method | Returns | Purpose |
