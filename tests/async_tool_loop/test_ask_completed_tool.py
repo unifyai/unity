@@ -7,6 +7,9 @@ outer LLM retrospectively query completed inner steerable tools about their
 internal reasoning and intermediate steps.
 """
 
+import asyncio
+from unittest.mock import MagicMock
+
 import pytest
 
 from unity.common.async_tool_loop import (
@@ -282,3 +285,73 @@ async def test_ask_about_completed_tool_not_exposed_without_completed_steerable_
         "ask_about_completed_tool should not be called when there are no "
         f"completed steerable tools, but found {len(ask_calls)} calls"
     )
+
+
+# ---------------------------------------------------------------------------
+# Symbolic: pop_task retains handle reference in completed metadata
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(10)
+async def test_pop_task_retains_handle_in_completed_askable_tools():
+    """When a steerable task completes, pop_task should retain the handle
+    reference in ``_completed_askable_tools`` alongside the ask_fn.
+
+    This enables downstream consumers (e.g. the actor's storage loop)
+    to inspect the handle's lifecycle state without reaching into
+    closure internals.
+    """
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+
+    sentinel_handle = MagicMock()
+    sentinel_handle.done.return_value = False
+
+    async def dummy_tool():
+        return "ok"
+
+    # Minimal ToolsData with a no-op logger and client.
+    logger = MagicMock()
+    logger.log_steps = False
+    td = ToolsData({"dummy": dummy_tool}, client=MagicMock(), logger=logger)
+
+    # Simulate scheduling and completing a steerable task.
+    task = asyncio.create_task(asyncio.sleep(0))
+    await task
+
+    call_id = "test_call_123"
+    metadata = ToolCallMetadata(
+        name="dummy",
+        call_id=call_id,
+        call_dict={
+            "id": call_id,
+            "type": "function",
+            "function": {"name": "dummy", "arguments": "{}"},
+        },
+        call_idx=0,
+        chat_context=None,
+        assistant_msg={"role": "assistant", "tool_calls": []},
+        is_interjectable=False,
+        handle=sentinel_handle,
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json="{}",
+    )
+    td.save_task(task, metadata)
+
+    # Simulate the ask_* dynamic tool being registered for this task.
+    ask_key = "ask_dummy_test_call_123"
+    td._task_ask_keys[task] = ask_key
+    td._dynamic_tools_ref = {ask_key: MagicMock()}
+
+    # pop_task should retain the handle in _completed_askable_tools.
+    td.pop_task(task)
+
+    assert (
+        call_id in td._completed_askable_tools
+    ), "pop_task should retain metadata for the completed steerable tool"
+    entry = td._completed_askable_tools[call_id]
+    assert (
+        entry["handle"] is sentinel_handle
+    ), "Retained metadata should include the original handle reference"

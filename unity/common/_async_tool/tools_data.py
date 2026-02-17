@@ -272,7 +272,7 @@ class ToolsData:
         self._completed_ask_handles: Dict[str, Callable] = {}
         self._task_ask_keys: Dict[asyncio.Task, str] = {}
         # Metadata for completed steerable tools, keyed by call_id.
-        # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable}
+        # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable, "handle": Any}
         self._completed_askable_tools: Dict[str, dict] = {}
 
     def get_ask_tools(self) -> Dict[str, Callable]:
@@ -386,6 +386,7 @@ class ToolsData:
                         "call_id": call_id,
                         "arg_repr": arg_repr,
                         "ask_fn": ask_fn,
+                        "handle": info.handle,
                     }
         self.pending.discard(coro)
         return self.info.pop(coro, None)
