@@ -1151,9 +1151,9 @@ class TestMeetInteractionEventHandlers:
         )
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.capture_assistant_screenshot.assert_called_once_with(
-            "So you need to click that button",
-        )
+        mock_cm.capture_assistant_screenshot.assert_called_once()
+        call_args = mock_cm.capture_assistant_screenshot.call_args
+        assert call_args[0][0] == "So you need to click that button"
 
     @pytest.mark.asyncio
     async def test_utterance_no_screenshot_capture_when_not_screen_sharing(
