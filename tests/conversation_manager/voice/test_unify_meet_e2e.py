@@ -426,31 +426,30 @@ class TestUnifyMeetUtteranceHandling:
 
             mock_interject.assert_called_once_with("What's the status of the project?")
 
-    async def test_inbound_utterance_cancels_proactive_speech(
+    async def test_inbound_utterance_resets_proactive_speech(
         self,
         initialized_cm,
         boss_contact,
     ):
         """
-        InboundUnifyMeetUtterance should cancel any pending proactive speech.
+        InboundUnifyMeetUtterance should reset the proactive speech cycle.
         """
         # Start meet first
         started = UnifyMeetStarted(contact=boss_contact)
         await initialized_cm.step(started)
 
-        # Mock cancel_proactive_speech
         with patch.object(
             initialized_cm.cm,
-            "cancel_proactive_speech",
+            "schedule_proactive_speech",
             new_callable=AsyncMock,
-        ) as mock_cancel:
+        ) as mock_schedule:
             utterance = InboundUnifyMeetUtterance(
                 contact=boss_contact,
                 content="Quick question...",
             )
             await initialized_cm.step(utterance)
 
-            mock_cancel.assert_called_once()
+            mock_schedule.assert_called_once()
 
 
 # =============================================================================
