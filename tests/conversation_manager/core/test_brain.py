@@ -211,27 +211,33 @@ class TestBrainSpecStateMessage:
         assert "your desktop" not in header_texts[0]
 
 
-class TestScreenshotEntryMessageId:
-    """Tests for the message_id field on ScreenshotEntry."""
+class TestScreenshotEntryLocalMessageId:
+    """Tests for the local_message_id field on ScreenshotEntry."""
 
-    def test_message_id_defaults_to_none(self):
-        """ScreenshotEntry without explicit message_id defaults to None."""
+    def test_local_message_id_defaults_to_none(self):
+        """ScreenshotEntry without explicit local_message_id defaults to None."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
         entry = ScreenshotEntry(FAKE_B64, "Hello", ts, "user")
-        assert entry.message_id is None
+        assert entry.local_message_id is None
 
-    def test_message_id_can_be_set(self):
-        """ScreenshotEntry accepts an explicit message_id."""
+    def test_local_message_id_can_be_set(self):
+        """ScreenshotEntry accepts an explicit local_message_id."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
-        entry = ScreenshotEntry(FAKE_B64, "Hello", ts, "assistant", message_id=42)
-        assert entry.message_id == 42
+        entry = ScreenshotEntry(
+            FAKE_B64,
+            "Hello",
+            ts,
+            "assistant",
+            local_message_id=42,
+        )
+        assert entry.local_message_id == 42
 
-    def test_message_id_replace(self):
-        """ScreenshotEntry.message_id can be updated via _replace."""
+    def test_local_message_id_replace(self):
+        """ScreenshotEntry.local_message_id can be updated via _replace."""
         ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
         entry = ScreenshotEntry(FAKE_B64, "Hello", ts, "user")
-        assert entry.message_id is None
+        assert entry.local_message_id is None
 
-        updated = entry._replace(message_id=7)
-        assert updated.message_id == 7
-        assert entry.message_id is None  # original unchanged (immutable)
+        updated = entry._replace(local_message_id=7)
+        assert updated.local_message_id == 7
+        assert entry.local_message_id is None  # original unchanged (immutable)

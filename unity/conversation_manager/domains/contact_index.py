@@ -36,7 +36,7 @@ class Message(CommsMessage):
     content: str
     timestamp: datetime
     role: str  # "user" or "assistant"
-    message_id: int = field(default=0, compare=False)
+    local_message_id: int = field(default=0, compare=False)
     screenshots: list[str] = field(default_factory=list, compare=False)
     image_ids: list[int] = field(default_factory=list, compare=False)
 
@@ -154,7 +154,7 @@ class ContactIndex:
         self._contact_manager: "BaseContactManager | None" = None
         # Fallback cache for contacts before ContactManager is initialized
         self._fallback_contacts: dict[int, dict] = {}
-        self._next_message_id: int = 0
+        self._next_local_message_id: int = 0
 
     def set_contact_manager(self, contact_manager: "BaseContactManager") -> None:
         """Set the ContactManager to use as the source of truth for contact data.
@@ -389,13 +389,13 @@ class ContactIndex:
                 attachments=attachments or [],
             )
         else:
-            self._next_message_id += 1
+            self._next_local_message_id += 1
             message = Message(
                 name=name,
                 content=message_content or "",
                 timestamp=timestamp,
                 role=role,
-                message_id=self._next_message_id,
+                local_message_id=self._next_local_message_id,
             )
 
         return GlobalThreadEntry(
@@ -444,7 +444,7 @@ class ContactIndex:
         )
         self.global_thread.append(entry)
         msg = entry.message
-        return msg.message_id if isinstance(msg, Message) else 0
+        return msg.local_message_id if isinstance(msg, Message) else 0
 
     def prepend_entries(self, entries: list) -> None:
         """Prepend entries to the front of the global thread.
