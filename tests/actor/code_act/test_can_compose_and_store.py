@@ -1,9 +1,10 @@
 import asyncio
-
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from unity.actor.code_act_actor import CodeActActor
+from unity.function_manager.function_manager import FunctionManager
 
 # ---------------------------------------------------------------------------
 # can_compose=False — symbolic tests
@@ -194,11 +195,7 @@ async def test_can_store_true_defers_storage_to_review_loop():
     The function must be complex enough that the librarian LLM consistently
     judges it as worth storing (non-trivial logic, validation, edge cases).
     """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": []})
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"parse_and_validate_contacts": "added"})
+    fm = FunctionManager(include_primitives=False)
 
     actor = CodeActActor(
         function_manager=fm,
@@ -232,12 +229,16 @@ async def test_can_store_true_defers_storage_to_review_loop():
                 raise TimeoutError("Storage loop did not complete in time")
             await asyncio.sleep(0.5)
 
-        fm.add_functions.assert_called()
-        call_kwargs = fm.add_functions.call_args.kwargs
-        impl = str(call_kwargs.get("implementations", ""))
-        assert (
-            "parse_and_validate_contacts" in impl
-        ), f"Expected 'parse_and_validate_contacts' in stored implementation, got: {impl}"
+        stored = fm.filter_functions()
+        assert stored, (
+            "Expected FunctionManager to contain at least one stored function "
+            "after the storage review loop."
+        )
+        stored_names = {f.get("name", "") for f in stored if isinstance(f, dict)}
+        assert "parse_and_validate_contacts" in stored_names, (
+            f"Expected 'parse_and_validate_contacts' in stored functions, "
+            f"got: {stored_names}"
+        )
     finally:
         try:
             await actor.close()
@@ -267,34 +268,18 @@ async def test_can_store_true_merges_redundant_functions():
     result() resolves after the task phase; storage runs in the background.
     The test waits for done() to confirm the storage loop has completed.
     """
-    _existing_functions = [
-        {
-            "function_id": 101,
-            "name": "greet_formal",
-            "docstring": "Return a formal greeting.",
-            "implementation": (
-                "def greet_formal(name):\n" '    return f"Good day, {name}."'
-            ),
-        },
-        {
-            "function_id": 102,
-            "name": "greet_casual",
-            "docstring": "Return a casual greeting.",
-            "implementation": ("def greet_casual(name):\n" '    return f"Hey {name}!"'),
-        },
-    ]
+    fm = FunctionManager(include_primitives=False)
 
-    fm = MagicMock()
-    # Discovery tools return the two existing overlapping functions.
-    fm.search_functions = MagicMock(return_value={"metadata": _existing_functions})
-    fm.filter_functions = MagicMock(return_value={"metadata": _existing_functions})
-    fm.list_functions = MagicMock(
-        return_value={"metadata": _existing_functions},
+    # Seed the store with two narrow, overlapping greeting functions.
+    fm.add_functions(
+        implementations=[
+            'def greet_formal(name):\n    """Return a formal greeting."""\n    return f"Good day, {name}."',
+            'def greet_casual(name):\n    """Return a casual greeting."""\n    return f"Hey {name}!"',
+        ],
     )
-    fm.add_functions = MagicMock(return_value={"greet": "added"})
-    fm.delete_function = MagicMock(
-        return_value={"greet_formal": "deleted", "greet_casual": "deleted"},
-    )
+    seeded = fm.filter_functions()
+    seeded_ids = {f["function_id"] for f in seeded if isinstance(f, dict)}
+    assert len(seeded_ids) == 2, f"Expected 2 seeded functions, got {len(seeded_ids)}"
 
     actor = CodeActActor(
         function_manager=fm,
@@ -322,23 +307,19 @@ async def test_can_store_true_merges_redundant_functions():
             await asyncio.sleep(0.5)
 
         # The merged function should have been stored.
-        fm.add_functions.assert_called()
-        add_kwargs = fm.add_functions.call_args.kwargs
-        impl = str(add_kwargs.get("implementations", ""))
+        final = fm.filter_functions()
+        final_names = {f.get("name", "") for f in final if isinstance(f, dict)}
         assert (
-            "greet" in impl
-        ), f"Expected 'greet' in stored implementation, got: {impl}"
+            "greet" in final_names
+        ), f"Expected a unified 'greet' function in the store, got: {final_names}"
 
-        # The old redundant functions should have been deleted.
-        fm.delete_function.assert_called()
-        delete_kwargs = fm.delete_function.call_args.kwargs
-        deleted_ids = delete_kwargs.get("function_id", [])
-        if isinstance(deleted_ids, int):
-            deleted_ids = [deleted_ids]
-        assert set(deleted_ids) & {
-            101,
-            102,
-        }, f"Expected deletion of function_ids 101 and/or 102, got: {deleted_ids}"
+        # At least one of the old redundant functions should have been deleted.
+        final_ids = {f["function_id"] for f in final if isinstance(f, dict)}
+        deleted = seeded_ids - final_ids
+        assert deleted, (
+            f"Expected at least one of the seeded functions ({seeded_ids}) to be "
+            f"deleted after merge, but all remain: {final_ids}"
+        )
     finally:
         try:
             await actor.close()
