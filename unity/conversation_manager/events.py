@@ -281,15 +281,21 @@ class CallGuidance(Event):
     """
     Guidance from the Main CM Brain sent to the Voice Agent during a call.
 
-    Used in both TTS and STS voice modes. The Voice Agent (fast brain) handles
-    all conversational responses autonomously; this guidance provides data,
-    notifications, or requests that the Main CM Brain needs to communicate.
+    Used in both TTS and STS voice modes. The guidance articulator decides
+    whether to block, silently notify, or speak the guidance.
+
+    When should_speak is True, response_text contains the exact text the fast
+    brain should utter via session.say(), bypassing its own LLM. When
+    should_speak is False, the fast brain absorbs the notification silently
+    and must NOT speak in response.
     """
 
     topic: ClassVar[str | None] = "app:comms:assistant_call_guidance"
 
     contact: dict
     content: str
+    response_text: str = ""
+    should_speak: bool = False
 
 
 @dataclass

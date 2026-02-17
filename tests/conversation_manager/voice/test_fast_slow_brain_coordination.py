@@ -68,7 +68,6 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 
@@ -678,33 +677,49 @@ class TestGuidanceRelevanceGuardrails:
 
         from unity.conversation_manager import conversation_manager as cm_module
 
-        filter_calls = {"count": 0}
+        articulator_calls = {"count": 0, "recent_guidance": "NOT_CALLED"}
 
-        class _SentinelFilter:
-            async def should_send_guidance(
+        class _SentinelArticulator:
+            async def articulate_guidance(
                 self,
                 guidance_content,
                 conversation_messages,
+                voice_agent_prompt,
+                recent_guidance=None,
             ):
-                filter_calls["count"] += 1
-                return SimpleNamespace(
-                    thoughts="sentinel",
-                    send_guidance=False,
+                articulator_calls["count"] += 1
+                articulator_calls["recent_guidance"] = recent_guidance
+                from unity.conversation_manager.domains.guidance_articulator import (
+                    GuidanceDecision,
                 )
 
-        monkeypatch.setattr(cm_module, "GuidanceFilter", lambda: _SentinelFilter())
+                return GuidanceDecision(
+                    thoughts="sentinel",
+                    send_guidance=True,
+                    should_speak=True,
+                    response_text="There is no contact named Bob.",
+                )
 
-        should_send = await cm._check_guidance_relevance(
+        monkeypatch.setattr(
+            cm_module,
+            "GuidanceArticulator",
+            lambda: _SentinelArticulator(),
+        )
+
+        decision = await cm._articulate_guidance(
             guidance_content="There is no contact named Bob.",
             slow_brain_start_time=slow_brain_start_time,
         )
 
         assert (
-            should_send is True
+            decision.send_guidance is True
         ), "Assistant-only new messages should not block guidance delivery."
         assert (
-            filter_calls["count"] == 0
-        ), "Relevance filter should not run when no new user turn has arrived."
+            articulator_calls["count"] == 1
+        ), "Articulator should run (needed for speech generation)."
+        assert (
+            articulator_calls["recent_guidance"] is None
+        ), "Redundancy check should be skipped when no new user turn has arrived."
 
     async def test_redundant_guidance_blocked_when_same_info_already_sent(
         self,
@@ -719,7 +734,7 @@ class TestGuidanceRelevanceGuardrails:
         produce guidance about it. Without redundancy detection the user hears
         the same information spoken twice on the call.
 
-        _check_guidance_relevance currently only detects *topic changes*
+        _articulate_guidance currently only detects *topic changes*
         (staleness). It has no mechanism to compare outgoing guidance against
         guidance that was already published. When Run 2 has no new user
         messages since its slow_brain_start_time, the early return bypasses
@@ -807,7 +822,7 @@ class TestGuidanceRelevanceGuardrails:
         )
 
         # Simulate Run 1 having published its guidance (populates the
-        # _recent_guidance deque that _check_guidance_relevance reads)
+        # _recent_guidance deque that _articulate_guidance reads)
         cm._recent_guidance.append(first_guidance_content)
 
         # Run 2 produces semantically equivalent guidance (different wording,
@@ -821,12 +836,12 @@ class TestGuidanceRelevanceGuardrails:
             "comp across all levels is about $556K per year."
         )
 
-        should_send = await cm._check_guidance_relevance(
+        decision = await cm._articulate_guidance(
             guidance_content=second_guidance_content,
             slow_brain_start_time=run2_start_time,
         )
 
-        assert should_send is False, (
+        assert decision.send_guidance is False, (
             "Redundant guidance was not blocked.\n"
             f"First guidance (already sent): {first_guidance_content[:80]}...\n"
             f"Second guidance (should block): {second_guidance_content[:80]}...\n"
@@ -834,7 +849,7 @@ class TestGuidanceRelevanceGuardrails:
 
 
 @pytest.mark.asyncio
-class TestStaleGuidanceFiltering:
+class TestStaleGuidanceArticulation:
     """
     Tests for filtering out stale guidance when the conversation has moved on.
 
@@ -1007,20 +1022,22 @@ class TestStaleGuidanceFiltering:
                     "The meeting tomorrow is scheduled for 3pm in Conference Room B"
                 )
 
-                # This simulates what _run_llm does: check guidance relevance before publishing
-                # The filter will see that NEW messages (topic change, weather response)
+                # This simulates what _run_llm does: articulate guidance before publishing
+                # The articulator will see that NEW messages (topic change, weather response)
                 # arrived after slow_brain_start_time, and should block stale guidance
-                should_send = await cm._check_guidance_relevance(
+                decision = await cm._articulate_guidance(
                     stale_guidance_content,
                     slow_brain_start_time,
                 )
                 guidance_published.set()
 
-                if should_send:
-                    # Publish the guidance (only if filter says it's relevant)
+                if decision.send_guidance:
+                    # Publish the guidance (only if articulator says it's relevant)
                     guidance_event = CallGuidance(
                         contact=boss_contact,
                         content=stale_guidance_content,
+                        response_text=decision.response_text,
+                        should_speak=decision.should_speak,
                     )
                     await cm.event_broker.publish(
                         "app:call:call_guidance",
@@ -1071,7 +1088,7 @@ class TestStaleGuidanceFiltering:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Wait for slow brain to complete (includes LLM call to GuidanceFilter)
+            # Wait for slow brain to complete (includes LLM call to GuidanceArticulator)
             await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # ─────────────────────────────────────────────────────────────────
@@ -1223,15 +1240,17 @@ class TestStaleGuidanceFiltering:
                 )
 
                 # Check if guidance is still relevant (it should be - same topic)
-                should_send = await cm._check_guidance_relevance(
+                decision = await cm._articulate_guidance(
                     relevant_guidance,
                     slow_brain_start_time,
                 )
 
-                if should_send:
+                if decision.send_guidance:
                     guidance_event = CallGuidance(
                         contact=boss_contact,
                         content=relevant_guidance,
+                        response_text=decision.response_text,
+                        should_speak=decision.should_speak,
                     )
                     await cm.event_broker.publish(
                         "app:call:call_guidance",
@@ -1435,15 +1454,17 @@ class TestUserCorrectionsAndRestatements:
                     "The usual attendees are the engineering team leads."
                 )
 
-                should_send = await cm._check_guidance_relevance(
+                decision = await cm._articulate_guidance(
                     wrong_meeting_guidance,
                     slow_brain_start_time,
                 )
 
-                if should_send:
+                if decision.send_guidance:
                     guidance_event = CallGuidance(
                         contact=boss_contact,
                         content=wrong_meeting_guidance,
+                        response_text=decision.response_text,
+                        should_speak=decision.should_speak,
                     )
                     await cm.event_broker.publish(
                         "app:call:call_guidance",
@@ -1489,7 +1510,7 @@ class TestUserCorrectionsAndRestatements:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Wait for slow brain to complete (includes LLM call to GuidanceFilter)
+            # Wait for slow brain to complete (includes LLM call to GuidanceArticulator)
             await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # ─────────────────────────────────────────────────────────────────
@@ -1676,15 +1697,17 @@ class TestFastBrainIncorrectInformation:
                     "She confirmed attendance this morning."
                 )
 
-                should_send = await cm._check_guidance_relevance(
+                decision = await cm._articulate_guidance(
                     correct_guidance,
                     slow_brain_start_time,
                 )
 
-                if should_send:
+                if decision.send_guidance:
                     guidance_event = CallGuidance(
                         contact=boss_contact,
                         content=correct_guidance,
+                        response_text=decision.response_text,
+                        should_speak=decision.should_speak,
                     )
                     await cm.event_broker.publish(
                         "app:call:call_guidance",
@@ -1718,7 +1741,7 @@ class TestFastBrainIncorrectInformation:
             # ─────────────────────────────────────────────────────────────────
             slow_brain_can_finish.set()
 
-            # Wait for slow brain to complete (includes LLM call to GuidanceFilter)
+            # Wait for slow brain to complete (includes LLM call to GuidanceArticulator)
             await asyncio.wait_for(guidance_published.wait(), timeout=120)
 
             # ─────────────────────────────────────────────────────────────────

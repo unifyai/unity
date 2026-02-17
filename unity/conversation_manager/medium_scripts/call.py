@@ -213,7 +213,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     user_is_speaking = False
-    guidance_reply_pending = False
+    _queued_speech: list[str] = []
     if channel == "phone":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
@@ -230,9 +230,22 @@ async def entrypoint(ctx: agents.JobContext):
     def _on_user_state_changed(ev):
         nonlocal user_is_speaking
         user_is_speaking = ev.new_state == "speaking"
-        if not user_is_speaking:
-            maybe_trigger_guidance_reply()
         touch_activity()
+
+    @session.on("agent_state_changed")
+    def _on_agent_state_changed(ev):
+        """Try queued speech only after the agent settles into a quiescent state.
+
+        We intentionally do NOT trigger from user_state_changed because there is
+        a gap between VAD silence detection and the turn detector confirming the
+        turn. During that gap, agent_state is still "listening" and current_speech
+        is None — firing then would race ahead of the fast brain's reply.
+
+        Triggering here guarantees the full thinking → speaking → listening cycle
+        has completed before queued guidance speech plays.
+        """
+        if ev.new_state in ("listening", "idle"):
+            maybe_speak_queued()
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
@@ -286,7 +299,7 @@ async def entrypoint(ctx: agents.JobContext):
     touch_activity()
 
     # Buffer for guidance that arrives before session is ready
-    pending_guidance: list[str] = []
+    pending_guidance: list[tuple[str, str, bool]] = []
     session_ready = False
 
     def on_status(data: dict) -> None:
@@ -301,8 +314,12 @@ async def entrypoint(ctx: agents.JobContext):
         elif event_type == "stop":
             asyncio.create_task(end_call())
 
-    def apply_guidance(content: str) -> None:
-        """Apply guidance to chat context and optionally trigger reply."""
+    def apply_guidance(
+        content: str,
+        response_text: str = "",
+        should_speak: bool = False,
+    ) -> None:
+        """Apply guidance to chat context and optionally queue pre-generated speech."""
         guidance_message = f"[notification] {content}"
 
         # generate_reply() reads from the agent chat context in TTS mode.
@@ -315,40 +332,49 @@ async def entrypoint(ctx: agents.JobContext):
             role="system",
             content=[guidance_message],
         )
-        nonlocal guidance_reply_pending
-        guidance_reply_pending = True
-        maybe_trigger_guidance_reply()
 
-    def maybe_trigger_guidance_reply() -> None:
-        """Trigger a guidance-driven reply when the user is not speaking."""
-        nonlocal guidance_reply_pending
-        if not guidance_reply_pending or user_is_speaking:
+        if should_speak and response_text:
+            _queued_speech.append(response_text)
+            maybe_speak_queued()
+
+    def maybe_speak_queued() -> None:
+        """Speak the next queued response when user is silent and assistant is idle.
+
+        Gates on agent_state to avoid racing with the fast brain's reply pipeline.
+        After the user stops speaking, the agent transitions through thinking →
+        speaking → listening. We only speak queued text once the agent has settled
+        back to a quiescent state, guaranteeing the fast brain's reply comes first.
+        """
+        if not _queued_speech or user_is_speaking:
             return
-        if (
-            assistant._chat_ctx.items
-            and assistant._chat_ctx.items[-1].role != "assistant"
-        ):
-            session.generate_reply(allow_interruptions=True)
-            guidance_reply_pending = False
+        if session.agent_state not in ("listening", "idle"):
+            return
+        current = session.current_speech
+        if current is not None and not current.done:
+            return
+        text = _queued_speech.pop(0)
+        session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
         payload = data.get("payload") or data
         content = payload.get("content", "")
+        response_text = payload.get("response_text", "")
+        should_speak = payload.get("should_speak", False)
         print(
             (
-                f"[Guidance] {content[:50]}..."
+                f"[Guidance] speak={should_speak} {content[:50]}..."
                 if len(content) > 50
-                else f"[Guidance] {content}"
+                else f"[Guidance] speak={should_speak} {content}"
             ),
         )
         touch_activity()
 
         if content:
             if not session_ready:
-                pending_guidance.append(content)
+                pending_guidance.append((content, response_text, should_speak))
             else:
-                apply_guidance(content)
+                apply_guidance(content, response_text, should_speak)
 
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
@@ -367,8 +393,8 @@ async def entrypoint(ctx: agents.JobContext):
     session_ready = True
     if pending_guidance:
         print(f"[Guidance] Applying {len(pending_guidance)} buffered message(s)")
-        for content in pending_guidance:
-            apply_guidance(content)
+        for content, response_text, should_speak in pending_guidance:
+            apply_guidance(content, response_text, should_speak)
         pending_guidance.clear()
 
     await session.generate_reply(allow_interruptions=True)
