@@ -143,9 +143,9 @@ def find_runtime_context_message(messages: list) -> dict | None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_time_context_injected(model):
+async def test_time_context_injected(llm_config):
     """Verify that the system message contains the ## Time Context section."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Run a simple tool loop
     answer = await start_async_tool_loop(
@@ -177,9 +177,9 @@ async def test_time_context_injected(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_timing_recorded(model):
+async def test_tool_timing_recorded(llm_config):
     """Verify that tool execution timing appears in the time context."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Run a loop with a tool that takes some time
     answer = await start_async_tool_loop(
@@ -209,9 +209,9 @@ async def test_tool_timing_recorded(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_history_cumulative(model):
+async def test_tool_history_cumulative(llm_config):
     """Verify that multiple tool calls build cumulative history with offsets."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Run a loop that calls multiple tools
     answer = await start_async_tool_loop(
@@ -248,13 +248,13 @@ async def test_tool_history_cumulative(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_timezone_applied_via_now(model):
+async def test_timezone_applied_via_now(llm_config):
     """Verify that times use the monkey-patched now() function.
 
     The conftest.py patches now() to return a fixed datetime. This test
     verifies that the time context respects that patching.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Run a simple loop
     answer = await start_async_tool_loop(
@@ -280,9 +280,9 @@ async def test_timezone_applied_via_now(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_loop_start_time_captured(model):
+async def test_loop_start_time_captured(llm_config):
     """Verify conversation start time is captured and shown as elapsed."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Run a simple loop
     answer = await start_async_tool_loop(
@@ -320,14 +320,14 @@ def extract_elapsed_seconds(content: str) -> float | None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_simulated_time_progression(model, simulated_time):
+async def test_simulated_time_progression(llm_config, simulated_time):
     """Verify that simulated time increments correctly per now() call.
 
     With simulated_time fixture, each call to now() adds 1 second.
     The elapsed time shown should reflect the difference between
     loop start time and current time.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Run a simple loop - the LLM will make multiple calls triggering now()
     answer = await start_async_tool_loop(
@@ -361,12 +361,12 @@ async def test_simulated_time_progression(model, simulated_time):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_simulated_time_shows_elapsed_correctly(model, simulated_time):
+async def test_simulated_time_shows_elapsed_correctly(llm_config, simulated_time):
     """Verify that elapsed time calculation is correct with simulated time.
 
     The elapsed time shown should equal (current_call_count - start_call_count) seconds.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     # Record the call counts before the loop starts
     initial_now_count = simulated_time["now_call_count"]

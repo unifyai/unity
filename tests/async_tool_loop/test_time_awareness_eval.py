@@ -78,13 +78,13 @@ def count_tool_calls(messages: list, tool_name: str) -> int:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_current_time_awareness(model):
+async def test_current_time_awareness(llm_config):
     """Verify the LLM can answer questions about the current time.
 
     The current time is injected via the time context in the system message.
     The LLM should be able to reference this in its response.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -127,9 +127,9 @@ async def test_current_time_awareness(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conversation_start_awareness(model):
+async def test_conversation_start_awareness(llm_config):
     """Verify the LLM knows when the conversation started."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -164,9 +164,9 @@ async def test_conversation_start_awareness(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_duration_awareness(model):
+async def test_tool_duration_awareness(llm_config):
     """Verify the LLM can report how long a tool took to execute."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -204,13 +204,13 @@ async def test_tool_duration_awareness(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_faster_tool_identification(model):
+async def test_faster_tool_identification(llm_config):
     """Verify the LLM can identify which tool was faster and re-call it.
 
     Uses neutral tool names (tool_alpha, tool_beta) so the LLM must
     infer speed from the execution timing in the Time Context.
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
@@ -252,9 +252,9 @@ async def test_faster_tool_identification(model):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_relative_timing_comparison(model):
+async def test_relative_timing_comparison(llm_config):
     """Verify the LLM can compare execution times of different tools."""
-    client = new_llm_client(model=model)
+    client = new_llm_client(**llm_config)
 
     answer = await start_async_tool_loop(
         client,
