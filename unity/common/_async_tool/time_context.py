@@ -37,8 +37,8 @@ def perf_counter() -> float:
     return _time.perf_counter()
 
 
-@dataclass
-class ToolTiming(frozen=True):
+@dataclass(frozen=True)
+class ToolTiming:
     """Record of a single tool execution."""
 
     call_id: str
