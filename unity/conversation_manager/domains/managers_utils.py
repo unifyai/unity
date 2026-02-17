@@ -461,7 +461,12 @@ async def actor_watch_clarifications(
         )
 
 
-async def log_message(cm: "ConversationManager", event: Event) -> None:
+async def log_message(
+    cm: "ConversationManager",
+    event: Event,
+    *,
+    cm_message_id: int | None = None,
+) -> None:
     """Log a message via TranscriptManager."""
     event_name = event.__class__.__name__
     print("publishing transcript", event_name)
@@ -597,6 +602,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
                     "bcc": event.bcc,
                 }
 
+            tm_message_id = None
             if exchange_id == UNASSIGNED:
                 msg_data = {
                     "medium": medium,
@@ -609,8 +615,10 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
                     msg_data["attachments"] = attachments
                 if metadata:
                     msg_data["metadata"] = metadata
-                exchange_id = cm.transcript_manager.log_first_message_in_new_exchange(
-                    msg_data,
+                exchange_id, tm_message_id = (
+                    cm.transcript_manager.log_first_message_in_new_exchange(
+                        msg_data,
+                    )
                 )
                 # Cache the exchange_id for subsequent pre-hire messages in the batch
                 if isinstance(event, PreHireMessage):
@@ -631,10 +639,15 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
                     msg_data["attachments"] = attachments
                 if metadata:
                     msg_data["metadata"] = metadata
-                cm.transcript_manager.log_messages(
+                logged_msgs = cm.transcript_manager.log_messages(
                     msg_data,
                     synchronous=True,
                 )
+                if logged_msgs:
+                    tm_message_id = logged_msgs[0].message_id
+
+            if cm_message_id is not None and tm_message_id is not None:
+                cm._cm_to_tm_message_ids[cm_message_id] = tm_message_id
 
             print(
                 f"[ManagersWorker] Logged message: {medium}"

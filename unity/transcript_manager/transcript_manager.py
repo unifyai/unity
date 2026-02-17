@@ -840,6 +840,25 @@ class TranscriptManager(BaseTranscriptManager):
             },
         }
 
+    def update_message_images(
+        self,
+        message_id: int,
+        images: list[dict],
+    ) -> None:
+        """Attach or replace images on an already-logged transcript message."""
+        log_ids = unify.get_logs(
+            context=self._transcripts_ctx,
+            filter=f"message_id == {message_id}",
+            return_ids_only=True,
+        )
+        if log_ids:
+            unify.update_logs(
+                logs=log_ids,
+                context=self._transcripts_ctx,
+                entries={"images": images},
+                overwrite=True,
+            )
+
     # ──────────────────────────────────────────────────────────────────────
     #  Image tools
     # ──────────────────────────────────────────────────────────────────────
@@ -1095,29 +1114,10 @@ class TranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
-        """Log the first message of a brand‑new exchange and set initial metadata.
+    ) -> tuple[int, int]:
+        """Log the first message of a brand-new exchange and set initial metadata.
 
-        Behaviour
-        ---------
-        - Requires that the provided message does NOT specify ``exchange_id``.
-          This method will auto‑assign a new exchange id by delegating to
-          :pyfunc:`log_messages` in synchronous mode.
-        - After successful creation, the corresponding ``Exchanges`` row is
-          updated with the given ``exchange_initial_metadata`` (if provided).
-
-        Parameters
-        ----------
-        message : dict | Message
-            The first message to log for the new exchange. Must not include
-            ``exchange_id``.
-        exchange_initial_metadata : dict | None
-            Optional initial metadata to persist on the created ``Exchanges`` row.
-
-        Returns
-        -------
-        int
-            The newly assigned ``exchange_id`` for this exchange.
+        Returns (exchange_id, message_id) for the newly created exchange and message.
         """
 
         # 1) Validate no exchange_id is provided by the caller
@@ -1208,7 +1208,8 @@ class TranscriptManager(BaseTranscriptManager):
             add_to_all_context=self.include_in_multi_assistant_table,
         )
 
-        return exid
+        tm_message_id = int(log.entries.get("message_id", -1))
+        return exid, tm_message_id
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
