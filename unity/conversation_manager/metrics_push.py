@@ -12,9 +12,14 @@ adding zero overhead.
 
 from __future__ import annotations
 
+import logging
 import os
 
 from opentelemetry import metrics
+from opentelemetry.exporter.cloud_monitoring import CloudMonitoringMetricsExporter
+from opentelemetry.resourcedetector.gcp_resource_detector import (
+    GoogleCloudResourceDetector,
+)
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
@@ -38,23 +43,23 @@ def init_metrics() -> None:
         print("[metrics] Metrics export disabled (no GCP credentials)")
         return
 
-    try:
-        from opentelemetry.exporter.cloud_monitoring import (
-            CloudMonitoringMetricsExporter,
-        )
-    except ImportError:
-        print(
-            "[metrics] opentelemetry-exporter-gcp-monitoring not installed "
-            "— metrics export disabled"
-        )
-        return
+    # Surface export errors that would otherwise be swallowed by the
+    # background PeriodicExportingMetricReader thread.
+    logging.getLogger("opentelemetry.exporter.cloud_monitoring").setLevel(logging.DEBUG)
+    logging.getLogger("opentelemetry.sdk.metrics").setLevel(logging.DEBUG)
+
+    # Detect GKE resource attributes (cluster, namespace, pod, container)
+    # so the exporter maps data points to the correct Cloud Monitoring
+    # monitored resource type.  Without this, writes are silently rejected.
+    resource = GoogleCloudResourceDetector().detect()
+    print(f"[metrics] Detected GCP resource: {resource.attributes}")
 
     exporter = CloudMonitoringMetricsExporter()
     reader = PeriodicExportingMetricReader(
         exporter,
         export_interval_millis=5_000,  # 5 seconds — short for ephemeral GKE jobs
     )
-    _provider = MeterProvider(metric_readers=[reader])
+    _provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(_provider)
     print("[metrics] GMP metrics export initialised (5 s interval)")
 
