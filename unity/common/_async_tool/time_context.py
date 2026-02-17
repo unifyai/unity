@@ -18,7 +18,6 @@ from typing import List
 
 from ..prompt_helpers import now
 
-
 # --------------------------------------------------------------------------- #
 #  MONOTONIC TIME HELPER (monkey-patchable for tests)                         #
 # --------------------------------------------------------------------------- #
@@ -42,10 +41,10 @@ def perf_counter() -> float:
 class ToolTiming:
     """Record of a single tool execution."""
 
-    call_id: str  # Unique identifier for this tool invocation
-    name: str  # Tool name (may be duplicated across calls)
-    started_offset_secs: float  # Seconds after loop_start_time when tool started
-    duration_secs: float  # How long the tool took to execute
+    call_id: str
+    name: str
+    started_offset_secs: float
+    duration_secs: float
 
 
 @dataclass
