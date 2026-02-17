@@ -42,7 +42,6 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.llm_client import new_llm_client
 from unity.function_manager.execution_env import create_execution_globals
-from unity.manager_registry import ManagerRegistry
 from unity.function_manager.primitives import get_primitive_callable
 
 from unity.function_manager.primitives import ComputerPrimitives
@@ -398,6 +397,9 @@ class SingleFunctionActor(BaseActor):
         computer_mode: str = "magnitude",
         agent_mode: str = "desktop",
         agent_server_url: str | None = None,
+        *,
+        environments: Optional[list] = None,
+        guidance_manager=None,
     ):
         """
         Initialize the SingleFunctionActor.
@@ -412,10 +414,22 @@ class SingleFunctionActor(BaseActor):
             agent_mode: Agent mode for ComputerPrimitives ("web" or "desktop").
             agent_server_url: URL for the agent server. For desktop mode, pass the
                 external VM's URL.
+            environments: Optional list of execution environments (accepted for
+                compatibility with CodeActActor / BaseActor but only used to
+                extract computer primitives if *computer_primitives* is None).
+            guidance_manager: Accepted for compatibility with BaseActor; unused.
         """
+        super().__init__(
+            environments=environments,
+            function_manager=function_manager,
+            guidance_manager=guidance_manager,
+        )
+
+        # If an explicit ComputerPrimitives was passed, prefer it over whatever
+        # BaseActor extracted from environments.
         if computer_primitives is not None:
             self._computer_primitives = computer_primitives
-        else:
+        elif self._computer_primitives is None:
             self._computer_primitives = ComputerPrimitives(
                 headless=headless,
                 computer_mode=computer_mode,
@@ -423,9 +437,7 @@ class SingleFunctionActor(BaseActor):
                 agent_server_url=agent_server_url,
             )
 
-        self._function_manager = (
-            function_manager or ManagerRegistry.get_function_manager()
-        )
+        self._function_manager = self.function_manager
 
     def _get_function_by_id(
         self,
