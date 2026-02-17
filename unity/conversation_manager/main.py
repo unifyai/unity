@@ -182,8 +182,9 @@ async def run_conversation_manager(
     # StartupEvent.  Pre-specified assistants (local dev / default) have no
     # startup job or assistant-job logging, so metrics are skipped — all
     # metric instruments remain harmless no-ops.
-    if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
-        init_metrics()
+    # Disabled because of errors with the container, will get it fixed soon.
+    # if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+    #     init_metrics()
 
     # Set the process working directory to the local file root so that relative
     # file paths in CodeActActor-generated code (e.g. "Downloads/report.pdf")
