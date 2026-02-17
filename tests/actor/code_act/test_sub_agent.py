@@ -276,6 +276,63 @@ async def test_actor_act_forwards_capability_flags():
 
 
 # ---------------------------------------------------------------------------
+# Symbolic tests — construct_sandbox_root("actor") round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(30)
+def test_construct_sandbox_root_actor_returns_actor_runner():
+    """construct_sandbox_root("actor") should return a fresh _ActorRunner instance.
+
+    This is the factory used by _inject_dependencies to satisfy the
+    "actor.act" dependency at runtime when a stored function is executed
+    outside of a live CodeActActor sandbox.
+    """
+    from unity.function_manager.primitives.registry import construct_sandbox_root
+
+    root = construct_sandbox_root("actor")
+    assert root is not None
+    assert isinstance(root, _ActorRunner)
+    assert hasattr(root, "act")
+    assert callable(root.act)
+
+
+@pytest.mark.timeout(30)
+def test_construct_sandbox_root_actor_is_stateless():
+    """Each call to construct_sandbox_root("actor") returns an independent instance.
+
+    Statelessness is load-bearing: stored compositional functions that call
+    actor.act(...) receive a freshly constructed _ActorRunner via
+    _inject_dependencies, with no shared state between invocations.
+    """
+    from unity.function_manager.primitives.registry import construct_sandbox_root
+
+    root_a = construct_sandbox_root("actor")
+    root_b = construct_sandbox_root("actor")
+    assert root_a is not root_b
+    assert type(root_a) is type(root_b) is _ActorRunner
+
+
+@pytest.mark.timeout(30)
+def test_construct_sandbox_root_actor_has_act_as_primitive_method():
+    """The _ActorRunner returned by construct_sandbox_root should expose
+    'act' in _PRIMITIVE_METHODS so the registry can discover it."""
+    from unity.function_manager.primitives.registry import construct_sandbox_root
+
+    root = construct_sandbox_root("actor")
+    assert hasattr(root, "_PRIMITIVE_METHODS")
+    assert "act" in root._PRIMITIVE_METHODS
+
+
+@pytest.mark.timeout(30)
+def test_construct_sandbox_root_unknown_returns_none():
+    """construct_sandbox_root with an unknown root name returns None."""
+    from unity.function_manager.primitives.registry import construct_sandbox_root
+
+    assert construct_sandbox_root("nonexistent_root") is None
+
+
+# ---------------------------------------------------------------------------
 # Eval test — end-to-end actor execution
 # ---------------------------------------------------------------------------
 
