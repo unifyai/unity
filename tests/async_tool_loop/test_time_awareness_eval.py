@@ -53,11 +53,6 @@ def count_tool_calls(messages: list, tool_name: str) -> int:
     return count
 
 
-# --------------------------------------------------------------------------- #
-#  TEST: LLM knows when conversation started                                  #
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.asyncio
 @_handle_project
 async def test_conversation_start_awareness(llm_config):
@@ -87,11 +82,6 @@ async def test_conversation_start_awareness(llm_config):
     assert (
         answer.elapsed_seconds <= 1.0
     ), f"Expected ~0 s elapsed (now() is fixed), got {answer.elapsed_seconds}"
-
-
-# --------------------------------------------------------------------------- #
-#  TEST: LLM can report tool execution duration                               #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -132,11 +122,6 @@ async def test_tool_duration_awareness(llm_config):
     assert (
         0.05 <= answer.duration_seconds <= 1.0
     ), f"Expected duration ~0.1s, got {answer.duration_seconds}"
-
-
-# --------------------------------------------------------------------------- #
-#  TEST: LLM can identify and re-call the faster tool                         #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -182,7 +167,6 @@ async def test_faster_tool_identification(llm_config):
         response_format=FasterToolResponse,
     ).result()
 
-    # Count tool calls
     alpha_count = count_tool_calls(client.messages, "tool_alpha")
     beta_count = count_tool_calls(client.messages, "tool_beta")
 

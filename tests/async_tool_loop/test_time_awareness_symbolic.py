@@ -106,19 +106,6 @@ def find_time_context_in_messages(messages: list) -> dict | None:
     return None
 
 
-def find_runtime_context_message(messages: list) -> dict | None:
-    """Find the runtime context system message."""
-    for msg in messages:
-        if msg.get("role") == "system" and msg.get("_runtime_context"):
-            return msg
-    return None
-
-
-# --------------------------------------------------------------------------- #
-#  TEST: Time context is injected into system message                         #
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.asyncio
 @_handle_project
 async def test_time_context_injected(llm_config):
@@ -148,11 +135,6 @@ async def test_time_context_injected(llm_config):
     ), "Conversation start time not in system message"
 
 
-# --------------------------------------------------------------------------- #
-#  TEST: Tool timing is recorded in time context                              #
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.asyncio
 @_handle_project
 async def test_tool_timing_recorded(llm_config):
@@ -180,11 +162,6 @@ async def test_tool_timing_recorded(llm_config):
     assert "call_" in content.lower() or "|" in content, "call_id table not found"
 
 
-# --------------------------------------------------------------------------- #
-#  TEST: Multiple tool calls build cumulative history                         #
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.asyncio
 @_handle_project
 async def test_tool_history_cumulative(llm_config):
@@ -210,18 +187,12 @@ async def test_tool_history_cumulative(llm_config):
     content = time_msg.get("content", "")
 
     # Count tool entries in the history (look for table rows with tool names)
-    # The table format is: | call_id | Tool | Started (relative) | Duration |
     simple_count = content.count("simple_tool")
     timed_count = content.count("timed_tool")
 
     # At least one of each tool should be in the history
     assert simple_count >= 1, "simple_tool not found in tool history"
     assert timed_count >= 1, "timed_tool not found in tool history"
-
-
-# --------------------------------------------------------------------------- #
-#  TEST: Loop start time is captured at loop creation                         #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -248,11 +219,6 @@ async def test_loop_start_time_captured(llm_config):
     # Should show "Conversation started: X ago" format
     assert "Conversation started:" in content
     assert "ago" in content
-
-
-# --------------------------------------------------------------------------- #
-#  TEST: Simulated time progression                                           #
-# --------------------------------------------------------------------------- #
 
 
 def extract_elapsed_seconds(content: str) -> float | None:
