@@ -1,18 +1,3 @@
-"""
-Symbolic tests for time-awareness in the async tool loop.
-
-These tests verify the programmatic correctness of time context injection
-and tool timing tracking, without depending on LLM behavior.
-
-The tests validate:
-1. Time context system message is injected
-2. Timezone is correctly applied via now()
-3. Loop start time is captured
-4. Tool execution timing is recorded
-5. Multiple tool calls build cumulative history
-6. Simulated time progression (1 second per call)
-"""
-
 from __future__ import annotations
 
 import asyncio

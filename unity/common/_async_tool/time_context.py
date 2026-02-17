@@ -1,16 +1,3 @@
-"""
-unity/common/_async_tool/time_context.py
-=========================================
-
-Time-awareness context for async tool loops.
-
-Tracks conversation start time and tool execution history, making this
-information available to the LLM via system messages. All time operations
-use helpers that can be monkey-patched in tests:
-- `now()` from `prompt_helpers` for datetime (respects assistant timezone)
-- `perf_counter()` for monotonic timing (tool start offsets, durations)
-"""
-
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,8 +13,7 @@ from ..prompt_helpers import now
 def perf_counter() -> float:
     """Return a monotonic time value for measuring elapsed durations.
 
-    This wraps time.perf_counter() to enable monkey-patching in tests,
-    making tool timing ("Started (relative)", "Duration") deterministic.
+    This wraps time.perf_counter() to enable monkey-patching in tests.
 
     Returns
     -------
@@ -203,12 +189,7 @@ class TimeContext:
 def create_time_context() -> TimeContext:
     """Create a new TimeContext with the current time as start.
 
-    Uses now(as_string=False) to get a datetime object that respects
-    the assistant's timezone and is monkey-patchable in tests.
-
-    Also captures perf_counter() at the same moment to enable
-    computing tool start offsets from ToolCallMetadata.scheduled_time.
-    Both helpers are monkey-patchable for deterministic tests.
+    Uses now() to get a datetime object that respects the assistant's timezone.
 
     Returns
     -------

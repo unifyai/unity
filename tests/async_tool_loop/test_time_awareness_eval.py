@@ -1,25 +1,3 @@
-"""
-Eval tests for time-awareness in the async tool loop.
-
-These tests verify that the LLM can reason about time based on the
-injected time context. They use structured JSON response schemas
-(Pydantic models via ``response_format``) so assertions are on concrete
-field values rather than keyword scanning.
-
-The ``now()`` helper is monkey-patched globally by conftest.py to return
-a fixed datetime (2025-06-13 12:00:00 UTC). This means:
-- The system prompt footer always reads "… June 13, 2025 at 12:00 PM UTC".
-- ``elapsed_since_start()`` always returns 0 (same fixed datetime).
-- Tool durations use real ``time.perf_counter`` (not patched here).
-
-The tests validate:
-1. LLM can report the current time
-2. LLM knows when the conversation started
-3. LLM can report how long a tool took to execute
-4. LLM can identify and re-call the faster of two tools
-5. LLM can compare relative tool timing
-"""
-
 from __future__ import annotations
 
 import asyncio
