@@ -48,6 +48,7 @@ from .messages import (
 )
 from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
+from .time_context import create_time_context, TimeContext
 from ..context_dump import make_messages_safe_for_context_dump
 
 if TYPE_CHECKING:
@@ -216,6 +217,7 @@ async def async_tool_loop_inner(
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
     prompt_caching: Optional["PromptCacheParam"] = None,
+    time_awareness: bool = True,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -341,6 +343,13 @@ async def async_tool_loop_inner(
         "final answer". The loop only terminates when explicitly stopped via
         ``cancel_event`` or ``stop_event``.
 
+    time_awareness : ``bool``, default ``True``
+        If ``True``, a time-context system message is injected at the start
+        of the conversation and refreshed after each tool completion, giving
+        the LLM awareness of wall-clock time and tool execution durations.
+        If ``False``, the time-context table is omitted entirely and no
+        tool-timing tracking is performed.
+
     Returns
     -------
     str
@@ -358,6 +367,10 @@ async def async_tool_loop_inner(
             # parent->child stack even when called outside the tool loop ContextVar scope.
             setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
     logger = LoopLogger(cfg, log_steps)
+
+    # ── Time context for time-awareness ──────────────────────────────────────
+    # Capture the conversation start time and track tool execution timings.
+    time_ctx: Optional[TimeContext] = create_time_context() if time_awareness else None
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Reasoning model compatibility ────────────────────────────────────────────
@@ -519,7 +532,8 @@ async def async_tool_loop_inner(
             f"{json.dumps(ctx_content_transformed, indent=2)}",
         )
 
-    # Always append runtime context as a new system message (never mutate the original)
+    # Append runtime context as a new system message (never mutate the original)
+    msgs_to_append = []
     if runtime_context_parts:
         sys_msg = {
             "role": "system",
@@ -529,7 +543,19 @@ async def async_tool_loop_inner(
         }
         if _has_parent_chat_context:
             sys_msg["_parent_chat_context"] = True
-        await _msg_dispatcher.append_msgs([sys_msg])
+        msgs_to_append.append(sys_msg)
+
+    time_ctx_sys_msg: Optional[dict] = None
+    if time_ctx is not None:
+        time_ctx_sys_msg = {
+            "role": "system",
+            "_time_context": True,
+            "_ctx_header": True,
+            "content": time_ctx.build_system_message(),
+        }
+        msgs_to_append.append(time_ctx_sys_msg)
+
+    await _msg_dispatcher.append_msgs(msgs_to_append)
 
     # ── 0-a++. Initialize context state for incremental propagation ──────────
     # Tracks initial parent context and any continued updates received via interjections.
@@ -566,7 +592,13 @@ async def async_tool_loop_inner(
     # -----------------------------------------------------------------------
 
     # Initialise loop state early so preflight backfill can schedule tasks
-    tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
+    tools_data: ToolsData = ToolsData(
+        tools,
+        client=client,
+        logger=logger,
+        time_ctx=time_ctx,
+        time_ctx_msg=time_ctx_sys_msg,
+    )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}

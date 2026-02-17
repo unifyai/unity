@@ -277,7 +277,6 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         "event",
         f"Publishing transcript: {event.__class__.__name__}",
     )
-    await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -291,7 +290,7 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         (InboundUnifyMeetUtterance, OutboundUnifyMeetUtterance),
     )
     medium = Medium.UNIFY_MEET if is_unify_meet else Medium.PHONE_CALL
-    cm.contact_index.push_message(
+    message_id = cm.contact_index.push_message(
         contact_id=contact_id,
         sender_name=sender_name,
         thread_name=medium,
@@ -299,13 +298,21 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         role=role,
     )
 
+    await managers_utils.queue_operation(
+        managers_utils.log_message,
+        cm,
+        event,
+        cm_message_id=message_id,
+    )
+
     if role == "user":
-        # Capture assistant's screen when screen sharing is active.
-        # The screenshot is buffered and attached to the next slow brain turn,
-        # giving it visual context aligned with the user's spoken instruction.
+        # Link any pending user screenshot to this message by stamping it
+        # with the message_id, then pass the same id to the assistant
+        # screenshot capture so both can be matched back deterministically.
+        cm._claim_pending_user_screenshot(message_id)
         if cm.assistant_screen_share_active:
             asyncio.create_task(
-                cm.capture_assistant_screenshot(event.content),
+                cm.capture_assistant_screenshot(event.content, message_id),
             )
 
         await cm.cancel_proactive_speech()

@@ -180,6 +180,24 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
         raise NotImplementedError
 
+    def update_message_images(
+        self,
+        message_id: int,
+        images: list[dict],
+    ) -> None:
+        """
+        Attach or replace the images on an already-logged transcript message.
+
+        Parameters
+        ----------
+        message_id : int
+            The transcript message_id to update.
+        images : list[dict]
+            JSON-serialized AnnotatedImageRefs list, e.g.
+            [{"raw_image_ref": {"image_id": N}, "annotation": "..."}].
+        """
+        raise NotImplementedError
+
     def update_exchange_metadata(
         self,
         exchange_id: int,
@@ -195,11 +213,11 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
+    ) -> tuple[int, int]:
         """
         Log the first message of a new exchange and set initial exchange metadata.
 
-        Returns the newly assigned exchange_id.
+        Returns (exchange_id, message_id) for the newly created exchange and message.
         """
         raise NotImplementedError
 

@@ -16,7 +16,11 @@ from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
 )
-from unity.conversation_manager.domains.contact_index import ContactIndex, CommsMessage
+from unity.conversation_manager.domains.contact_index import (
+    ContactIndex,
+    CommsMessage,
+    Message,
+)
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
@@ -188,6 +192,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # screenshot buffer for slow brain visual context
         self._screenshot_buffer: list[ScreenshotEntry] = []
+        # mapping from local CM message_id to backend TM message_id,
+        # populated by log_message() for post-hoc screenshot image updates.
+        self._cm_to_tm_message_ids: dict[int, int] = {}
 
         # recently-published guidance content for redundancy detection
         self._recent_guidance: deque[str] = deque(maxlen=5)
@@ -243,7 +250,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             contact_id=1,
         )
 
-    async def capture_assistant_screenshot(self, user_utterance: str) -> None:
+    async def capture_assistant_screenshot(
+        self,
+        user_utterance: str,
+        message_id: int | None = None,
+    ) -> None:
         """Capture the assistant's screen and buffer it for the next slow brain turn.
 
         Called when an inbound utterance arrives while assistant screen sharing
@@ -279,6 +290,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                                 user_utterance,
                                 datetime.now(timezone.utc),
                                 "assistant",
+                                message_id,
                             ),
                         )
                         self._session_logger.debug(
@@ -297,6 +309,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         screenshots = list(self._screenshot_buffer)
         self._screenshot_buffer.clear()
         return screenshots
+
+    def _claim_pending_user_screenshot(self, message_id: int) -> None:
+        """Stamp the most recent unclaimed user screenshot with the given message_id."""
+        if self._screenshot_buffer:
+            last = self._screenshot_buffer[-1]
+            if last.source == "user" and last.message_id is None:
+                self._screenshot_buffer[-1] = last._replace(message_id=message_id)
 
     def _buffer_user_screenshot(self, event_json: str) -> None:
         """Buffer a user screen share screenshot received from the fast brain via IPC."""
@@ -676,6 +695,82 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Persist each screenshot to disk so the CodeActActor can reference them
         # by filepath for programmatic operations (OCR, comparison, etc.).
         screenshot_paths = [_save_screenshot(s) for s in screenshots]
+
+        # Register screenshots with ImageManager and attach filepaths + image_ids
+        # to the corresponding Message objects in the global thread.
+        image_ids: list[int] = []
+        if screenshots:
+            # Register with backend to get persistent image_ids (auto-caption enabled).
+            try:
+                from unity.manager_registry import ManagerRegistry
+
+                image_manager = ManagerRegistry.get_image_manager()
+                items = [
+                    {"data": entry.b64, "timestamp": entry.timestamp}
+                    for entry in screenshots
+                ]
+                image_ids = await asyncio.to_thread(
+                    image_manager.add_images,
+                    items,
+                    synchronous=True,
+                )
+            except Exception as e:
+                self._session_logger.warning(
+                    "screenshot_registration",
+                    f"ImageManager registration failed, skipping: {e}",
+                )
+                image_ids = []
+
+            # Build per-message groupings for filepaths, image_ids, and TM refs.
+            msg_to_paths: dict[int, list[str]] = {}
+            msg_to_image_ids: dict[int, list[int]] = {}
+            msg_to_image_refs: dict[int, list[dict]] = {}
+            source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
+            for i, (entry, path) in enumerate(zip(screenshots, screenshot_paths)):
+                if entry.message_id is None:
+                    continue
+                mid = entry.message_id
+                msg_to_paths.setdefault(mid, []).append(path)
+                if i < len(image_ids):
+                    img_id = image_ids[i]
+                    msg_to_image_ids.setdefault(mid, []).append(img_id)
+                    label = source_labels.get(entry.source, "Screenshot")
+                    msg_to_image_refs.setdefault(mid, []).append(
+                        {
+                            "raw_image_ref": {"image_id": img_id},
+                            "annotation": f"{label} -- '{entry.utterance}'",
+                        },
+                    )
+
+            # Annotate CM Message objects with filepaths and image_ids.
+            if msg_to_paths:
+                for gte in self.contact_index.global_thread:
+                    msg = gte.message
+                    if isinstance(msg, Message) and msg.message_id in msg_to_paths:
+                        msg.screenshots.extend(msg_to_paths.pop(msg.message_id))
+                        if msg.message_id in msg_to_image_ids:
+                            msg.image_ids.extend(
+                                msg_to_image_ids.pop(msg.message_id),
+                            )
+                    if not msg_to_paths:
+                        break
+
+            # Post-hoc update TM messages with AnnotatedImageRefs.
+            if msg_to_image_refs and self.transcript_manager is not None:
+                for cm_msg_id, refs in msg_to_image_refs.items():
+                    tm_msg_id = self._cm_to_tm_message_ids.get(cm_msg_id)
+                    if tm_msg_id is not None:
+                        try:
+                            await asyncio.to_thread(
+                                self.transcript_manager.update_message_images,
+                                tm_msg_id,
+                                refs,
+                            )
+                        except Exception as e:
+                            self._session_logger.warning(
+                                "screenshot_tm_update",
+                                f"TM image update failed for msg {tm_msg_id}: {e}",
+                            )
 
         self.snapshot()
         brain_spec = build_brain_spec(

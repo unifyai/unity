@@ -959,6 +959,131 @@ class TestContactIndex:
         assert contact_index.global_thread[2].message.content == "Voice 1"
         assert contact_index.global_thread[3].message.content == "SMS 2"
 
+    def test_push_message_returns_message_id(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """push_message returns a monotonically increasing message_id for Message types."""
+        id1 = contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="First",
+        )
+        id2 = contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Second",
+        )
+
+        assert id1 == 1
+        assert id2 == 2
+        assert contact_index.global_thread[0].message.message_id == 1
+        assert contact_index.global_thread[1].message.message_id == 2
+
+    def test_push_message_returns_zero_for_non_message_types(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """push_message returns 0 for EmailMessage and other non-Message types."""
+        mid = contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.EMAIL,
+            subject="Test email",
+            body="Body",
+        )
+        assert mid == 0
+
+    def test_message_screenshots_field_defaults_empty(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Message.screenshots defaults to an empty list."""
+        contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello",
+        )
+        msg = contact_index.global_thread[0].message
+        assert msg.screenshots == []
+
+    def test_message_screenshots_mutable_after_creation(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Screenshot paths can be attached to a Message after it is created."""
+        contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Click the button",
+        )
+        msg = contact_index.global_thread[0].message
+        msg.screenshots.extend(
+            [
+                "Screenshots/User/2025-06-13T12-00-00.jpg",
+                "Screenshots/Assistant/2025-06-13T12-00-01.jpg",
+            ],
+        )
+        assert len(msg.screenshots) == 2
+        assert "Screenshots/User/" in msg.screenshots[0]
+        assert "Screenshots/Assistant/" in msg.screenshots[1]
+
+    def test_message_image_ids_field_defaults_empty(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Message.image_ids defaults to an empty list."""
+        contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello",
+        )
+        msg = contact_index.global_thread[0].message
+        assert msg.image_ids == []
+
+    def test_message_image_ids_mutable_after_creation(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """Image IDs can be attached to a Message after it is created."""
+        contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Click the button",
+        )
+        msg = contact_index.global_thread[0].message
+        msg.image_ids.extend([101, 202])
+        assert msg.image_ids == [101, 202]
+
+    def test_cm_to_tm_message_id_mapping(
+        self,
+        contact_index,
+        sample_contact_dict,
+    ):
+        """The _cm_to_tm_message_ids mapping can store and retrieve cm->tm links."""
+        mapping: dict[int, int] = {}
+        mid = contact_index.push_message(
+            contact_id=sample_contact_dict["contact_id"],
+            sender_name="Test",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello",
+        )
+        mapping[mid] = 9999
+        assert mapping[mid] == 9999
+        assert mapping.get(mid + 1) is None
+
 
 # =============================================================================
 # Tool name length guarantee tests

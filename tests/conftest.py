@@ -255,6 +255,7 @@ def stub_external_deps(monkeypatch):
 
     # Patch prompt_helpers.now everywhere it's imported
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
+    monkeypatch.setattr("unity.common._async_tool.time_context.now", _static_now)
     monkeypatch.setattr("unity.guidance_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.secret_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
@@ -273,6 +274,14 @@ def stub_external_deps(monkeypatch):
     monkeypatch.setattr(
         "unity.conversation_manager.conversation_manager.prompt_now",
         _static_now,
+    )
+
+    def _static_perf_counter() -> float:
+        return 1000.0
+
+    monkeypatch.setattr(
+        "unity.common._async_tool.time_context.perf_counter",
+        _static_perf_counter,
     )
 
 

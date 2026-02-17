@@ -352,7 +352,7 @@ def test_update_contact_id_sync():
     """
     tm = SimulatedTranscriptManager()
     # Create an exchange with a message referencing contact id 10
-    exid = tm.log_first_message_in_new_exchange(
+    exid, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": Medium.EMAIL,
             "sender_id": 10,
@@ -389,7 +389,7 @@ def test_clear_sync():
     """
     tm = SimulatedTranscriptManager()
     # Create prior state
-    exid = tm.log_first_message_in_new_exchange(
+    exid, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": Medium.EMAIL,
             "sender_id": 1,
@@ -411,7 +411,7 @@ def test_clear_sync():
     # Clear should be quick and not raise
     tm.clear()
     # Post-clear, synchronous helper still works
-    exid2 = tm.log_first_message_in_new_exchange(
+    exid2, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": Medium.SMS_MESSAGE,
             "sender_id": 3,
@@ -447,7 +447,7 @@ def test_log_sync_and_metadata():
     Validate log_messages returns Message objects and exchange metadata APIs round-trip.
     """
     tm = SimulatedTranscriptManager()
-    exid = tm.log_first_message_in_new_exchange(
+    exid, _ = tm.log_first_message_in_new_exchange(
         {
             "medium": Medium.EMAIL,
             "sender_id": 100,

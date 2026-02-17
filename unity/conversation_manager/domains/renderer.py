@@ -1024,6 +1024,9 @@ class Renderer:
 
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tz_block_line}"
 
+        if isinstance(message, GuidanceMessage):
+            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
+
         # Simple Message (SMS, phone call utterances)
         # Show timezone info for the contact
         tz_block_line = ""
@@ -1036,7 +1039,11 @@ class Renderer:
             if tz_block:
                 tz_block_line = f"\n{tz_block}"
 
-        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
+        screenshots_line = ""
+        if isinstance(message, Message) and message.screenshots:
+            screenshots_line = f" [Screenshots: {', '.join(message.screenshots)}]"
+
+        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{screenshots_line}{tz_block_line}"
 
     def render_completed_actions(
         self,

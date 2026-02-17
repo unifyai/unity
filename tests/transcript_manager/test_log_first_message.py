@@ -63,9 +63,10 @@ def test_creates_exchange_returns_id():
         "content": "first sms",
     }
 
-    exid = tm.log_first_message_in_new_exchange(payload)
+    exid, tm_msg_id = tm.log_first_message_in_new_exchange(payload)
 
     assert isinstance(exid, int) and exid >= 0
+    assert isinstance(tm_msg_id, int)
 
     # Exchanges row should exist (metadata default to dict) and medium set
     rows_e = unify.get_logs(
@@ -99,7 +100,10 @@ def test_sets_initial_metadata():
     }
     meta = {"thread_id": "abc123", "origin": "inbound"}
 
-    exid = tm.log_first_message_in_new_exchange(payload, exchange_initial_metadata=meta)
+    exid, _ = tm.log_first_message_in_new_exchange(
+        payload,
+        exchange_initial_metadata=meta,
+    )
     assert isinstance(exid, int) and exid >= 0
 
     rows_e = unify.get_logs(

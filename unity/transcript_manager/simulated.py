@@ -704,6 +704,20 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             },
         }
 
+    def update_message_images(
+        self,
+        message_id: int,
+        images: list[dict],
+    ) -> None:
+        """Simulated: attach images to an in-memory message by message_id."""
+        from unity.image_manager.types import AnnotatedImageRefs
+
+        parsed = AnnotatedImageRefs.model_validate(images)
+        for i, msg in enumerate(self._sim_messages):
+            if msg.message_id == message_id:
+                self._sim_messages[i] = msg.model_copy(update={"images": parsed})
+                return
+
     def get_exchange_metadata(self, exchange_id: int) -> Exchange:
         """
         Simulated fetch of exchange metadata from in-memory exchanges.
@@ -786,9 +800,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
+    ) -> tuple[int, int]:
         """
         Start a new exchange, assign a fresh id, log the first message, and upsert metadata.
+
+        Returns (exchange_id, message_id).
         """
         sched = maybe_tool_log_scheduled(
             "SimulatedTranscriptManager.log_first_message_in_new_exchange",
@@ -815,7 +831,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         # Log first message
         payload["exchange_id"] = new_exid
         # Let log_messages validate and store
-        self.log_messages(payload, synchronous=True)
+        logged_msgs = self.log_messages(payload, synchronous=True)
+        tm_message_id = logged_msgs[0].message_id if logged_msgs else -1
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(
@@ -825,7 +842,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
                 {"exchange_id": new_exid},
                 t0,
             )
-        return new_exid
+        return new_exid, tm_message_id
 
     @functools.wraps(BaseTranscriptManager.filter_exchanges, updated=())
     def filter_exchanges(
