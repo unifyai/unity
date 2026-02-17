@@ -366,3 +366,76 @@ async def test_actor_completes_simple_task():
             await actor.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Eval test — stored function with actor.act dependency re-execution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_stored_actor_function_reexecutes_successfully():
+    """A stored compositional function that calls actor.act() works when re-executed.
+
+    This is the end-to-end test for the "store then re-execute" pipeline:
+
+    1. Programmatically store a function that calls actor.act(...)
+    2. Retrieve it and prepare it via _inject_callables_for_functions
+       (which calls _inject_dependencies -> construct_sandbox_root("actor"))
+    3. Call the resulting callable with a trivially simple request
+    4. Verify the inner actor (freshly constructed _ActorRunner) runs an
+       LLM loop to completion and returns a meaningful result
+
+    This exercises the chain that was previously untested:
+    stored function -> _inject_dependencies -> construct_sandbox_root("actor")
+    -> _ActorRunner() -> _ActorRunner.act() -> inner CodeActActor -> result
+    """
+    from tests.helpers import _handle_project
+    from unity.function_manager.function_manager import FunctionManager
+    from unity.function_manager.execution_env import create_base_globals
+
+    @_handle_project
+    async def _inner():
+        fm = FunctionManager(include_primitives=False)
+
+        source = (
+            "async def quick_compute(request: str):\n"
+            '    """Delegate a computation to a sub-agent."""\n'
+            "    handle = await actor.act(\n"
+            "        request=request,\n"
+            "        timeout=60,\n"
+            "    )\n"
+            "    return await handle.result()\n"
+        )
+
+        result = fm.add_functions(implementations=source)
+        assert result == {"quick_compute": "added"}
+
+        func_data = fm._get_function_data_by_name(name="quick_compute")
+        assert func_data is not None
+        assert "actor.act" in func_data.get("depends_on", [])
+
+        namespace = create_base_globals()
+        callables = fm._inject_callables_for_functions(
+            [func_data],
+            namespace=namespace,
+        )
+
+        assert len(callables) == 1
+        assert "actor" in namespace
+        assert isinstance(namespace["actor"], _ActorRunner)
+        assert "quick_compute" in namespace
+
+        fn = namespace["quick_compute"]
+        result = await asyncio.wait_for(
+            fn("What is 2 + 2? Reply with just the number."),
+            timeout=120,
+        )
+        result_str = str(result)
+        assert (
+            "4" in result_str
+        ), f"Expected '4' in inner actor result, got: {result_str}"
+
+    await _inner()
