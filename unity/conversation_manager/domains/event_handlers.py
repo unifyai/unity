@@ -173,6 +173,10 @@ async def _(
     sender_name = _get_sender_name(contact)
 
     cm.call_manager.call_contact = contact
+    if isinstance(event, PhoneCallStarted):
+        cm.call_manager.call_start_timestamp = event.timestamp
+    else:
+        cm.call_manager.unify_meet_start_timestamp = event.timestamp
     cm.notifications_bar.push_notif(
         "Comms",
         f"Phone Call started with {sender_name}",
@@ -235,10 +239,17 @@ async def _(
     if cm.mode.is_voice:
         cm.mode = Mode.TEXT
         cm.call_manager.call_contact = None
-        cm.call_manager.conference_name = None
 
     # Clean up the call process
     await cm.call_manager.cleanup_call_proc()
+
+    # Clear session state
+    cm.call_manager.conference_name = None
+    cm.call_manager.room_name = None
+    cm.call_manager.call_start_timestamp = None
+    cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.call_exchange_id = UNASSIGNED
+    cm.call_manager.unify_meet_exchange_id = UNASSIGNED
 
     # Build display content
     reason_display = {
@@ -353,10 +364,24 @@ async def _(
     *args,
     **kwargs,
 ):
+    # Persist session identifiers in exchange metadata before clearing state.
+    if isinstance(event, PhoneCallEnded):
+        exchange_id = cm.call_manager.call_exchange_id
+        if exchange_id != UNASSIGNED and cm.call_manager.conference_name:
+            cm.transcript_manager.update_exchange_metadata(
+                exchange_id,
+                {"conference_name": cm.call_manager.conference_name},
+            )
+    else:
+        exchange_id = cm.call_manager.unify_meet_exchange_id
+        if exchange_id != UNASSIGNED and cm.call_manager.room_name:
+            cm.transcript_manager.update_exchange_metadata(
+                exchange_id,
+                {"room_name": cm.call_manager.room_name},
+            )
+
     cm.mode = Mode.TEXT
     cm.call_manager.call_contact = None
-    if isinstance(event, PhoneCallEnded):
-        cm.call_manager.conference_name = None
     if isinstance(event, UnifyMeetEnded):
         contact_id = event.contact.get("contact_id")
         contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -377,6 +402,15 @@ async def _(
 
     await cm.call_manager.cleanup_call_proc()
     await cm.cancel_proactive_speech()
+
+    # Clear all session state after cleanup.
+    cm.call_manager.conference_name = None
+    cm.call_manager.room_name = None
+    cm.call_manager.call_start_timestamp = None
+    cm.call_manager.unify_meet_start_timestamp = None
+    cm.call_manager.call_exchange_id = UNASSIGNED
+    cm.call_manager.unify_meet_exchange_id = UNASSIGNED
+
     await cm.request_llm_run(delay=0, cancel_running=True)
 
 
