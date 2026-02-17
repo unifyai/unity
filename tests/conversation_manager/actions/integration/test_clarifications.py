@@ -15,6 +15,8 @@ from tests.helpers import _handle_project, get_or_create_contact
 from tests.conversation_manager.conftest import BOSS
 from tests.conversation_manager.actions.integration.helpers import (
     assert_no_errors,
+    extract_actor_handle,
+    get_action_data,
     get_actor_started_event,
     inject_actor_clarification_request,
     run_cm_until_wait,
@@ -73,7 +75,7 @@ async def test_clarification_handle_contract(initialized_cm_codeact):
 
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    handle = cm.cm.in_flight_actions[handle_id]["handle"]
+    handle = extract_actor_handle(cm, handle_id)
 
     # Inject a clarification question into the handle's internal clarification
     # queue — the same queue that the inner loop's _handle_clarification() populates
@@ -150,7 +152,7 @@ async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
     )
     actor_event = get_actor_started_event(result)
     handle_id = actor_event.handle_id
-    handle = cm.cm.in_flight_actions[handle_id]["handle"]
+    handle = extract_actor_handle(cm, handle_id)
 
     # Inject a clarification question into the handle's internal clarification queue
     # (same queue that the inner loop populates when nested tools request clarification).
@@ -177,7 +179,7 @@ async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
     await wait_for_condition(
         lambda: any(
             a.get("action_name") == "clarification_request"
-            for a in cm.cm.in_flight_actions[handle_id].get("handle_actions", [])
+            for a in get_action_data(cm, handle_id).get("handle_actions", [])
         ),
         timeout=300,
         timeout_message="Timed out waiting for CM to record clarification_request in handle_actions.",
@@ -195,10 +197,7 @@ async def test_clarification_cm_event_broker_path(initialized_cm_codeact):
     await wait_for_condition(
         lambda: any(
             str(a.get("action_name", "")).startswith("answer_clarification_")
-            for a in cm.cm.in_flight_actions.get(handle_id, {}).get(
-                "handle_actions",
-                [],
-            )
+            for a in get_action_data(cm, handle_id).get("handle_actions", [])
         ),
         timeout=300,
         timeout_message="Timed out waiting for CM brain to call answer_clarification_* steering tool.",
