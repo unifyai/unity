@@ -170,11 +170,19 @@ _FRENCH_MARKERS = [
     "quelque",
     "beaucoup",
     "seulement",
-    # Verbs / verb forms
+    # Verbs / verb forms (infinitives + common conjugations)
     "aider",
     "faire",
     "confirmer",
     "vérifier",
+    "vérifie",
+    # Common short phrases
+    "un instant",
+    "je vérifie",
+    "je peux",
+    "pas de souci",
+    "tout de suite",
+    "en cours",
     # Contractions (matched after apostrophe normalisation)
     "j'ai",
     "c'est",
@@ -231,6 +239,7 @@ def _normalize_apostrophes(text: str) -> str:
 
 
 _SPANISH_ACCENT_RE = re.compile(r"[áéíóúñ]", re.IGNORECASE)
+_FRENCH_ACCENT_RE = re.compile(r"[àâéèêëçùûüôîï]", re.IGNORECASE)
 
 
 def _has_spanish(text: str) -> bool:
@@ -242,7 +251,9 @@ def _has_spanish(text: str) -> bool:
 
 def _has_french(text: str) -> bool:
     low = _normalize_apostrophes(text.lower())
-    return sum(1 for w in _FRENCH_MARKERS if w in low) >= 2
+    hits = sum(1 for w in _FRENCH_MARKERS if w in low)
+    accent_hits = len(_FRENCH_ACCENT_RE.findall(text))
+    return hits >= 2 or (hits >= 1 and accent_hits >= 1) or accent_hits >= 2
 
 
 def _has_japanese(text: str) -> bool:
