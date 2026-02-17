@@ -920,6 +920,12 @@ class ToolSurfaceRegistry:
                 "- All manager calls return a steerable handle; default to returning the handle as the last expression so outer-loop steering/progress stays available. Await `.result()` only for immediate in-code composition",
             )
             lines.append(
+                "- Calls to `primitives.*` are nested tool loops; emit `notify({...})` before each call, and emit a concrete completion update when you await and continue with more steps",
+            )
+            lines.append(
+                "- Notification messages should be user-facing progress summaries, not low-level technical diagnostics",
+            )
+            lines.append(
                 "- If a manager asks for clarification, wait for the user response and answer via the handle's API",
             )
             lines.append(

@@ -87,8 +87,38 @@ _EXECUTION_RULES = textwrap.dedent("""
     4. **Pydantic for Structured Data (When Supported)**: If a tool supports structured outputs via a `response_format` or schema, define Pydantic models inside the code and call `model_rebuild()` on the outermost model.
 
     5. **Sandbox Helpers**: The following helpers are available in `execute_code` Python sessions:
-       - `notify(payload)` — Send a progress notification (dict) to the outer handle without blocking. Use for long-running tasks to report intermediate status.
-       - `display(obj)` — Emit rich output (text or PIL images) to stdout. Images are auto-resized and base64-encoded. Use instead of `print()` when outputting images.
+
+       **Progress Notifications (`notify`)**
+       - `notify(payload)` sends a non-blocking progress event (dict) to the outer handle.
+       - Treat `primitives.*` calls as long-running by default because they run nested tool loops.
+       - For each `primitives.*` call, emit at least one kickoff notification before the call.
+       - If you await a primitive result and continue with more work, emit a completion notification with concrete outcome data.
+       - If you return a primitive handle directly as the last expression, still emit one kickoff notification before returning the handle.
+       - Use notifications at meaningful milestones only (start of a major step, completion of a major step, and measurable progress points).
+
+       **What makes a strong notification**
+       - Concrete: include useful details like counts, batch indexes, item names, or completed step names.
+       - Specific: report what changed since the last update, not generic activity.
+       - Informative: help the user understand remaining work and current status.
+       - User-facing: explain progress in plain language the end user can understand.
+       - High-level: summarize outcomes and next steps, not internal implementation details.
+
+       **Anti-patterns to avoid**
+       - Generic filler text with no signal (for example: "working on it", "still processing", "please wait").
+       - Repeating the same update without new information.
+       - Over-notifying for trivial operations that complete almost immediately.
+       - Skipping notifications around `primitives.*` calls unless there is a clear reason.
+       - Dumping low-level internals (stack traces, call IDs, schema/debug metadata) into user progress updates.
+
+       **Example payloads**
+       - Progress: `{"type": "progress", "message": "...", "step": 2, "total": 5}`
+       - Step completion: `{"type": "step_complete", "step_name": "...", "result_summary": "..."}`
+       - Custom: any dict schema that communicates real progress clearly.
+
+       **Display Helper (`display`)**
+       - `display(obj)` emits rich output (text or PIL images) to stdout.
+       - Images are auto-resized and base64-encoded.
+       - Use `display(...)` instead of `print(...)` for image output.
 
     6. **Error Handling**: If your code produces an error, the traceback will be returned. Read it carefully, correct your code, and try again.
 
