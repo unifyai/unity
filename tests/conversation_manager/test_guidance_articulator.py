@@ -1,13 +1,13 @@
 """
-tests/conversation_manager/test_guidance_filter.py
-==================================================
+tests/conversation_manager/test_guidance_articulator.py
+=======================================================
 
-Tests for the GuidanceFilter module that determines whether slow brain guidance
-should be sent to the fast brain based on conversation relevance.
+Tests for the GuidanceArticulator module that determines whether slow brain
+guidance should be blocked, silently notified, or spoken aloud by the fast brain.
 
-The GuidanceFilter uses a fast LLM (opus-4.5 without extended thinking) to make
-quick decisions about whether guidance is still relevant after the conversation
-may have moved on while the slow brain was thinking.
+The GuidanceArticulator uses a fast LLM (opus-4.6 without extended thinking)
+to make decisions about relevance and, when appropriate, generates the exact
+speech text in the voice agent's persona.
 
 Test Categories:
 ----------------
@@ -15,7 +15,8 @@ Test Categories:
 2. **Same Topic Continuation**: Guidance should be sent when topic stays the same
 3. **Notification Relevance**: Cross-channel notifications should usually be sent
 4. **Redundancy Detection**: Guidance should be blocked if fast brain already handled it
-5. **Edge Cases**: Ambiguous situations, partial topic changes, etc.
+5. **Speech Generation**: When guidance is relevant, articulator generates speech text
+6. **Edge Cases**: Ambiguous situations, partial topic changes, etc.
 """
 
 from __future__ import annotations
@@ -24,11 +25,25 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from unity.conversation_manager.domains.guidance_filter import (
+from unity.conversation_manager.domains.guidance_articulator import (
     ConversationMessage,
-    GuidanceFilter,
-    GuidanceRelevanceDecision,
+    GuidanceArticulator,
+    GuidanceDecision,
 )
+
+# Minimal voice agent prompt for tests. Enough for the articulator to match
+# persona without the full production prompt.
+STUB_VOICE_AGENT_PROMPT = """\
+I'm a helpful assistant on a phone call with my boss.
+I never reference internal systems, backends, or notifications.
+I match the caller's language.
+
+Brevity: I sound like a normal person on a phone call: concise, natural, and calm.
+Most turns are one to two sentences.
+
+I receive internal [notification] messages with data. The user cannot see these.
+I integrate them naturally as if I knew the answer all along.
+I say "I sent the email", not "the email was sent." I never mention notifications."""
 
 # =============================================================================
 # Fixtures
@@ -36,9 +51,9 @@ from unity.conversation_manager.domains.guidance_filter import (
 
 
 @pytest.fixture
-def guidance_filter():
-    """Create a GuidanceFilter instance for testing."""
-    return GuidanceFilter()
+def articulator():
+    """Create a GuidanceArticulator instance for testing."""
+    return GuidanceArticulator()
 
 
 @pytest.fixture
@@ -85,7 +100,7 @@ class TestTopicChangeDetection:
 
     async def test_explicit_topic_change_blocks_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -107,7 +122,11 @@ class TestTopicChangeDetection:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is False, (
             f"Guidance about meeting should be BLOCKED after explicit topic change!\n"
@@ -120,7 +139,7 @@ class TestTopicChangeDetection:
 
     async def test_implicit_topic_change_blocks_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -142,7 +161,11 @@ class TestTopicChangeDetection:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is False, (
             f"Guidance about restaurants should be BLOCKED after topic change!\n"
@@ -155,7 +178,7 @@ class TestTopicChangeDetection:
 
     async def test_user_cancellation_blocks_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -181,7 +204,11 @@ class TestTopicChangeDetection:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is False, (
             f"Guidance should be BLOCKED when user cancels request!\n"
@@ -199,9 +226,9 @@ class TestTopicChangeDetection:
 class TestSameTopicContinuation:
     """Tests for cases where guidance should be sent (topic stayed the same)."""
 
-    async def test_follow_up_question_allows_guidance(
+    async def test_follow_up_question_sends_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -218,7 +245,11 @@ class TestSameTopicContinuation:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Guidance about meeting should be SENT for follow-up question!\n"
@@ -229,9 +260,9 @@ class TestSameTopicContinuation:
             f"The time/location info is still relevant."
         )
 
-    async def test_clarification_allows_guidance(
+    async def test_clarification_sends_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -247,7 +278,11 @@ class TestSameTopicContinuation:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Guidance should be SENT for clarification question!\n"
@@ -255,9 +290,9 @@ class TestSameTopicContinuation:
             f"Decision thoughts: {decision.thoughts}"
         )
 
-    async def test_no_new_messages_allows_guidance(
+    async def test_no_new_messages_sends_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -273,7 +308,11 @@ class TestSameTopicContinuation:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Guidance should be SENT when no new messages!\n"
@@ -281,9 +320,9 @@ class TestSameTopicContinuation:
             f"Decision thoughts: {decision.thoughts}"
         )
 
-    async def test_assistant_acknowledgment_allows_guidance(
+    async def test_assistant_acknowledgment_sends_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -300,12 +339,93 @@ class TestSameTopicContinuation:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Guidance should be SENT after assistant acknowledgment!\n"
             f"Guidance: {guidance}\n"
             f"Decision thoughts: {decision.thoughts}"
+        )
+
+
+# =============================================================================
+# Test Class: Speech Generation
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestSpeechGeneration:
+    """Tests for the articulator's speech generation when guidance is relevant."""
+
+    async def test_direct_answer_generates_speech(
+        self,
+        articulator: GuidanceArticulator,
+        base_timestamp: datetime,
+    ):
+        """
+        When guidance directly answers the user's question, the articulator
+        should generate speech (should_speak=True with non-empty response_text).
+        """
+        guidance = "The meeting tomorrow is at 3pm in Conference Room B"
+
+        conversation = make_conversation(
+            [
+                ("user", "What time is the meeting tomorrow?", False),
+                ("assistant", "Let me check on that.", True),
+            ],
+            base_timestamp,
+        )
+
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
+
+        assert decision.send_guidance is True
+        assert decision.should_speak is True, (
+            f"Articulator should generate speech for a direct answer!\n"
+            f"Guidance: {guidance}\n"
+            f"Decision thoughts: {decision.thoughts}"
+        )
+        assert decision.response_text, (
+            f"response_text must be non-empty when should_speak is True!\n"
+            f"Decision: {decision}"
+        )
+
+    async def test_speech_is_concise(
+        self,
+        articulator: GuidanceArticulator,
+        base_timestamp: datetime,
+    ):
+        """
+        Generated speech should be brief (matching voice agent persona: 1-2 sentences).
+        """
+        guidance = "John's email is john@example.com and his phone number is 555-123-4567. He works in the engineering department on the third floor."
+
+        conversation = make_conversation(
+            [
+                ("user", "How can I reach John?", False),
+                ("assistant", "Let me look that up.", True),
+            ],
+            base_timestamp,
+        )
+
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
+
+        assert decision.should_speak is True
+        # Reasonable upper bound for concise phone speech
+        assert len(decision.response_text) < 300, (
+            f"Speech should be concise! Got {len(decision.response_text)} chars:\n"
+            f"{decision.response_text}"
         )
 
 
@@ -320,7 +440,7 @@ class TestNotificationRelevance:
 
     async def test_relevant_notification_is_sent(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -336,7 +456,11 @@ class TestNotificationRelevance:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Notification answering user's question should be SENT!\n"
@@ -346,7 +470,7 @@ class TestNotificationRelevance:
 
     async def test_urgent_notification_is_sent(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -362,10 +486,12 @@ class TestNotificationRelevance:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
-        # Note: This is a judgment call - urgent notifications should probably
-        # interrupt even unrelated conversations
         assert decision.send_guidance is True, (
             f"Urgent notification should be SENT even if topic is different!\n"
             f"Guidance: {guidance}\n"
@@ -384,7 +510,7 @@ class TestRedundancyDetection:
 
     async def test_already_answered_blocks_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -406,7 +532,11 @@ class TestRedundancyDetection:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is False, (
             f"Redundant guidance should be BLOCKED!\n"
@@ -419,7 +549,7 @@ class TestRedundancyDetection:
 
     async def test_partial_answer_allows_additional_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
@@ -440,7 +570,11 @@ class TestRedundancyDetection:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Additional contact info should be SENT!\n"
@@ -458,9 +592,9 @@ class TestRedundancyDetection:
 class TestEdgeCases:
     """Tests for edge cases and ambiguous situations."""
 
-    async def test_empty_conversation_with_notification_allows_guidance(
+    async def test_empty_conversation_with_notification_sends_guidance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
     ):
         """
         With an empty conversation but an important notification, guidance should
@@ -468,7 +602,11 @@ class TestEdgeCases:
         """
         guidance = "URGENT: SMS from boss - 'Meeting moved to 2pm'"
 
-        decision = await guidance_filter.should_send_guidance(guidance, [])
+        decision = await articulator.articulate_guidance(
+            guidance,
+            [],
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
         assert decision.send_guidance is True, (
             f"Urgent notification should be SENT even with empty conversation!\n"
@@ -478,11 +616,11 @@ class TestEdgeCases:
 
     async def test_all_new_messages_still_evaluates_relevance(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
-        Even if all messages are "new" (edge case), the filter should still
+        Even if all messages are "new" (edge case), the articulator should still
         evaluate relevance based on content.
         """
         guidance = "The meeting is at 3pm"
@@ -495,9 +633,12 @@ class TestEdgeCases:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
-        # The guidance about a meeting is irrelevant to a weather conversation
         assert decision.send_guidance is False, (
             f"Irrelevant guidance should be BLOCKED!\n"
             f"Guidance: {guidance}\n"
@@ -506,11 +647,11 @@ class TestEdgeCases:
 
     async def test_related_but_different_topic(
         self,
-        guidance_filter: GuidanceFilter,
+        articulator: GuidanceArticulator,
         base_timestamp: datetime,
     ):
         """
-        When the new topic is related but different, the filter should make
+        When the new topic is related but different, the articulator should make
         a judgment call. This tests the model's reasoning.
         """
         guidance = "The project budget is $50,000"
@@ -523,14 +664,13 @@ class TestEdgeCases:
             base_timestamp,
         )
 
-        decision = await guidance_filter.should_send_guidance(guidance, conversation)
+        decision = await articulator.articulate_guidance(
+            guidance,
+            conversation,
+            STUB_VOICE_AGENT_PROMPT,
+        )
 
-        # User asked about deadline instead - budget info might be useful context
-        # but the immediate question is about deadline. This is a judgment call.
-        # We accept either decision but require clear reasoning.
         assert decision.thoughts, "Decision should include reasoning"
-        # The model should recognize this is a topic shift
-        # Most likely should block since user asked for deadline "instead"
 
 
 # =============================================================================
@@ -540,26 +680,45 @@ class TestEdgeCases:
 
 @pytest.mark.asyncio
 class TestResponseModel:
-    """Tests for the GuidanceRelevanceDecision response model."""
+    """Tests for the GuidanceDecision response model."""
 
     def test_decision_model_has_required_fields(self):
         """Verify the response model has the expected fields."""
-        decision = GuidanceRelevanceDecision(
+        decision = GuidanceDecision(
             thoughts="Test reasoning",
             send_guidance=True,
+            should_speak=True,
+            response_text="It's at 3pm.",
         )
         assert hasattr(decision, "thoughts")
         assert hasattr(decision, "send_guidance")
+        assert hasattr(decision, "should_speak")
+        assert hasattr(decision, "response_text")
         assert isinstance(decision.thoughts, str)
         assert isinstance(decision.send_guidance, bool)
+        assert isinstance(decision.should_speak, bool)
+        assert isinstance(decision.response_text, str)
 
     def test_decision_model_json_serialization(self):
         """Verify the model can be serialized to/from JSON."""
-        decision = GuidanceRelevanceDecision(
+        decision = GuidanceDecision(
             thoughts="The guidance is relevant",
             send_guidance=True,
+            should_speak=True,
+            response_text="It's at 3pm in Conference Room B.",
         )
         json_str = decision.model_dump_json()
-        restored = GuidanceRelevanceDecision.model_validate_json(json_str)
+        restored = GuidanceDecision.model_validate_json(json_str)
         assert restored.thoughts == decision.thoughts
         assert restored.send_guidance == decision.send_guidance
+        assert restored.should_speak == decision.should_speak
+        assert restored.response_text == decision.response_text
+
+    def test_decision_model_defaults(self):
+        """Verify default values for optional fields."""
+        decision = GuidanceDecision(
+            thoughts="Blocked",
+            send_guidance=False,
+            should_speak=False,
+        )
+        assert decision.response_text == ""

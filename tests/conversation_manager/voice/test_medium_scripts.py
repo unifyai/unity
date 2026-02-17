@@ -38,7 +38,6 @@ conversation while the Main CM Brain (slow brain) handles orchestration.
    - build_voice_agent_prompt output structure
 """
 
-import asyncio
 import json
 from types import SimpleNamespace
 
@@ -1323,6 +1322,9 @@ class TestFastBrainGuidanceFlow:
                 self.current_agent = None
                 self._events = {}
                 self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
                 fake_session_holder["session"] = self
 
             def on(self, event_name):
@@ -1337,6 +1339,10 @@ class TestFastBrainGuidanceFlow:
 
             def generate_reply(self, **kwargs):
                 self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
                 return _ImmediateAwaitable()
 
         class _FakeAssistant:
@@ -1407,18 +1413,35 @@ class TestFastBrainGuidanceFlow:
 
         session = fake_session_holder["session"]
         guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        agent_state_cb = session._events["agent_state_changed"]
+
+        # User is speaking — guidance with should_speak=True arrives and is queued
         state_cb = session._events["user_state_changed"]
-
-        baseline_reply_calls = session.generate_reply_calls
-
         state_cb(SimpleNamespace(new_state="speaking"))
-        guidance_cb({"payload": {"content": "No, there is no contact named Bob."}})
-        assert session.generate_reply_calls == baseline_reply_calls
-
-        state_cb(SimpleNamespace(new_state="listening"))
-        await asyncio.sleep(0)
-
-        assert session.generate_reply_calls == baseline_reply_calls + 1, (
-            "Guidance that arrives while the user is speaking should be surfaced "
-            "after speech ends."
+        guidance_cb(
+            {
+                "payload": {
+                    "content": "No, there is no contact named Bob.",
+                    "response_text": "No, there's no contact named Bob.",
+                    "should_speak": True,
+                },
+            },
         )
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire while user is speaking."
+
+        # User stops speaking — say() must NOT fire from user_state_changed alone
+        state_cb(SimpleNamespace(new_state="listening"))
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire from user_state_changed (race condition)."
+
+        # Agent settles to listening — say() fires now
+        agent_state_cb(SimpleNamespace(new_state="listening"))
+
+        assert len(session.say_calls) == 1, (
+            "Guidance that arrives while the user is speaking should be surfaced "
+            "via session.say() after the agent settles to listening."
+        )
+        assert session.say_calls[0] == "No, there's no contact named Bob."

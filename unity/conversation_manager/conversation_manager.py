@@ -42,10 +42,12 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-from unity.conversation_manager.domains.guidance_filter import (
-    GuidanceFilter,
+from unity.conversation_manager.domains.guidance_articulator import (
+    GuidanceArticulator,
+    GuidanceDecision,
     ConversationMessage,
 )
+from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -518,37 +520,72 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
-    async def _check_guidance_relevance(
+    def _build_voice_agent_prompt(self) -> str:
+        """Build the fast brain prompt from CM state for the guidance articulator."""
+        from unity.settings import SETTINGS
+
+        contact = self.get_active_contact() or {}
+        boss = self.contact_index.get_contact(contact_id=1) or {}
+        is_boss_user = contact.get("contact_id") == 1
+
+        return build_voice_agent_prompt(
+            bio=self.assistant_about,
+            assistant_name=self.assistant_name or None,
+            boss_first_name=boss.get("first_name", ""),
+            boss_surname=boss.get("surname", ""),
+            boss_email_address=boss.get("email_address", ""),
+            boss_phone_number=boss.get("phone_number", ""),
+            boss_bio=boss.get("bio") or None,
+            contact_first_name=contact.get("first_name", ""),
+            contact_surname=contact.get("surname", ""),
+            contact_phone_number=contact.get("phone_number", ""),
+            contact_email=contact.get("email_address", ""),
+            contact_bio=contact.get("bio") or None,
+            is_boss_user=is_boss_user,
+            contact_rolling_summary=contact.get("rolling_summary", ""),
+            demo_mode=SETTINGS.DEMO_MODE,
+        ).flatten()
+
+    async def _articulate_guidance(
         self,
         guidance_content: str,
         slow_brain_start_time: "datetime",
-    ) -> bool:
+    ) -> GuidanceDecision:
         """
-        Check if guidance is still relevant given conversation changes since slow brain started.
+        Decide what to do with slow brain guidance: block, silently notify, or speak.
 
-        The slow brain takes 10-20 seconds to think. During this time, the user may change
-        topics, the fast brain may respond, etc. This method uses a fast LLM filter to
-        determine if the guidance is still relevant or if it's stale.
+        The slow brain takes 10-20 seconds to think. During this time, the user may
+        change topics, the fast brain may respond, etc. This method uses a fast LLM
+        articulator to determine relevance and, when appropriate, generate the exact
+        speech text the fast brain should utter.
 
         Args:
             guidance_content: The guidance text from the slow brain.
             slow_brain_start_time: When the slow brain started thinking.
 
         Returns:
-            True if guidance should be sent, False if it's stale and should be blocked.
+            GuidanceDecision with send_guidance, should_speak, and response_text.
         """
         from datetime import datetime, timezone
+
+        # Default decision: send guidance without speech (notify-only, fail-open)
+        default_decision = GuidanceDecision(
+            thoughts="No filtering needed.",
+            send_guidance=True,
+            should_speak=False,
+            response_text="",
+        )
 
         try:
             # Get the current voice conversation
             contact = self.get_active_contact()
             if not contact:
-                return True  # No contact context, send guidance
+                return default_decision
 
             contact_id = contact.get("contact_id")
             conv_state = self.contact_index.get_conversation_state(contact_id)
             if not conv_state:
-                return True  # No conversation state, send guidance
+                return default_decision
 
             # Get the voice thread
             voice_medium = (
@@ -560,7 +597,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
 
             if not voice_thread:
-                return True  # No messages to compare, send guidance
+                return default_decision
 
             # Convert to ConversationMessage format with is_new flag
             conversation_messages = []
@@ -581,7 +618,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 msg_time = getattr(msg, "timestamp", None)
                 is_new = False
                 if msg_time is not None:
-                    # Ensure timezone-aware comparison
                     if msg_time.tzinfo is None:
                         msg_time = msg_time.replace(tzinfo=timezone.utc)
                     is_new = msg_time > slow_brain_start_time
@@ -602,41 +638,45 @@ class ConversationManager(metaclass=SingletonABCMeta):
             )
             has_recent_guidance = len(self._recent_guidance) > 0
 
-            # Early returns: skip the LLM filter when there is nothing to
-            # check against.  Two independent dimensions can trigger filtering:
+            # Early return: skip the LLM when there is nothing to check against.
+            # Two dimensions can trigger the articulator:
             #   1. Topic staleness — a new user turn may have changed the topic.
             #   2. Redundancy — a previous slow-brain run already published
             #      equivalent guidance (queue-of-2 overlap).
-            # If neither condition applies we can return immediately.
-            if not has_new_messages and not has_recent_guidance:
-                return True
-            if not has_new_user_turn and not has_recent_guidance:
-                return True
+            # If neither applies, go straight to the articulator for speech
+            # generation (but skip the relevance check since it's guaranteed fresh).
+            needs_relevance_check = (
+                has_new_messages and has_new_user_turn
+            ) or has_recent_guidance
 
-            # Use the GuidanceFilter to make the decision (topic staleness
-            # and/or redundancy against recently-published guidance).
-            guidance_filter = GuidanceFilter()
-            decision = await guidance_filter.should_send_guidance(
+            # Build the full fast brain prompt for persona matching
+            voice_agent_prompt = self._build_voice_agent_prompt()
+
+            articulator = GuidanceArticulator()
+            decision = await articulator.articulate_guidance(
                 guidance_content,
                 conversation_messages,
-                recent_guidance=list(self._recent_guidance),
+                voice_agent_prompt=voice_agent_prompt,
+                recent_guidance=(
+                    list(self._recent_guidance) if needs_relevance_check else None
+                ),
             )
 
             self._session_logger.debug(
-                "guidance_filter",
-                f"Filter decision: send={decision.send_guidance}, "
+                "guidance_articulator",
+                f"Decision: send={decision.send_guidance}, "
+                f"speak={decision.should_speak}, "
                 f"thoughts={decision.thoughts[:100]}...",
             )
 
-            return decision.send_guidance
+            return decision
 
         except Exception as e:
-            # On error, default to sending guidance (fail-open)
             self._session_logger.error(
-                "guidance_filter",
-                f"Error in guidance filter, defaulting to send: {e}",
+                "guidance_articulator",
+                f"Error in guidance articulator, defaulting to notify-only: {e}",
             )
-            return True
+            return default_decision
 
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
@@ -860,15 +900,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if self.mode.is_voice:
                 call_guidance = getattr(structured, "call_guidance", "")
                 if call_guidance:
-                    # Check if guidance is still relevant (conversation may have moved on)
-                    should_send = await self._check_guidance_relevance(
+                    decision = await self._articulate_guidance(
                         call_guidance,
                         slow_brain_start_time,
                     )
 
-                    if should_send:
+                    if decision.send_guidance:
                         contact = self.get_active_contact()
-                        event = CallGuidance(contact, call_guidance)
+                        event = CallGuidance(
+                            contact=contact,
+                            content=call_guidance,
+                            response_text=decision.response_text,
+                            should_speak=decision.should_speak,
+                        )
                         await self.event_broker.publish(
                             "app:call:call_guidance",
                             event.to_json(),
@@ -880,8 +924,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         self._recent_guidance.append(call_guidance)
                     else:
                         self._session_logger.info(
-                            "guidance_filtered",
-                            f"Stale guidance blocked: {call_guidance[:50]}...",
+                            "guidance_blocked",
+                            f"Guidance blocked: {call_guidance[:50]}...",
                         )
 
         # Log LLM response
