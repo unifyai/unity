@@ -217,6 +217,7 @@ async def async_tool_loop_inner(
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
     prompt_caching: Optional["PromptCacheParam"] = None,
+    time_awareness: bool = True,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -342,6 +343,13 @@ async def async_tool_loop_inner(
         "final answer". The loop only terminates when explicitly stopped via
         ``cancel_event`` or ``stop_event``.
 
+    time_awareness : ``bool``, default ``True``
+        If ``True``, a time-context system message is injected at the start
+        of the conversation and refreshed after each tool completion, giving
+        the LLM awareness of wall-clock time and tool execution durations.
+        If ``False``, the time-context table is omitted entirely and no
+        tool-timing tracking is performed.
+
     Returns
     -------
     str
@@ -364,7 +372,7 @@ async def async_tool_loop_inner(
     # Capture the conversation start time and track tool execution timings.
     # Uses now() from prompt_helpers which respects SESSION_DETAILS.assistant.timezone
     # and is monkey-patched in tests for deterministic behavior.
-    time_ctx: TimeContext = create_time_context()
+    time_ctx: Optional[TimeContext] = create_time_context() if time_awareness else None
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
 
     # ── Reasoning model compatibility ────────────────────────────────────────────
@@ -540,13 +548,15 @@ async def async_tool_loop_inner(
         msgs_to_append.append(sys_msg)
 
     # Time context as its own system message (updated after tool completions)
-    time_ctx_sys_msg = {
-        "role": "system",
-        "_time_context": True,
-        "_ctx_header": True,
-        "content": time_ctx.build_system_message(),
-    }
-    msgs_to_append.append(time_ctx_sys_msg)
+    time_ctx_sys_msg: Optional[dict] = None
+    if time_ctx is not None:
+        time_ctx_sys_msg = {
+            "role": "system",
+            "_time_context": True,
+            "_ctx_header": True,
+            "content": time_ctx.build_system_message(),
+        }
+        msgs_to_append.append(time_ctx_sys_msg)
 
     await _msg_dispatcher.append_msgs(msgs_to_append)
 

@@ -861,6 +861,7 @@ def start_async_tool_loop(
     persist: bool = False,
     multi_handle: bool = False,
     prompt_caching: Optional["PromptCacheParam"] = None,
+    time_awareness: bool = True,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -903,6 +904,12 @@ def start_async_tool_loop(
         to the running loop. Interjections are tagged with request IDs so the LLM
         knows which request they belong to. The loop terminates when all requests
         are completed/cancelled (unless persist=True).
+
+    time_awareness : bool, default True
+        If ``True``, a time-context system message is injected into the
+        conversation and updated after each tool completion, giving the LLM
+        awareness of wall-clock time and tool execution durations.  If
+        ``False``, the time-context table is omitted entirely.
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     loop_id = loop_id if loop_id is not None else short_id()
@@ -978,6 +985,7 @@ def start_async_tool_loop(
                 persist=persist,
                 multi_handle_coordinator=multi_handle_coordinator,
                 prompt_caching=prompt_caching,
+                time_awareness=time_awareness,
             )
         except asyncio.CancelledError:
             raise
