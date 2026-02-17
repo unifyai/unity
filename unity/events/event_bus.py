@@ -319,6 +319,12 @@ class EventBus:
     # first EventBus instantiation. Can be overridden (e.g., tests use markers).
     _publishing_enabled: bool | None = None
 
+    # ── Pub/Sub streaming for Live Actions ────────────────────────────────
+    _GCP_PROJECT = "responsive-city-458413-a2"
+    _ACTION_EVENT_TYPES = frozenset({"ManagerMethod", "ToolLoop"})
+    _pubsub_publisher = None
+    _pubsub_streaming_enabled: bool | None = None
+
     @classmethod
     def _init_publishing_enabled(cls) -> None:
         """Initialize _publishing_enabled from settings if not already set."""
@@ -330,6 +336,26 @@ class EventBus:
             except Exception:
                 # Fallback to disabled if settings can't be loaded
                 cls._publishing_enabled = False
+
+    @classmethod
+    def _init_pubsub_streaming(cls) -> None:
+        """Initialize _pubsub_streaming_enabled from settings if not already set."""
+        if cls._pubsub_streaming_enabled is None:
+            try:
+                from ..settings import SETTINGS
+
+                cls._pubsub_streaming_enabled = SETTINGS.EVENTBUS_PUBSUB_STREAMING
+            except Exception:
+                cls._pubsub_streaming_enabled = False
+
+    @classmethod
+    def _get_pubsub_publisher(cls):
+        """Lazily initialize the GCP Pub/Sub publisher client."""
+        if cls._pubsub_publisher is None:
+            from google.cloud import pubsub_v1
+
+            cls._pubsub_publisher = pubsub_v1.PublisherClient()
+        return cls._pubsub_publisher
 
     def __init__(self):
         # Initialize publishing flag from settings (once, on first instantiation)
@@ -868,12 +894,102 @@ class EventBus:
             self._specific_ctxs[event.type],
         )
 
+        # ── Stream action events to Pub/Sub for real-time frontend rendering ─
+        if event.type in self._ACTION_EVENT_TYPES:
+            self._stream_action_to_pubsub(event, base_entries, payload_dict)
+
         # ── Evaluate subscriptions *after* persistence ──────────────────────
         self._process_event(event)
 
         # maybe block until published, if sync mode
         if blocking:
             self._get_logger().join()
+
+    # ------------------------------------------------------------------
+    # Pub/Sub streaming (Live Actions)
+    # ------------------------------------------------------------------
+
+    def _stream_action_to_pubsub(
+        self,
+        event: Event,
+        base_entries: dict,
+        payload_dict: dict,
+    ) -> None:
+        """Fire-and-forget publish of a ManagerMethod/ToolLoop event to Pub/Sub.
+
+        The message lands on the assistant's existing Pub/Sub topic with
+        ``thread="action_event"`` as a message attribute.  A dedicated
+        subscription filtered on that attribute delivers these events to the
+        console's SSE endpoint for real-time rendering without Orchestra polling.
+
+        Errors are logged at DEBUG level and never propagate — the Orchestra
+        dual-write is the authoritative persistence path.
+        """
+        import logging
+
+        _log = logging.getLogger(__name__)
+
+        if EventBus._pubsub_streaming_enabled is None:
+            EventBus._init_pubsub_streaming()
+        if not EventBus._pubsub_streaming_enabled:
+            return
+
+        try:
+            from ..session_details import SESSION_DETAILS, DEFAULT_ASSISTANT_ID
+            from ..settings import SETTINGS
+
+            assistant_id = SESSION_DETAILS.assistant.id
+            staging_suffix = (
+                "-staging"
+                if SETTINGS.STAGING and DEFAULT_ASSISTANT_ID not in assistant_id
+                else ""
+            )
+            topic_name = f"unity-{assistant_id}{staging_suffix}"
+
+            publisher = self._get_pubsub_publisher()
+            topic_path = publisher.topic_path(self._GCP_PROJECT, topic_name)
+
+            # Build the message in the same flat shape that Orchestra stores
+            # (base_entries merged with payload fields) so the frontend can
+            # consume either source with identical parsing logic.
+            message_data = {
+                "thread": "action_event",
+                "event": {
+                    **base_entries,
+                    "type": event.type,
+                    **payload_dict,
+                },
+            }
+
+            future = publisher.publish(
+                topic_path,
+                json.dumps(message_data, default=str).encode("utf-8"),
+                thread="action_event",
+            )
+            future.add_done_callback(self._on_pubsub_publish_done)
+
+        except Exception:
+            _log.debug(
+                "Pub/Sub action streaming unavailable — falling back to "
+                "Orchestra-only persistence",
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _on_pubsub_publish_done(future) -> None:
+        """Callback for fire-and-forget Pub/Sub publishes.
+
+        Logs failures at WARNING; successes are silent.
+        """
+        import logging
+
+        try:
+            future.result()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Failed to publish action event to Pub/Sub",
+                exc_info=True,
+            )
 
     def join_published(self):
         """Ensures all published events have been uploaded"""
