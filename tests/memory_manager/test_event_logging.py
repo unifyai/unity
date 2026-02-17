@@ -32,11 +32,9 @@ _TRANSCRIPT = (
 # Display labels defined on each @log_manager_result decorator in memory_manager.py
 _LABELS = {
     "update_contacts": "Updating Contacts",
-    "update_contact_bio": "Updating Contact Bio",
-    "update_contact_rolling_summary": "Updating Contact Summary",
-    "update_contact_response_policy": "Updating Response Policy",
     "update_knowledge": "Updating Knowledge",
     "update_tasks": "Updating Tasks",
+    "process_chunk": "Processing Memory Chunk",
 }
 
 
@@ -139,23 +137,24 @@ async def test_events_for_update_tasks():
 
 
 # ---------------------------------------------------------------------------
-#  update_contact_bio
+#  process_chunk (unified single-loop)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_events_for_update_contact_bio():
+async def test_events_for_process_chunk():
     mm = SimulatedMemoryManager()
 
     async with capture_events("ManagerMethod") as events:
-        result = await mm.update_contact_bio(_TRANSCRIPT, contact_id=1)
+        result = await mm.process_chunk(_TRANSCRIPT)
 
     assert isinstance(result, str)
 
-    incoming = _filter_mm_events(events, "update_contact_bio", "incoming")
-    assert incoming, "No incoming ManagerMethod event for update_contact_bio()"
-    assert incoming[0].payload.get("display_label") == _LABELS["update_contact_bio"]
+    incoming = _filter_mm_events(events, "process_chunk", "incoming")
+    assert incoming, "No incoming ManagerMethod event for process_chunk()"
+    assert incoming[0].payload.get("display_label") == _LABELS["process_chunk"]
+    assert incoming[0].payload.get("transcript") == _TRANSCRIPT
 
     call_id = incoming[0].calling_id
     outgoing = [
@@ -163,77 +162,8 @@ async def test_events_for_update_contact_bio():
         for e in events
         if e.calling_id == call_id and e.payload.get("phase") == "outgoing"
     ]
-    assert outgoing, "No outgoing ManagerMethod event for update_contact_bio()"
-
-
-# ---------------------------------------------------------------------------
-#  update_contact_rolling_summary
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_events_for_update_contact_rolling_summary():
-    mm = SimulatedMemoryManager()
-
-    async with capture_events("ManagerMethod") as events:
-        result = await mm.update_contact_rolling_summary(_TRANSCRIPT, contact_id=1)
-
-    assert isinstance(result, str)
-
-    incoming = _filter_mm_events(events, "update_contact_rolling_summary", "incoming")
-    assert (
-        incoming
-    ), "No incoming ManagerMethod event for update_contact_rolling_summary()"
-    assert (
-        incoming[0].payload.get("display_label")
-        == _LABELS["update_contact_rolling_summary"]
-    )
-
-    call_id = incoming[0].calling_id
-    outgoing = [
-        e
-        for e in events
-        if e.calling_id == call_id and e.payload.get("phase") == "outgoing"
-    ]
-    assert (
-        outgoing
-    ), "No outgoing ManagerMethod event for update_contact_rolling_summary()"
-
-
-# ---------------------------------------------------------------------------
-#  update_contact_response_policy
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_events_for_update_contact_response_policy():
-    mm = SimulatedMemoryManager()
-
-    async with capture_events("ManagerMethod") as events:
-        result = await mm.update_contact_response_policy(_TRANSCRIPT, contact_id=1)
-
-    assert isinstance(result, str)
-
-    incoming = _filter_mm_events(events, "update_contact_response_policy", "incoming")
-    assert (
-        incoming
-    ), "No incoming ManagerMethod event for update_contact_response_policy()"
-    assert (
-        incoming[0].payload.get("display_label")
-        == _LABELS["update_contact_response_policy"]
-    )
-
-    call_id = incoming[0].calling_id
-    outgoing = [
-        e
-        for e in events
-        if e.calling_id == call_id and e.payload.get("phase") == "outgoing"
-    ]
-    assert (
-        outgoing
-    ), "No outgoing ManagerMethod event for update_contact_response_policy()"
+    assert outgoing, "No outgoing ManagerMethod event for process_chunk()"
+    assert isinstance(outgoing[0].payload.get("answer"), str)
 
 
 # ---------------------------------------------------------------------------
