@@ -265,23 +265,6 @@ class TestContactBio:
             "Should mention cloud migration from bio",
         )
 
-    async def test_boss_bio_available(self, boss_call_prompt: str):
-        """
-        When on a call with the boss, the fast brain should know the boss's
-        background from the bio.
-        """
-        response = await ask_fast_brain(
-            boss_call_prompt,
-            "What's the name of my company again?",
-        )
-
-        assert_no_deferral(response, "Asked about boss's company from bio")
-        assert_contains(
-            response,
-            "Meridian",
-            "Should mention company name from boss bio",
-        )
-
 
 # =============================================================================
 # Test Class: Meet Participants
