@@ -77,7 +77,7 @@ def _apply_comms_only_mocks(cm) -> None:
     (SMS, email, etc.) that we don't want to actually call during tests.
     """
     from unity.conversation_manager.domains import comms_utils
-    from unity.conversation_manager import debug_logger
+    from unity.conversation_manager import assistant_jobs
 
     def _sync_mock_success(*args, **kwargs):
         return {"success": True}
@@ -93,8 +93,8 @@ def _apply_comms_only_mocks(cm) -> None:
     cm.call_manager.start_call = _async_mock_success
     cm.call_manager.start_unify_meet = _async_mock_success
     cm.schedule_proactive_speech = _async_mock_success
-    debug_logger.log_job_startup = _sync_mock_success
-    debug_logger.mark_job_done = _sync_mock_success
+    assistant_jobs.log_job_startup = _sync_mock_success
+    assistant_jobs.mark_job_done = _sync_mock_success
 
 
 # Test contacts

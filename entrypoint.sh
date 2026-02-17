@@ -3,6 +3,10 @@
 # Exit on any error
 set -e
 
+# Record container start time (milliseconds since epoch).
+# Used by the Python process to compute container spin-up duration (U1).
+export CONTAINER_START_TIME_MS=$(date +%s%3N)
+
 # Global variables to track processes
 REDIS_PID=""
 MAIN_PID=""

@@ -11,7 +11,7 @@ from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.hierarchical_logger import SessionLogger
-from unity.conversation_manager import debug_logger
+from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
@@ -945,7 +945,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
-            debug_logger.mark_job_done(self.job_name)
+            assistant_jobs.mark_job_done(self.job_name)
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:

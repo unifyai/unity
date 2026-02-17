@@ -7,6 +7,10 @@ import unity
 
 from unity.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
+from unity.conversation_manager.metrics import (
+    manager_init_total,
+    per_manager_init,
+)
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.event_broker import get_event_broker
@@ -862,10 +866,9 @@ def _init_managers(
                 "user_last_name": "",
             },
         )
-    print(
-        "[ManagersWorker] Unity initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds",
-    )
+    _unity_init_dur = perf_counter() - local_start_time
+    print(f"[ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds")
+    per_manager_init.record(_unity_init_dur, {"manager": "unity"})
 
     # Get API key from SESSION_DETAILS (set by ConversationManager on startup)
     api_key = SESSION_DETAILS.unify_key or None
@@ -876,10 +879,9 @@ def _init_managers(
     if api_key:
         EVENT_BUS._get_logger().session.headers["Authorization"] = f"Bearer {api_key}"
     EVENT_BUS.set_window("Comms", 100)
-    print(
-        "[ManagersWorker] EventBus configured in "
-        f"{perf_counter() - local_start_time:.2f} seconds",
-    )
+    _eventbus_dur = perf_counter() - local_start_time
+    print(f"[ManagersWorker] EventBus configured in {_eventbus_dur:.2f} seconds")
+    per_manager_init.record(_eventbus_dur, {"manager": "event_bus"})
 
     # 2. Initialize ContactManager (respects SETTINGS.contact.IMPL)
     print("[ManagersWorker] Initializing ContactManager...")
@@ -960,10 +962,12 @@ def _init_managers(
             )
         except Exception as e:
             print(f"[ManagersWorker] Failed to create demoer contact: {e}")
+    _contact_dur = perf_counter() - local_start_time
     print(
         f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds",
+        f"{_contact_dur:.2f} seconds",
     )
+    per_manager_init.record(_contact_dur, {"manager": "contact_manager"})
 
     # 3. Initialize TranscriptManager (respects SETTINGS.transcript.IMPL)
     print("[ManagersWorker] Initializing TranscriptManager...")
@@ -972,10 +976,12 @@ def _init_managers(
         description="production deployment",
         contact_manager=cm.contact_manager,
     )
+    _transcript_dur = perf_counter() - local_start_time
     print(
         f"[ManagersWorker] TranscriptManager ({type(cm.transcript_manager).__name__}) initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds",
+        f"{_transcript_dur:.2f} seconds",
     )
+    per_manager_init.record(_transcript_dur, {"manager": "transcript_manager"})
 
     # 4. Configure TranscriptManager logger (only for real implementation)
     # Check hasattr instead of SETTINGS to be defensive against implementation mismatches
@@ -1004,10 +1010,11 @@ def _init_managers(
             config=mem_cfg,
             loop=loop,
         )
+        _memory_dur = perf_counter() - local_start_time
         print(
-            "[ManagersWorker] MemoryManager initialized in "
-            f"{perf_counter() - local_start_time:.2f} seconds",
+            f"[ManagersWorker] MemoryManager initialized in {_memory_dur:.2f} seconds",
         )
+        per_manager_init.record(_memory_dur, {"manager": "memory_manager"})
     else:
         print("[ManagersWorker] MemoryManager disabled (SETTINGS.memory.ENABLED=False)")
 
@@ -1033,10 +1040,12 @@ def _init_managers(
                 conversation_manager=cm,
             )
         )
+    _cmhandle_dur = perf_counter() - local_start_time
     print(
         f"[ManagersWorker] ConversationManagerHandle ({type(cm._conversation_manager_handle).__name__}) initialized in "
-        f"{perf_counter() - local_start_time:.2f} seconds",
+        f"{_cmhandle_dur:.2f} seconds",
     )
+    per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
     # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
     print("[ManagersWorker] Initializing Actor...")
@@ -1062,18 +1071,20 @@ def _init_managers(
                     ActorEnvironment(),
                 ],
             )
+        _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__
         print(
             f"[ManagersWorker] Actor ({actor_cls}) initialized in "
-            f"{perf_counter() - local_start_time:.2f} seconds",
+            f"{_actor_dur:.2f} seconds",
         )
+        per_manager_init.record(_actor_dur, {"manager": "actor"})
     except Exception as e:
         print(f"[ManagersWorker] Error initializing Actor: {e}")
 
-    print(
-        "[ManagersWorker] All managers initialized in "
-        f"{perf_counter() - start_time:.2f} seconds",
-    )
+    # U2: Total manager init duration
+    _total_dur = perf_counter() - start_time
+    print(f"[ManagersWorker] All managers initialized in {_total_dur:.2f} seconds")
+    manager_init_total.record(_total_dur)
 
 
 async def _start_file_sync() -> None:
@@ -1172,9 +1183,9 @@ async def init_conv_manager(
                 InitializationComplete().to_json(),
             )
 
+            _init_dur = perf_counter() - start_time
             print(
-                "[ManagersWorker] Initialization complete in "
-                f"{perf_counter() - start_time:.2f} seconds",
+                f"[ManagersWorker] Initialization complete in {_init_dur:.2f} seconds",
             )
 
         except Exception as e:

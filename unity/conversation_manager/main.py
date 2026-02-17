@@ -16,6 +16,7 @@ from datetime import datetime
 import os
 import signal
 import sys
+import time
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
@@ -25,12 +26,18 @@ import asyncio
 
 from unity.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
-from unity.conversation_manager import debug_logger
+from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.comms_manager import CommsManager
+from unity.conversation_manager.metrics import container_spinup
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
+from unity.conversation_manager.metrics_push import (
+    init_metrics,
+    flush_metrics,
+    shutdown_metrics,
+)
 from unity.helpers import cleanup_dangling_call_processes
 
 if TYPE_CHECKING:
@@ -74,8 +81,8 @@ def _apply_test_mocks(cm: ConversationManager) -> None:
     cm.call_manager.start_call = _async_mock_success
     cm.call_manager.start_unify_meet = _async_mock_success
     cm.schedule_proactive_speech = _async_mock_success
-    debug_logger.log_job_startup = _sync_mock_success
-    debug_logger.mark_job_done = _sync_mock_success
+    assistant_jobs.log_job_startup = _sync_mock_success
+    assistant_jobs.mark_job_done = _sync_mock_success
     managers_utils.log_message = _async_mock_success
     managers_utils.publish_bus_events = _async_mock_success
 
@@ -170,6 +177,14 @@ async def run_conversation_manager(
     # Populate session details from environment
     _populate_session_details_from_env()
 
+    # Initialise OTel metrics export to GCP Managed Prometheus.
+    # Only for cloud-deployed containers where the assistant is assigned via
+    # StartupEvent.  Pre-specified assistants (local dev / default) have no
+    # startup job or assistant-job logging, so metrics are skipped — all
+    # metric instruments remain harmless no-ops.
+    if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+        init_metrics()
+
     # Set the process working directory to the local file root so that relative
     # file paths in CodeActActor-generated code (e.g. "Downloads/report.pdf")
     # resolve against the same root used by LocalFileSystemAdapter.  This must
@@ -243,6 +258,15 @@ async def run_conversation_manager(
         enable_comms_manager if enable_comms_manager is not None else not SETTINGS.TEST
     )
     if should_enable_comms:
+        # U1: Record container spin-up time for idle containers
+        # (entrypoint.sh → CommsManager start)
+        if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+            _container_start_ms = os.environ.get("CONTAINER_START_TIME_MS")
+            if _container_start_ms:
+                _spinup_s = (time.time() * 1000 - int(_container_start_ms)) / 1000.0
+                container_spinup.record(_spinup_s)
+                print(f"[metrics] Container spin-up: {_spinup_s:.2f}s")
+
         comms_manager = CommsManager(event_broker=event_broker)
         asyncio.create_task(comms_manager.start())
 
@@ -278,6 +302,10 @@ async def main(project_name: str = "Assistants"):
     print("Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
     print("Cleanup finished")
+
+    # Push any remaining metrics and tear down the exporter.
+    flush_metrics()
+    shutdown_metrics()
 
     print("Shutdown finished")
 

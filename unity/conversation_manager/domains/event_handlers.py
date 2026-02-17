@@ -3,7 +3,7 @@ import traceback
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager import debug_logger
+from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.types import Medium, Mode
@@ -714,7 +714,7 @@ async def _startup_sequence(cm: "ConversationManager"):
     so once it returns the VM is confirmed reachable (or retries exhausted).
     """
     await asyncio.to_thread(
-        debug_logger.log_job_startup,
+        assistant_jobs.log_job_startup,
         job_name=cm.job_name,
         user_id=cm.user_id,
         assistant_id=cm.assistant_id,

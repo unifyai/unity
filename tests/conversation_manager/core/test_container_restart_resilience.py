@@ -512,9 +512,9 @@ class TestStaleAssistantJobsState:
         cm.initialized = True
         cm.job_name = "unity-test-job"
 
-        from unity.conversation_manager import debug_logger
+        from unity.conversation_manager import assistant_jobs
 
-        with patch.object(debug_logger, "mark_job_done") as mock_mark_done:
+        with patch.object(assistant_jobs, "mark_job_done") as mock_mark_done:
             await cm.cleanup()
 
             # Should have called mark_job_done
@@ -532,9 +532,9 @@ class TestStaleAssistantJobsState:
         cm.initialized = True
         cm.job_name = "unity-idle-job"
 
-        from unity.conversation_manager import debug_logger
+        from unity.conversation_manager import assistant_jobs
 
-        with patch.object(debug_logger, "mark_job_done") as mock_mark_done:
+        with patch.object(assistant_jobs, "mark_job_done") as mock_mark_done:
             await cm.cleanup()
 
             # Should NOT have called mark_job_done for idle container
