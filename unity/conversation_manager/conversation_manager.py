@@ -16,7 +16,11 @@ from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
 )
-from unity.conversation_manager.domains.contact_index import ContactIndex, CommsMessage
+from unity.conversation_manager.domains.contact_index import (
+    ContactIndex,
+    CommsMessage,
+    Message,
+)
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
@@ -243,7 +247,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
             contact_id=1,
         )
 
-    async def capture_assistant_screenshot(self, user_utterance: str) -> None:
+    async def capture_assistant_screenshot(
+        self,
+        user_utterance: str,
+        message_id: int | None = None,
+    ) -> None:
         """Capture the assistant's screen and buffer it for the next slow brain turn.
 
         Called when an inbound utterance arrives while assistant screen sharing
@@ -279,6 +287,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                                 user_utterance,
                                 datetime.now(timezone.utc),
                                 "assistant",
+                                message_id,
                             ),
                         )
                         self._session_logger.debug(
@@ -297,6 +306,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         screenshots = list(self._screenshot_buffer)
         self._screenshot_buffer.clear()
         return screenshots
+
+    def _claim_pending_user_screenshot(self, message_id: int) -> None:
+        """Stamp the most recent unclaimed user screenshot with the given message_id."""
+        if self._screenshot_buffer:
+            last = self._screenshot_buffer[-1]
+            if last.source == "user" and last.message_id is None:
+                self._screenshot_buffer[-1] = last._replace(message_id=message_id)
 
     def _buffer_user_screenshot(self, event_json: str) -> None:
         """Buffer a user screen share screenshot received from the fast brain via IPC."""
@@ -676,6 +692,21 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Persist each screenshot to disk so the CodeActActor can reference them
         # by filepath for programmatic operations (OCR, comparison, etc.).
         screenshot_paths = [_save_screenshot(s) for s in screenshots]
+
+        # Attach saved filepaths to the corresponding Message objects so they
+        # persist in the rendered conversation history across slow brain turns.
+        if screenshots:
+            msg_to_paths: dict[int, list[str]] = {}
+            for entry, path in zip(screenshots, screenshot_paths):
+                if entry.message_id is not None:
+                    msg_to_paths.setdefault(entry.message_id, []).append(path)
+            if msg_to_paths:
+                for gte in self.contact_index.global_thread:
+                    msg = gte.message
+                    if isinstance(msg, Message) and msg.message_id in msg_to_paths:
+                        msg.screenshots.extend(msg_to_paths.pop(msg.message_id))
+                    if not msg_to_paths:
+                        break
 
         self.snapshot()
         brain_spec = build_brain_spec(

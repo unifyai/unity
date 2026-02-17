@@ -1036,7 +1036,11 @@ class Renderer:
             if tz_block:
                 tz_block_line = f"\n{tz_block}"
 
-        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
+        screenshots_line = ""
+        if message.screenshots:
+            screenshots_line = f" [Screenshots: {', '.join(message.screenshots)}]"
+
+        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{screenshots_line}{tz_block_line}"
 
     def render_completed_actions(
         self,
