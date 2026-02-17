@@ -2,7 +2,6 @@ import asyncio
 import logging
 from collections import deque
 
-import json
 from typing import Optional
 import contextlib
 
@@ -1216,11 +1215,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
 
             # Deliver to the fast brain via the call_guidance channel.
-            # The fast brain will speak this via TTS, producing an OutboundUtterance
-            # event that restarts the proactive speech cycle through the event handler.
+            # The fast brain will speak this via session.say(), producing an
+            # OutboundUtterance event that restarts the proactive speech cycle.
+            event = CallGuidance(
+                contact=contact or {},
+                content=decision.content,
+                response_text=decision.content,
+                should_speak=True,
+            )
             await self.event_broker.publish(
                 "app:call:call_guidance",
-                json.dumps({"content": decision.content}),
+                event.to_json(),
             )
             self._session_logger.info(
                 "proactive_speech",
