@@ -4,7 +4,11 @@ import inspect
 from typing import Any, Dict, Optional
 import asyncio
 
-from unity.actor.environments.base import BaseEnvironment, ToolMetadata
+from unity.actor.environments.base import (
+    BaseEnvironment,
+    ToolMetadata,
+    build_filtered_method_docs,
+)
 from unity.function_manager.primitives import ComputerPrimitives, get_registry
 
 
@@ -14,6 +18,17 @@ class ComputerEnvironment(BaseEnvironment):
     Exposes web control methods like `primitives.computer.act(instruction)` for use inside
     generated plan code.  Lives under the unified ``primitives`` namespace alongside
     state managers and actor delegation.
+
+    Parameters
+    ----------
+    computer_primitives : ComputerPrimitives
+        The backend instance to wrap.
+    allowed_methods : set[str] | None
+        Optional set of fully-qualified method names to expose (e.g.,
+        ``{"primitives.computer.act", "primitives.computer.observe"}``).
+        When set, only these methods appear in ``get_tools()`` and
+        ``get_prompt_context()``.  When ``None`` (default), all methods
+        are exposed.
     """
 
     NAMESPACE = "primitives"
@@ -23,12 +38,14 @@ class ComputerEnvironment(BaseEnvironment):
         self,
         computer_primitives: ComputerPrimitives,
         *,
+        allowed_methods: Optional[set[str]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ):
         from unity.function_manager.primitives import Primitives, PrimitiveScope
 
         self._computer_primitives = computer_primitives
+        self._allowed_methods = frozenset(allowed_methods) if allowed_methods else None
         primitives = Primitives(
             primitive_scope=PrimitiveScope(
                 scoped_managers=frozenset({self.MANAGER_ALIAS}),
@@ -72,6 +89,12 @@ class ComputerEnvironment(BaseEnvironment):
         registry = get_registry()
         tools: Dict[str, ToolMetadata] = {}
         for name in tool_names:
+            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.{name}"
+            if (
+                self._allowed_methods is not None
+                and fq_name not in self._allowed_methods
+            ):
+                continue
             if not hasattr(self._computer_primitives, name):
                 continue
             fn = getattr(self._computer_primitives, name)
@@ -83,7 +106,6 @@ class ComputerEnvironment(BaseEnvironment):
             except Exception:
                 signature = None
 
-            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.{name}"
             tools[fq_name] = ToolMetadata(
                 name=fq_name,
                 is_impure=name in impure,
@@ -98,9 +120,6 @@ class ComputerEnvironment(BaseEnvironment):
 
     def get_prompt_context(self) -> str:
         """Generate self-contained prompt context: rules, method docs, and examples."""
-        from unity.function_manager.primitives import get_registry
-        from unity.actor.prompt_examples import get_computer_examples
-
         parts: list[str] = []
 
         parts.append(
@@ -126,13 +145,23 @@ class ComputerEnvironment(BaseEnvironment):
             "- Avoid low-level diagnostics in notifications (internal IDs, schema/debug details, stack traces).",
         )
 
-        registry_ctx = get_registry().computer_prompt_context()
-        if registry_ctx:
-            parts.append(registry_ctx)
+        if self._allowed_methods is not None:
+            filtered_docs = build_filtered_method_docs(
+                self._allowed_methods,
+                self.NAMESPACE,
+            )
+            if filtered_docs:
+                parts.append(filtered_docs)
+        else:
+            registry_ctx = get_registry().computer_prompt_context()
+            if registry_ctx:
+                parts.append(registry_ctx)
 
-        examples = get_computer_examples()
-        if examples:
-            parts.append(f"### Computer Examples\n\n{examples}")
+            from unity.actor.prompt_examples import get_computer_examples
+
+            examples = get_computer_examples()
+            if examples:
+                parts.append(f"### Computer Examples\n\n{examples}")
 
         return "\n\n".join(p for p in parts if p and p.strip())
 

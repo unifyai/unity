@@ -19,7 +19,11 @@ import inspect
 import logging
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from unity.actor.environments.base import BaseEnvironment, ToolMetadata
+from unity.actor.environments.base import (
+    BaseEnvironment,
+    ToolMetadata,
+    build_filtered_method_docs,
+)
 from unity.function_manager.primitives.registry import get_registry
 
 if TYPE_CHECKING:
@@ -58,14 +62,19 @@ def _build_environments_from_db(
 ) -> List[BaseEnvironment]:
     """Resolve *prompt_functions* patterns against the FunctionManager DB.
 
-    Returns a list of environments for the inner actor. Only state-manager
-    primitives and compositional functions are supported; computer primitives
-    and custom environments are out of scope.
+    Returns a list of environments for the inner actor.  Supports all
+    primitive namespaces (state managers, computer, actor) as well as
+    compositional functions stored in the FunctionManager.
     """
     from unity.actor.environments.base import resolve_directly_callable
+    from unity.actor.environments.computer import ComputerEnvironment
     from unity.actor.environments.function_store import FunctionStoreEnvironment
     from unity.actor.environments.state_managers import StateManagerEnvironment
-    from unity.function_manager.primitives import Primitives, PrimitiveScope
+    from unity.function_manager.primitives import (
+        ComputerPrimitives,
+        Primitives,
+        PrimitiveScope,
+    )
 
     if not prompt_functions:
         return []
@@ -85,13 +94,22 @@ def _build_environments_from_db(
     # Resolve dotted-segment patterns to canonical names.
     matched_names = resolve_directly_callable(prompt_functions, all_known_names)
 
-    # Bucket by type: primitives (dotted, starting with "primitives.") vs compositional (bare).
-    primitive_methods: set[str] = set()
+    # Bucket by environment type.
+    state_manager_methods: set[str] = set()
+    computer_methods: set[str] = set()
+    actor_methods: set[str] = set()
     fm_function_names: list[str] = []
 
     for name in matched_names:
         if name.startswith("primitives."):
-            primitive_methods.add(name)
+            parts = name.split(".")
+            alias = parts[1] if len(parts) >= 2 else ""
+            if alias == "computer":
+                computer_methods.add(name)
+            elif alias == "actor":
+                actor_methods.add(name)
+            else:
+                state_manager_methods.add(name)
         elif "." not in name:
             fm_function_names.append(name)
         else:
@@ -104,9 +122,9 @@ def _build_environments_from_db(
     # Build environments.
     envs: list[BaseEnvironment] = []
 
-    if primitive_methods:
+    if state_manager_methods:
         needed_managers: set[str] = set()
-        for fq in primitive_methods:
+        for fq in state_manager_methods:
             parts = fq.split(".")
             if len(parts) >= 2:
                 needed_managers.add(parts[1])
@@ -114,8 +132,21 @@ def _build_environments_from_db(
         envs.append(
             StateManagerEnvironment(
                 Primitives(primitive_scope=scope),
-                allowed_methods=primitive_methods,
+                allowed_methods=state_manager_methods,
             ),
+        )
+
+    if computer_methods:
+        envs.append(
+            ComputerEnvironment(
+                ComputerPrimitives(),
+                allowed_methods=computer_methods,
+            ),
+        )
+
+    if actor_methods:
+        envs.append(
+            ActorEnvironment(allowed_methods=actor_methods),
         )
 
     if fm_function_names and function_manager is not None:
@@ -238,9 +269,12 @@ class _ActorRunner:
             Names use dotted-segment matching against the function names
             stored in the database:
 
-            - ``"primitives"`` — all state manager primitives
+            - ``"primitives"`` — all primitives (state managers, computer, actor)
             - ``"primitives.contacts"`` — all contacts methods
             - ``"primitives.contacts.ask"`` — just contacts.ask
+            - ``"primitives.computer"`` — all computer methods
+            - ``"primitives.computer.act"`` — just computer.act
+            - ``"primitives.actor"`` — actor delegation
             - ``"alpha"`` — a specific stored function
 
             Any function stored in the database (primitives or
@@ -297,8 +331,11 @@ class _ActorRunner:
         # Resolve prompt_functions against DB.
         inner_envs = _build_environments_from_db(prompt_functions, inner_fm)
 
-        # Optionally allow nested actor spawning.
-        if can_spawn_sub_agents:
+        # Optionally allow nested actor spawning (skip if prompt_functions
+        # already resolved an ActorEnvironment to avoid duplicates).
+        if can_spawn_sub_agents and not any(
+            isinstance(e, ActorEnvironment) for e in inner_envs
+        ):
             inner_envs.append(ActorEnvironment())
 
         # Create inner CodeActActor.
@@ -357,6 +394,14 @@ class ActorEnvironment(BaseEnvironment):
 
     Injects a ``Primitives``-scoped object into the sandbox so that
     ``primitives.actor.act(...)`` spawns isolated inner CodeActActors.
+
+    Parameters
+    ----------
+    allowed_methods : set[str] | None
+        Optional set of fully-qualified method names to expose (e.g.,
+        ``{"primitives.actor.act"}``).  When set, only these methods
+        appear in ``get_tools()`` and ``get_prompt_context()``.
+        When ``None`` (default), all actor methods are exposed.
     """
 
     NAMESPACE = "primitives"
@@ -365,11 +410,13 @@ class ActorEnvironment(BaseEnvironment):
     def __init__(
         self,
         *,
+        allowed_methods: Optional[set[str]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> None:
         from unity.function_manager.primitives import Primitives, PrimitiveScope
 
+        self._allowed_methods = frozenset(allowed_methods) if allowed_methods else None
         primitives = Primitives(
             primitive_scope=PrimitiveScope(
                 scoped_managers=frozenset({self.MANAGER_ALIAS}),
@@ -384,19 +431,35 @@ class ActorEnvironment(BaseEnvironment):
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
         registry = get_registry()
-        fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.act"
-        return {
-            fq_name: ToolMetadata(
+        tools: Dict[str, ToolMetadata] = {}
+        for method_name in _ActorRunner._PRIMITIVE_METHODS:
+            fq_name = f"{self.NAMESPACE}.{self.MANAGER_ALIAS}.{method_name}"
+            if (
+                self._allowed_methods is not None
+                and fq_name not in self._allowed_methods
+            ):
+                continue
+            tools[fq_name] = ToolMetadata(
                 name=fq_name,
                 is_impure=True,
                 is_steerable=True,
-                function_id=registry.get_function_id(self.MANAGER_ALIAS, "act"),
+                function_id=registry.get_function_id(
+                    self.MANAGER_ALIAS,
+                    method_name,
+                ),
                 function_context="primitive",
-            ),
-        }
+            )
+        return tools
 
     def get_prompt_context(self) -> str:
         """Generate prompt context from the ``act()`` method's docstring."""
+        if self._allowed_methods is not None:
+            filtered_docs = build_filtered_method_docs(
+                self._allowed_methods,
+                self.NAMESPACE,
+            )
+            return filtered_docs
+
         registry = get_registry()
         sig_str = registry._format_method_signature(
             _ActorRunner,
