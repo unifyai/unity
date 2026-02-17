@@ -55,6 +55,54 @@ def resolve_directly_callable(
     return matched
 
 
+def build_filtered_method_docs(
+    allowed_methods: frozenset[str],
+    namespace: str = "primitives",
+) -> str:
+    """Build method-level documentation for only the specified fully-qualified methods.
+
+    Reusable across all environment types (state managers, computer, actor).
+    Uses the ``ToolSurfaceRegistry`` to introspect method signatures and
+    docstrings for each allowed method.
+    """
+    from unity.function_manager.primitives.registry import get_registry
+
+    registry = get_registry()
+
+    allowed_aliases: dict[str, list[str]] = {}
+    for fq in sorted(allowed_methods):
+        parts = fq.split(".")
+        if len(parts) != 3 or parts[0] != namespace:
+            continue
+        alias, method = parts[1], parts[2]
+        allowed_aliases.setdefault(alias, []).append(method)
+
+    if not allowed_aliases:
+        return ""
+
+    lines = ["### Method Reference\n"]
+    for alias in sorted(allowed_aliases):
+        spec = registry.get_manager_spec(alias)
+        mgr_cls = (
+            registry._load_manager_class(spec.primitive_class_path) if spec else None
+        )
+
+        lines.append(f"\n#### `{namespace}.{alias}`")
+        if spec:
+            lines.append(f"*{spec.domain}* — {spec.description}")
+
+        for method_name in sorted(allowed_aliases[alias]):
+            sig_str = registry._format_method_signature(mgr_cls, method_name)
+            full_doc = registry._extract_method_docstring(mgr_cls, method_name)
+            compact_doc = registry._extract_summary_and_params(full_doc)
+            lines.append(f"\n**`.{method_name}{sig_str}`**")
+            if compact_doc:
+                for doc_line in compact_doc.splitlines():
+                    lines.append(f"  {doc_line}")
+
+    return "\n".join(lines)
+
+
 class ToolMetadata(BaseModel):
     """Metadata describing a tool's behavior and safety characteristics.
 
