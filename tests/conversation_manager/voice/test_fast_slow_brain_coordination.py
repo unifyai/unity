@@ -1847,9 +1847,9 @@ class TestInFlightActionOrchestration:
             f"{[type(e).__name__ for e in result.output_events]}"
         )
 
-        # Get the handle_id for the in-flight action
-        assert cm.cm.in_flight_actions, "Should have an in-flight action"
-        handle_id = next(iter(cm.cm.in_flight_actions))
+        # Get the handle_id from the event (resilient to the action having
+        # already completed and moved to completed_actions).
+        handle_id = actor_started[0].handle_id
 
         # ─── Phase 3: Action completes → slow brain relays via guidance ───
         # Inject ActorResult deterministically (no background task dependency).

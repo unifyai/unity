@@ -666,11 +666,12 @@ class TestSlowBrainMultiSpeakerAwareness:
         )
 
         # If the slow brain called act, complete the action and check guidance
-        if (
-            "act" in initialized_cm.all_tool_calls
-            and initialized_cm.cm.in_flight_actions
-        ):
-            handle_id = next(iter(initialized_cm.cm.in_flight_actions))
+        all_actions = {
+            **initialized_cm.cm.in_flight_actions,
+            **initialized_cm.cm.completed_actions,
+        }
+        if "act" in initialized_cm.all_tool_calls and all_actions:
+            handle_id = next(iter(all_actions))
 
             def _get_guidance_messages(cm, contact_id: int) -> list:
                 voice_thread = cm.contact_index.get_messages_for_contact(
