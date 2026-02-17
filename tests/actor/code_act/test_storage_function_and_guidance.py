@@ -80,17 +80,17 @@ class _TrackingGuidanceManager:
 async def test_storage_loop_stores_both_function_and_guidance():
     """The storage check stores both functions (FM) and guidance (GM).
 
-    The task produces a multi-step data-cleaning pipeline with:
-    - Two parameterized, general-purpose utility functions that work on
-      *any* dict-based dataset (not tied to a specific schema).
-    - A composition function that chains normalize → filter → deduplicate
-      with conditional logic and summarization.
+    The task produces a single reusable utility function AND demonstrates
+    a multi-phase workflow with conditional branching that can only be
+    captured as a guidance playbook.
+
+    The scenario is deliberately kept small (one function + one workflow)
+    so the 30-step storage loop has budget for both FM and GM operations.
 
     The storage-check librarian should recognise:
-    - The parameterized utilities as genuinely reusable → store via FM.
-    - The multi-step composition (which fields get which ops, merge
-      strategy selection, empty-record filtering, statistics) as a
-      non-trivial workflow recipe → store via GM.
+    - The utility function as genuinely reusable → store via FM.
+    - The adaptive workflow with quality gates and conditional strategy
+      selection as a non-trivial orchestration recipe → store via GM.
     """
     fm = FunctionManager(include_primitives=False)
     gm = _TrackingGuidanceManager()
@@ -102,46 +102,39 @@ async def test_storage_loop_stores_both_function_and_guidance():
     )
     try:
         handle = await actor.act(
-            "I regularly process messy data exports from multiple sources and need "
-            "a reliable, reusable cleaning toolkit. Build these general-purpose "
-            "utilities (parameterized — not tied to any specific schema):\n\n"
-            "1. `transform_field(value, operations: list[str]) -> str`\n"
-            "   Chains text operations on a single value. Supported ops:\n"
-            "   'strip', 'lower', 'upper', 'title', 'digits_only', 'alpha_only', "
-            "'collapse_spaces'.\n"
-            "   Returns '' for None/non-string input. Operations applied left-to-right.\n\n"
-            "2. `detect_and_merge_duplicates(records: list[dict], match_keys: list[str], "
-            "merge: str = 'most_complete') -> tuple[list[dict], list[tuple[int, ...]]]`\n"
-            "   Groups records whose match_keys values are identical after strip+lower.\n"
-            "   Merge strategies:\n"
-            "   - 'most_complete': for each field, pick the non-empty value from the "
-            "record that has the most filled fields overall.\n"
-            "   - 'first'/'last': keep the first/last occurrence from each group.\n"
-            "   Returns (unique_records, merge_groups) where merge_groups lists the "
-            "original indices that were merged together.\n\n"
-            "3. Compose these into `clean_export(records, field_ops, dedup_keys)` that:\n"
-            "   a) Normalizes every record by applying field_ops "
-            "(dict mapping field names to operation lists) via transform_field.\n"
-            "   b) Removes records where ALL dedup_keys are empty after normalization.\n"
-            "   c) Merges duplicates on dedup_keys using 'most_complete' strategy.\n"
-            "   d) Returns {'cleaned': [...], 'empty_removed': int, "
-            "'duplicates_merged': int, 'input_count': int, 'output_count': int}\n\n"
-            "Test the full pipeline with this messy employee dataset:\n"
+            "Build a reusable text-normalization function and then demonstrate "
+            "an adaptive data-cleaning workflow that uses it.\n\n"
+            "## Part 1 — Utility Function\n\n"
+            "`normalize_text(value, operations: list[str]) -> str`\n"
+            "Chains text operations on a single value. Supported ops:\n"
+            "'strip', 'lower', 'upper', 'title', 'digits_only', 'collapse_spaces'.\n"
+            "Returns '' for None/non-string input. Operations applied left-to-right.\n"
+            "Test it on a few examples to verify.\n\n"
+            "## Part 2 — Adaptive Cleaning Workflow\n\n"
+            "Using normalize_text, demonstrate this multi-phase workflow on the "
+            "dataset below. Do NOT wrap the workflow into a single function — "
+            "execute each phase inline with explicit decision logic between steps:\n\n"
+            "Phase 1: Compute completeness_rate (fraction of records where both "
+            "'name' and 'email' are non-empty).\n"
+            "Phase 2: Based on completeness:\n"
+            "  - If completeness_rate < 0.8: normalize aggressively — apply "
+            "['strip', 'lower', 'collapse_spaces'] to name and email fields.\n"
+            "  - If completeness_rate >= 0.8: normalize gently — apply "
+            "['strip', 'title'] to name, ['strip', 'lower'] to email.\n"
+            "Phase 3: Remove records where BOTH name and email are empty.\n"
+            "Phase 4: Group records by normalized email (strip+lower). For each "
+            "group with >1 record, merge by keeping the record with the most "
+            "non-empty fields and filling gaps from others.\n"
+            "Phase 5: Re-compute completeness_rate. If it improved by less "
+            "than 5 percentage points, print a warning for manual review.\n\n"
+            "Dataset:\n"
             "[\n"
-            "  {'name': '  JOHN DOE  ', 'email': 'John@example.COM', "
-            "'dept': 'Engineering', 'id': '1234'},\n"
-            "  {'name': 'john doe', 'email': 'john@example.com', "
-            "'dept': '', 'id': ''},\n"
-            "  {'name': '', 'email': '', 'dept': '', 'id': ''},\n"
-            "  {'name': 'Jane Smith', 'email': 'jane@example.com', "
-            "'dept': 'Marketing', 'id': '5678'},\n"
-            "  {'name': '  jane SMITH', 'email': ' Jane@Example.com ', "
-            "'dept': '', 'id': '5678'},\n"
-            "]\n"
-            "Using: field_ops={'name': ['strip', 'title'], 'email': ['strip', 'lower'], "
-            "'id': ['digits_only']}, dedup_keys=['email']\n\n"
-            "Verify: John and Jane's duplicates are merged (keeping dept and id from "
-            "the most complete record), the empty record is removed, and final count is 2.",
+            "  {'name': '  JOHN DOE  ', 'email': 'John@example.COM', 'dept': 'Eng'},\n"
+            "  {'name': 'john doe', 'email': 'john@example.com', 'dept': ''},\n"
+            "  {'name': '', 'email': '', 'dept': ''},\n"
+            "  {'name': 'Jane Smith', 'email': 'jane@example.com', 'dept': 'Mkt'},\n"
+            "  {'name': '  jane SMITH', 'email': ' Jane@Example.com ', 'dept': ''},\n"
+            "]",
             can_store=True,
             persist=False,
             clarification_enabled=False,
@@ -160,14 +153,14 @@ async def test_storage_loop_stores_both_function_and_guidance():
         stored = fm.filter_functions()
         assert stored, (
             "Expected FunctionManager to contain at least one stored function "
-            "for the reusable data-cleaning utilities."
+            "for the reusable normalize_text utility."
         )
 
         # The storage check should have stored guidance about the
-        # data-cleaning workflow composition.
+        # adaptive cleaning workflow.
         assert gm.add_calls, (
             f"Expected GuidanceManager.add_guidance to be called for the "
-            f"data-cleaning pipeline composition. "
+            f"adaptive data-cleaning workflow. "
             f"FM has {len(stored)} stored function(s), "
             f"but no guidance was stored."
         )
