@@ -17,43 +17,35 @@ from unity.actor.prompt_examples import (
 # Static prompt content (inlined rather than wrapped in trivial functions)
 # ---------------------------------------------------------------------------
 
-_CRITICAL_RULES_FM = textwrap.dedent("""
-    ### 🚨 CRITICAL RULES (READ FIRST)
+_FUNCTION_LIBRARY = textwrap.dedent("""
+    ### Function Library
 
-    #### 1. Function-First Workflow (MOST IMPORTANT)
+    When FunctionManager tools are available, always search for an existing
+    function before writing new code with raw `primitives.*` calls.
 
-    If FunctionManager tools are available, **ALWAYS search BEFORE calling `execute_code`** for a new request:
-    1. Search with `FunctionManager_search_functions` (even for "simple" requests)
-    2. If a function exists → call it in `execute_code`
+    1. Search with `FunctionManager_search_functions`
+    2. If a function exists, call it in `execute_code`
     3. Only fall back to raw `primitives.*` if no relevant function exists
 
-    FunctionManager-discovered functions are automatically available in **all**
-    `execute_code` calls — both stateful and stateless. You do not need to
-    switch to `state_mode="stateful"` just to use them.
+    Function results include a `guidance_ids` field linking to related
+    guidance entries that describe compositional workflows. Retrieve them
+    via `primitives.guidance.ask(...)`. Conversely, guidance entries
+    include `function_ids` pointing back to concrete implementations.
 
-    #### 2. When to Use Stateful vs Stateless
+    #### Function Execution Modes
 
-    - `execute_code` defaults to `state_mode="stateless"` (fresh, isolated execution)
-    - Use `state_mode="stateful"` when you need **intermediate variables** to persist
-      across multiple `execute_code` calls (e.g., load data in one call, analyze in the next)
-    - Stateless is preferred for self-contained, one-shot operations
-""").strip()
+    Functions support execution mode overrides independent of the session's
+    `state_mode`:
 
-_FM_GUIDANCE_CROSS_REFERENCE = textwrap.dedent("""
-    #### 4. Functions and Guidance Are Cross-Referenced
-
-    Function results include a ``guidance_ids`` field — a list of IDs for
-    related guidance entries that describe compositional workflows using
-    those functions. To retrieve the corresponding guidance, call
-    ``primitives.guidance.ask(...)`` inside ``execute_code`` with the
-    relevant IDs.
-
-    Conversely, guidance entries include ``function_ids`` pointing back to
-    the concrete function implementations they describe.
+    | Mode | Syntax | Behavior |
+    |------|--------|----------|
+    | **stateful** (default) | `await func(...)` | Function's internal state persists across calls |
+    | **stateless** | `await func.stateless(...)` | Fresh environment, no inherited state |
+    | **read_only** | `await func.read_only(...)` | Sees current state, changes discarded |
 """).strip()
 
 _EXECUTION_RULES = textwrap.dedent("""
-    ### Code Execution Rules
+    ### Execution Rules
 
     1. **Session-Based Execution**:
        - All code execution happens via the `execute_code` tool (JSON tool call).
@@ -207,81 +199,32 @@ def _build_tool_signatures(tool_dict: Dict[str, Callable]) -> str:
 def _build_additional_tools_block(
     *,
     tools: Optional[Dict[str, Callable]],
-    has_fm_tools: bool,
-    has_execute_code: bool,
     render_tools_block: Callable,
 ) -> str:
-    """Build the additional tools + FunctionManager guidance block.
+    """Render signatures for non-primary tools (FM discovery, install, etc.)."""
+    if not tools:
+        return ""
 
-    This appears right after the primary execution tools and before
-    the rules/examples, so FunctionManager tool signatures are close
-    to the Critical Rules that reference them.
-    """
-    parts: list[str] = []
-
-    if tools:
-        additional_tools = {
-            k: v
-            for k, v in tools.items()
-            if k
-            not in {
-                "execute_code",
-                "list_sessions",
-                "inspect_state",
-                "close_session",
-                "close_all_sessions",
-            }
+    additional_tools = {
+        k: v
+        for k, v in tools.items()
+        if k
+        not in {
+            "execute_code",
+            "list_sessions",
+            "inspect_state",
+            "close_session",
+            "close_all_sessions",
         }
-        if additional_tools:
-            parts.append(
-                f"### Additional Tools (JSON Tool Calls)\n"
-                f"These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
-                f"{render_tools_block(additional_tools)}",
-            )
+    }
+    if not additional_tools:
+        return ""
 
-        if has_fm_tools and has_execute_code:
-            parts.append(
-                """\
-### Function Execution Modes & State Concepts
-
-**When passing tools to functions:**
-- Functions accepting `tools: FileTools` need: `tools = primitives.files.get_tools()`
-- For direct data operations, use: `await primitives.files.reduce(...)`
-
-#### Two Types of "State" (Important Distinction)
-
-There are two independent "state" concepts in this system:
-
-| Concept | What It Controls | When to Use |
-|---------|------------------|-------------|
-| **CodeAct Session State** (`execute_code` `state_mode` parameter) | Whether variables/imports persist between `execute_code` calls | Use `stateful` for multi-step work that builds on intermediate variables |
-| **Function Execution Mode** (`.stateless()` / `.read_only()` methods) | Whether a FunctionManager function's internal state persists | Use `.stateless()` for pure functions, default for iterative work |
-
-**Key insight**: These are independent! You can call a stateless function in a stateful session.
-
-#### Function Execution Modes (for the function itself)
-
-| Mode | Syntax | State Behavior |
-|------|--------|----------------|
-| **stateful** (default) | `await func(...)` | Function's internal state persists across calls |
-| **stateless** | `await func.stateless(...)` | Fresh environment for function, no inherited state |
-| **read_only** | `await func.read_only(...)` | Function sees current state, but changes are discarded |
-
-**Example:**
-```python
-# Stateful (default) - function's state persists
-await load_dataset(path="data.csv")
-await analyze_dataset()  # can access data loaded above
-
-# Stateless - isolated execution
-result = await compute_score.stateless(values=[1, 2, 3])
-
-# Read-only - see state without modifying it
-preview = await transform_data.read_only(sample_size=100)
-```""",
-            )
-
-    return "\n\n".join(parts)
+    return (
+        f"#### Additional Tools\n"
+        f"These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
+        f"{render_tools_block(additional_tools)}"
+    )
 
 
 def _build_code_act_rules_and_examples(
@@ -310,13 +253,13 @@ def _build_code_act_rules_and_examples(
         function_first = get_code_act_function_first_examples()
         if function_first:
             parts.append(
-                f"### Function-First Workflow (CRITICAL)\n\n{function_first}",
+                f"### Function-First Workflow\n\n{function_first}",
             )
 
         session_examples = get_code_act_session_examples()
         if session_examples:
             parts.append(
-                f"### Sessions & Multi-Language Execution (CRITICAL)\n\n{session_examples}",
+                f"### Sessions & Multi-Language Execution\n\n{session_examples}",
             )
 
     # Each environment provides its own rules, docs, and examples.
@@ -354,30 +297,48 @@ def build_code_act_prompt(
     can_store: bool = False,
     guidelines: Optional[str] = None,
 ) -> str:
-    """
-    Build the rich system prompt for the CodeActActor.
+    """Build the system prompt for the CodeActActor.
 
-    Notes
-    -----
-    This is intentionally a pure prompt builder (no side effects).
+    Assembles prompt sections in a fixed order, skipping sections that
+    don't apply to the current configuration. This is intentionally a
+    pure prompt builder (no side effects).
     """
     from unity.common.prompt_helpers import render_tools_block
 
     has_execute_code = bool(tools and "execute_code" in tools)
+    has_fm_tools = bool(
+        tools and any(str(k).startswith("FunctionManager_") for k in tools.keys()),
+    )
+
+    additional_tools_block = _build_additional_tools_block(
+        tools=tools,
+        render_tools_block=render_tools_block,
+    )
 
     rules_and_examples = _build_code_act_rules_and_examples(
         environments=environments,
         has_execute_code=has_execute_code,
     )
 
-    _penv = environments.get("primitives")
-    has_computer_env = _penv is not None and any(
-        k.startswith("primitives.computer.") for k in _penv.get_tools()
-    )
-    has_fm_tools = tools and any(
-        str(k).startswith("FunctionManager_") for k in tools.keys()
-    )
+    parts: list[str] = []
+
     if has_execute_code:
+        parts.append(
+            "### Role\n\n"
+            "You are an expert agent that solves tasks by writing and executing code. "
+            "Your primary tool is a multi-language, multi-session execution environment "
+            "for running Python and shell code with access to injected tool domains.",
+        )
+
+        if guidelines:
+            parts.append(
+                f"### Guidelines\n\n"
+                f"Follow these guidelines throughout this session:\n\n"
+                f"{guidelines}",
+            )
+
+        parts.append(_build_filesystem_context())
+
         primary_names = [
             "execute_code",
             "list_sessions",
@@ -386,111 +347,60 @@ def build_code_act_prompt(
             "close_all_sessions",
         ]
         primary_tools = {k: tools[k] for k in primary_names if k in tools}
-        primary_tool_reference = (
-            _build_tool_signatures(primary_tools) if primary_tools else ""
+        primary_sigs = _build_tool_signatures(primary_tools) if primary_tools else "{}"
+
+        tools_section = (
+            "### Tools\n\n"
+            "#### Execution & Session Tools\n"
+            "These tools are called via **structured JSON tool calls**, NOT inside Python code.\n\n"
+            f"```json\n{primary_sigs}\n```"
         )
+        if additional_tools_block:
+            tools_section += f"\n\n{additional_tools_block}"
+        parts.append(tools_section)
 
-        role_line = (
-            "You are an expert agent that solves tasks by writing and executing code."
-        )
-        capabilities_line = (
-            "Your primary tool is a multi-language, multi-session execution environment where you can run Python and shell code, "
-            "and (when enabled) control computer interfaces and other tool domains."
-            if has_computer_env
-            else "Your primary tool is a multi-language, multi-session execution environment where you can use whatever tool "
-            "domains are available via injected environment globals (e.g. state managers, and optionally computer/desktop)."
-        )
+        parts.append(_EXECUTION_RULES)
 
-        critical_rules = (
-            f"{_CRITICAL_RULES_FM}\n\n{_FM_GUIDANCE_CROSS_REFERENCE}"
-            if has_fm_tools
-            else ""
-        )
+        if has_fm_tools:
+            parts.append(_FUNCTION_LIBRARY)
 
-        additional_tools_block = _build_additional_tools_block(
-            tools=tools,
-            has_fm_tools=bool(has_fm_tools),
-            has_execute_code=True,
-            render_tools_block=render_tools_block,
-        )
+        if can_store:
+            parts.append(_STORAGE_DEFERRED_NOTICE)
 
-        storage_deferred_block = _STORAGE_DEFERRED_NOTICE if can_store else ""
+        if rules_and_examples:
+            parts.append(rules_and_examples)
 
-        guidelines_block = (
-            f"\n### Guidelines\n\n"
-            f"You MUST follow these guidelines throughout this session:\n\n"
-            f"{guidelines}\n"
-            if guidelines
-            else ""
-        )
-
-        prompt = f"""
-### Your Role: Code-First Automation Agent
-{role_line} {capabilities_line}
-{guidelines_block}
-{_build_filesystem_context()}
-
-{critical_rules}
-
-### Primary Execution & Session Tools
-These tools are called via **structured JSON tool calls**, NOT inside Python code.
-They are the only supported way to run Python/shell code and manage sessions.
-
-```json
-{primary_tool_reference or "{{}}"}
-```
-
-{additional_tools_block}
-
-{storage_deferred_block}
-
-{rules_and_examples}
-"""
     else:
-        # can_compose=False mode: no code sandbox, only stored function execution.
-        role_line = (
+        parts.append(
+            "### Role\n\n"
             "You are an expert agent that solves tasks by discovering and executing "
-            "pre-stored functions from a function library."
-        )
-        capabilities_line = (
+            "pre-stored functions from a function library. "
             "You do NOT write or execute arbitrary code. Instead, you use the "
             "FunctionManager discovery tools to find relevant stored functions, "
-            "then invoke them via `execute_function`."
+            "then invoke them via `execute_function`.",
         )
 
-        additional_tools_block = _build_additional_tools_block(
-            tools=tools,
-            has_fm_tools=bool(
-                tools
-                and any(str(k).startswith("FunctionManager_") for k in tools.keys()),
-            ),
-            has_execute_code=False,
-            render_tools_block=render_tools_block,
+        if guidelines:
+            parts.append(
+                f"### Guidelines\n\n"
+                f"Follow these guidelines throughout this session:\n\n"
+                f"{guidelines}",
+            )
+
+        workflow = (
+            "### Workflow\n\n"
+            "1. **Discover** stored functions using `FunctionManager_search_functions`,\n"
+            "   `FunctionManager_filter_functions`, or `FunctionManager_list_functions`.\n"
+            "2. **Pick** the best match by name from the search results.\n"
+            "3. **Execute** it via `execute_function(function_name=..., call_kwargs=...)`.\n"
+            "4. If no matching function exists, report that clearly — do NOT attempt to\n"
+            "   write or compose code yourself."
         )
+        if additional_tools_block:
+            workflow += f"\n\n{additional_tools_block}"
+        parts.append(workflow)
 
-        guidelines_block = (
-            f"\n### Guidelines\n\n"
-            f"You MUST follow these guidelines throughout this session:\n\n"
-            f"{guidelines}\n"
-            if guidelines
-            else ""
-        )
+        if rules_and_examples:
+            parts.append(rules_and_examples)
 
-        prompt = f"""
-### Your Role: Function Execution Agent
-{role_line} {capabilities_line}
-{guidelines_block}
-### Workflow
-1. **Discover** stored functions using `FunctionManager_search_functions`,
-   `FunctionManager_filter_functions`, or `FunctionManager_list_functions`.
-2. **Pick** the best match by name from the search results.
-3. **Execute** it via `execute_function(function_name=..., call_kwargs=...)`.
-4. If no matching function exists, report that clearly — do NOT attempt to
-   write or compose code yourself.
-
-{additional_tools_block}
-
-{rules_and_examples}
-"""
-
-    return prompt
+    return "\n\n".join(p for p in parts if p and p.strip())

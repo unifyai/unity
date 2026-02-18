@@ -1753,12 +1753,12 @@ def get_function_first_pattern_example() -> str:
 #   "arguments": {"query": "contacts prefer phone", "n": 5}
 # }
 #
-# Step 2 (JSON TOOL CALL): execute with state_mode="stateful" (REQUIRED!)
+# Step 2 (JSON TOOL CALL): execute the discovered function
 # {
 #   "name": "execute_code",
 #   "arguments": {
 #     "language": "python",
-#     "state_mode": "stateful",
+#     "state_mode": "stateless",
 #     "code": "result = await ask_contacts_question('Which of our contacts prefers phone contact?')\nprint(result)"
 #   }
 # }
