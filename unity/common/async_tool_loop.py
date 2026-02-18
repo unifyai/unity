@@ -851,7 +851,13 @@ def start_async_tool_loop(
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     tool_policy: Optional[
-        Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
+        Union[
+            Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]],
+            Callable[
+                [int, Dict[str, Callable], list[str]],
+                Tuple[str, Dict[str, Callable]],
+            ],
+        ]
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,

@@ -490,6 +490,114 @@ async def test_policy_two_required_then_auto(llm_config):
     assert counter["n"] >= 2
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. tool_policy with called_tools history (3-arg policy)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_policy_called_tools_history_gates_on_both(llm_config):
+    """A 3-arg tool_policy receives the history of previously called tools and
+    can gate on *multiple* required tools being called (order-independent)
+    before opening up the full tool set.
+
+    The policy requires both ``tool_a`` and ``tool_b`` to have been invoked
+    before any other tool becomes visible.  This is a symbolic test: the LLM
+    is instructed which tools to call and in which order.
+    """
+
+    call_log: list[str] = []
+
+    async def tool_a():
+        call_log.append("a")
+        return "tool_a done"
+
+    async def tool_b():
+        call_log.append("b")
+        return "tool_b done"
+
+    async def tool_final():
+        call_log.append("final")
+        return "COMPLETE — do not call any more tools."
+
+    REQUIRED = {"tool_a", "tool_b"}
+    policy_log: list[tuple] = []
+
+    def gate_policy(
+        step: int,
+        tools: Dict[str, Callable],
+        called_tools: list[str],
+    ):
+        called_set = set(called_tools)
+        satisfied = REQUIRED.issubset(called_set)
+        policy_log.append((step, list(called_tools), satisfied))
+        if not satisfied:
+            gate = {k: v for k, v in tools.items() if k in REQUIRED}
+            return "required", gate
+        return "auto", tools
+
+    client = new_llm_client(**llm_config)
+    handle = start_async_tool_loop(
+        client,
+        (
+            "You are part of a test. Follow these steps exactly:\n"
+            "1. Call `tool_a` first.\n"
+            "2. Call `tool_b` next.\n"
+            "3. Call `tool_final` once it becomes available.\n"
+            "4. Then stop and respond to the user.\n"
+            "Do NOT skip any steps."
+        ),
+        {"tool_a": tool_a, "tool_b": tool_b, "tool_final": tool_final},
+        tool_policy=gate_policy,
+        timeout=60,
+    )
+    await handle.result()
+
+    # Both gate tools were called before the final tool
+    assert "a" in call_log
+    assert "b" in call_log
+
+    # The policy received called_tools history and transitioned correctly:
+    # step 0 should have empty history and not be satisfied
+    assert policy_log[0][1] == []
+    assert policy_log[0][2] is False
+
+    # After tool_a is called, the history should contain it
+    assert "tool_a" in policy_log[1][1]
+
+    # At some point the policy must have seen both tools and become satisfied
+    satisfied_entries = [e for e in policy_log if e[2] is True]
+    assert len(satisfied_entries) >= 1
+
+
+@pytest.mark.asyncio
+async def test_policy_legacy_two_arg_still_works(llm_config):
+    """Existing 2-arg policies continue to work unchanged when called_tools
+    tracking is active (backward compatibility)."""
+
+    flag = {"called": False}
+
+    async def dummy_tool():
+        flag["called"] = True
+        return "ok"
+
+    def legacy_policy(step: int, tools: Dict[str, Callable]):
+        if step < 1:
+            return "required", tools
+        return "auto", tools
+
+    client = new_llm_client(**llm_config)
+    handle = start_async_tool_loop(
+        client,
+        message="You are part of a test. Do *not* call any tools, just return to the user immediately",
+        tools={"dummy_tool": dummy_tool},
+        tool_policy=legacy_policy,
+    )
+    await handle.result()
+
+    assert flag["called"] is True
+
+
 # ── 9. timeout resets after LLM response (activity-based) ─────────────────────
 @pytest.mark.asyncio
 async def test_timeout_resets_after_llm_response(llm_config, monkeypatch):
