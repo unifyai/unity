@@ -1211,6 +1211,81 @@ class TestMeetInteractionEventHandlers:
         assert isinstance(entry.timestamp, datetime)
 
     # --------------------------------------------------------------------- #
+    # Two-phase screenshot buffer (peek + commit)
+    # --------------------------------------------------------------------- #
+
+    def test_peek_does_not_clear_buffer_simulating_cancelled_turn(self, mock_cm):
+        """Peeking the screenshot buffer leaves entries intact for retry.
+
+        Simulates a cancelled LLM turn: peek is called but commit never
+        happens.  The next peek must return the same screenshots.  With the
+        old destructive drain this would have returned an empty list on the
+        second call.
+        """
+        from datetime import datetime, timezone
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm._screenshot_buffer = []
+        peek = ConversationManager.peek_screenshot_buffer.__get__(mock_cm)
+
+        ts = datetime(2026, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("AAAA", "Click the button", ts, "assistant", 1),
+        )
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("BBBB", "Now scroll down", ts, "user", 2),
+        )
+
+        # First peek (start of a turn that will be cancelled)
+        first = peek()
+        assert len(first) == 2
+
+        # Simulate cancellation — commit is never called.
+
+        # Second peek (retry turn) must see the same screenshots.
+        second = peek()
+        assert len(second) == 2
+        assert second[0].b64 == "AAAA"
+        assert second[1].b64 == "BBBB"
+
+    def test_commit_clears_peeked_and_preserves_new_arrivals(self, mock_cm):
+        """Committing after a successful turn removes consumed entries while
+        preserving screenshots that arrived during the turn.
+
+        With the old destructive drain, screenshots appended between drain
+        and turn completion would have been lost.
+        """
+        from datetime import datetime, timezone
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm._screenshot_buffer = []
+        peek = ConversationManager.peek_screenshot_buffer.__get__(mock_cm)
+        commit = ConversationManager.commit_screenshot_buffer.__get__(mock_cm)
+
+        ts = datetime(2026, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("AAAA", "Original screenshot", ts, "assistant", 1),
+        )
+
+        # Peek at the start of the turn (1 screenshot).
+        peeked = peek()
+        assert len(peeked) == 1
+
+        # A new screenshot arrives mid-turn (e.g. user speaks again).
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("BBBB", "New during turn", ts, "user", 2),
+        )
+
+        # Turn succeeds — commit only the peeked count.
+        commit(len(peeked))
+
+        # The original screenshot is gone; the mid-turn arrival survives.
+        assert len(mock_cm._screenshot_buffer) == 1
+        assert mock_cm._screenshot_buffer[0].b64 == "BBBB"
+
+    # --------------------------------------------------------------------- #
     # Direct fast brain guidance on mode change
     # --------------------------------------------------------------------- #
 
