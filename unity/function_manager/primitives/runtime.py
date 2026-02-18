@@ -37,7 +37,6 @@ if TYPE_CHECKING:
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager
     from unity.task_scheduler.task_scheduler import TaskScheduler
     from unity.secret_manager.secret_manager import SecretManager
-    from unity.guidance_manager.guidance_manager import GuidanceManager
     from unity.web_searcher.web_searcher import WebSearcher
 
 logger = logging.getLogger(__name__)
@@ -442,7 +441,6 @@ _ALIAS_TO_GETTER: dict[str, str] = {
     "knowledge": "get_knowledge_manager",
     "tasks": "get_task_scheduler",
     "secrets": "get_secret_manager",
-    "guidance": "get_guidance_manager",
     "web": "get_web_searcher",
     "files": "get_file_manager",
     "computer": "",
@@ -587,11 +585,6 @@ class Primitives:
     def secrets(self) -> "SecretManager":
         """Secret management primitives (ask, update)."""
         return self._get_manager("secrets")
-
-    @property
-    def guidance(self) -> "GuidanceManager":
-        """Guidance management primitives (ask, update)."""
-        return self._get_manager("guidance")
 
     @property
     def web(self) -> "WebSearcher":
