@@ -141,3 +141,84 @@ def test_images_field_schema_is_nested_and_enforced():
     }
     with pytest.raises(Exception):
         unify.log(context=gm._ctx, **invalid_payload_bad_type, new=True, mutable=True)
+
+
+# --------------------------------------------------------------------------- #
+#  Filepath-based image resolution in add_guidance / update_guidance            #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+def test_add_guidance_resolves_filepath_images():
+    """add_guidance resolves filepath-only refs to image_ids before persisting."""
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "red square",
+                "data": PNG_RED_B64,
+                "filepath": "/tmp/images/gm_add_resolve.png",
+            },
+        ],
+        synchronous=True,
+    )
+
+    gm = GuidanceManager()
+    result = gm.add_guidance(
+        title="Filepath Resolve Test",
+        content="Testing filepath-based image resolution",
+        images=[
+            {
+                "raw_image_ref": {"filepath": "/tmp/images/gm_add_resolve.png"},
+                "annotation": "step 1 screenshot",
+            },
+        ],
+    )
+    gid = result["details"]["guidance_id"]
+
+    rows = gm.filter(filter=f"guidance_id == {gid}", limit=1)
+    assert rows, "Guidance entry should exist"
+    stored_images = rows[0].images.root
+    assert len(stored_images) == 1
+    assert stored_images[0].raw_image_ref.image_id == img_id
+
+
+@_handle_project
+def test_update_guidance_resolves_filepath_images():
+    """update_guidance resolves filepath-only refs to image_ids before persisting."""
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "blue square",
+                "data": PNG_RED_B64,
+                "filepath": "/tmp/images/gm_update_resolve.png",
+            },
+        ],
+        synchronous=True,
+    )
+
+    gm = GuidanceManager()
+    result = gm.add_guidance(
+        title="Update Resolve Test",
+        content="Will add images via update",
+    )
+    gid = result["details"]["guidance_id"]
+
+    gm.update_guidance(
+        guidance_id=gid,
+        images=[
+            {
+                "raw_image_ref": {"filepath": "/tmp/images/gm_update_resolve.png"},
+                "annotation": "added via update",
+            },
+        ],
+    )
+
+    rows = gm.filter(filter=f"guidance_id == {gid}", limit=1)
+    assert rows, "Guidance entry should exist"
+    stored_images = rows[0].images.root
+    assert len(stored_images) == 1
+    assert stored_images[0].raw_image_ref.image_id == img_id

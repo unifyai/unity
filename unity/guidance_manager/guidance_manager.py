@@ -528,6 +528,17 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return {"attached_count": len(images), "images": images}
 
+    def _resolve_image_refs(
+        self,
+        images: AnnotatedImageRefs | list,
+    ) -> AnnotatedImageRefs:
+        """Ensure every ref in *images* has a concrete ``image_id``."""
+        if not isinstance(images, AnnotatedImageRefs):
+            images = AnnotatedImageRefs.model_validate(images)
+        for ref in images.root:
+            ref.resolve_image_id(self._image_manager)
+        return images
+
     @functools.wraps(BaseGuidanceManager.add_guidance, updated=())
     def add_guidance(
         self,
@@ -541,6 +552,8 @@ class GuidanceManager(BaseGuidanceManager):
             raise ValueError(
                 "At least one field (title/content/images) must be provided.",
             )
+        if images is not None:
+            images = self._resolve_image_refs(images)
         g = Guidance(
             title=title or "",
             content=content or "",
@@ -578,14 +591,11 @@ class GuidanceManager(BaseGuidanceManager):
         if content is not None:
             updates["content"] = content
         if images is not None:
+            images = self._resolve_image_refs(images)
             _ = Guidance(
                 title=title or "tmp",
                 content=content or "tmp",
-                images=(
-                    images
-                    if images is not None
-                    else AnnotatedImageRefs.model_validate([])
-                ),
+                images=images,
             )
             updates["images"] = _.model_dump(mode="json")["images"]
         if function_ids is not None:
