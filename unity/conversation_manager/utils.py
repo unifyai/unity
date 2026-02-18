@@ -10,7 +10,14 @@ unity_comms_url = SETTINGS.conversation.COMMS_URL
 
 
 # dispatch LiveKit agent
-def dispatch_livekit_agent(livekit_agent_name: str, room_name: str = None):
+def dispatch_livekit_agent(
+    livekit_agent_name: str,
+    room_name: str = None,
+    *,
+    record: bool = True,
+    assistant_id: str = "",
+    user_id: str = "",
+):
     """
     Dispatch a LiveKit agent via the communication service.
 
@@ -37,7 +44,13 @@ def dispatch_livekit_agent(livekit_agent_name: str, room_name: str = None):
         response = requests.post(
             f"{unity_comms_url}/phone/dispatch-livekit-agent",
             headers=admin_headers,
-            json={"livekit_agent_name": livekit_agent_name, "room_name": room_name},
+            json={
+                "livekit_agent_name": livekit_agent_name,
+                "room_name": room_name,
+                "record": record,
+                "assistant_id": assistant_id,
+                "user_id": user_id,
+            },
             timeout=1,
         )
         if response.status_code != 200:

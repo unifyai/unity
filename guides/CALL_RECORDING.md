@@ -27,7 +27,7 @@ This document is the ground truth for how voice calls and Unify Meets are record
 
 2. **Recording is a property of an exchange, not a separate entity.** A phone call or Unify Meet maps to a single transcript exchange. The recording URL lives on that exchange's metadata, making it self-contained. There is no separate recordings table or registry.
 
-3. **LiveKit writes directly to GCS.** LiveKit Egress uploads the recording file to a GCS bucket. The Communication service never downloads or re-uploads the file. It only receives a webhook notification and publishes a Pub/Sub event.
+3. **LiveKit writes directly to GCS.** LiveKit Egress uploads the recording file to a GCS bucket. No service downloads or re-uploads the file.
 
 4. **Asynchronous linking.** The recording URL is not available at call-end time. It arrives later via a LiveKit webhook. The session identifier (`conference_name` for phone calls, `room_name` for Unify Meets) is stored on the exchange at call-end time. The recording URL is added asynchronously when the `RecordingReady` event arrives.
 
@@ -38,38 +38,40 @@ This document is the ground truth for how voice calls and Unify Meets are record
 ## High-Level Flow
 
 ```
-┌──────────────┐     ┌──────────────────┐     ┌─────────────┐     ┌──────────────┐     ┌───────────┐
-│ Call starts   │────►│  Communication   │────►│ LiveKit     │────►│ GCS Bucket   │     │           │
-│ (Twilio or   │     │  starts egress   │     │ Egress      │     │ (MP3 file)   │     │           │
-│  WebRTC)     │     │  on LiveKit room │     │ records     │     │              │     │           │
-└──────────────┘     └──────────────────┘     │ full call   │     └──────┬───────┘     │           │
-                                               └──────┬──────┘            │             │           │
-                                                      │                   │             │           │
-                                                      │  egress complete  │             │           │
-                                                      ▼                   │             │           │
-                                               ┌──────────────────┐       │             │  Unity    │
-                                               │  Communication   │       │             │  Container│
-                                               │  /egress-complete│       │             │           │
-                                               │  webhook handler │       │             │           │
-                                               └──────┬───────────┘       │             │           │
-                                                      │                   │             │           │
-                                                      │ Pub/Sub           │             │           │
-                                                      │ recording_ready   │             │           │
-                                                      ▼                   │             │           │
-                                               ┌──────────────────┐       │             │           │
-                                               │  Unity receives  │◄──────┘             │           │
-                                               │  RecordingReady  │  (URL references    │           │
-                                               │  event           │   the GCS file)     │           │
-                                               └──────┬───────────┘                     │           │
-                                                      │                                 │           │
-                                                      │ stores recording_url            │           │
-                                                      │ on exchange metadata            │           │
-                                                      ▼                                 │           │
-                                               ┌──────────────────┐                     │           │
-                                               │  Exchange now    │                     │           │
-                                               │  has recording   │                     │           │
-                                               │  URL inline      │                     │           │
-                                               └──────────────────┘                     └───────────┘
+┌──────────────┐     ┌──────────────────┐     ┌─────────────┐     ┌──────────────┐
+│ Call starts   │────►│  Communication   │────►│ LiveKit     │────►│ GCS Bucket   │
+│ (Twilio or   │     │  starts egress   │     │ Egress      │     │ (MP3 file)   │
+│  WebRTC)     │     │  on LiveKit room │     │ records     │     │              │
+└──────────────┘     └──────────────────┘     │ full call   │     └──────┬───────┘
+                                               └──────┬──────┘            │
+                                                      │                   │
+                                                      │  egress complete  │
+                                                      ▼                   │
+                                               ┌──────────────────────┐   │
+                                               │  Adapter             │   │
+                                               │  /livekit/           │   │
+                                               │  recording-complete  │   │
+                                               │  (ensures job alive, │   │
+                                               │   publishes Pub/Sub) │   │
+                                               └──────┬───────────────┘   │
+                                                      │                   │
+                                                      │ Pub/Sub           │
+                                                      │ recording_ready   │
+                                                      ▼                   │
+                                               ┌──────────────────┐       │
+                                               │  Unity receives  │◄──────┘
+                                               │  RecordingReady  │  (URL references
+                                               │  event           │   the GCS file)
+                                               └──────┬───────────┘
+                                                      │
+                                                      │ stores recording_url
+                                                      │ on exchange metadata
+                                                      ▼
+                                               ┌──────────────────┐
+                                               │  Exchange now    │
+                                               │  has recording   │
+                                               │  URL inline      │
+                                               └──────────────────┘
 ```
 
 ---
@@ -93,7 +95,7 @@ The egress is started via `start_room_egress()` (or `create_room_and_dispatch_ag
 - **Format:** MP3 (audio-only, `file_type=3`)
 - **Mixing:** Room Composite — all audio tracks in the room are mixed into a single file
 - **Upload target:** GCS bucket via `GCPUpload` with credentials from `LIVEKIT_EGRESS_GCS_CREDENTIALS`
-- **Webhook:** On completion, LiveKit calls `{UNITY_COMMS_URL}/phone/egress-complete?assistant_id=X&room_name=Y`, signed with `LIVEKIT_API_KEY`
+- **Webhook:** On completion, LiveKit calls `{UNITY_ADAPTERS_URL}/livekit/recording-complete?assistant_id=X&room_name=Y`, signed with `LIVEKIT_API_KEY`
 
 ### When Egress Starts
 
@@ -110,7 +112,7 @@ For phone calls, the LiveKit room name is `unity_{twilio_number}` (e.g. `unity_1
 2. **Recording**: LiveKit Egress runs server-side, recording all audio in the room for the full duration
 3. **End**: When the room closes (all participants leave), egress finalizes the file
 4. **Upload**: LiveKit writes the MP3 to the configured GCS bucket
-5. **Webhook**: LiveKit sends a POST to the `egress-complete` webhook URL
+5. **Webhook**: LiveKit sends a POST to the adapter's `/livekit/recording-complete` endpoint
 
 ---
 
@@ -135,7 +137,7 @@ This is the URL stored in exchange metadata as `recording_url`. The Console's `A
 
 ## Pub/Sub Event: recording_ready
 
-When LiveKit Egress completes and the webhook fires, Communication publishes a Pub/Sub message to the assistant's topic.
+When LiveKit Egress completes and the webhook fires, the **adapter** (not the comms app) handles the webhook, ensures the assistant's Unity container is running, and publishes a Pub/Sub message to the assistant's topic.
 
 ### Message Format
 
@@ -156,10 +158,11 @@ When LiveKit Egress completes and the webhook fires, Communication publishes a P
 
 ### Publishing Logic
 
-The `_publish_recording_ready()` function in `communication/phone/views.py`:
-1. Constructs the Pub/Sub topic name: `unity-{assistant_id}[-staging]`
-2. Publishes the JSON message to that topic
-3. The message arrives at the Unity container that is live for that assistant
+The `/livekit/recording-complete` adapter endpoint in `adapters/main.py`:
+1. Verifies the LiveKit webhook signature via `verify_livekit_webhook()` (shared helper in `common/livekit.py`)
+2. Calls `build_webhook_context()` with `validate_contact=False, ensure_job=True` to ensure the assistant's Unity container is alive (starts a new job if the container shut down while waiting for the recording)
+3. Constructs the Pub/Sub topic name: `unity-{assistant_id}[-staging]`
+4. Publishes the `recording_ready` JSON message to that topic
 
 ---
 
@@ -263,8 +266,8 @@ Per-utterance timestamps enable precise time-alignment of transcript text to aud
     - Stores `conference_name` in exchange metadata
     - Stashes `conference_name -> exchange_id` in `_recording_exchange_ids`
     - Clears all session state (timestamps, exchange IDs, conference_name)
-11. **Egress completes** → LiveKit finishes writing MP3 to GCS, fires webhook to `/phone/egress-complete`
-12. **Webhook handler** → Verifies signature, constructs `recording_url` from file result, publishes `recording_ready` Pub/Sub event
+11. **Egress completes** → LiveKit finishes writing MP3 to GCS, fires webhook to `/livekit/recording-complete` on the adapters
+12. **Adapter handler** → Verifies LiveKit signature, ensures Unity container is alive (starts a job if needed), constructs `recording_url`, publishes `recording_ready` Pub/Sub event
 13. **Unity receives recording** → `CommsManager` routes to `RecordingReady` event → handler looks up `exchange_id` from `_recording_exchange_ids`, stores `recording_url` on exchange metadata
 
 ---
@@ -283,7 +286,7 @@ Per-utterance timestamps enable precise time-alignment of transcript text to aud
     - Stores `room_name` in exchange metadata
     - Stashes `room_name -> exchange_id` in `_recording_exchange_ids`
     - Clears all session state
-10. **Egress completes** → Same webhook flow as phone calls
+10. **Egress completes** → Same adapter webhook flow as phone calls (`/livekit/recording-complete`)
 11. **Unity receives recording** → Same `RecordingReady` handler as phone calls
 
 ---
@@ -294,10 +297,10 @@ Per-utterance timestamps enable precise time-alignment of transcript text to aud
 
 | File | Role |
 |------|------|
-| `common/livekit.py` | Shared LiveKit utilities: `get_livekit_api()`, `create_room_and_dispatch_agent()`, `start_room_egress()`, `_start_room_egress()` |
-| `communication/phone/views.py` | `/egress-complete` webhook handler, `_publish_recording_ready()` helper, `/dispatch-livekit-agent` endpoint |
-| `adapters/main.py` | Twilio call webhook — starts egress after conference setup |
+| `common/livekit.py` | Shared LiveKit utilities: `get_livekit_api()`, `create_room_and_dispatch_agent()`, `start_room_egress()`, `_start_room_egress()`, `verify_livekit_webhook()` |
+| `adapters/main.py` | `/livekit/recording-complete` webhook handler (verifies signature, ensures job, publishes Pub/Sub); Twilio call webhook (starts egress after conference setup) |
 | `adapters/helpers.py` | Imports `start_room_egress` from `common.livekit`, `create_conference_response()` (no recording flag) |
+| `communication/phone/views.py` | `/dispatch-livekit-agent` endpoint (for Unify Meets) |
 
 ### Unity (`unity/`)
 
@@ -332,12 +335,12 @@ No Console changes were needed for recording support.
 | Variable | Service | Purpose |
 |----------|---------|---------|
 | `LIVEKIT_EGRESS_GCS_CREDENTIALS` | Communication (adapters + comms app) | GCS service account JSON that LiveKit Egress uses to upload recordings to the bucket |
-| `LIVEKIT_API_KEY` | Communication | LiveKit API key — used to start egress and verify webhook signatures |
-| `LIVEKIT_API_SECRET` | Communication | LiveKit API secret — used alongside `LIVEKIT_API_KEY` |
-| `LIVEKIT_URL` | Communication | LiveKit server URL |
-| `UNITY_COMMS_URL` | Communication | Public URL of the Communication service — used as the base for the egress webhook callback |
-| `GCP_PROJECT_ID` | Communication | GCP project ID — used for Pub/Sub topic path construction |
-| `STAGING` | Communication | If truthy, recordings go to `staging/` prefix; otherwise `production/` |
+| `LIVEKIT_API_KEY` | Communication (adapters + comms app) | LiveKit API key — used to start egress and verify webhook signatures |
+| `LIVEKIT_API_SECRET` | Communication (adapters) | LiveKit API secret — used alongside `LIVEKIT_API_KEY` for webhook verification |
+| `LIVEKIT_URL` | Communication (adapters + comms app) | LiveKit server URL |
+| `UNITY_ADAPTERS_URL` | Communication (adapters + comms app) | Public URL of the adapters service — used as the base for the egress webhook callback |
+| `GCP_PROJECT_ID` | Communication (adapters) | GCP project ID — used for Pub/Sub topic path construction |
+| `STAGING` | Communication (adapters + comms app) | If truthy, recordings go to `staging/` prefix; otherwise `production/` |
 
 ### Optional
 
@@ -365,6 +368,7 @@ The following were explicitly deleted as part of this consolidation:
 - Twilio `/recording` callback endpoint (the one that downloaded from Twilio, uploaded to Orchestra)
 - `record="record-from-start"` and `recording_status_callback` from `create_conference_response()`
 - `_get_recordings_bucket()` helper (for Twilio recording GCS upload)
+- `/phone/egress-complete` endpoint and `_publish_recording_ready()` from the comms app (moved to the adapters as `/livekit/recording-complete`)
 
 ### Unity
 - `debug_audio.py` script (stale debugging tool with hardcoded bucket paths and heavyweight desktop deps)
@@ -381,9 +385,9 @@ For recording to work end-to-end, the following must be true:
 
 2. **`LIVEKIT_EGRESS_GCS_CREDENTIALS`** must be set on both the adapters and communication Cloud Run services. This is a GCS service account JSON string with `Storage Object Creator` permissions on the `assistant-call-recordings` bucket.
 
-3. **`UNITY_COMMS_URL` must be publicly reachable** from LiveKit's infrastructure, so the egress completion webhook can reach `/phone/egress-complete`.
+3. **`UNITY_ADAPTERS_URL` must be publicly reachable** from LiveKit's infrastructure, so the egress completion webhook can reach `/livekit/recording-complete` on the adapters.
 
-4. **The `/phone/egress-complete` endpoint** is on the `unauth_router` (no application-level auth). If there's infrastructure-level auth (API gateway, load balancer) that blocks unauthenticated requests, the webhook will be rejected. LiveKit uses its own webhook signing (verified via `WebhookReceiver`/`TokenVerifier`).
+4. **The `/livekit/recording-complete` adapter endpoint** has no application-level auth beyond LiveKit's own webhook signing (verified via `WebhookReceiver`/`TokenVerifier`). If there's infrastructure-level auth (API gateway, load balancer) that blocks unauthenticated requests to the adapters service, the webhook will be rejected.
 
 5. **The GCS bucket `assistant-call-recordings` must exist** in the GCP project, with the service account from `LIVEKIT_EGRESS_GCS_CREDENTIALS` having write access.
 
@@ -400,7 +404,7 @@ All egress-related code is wrapped in exception handlers. If any prerequisite is
 
 ## Current Limitations and Known Gaps
 
-1. **`_recording_exchange_ids` is in-memory.** If the Unity container shuts down between call-end and recording-ready (e.g. 6-minute inactivity timeout fires before egress completes), the mapping is lost and the recording URL will not be linked to its exchange. The recording file still exists in GCS but there is no automatic recovery path.
+1. **`_recording_exchange_ids` is in-memory.** The adapter now ensures the container is alive before publishing `recording_ready`, which prevents the message from being lost to an empty Pub/Sub topic. However, if the original container shut down and a *new* container was started, the in-memory `_recording_exchange_ids` dict is empty and the handler cannot resolve the exchange. The recording file still exists in GCS but the URL will not be linked to its exchange. A persistent lookup (e.g. filtering exchanges by `metadata.conference_name`) would be needed to fully close this gap.
 
 2. **No signed URL generation in the recording flow.** The `recording_url` stored on exchange metadata is a raw GCS public URL. The Console's `AudioPlayer` handles signed URL generation client-side. Direct API consumers would need to generate their own signed URLs or rely on the Console's `/api/media/get` route.
 
@@ -408,6 +412,6 @@ All egress-related code is wrapped in exception handlers. If any prerequisite is
 
 4. **Egress start timing for phone calls.** Egress is started in the adapter webhook, which runs during Twilio's initial callback. The LiveKit room may not have audio tracks yet if the SIP bridge hasn't connected. LiveKit Egress should wait for tracks to appear, but this is an edge case that hasn't been validated in production.
 
-5. **No retry on webhook failure.** If the `/phone/egress-complete` webhook fails (network issue, service down), LiveKit may retry depending on its configuration, but there's no application-level retry or dead-letter queue. The recording file would exist in GCS but the Pub/Sub event would never be published.
+5. **No retry on webhook failure.** If the `/livekit/recording-complete` webhook fails (network issue, adapters service down), LiveKit may retry depending on its configuration, but there's no application-level retry or dead-letter queue. The recording file would exist in GCS but the Pub/Sub event would never be published.
 
 6. **`user_id` is accepted but unused.** The `/dispatch-livekit-agent` endpoint accepts a `user_id` parameter and passes it to `create_room_and_dispatch_agent()`, but the function doesn't use it. It could be useful for organizing recordings by user in the future.
