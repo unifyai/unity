@@ -1763,8 +1763,9 @@ def get_function_first_pattern_example() -> str:
 #   }
 # }
 #
-# IMPORTANT: You MUST use state_mode="stateful" because functions are injected into Session 0.
-# Using stateless creates a fresh session where the function is NOT available!
+# FunctionManager-discovered functions are available in all execute_code calls
+# (both stateful and stateless). Use stateful only when you need intermediate
+# variables to persist across calls.
 #
 # If no function exists, THEN fall back to composing with primitives directly in Python.
 # When you do fall back to `primitives.*`, emit `notify({...})` before each call.
@@ -1785,22 +1786,9 @@ def get_function_first_anti_pattern_example() -> str:
 #   handle = await primitives.contacts.ask("Which contacts prefer phone?")
 #   result = await handle.result()
 #
-# ❌ ANTI-PATTERN #2: Using stateless mode after FunctionManager search
-#
-# DON'T do this:
-# {
-#   "name": "execute_code",
-#   "arguments": {
-#     "language": "python",
-#     "state_mode": "stateless",
-#     "code": "result = await ask_contacts_question(...)"
-#   }
-# }
-# ERROR: NameError - function not available in fresh session!
-#
 # ✅ CORRECT:
 #   1) Call FunctionManager_search_functions(...) as a JSON tool call
-#   2) Call execute_code with state_mode="stateful" and invoke the injected function
+#   2) Call execute_code and invoke the discovered function (any state_mode works)
 """
 
 
@@ -1855,7 +1843,7 @@ def get_code_act_session_examples() -> str:
 **Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
 to preserve state across multiple tool calls.
 
-> **Reminder**: FunctionManager functions are injected into Session 0 — always use `state_mode="stateful"` to access them (see Critical Rules).
+> **Note**: FunctionManager-discovered functions are available in all `execute_code` calls regardless of `state_mode`.
 
 #### Example A — Stateful shell session for repo navigation
 ```json

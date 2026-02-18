@@ -420,6 +420,8 @@ class PythonExecutionSession:
                 ),
             )
 
+        self._fm_keys: set[str] = set()
+
     async def close(self) -> None:
         """
         Best-effort cleanup for an ephemeral sandbox instance.
@@ -742,6 +744,7 @@ class SessionExecutor:
         venv_id: int | None,
         primitives: Any = None,
         computer_primitives: Any = None,
+        inject_globals: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         started = datetime.now(timezone.utc)
         t0 = started.timestamp()
@@ -781,6 +784,8 @@ class SessionExecutor:
                     venv_pool=self._venv_pool,
                     shell_pool=self._shell_pool,
                 )
+                if inject_globals:
+                    sb.global_state.update(inject_globals)
                 try:
                     res = await sb.execute(code)
                 finally:
