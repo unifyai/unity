@@ -33,7 +33,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - Tasks/queues/ordering → `primitives.tasks.update` or `TaskScheduler.update`
   - Contacts → `primitives.contacts.update`
   - Knowledge/schema changes or ingestion → `primitives.knowledge.update` / `primitives.knowledge.refactor`
-  - Guidance → `primitives.guidance.update`
+  - Guidance → `GuidanceManager_add_guidance` / `GuidanceManager_update_guidance` / `GuidanceManager_delete_guidance` (top-level JSON tool calls)
   - Secrets → `primitives.secrets.update`
 - **Execution vs. interaction**
   - Ephemeral live action (UI control/one‑off interaction) → `Actor.act` (called via ConversationManager)
@@ -57,7 +57,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
     - `ask(question)` → sends the image to a vision‑capable model and returns a text answer
 - **Cross‑manager image convention**:
   - **Filesystem paths are the universal image reference.** When images need to flow between managers (e.g., from `Actor` plans into `GuidanceManager.update`), they are referenced by their workspace‑relative filepath (e.g., `Screenshots/User/2026-02-16T14-30-45.jpg`). The receiving manager or its internal tools can resolve filepaths to `image_id`s via `ImageManager.filter_images(filter="filepath == '...'")` when persistent storage linkage is needed.
-  - A small number of internal call sites still pass an `images` parameter using `ImageRefs`/`AnnotatedImageRef` types. This is **legacy** and being phased out — do not introduce new usages of this pattern.
+  - Some managers accept an `images` parameter using `ImageRefs`/`AnnotatedImageRef` types for structured image attachment (e.g., `GuidanceManager.add_guidance` and `update_guidance` accept annotated image references to link visual content directly to guidance entries). This is the appropriate mechanism when a manager's data model has a first-class `images` field. The filesystem-path convention above applies at the *orchestration* boundary (Actor plans, cross-manager references); within a manager's own CRUD interface, structured image refs are the native format.
 - **Connections**:
   - **Steered by**: managers that persist or query images (e.g., `GuidanceManager`, `TranscriptManager`).
   - **Steers**: — (exposes image records/handles; managers decide when/how to query or persist images).
@@ -137,11 +137,11 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 
 
 ### GuidanceManager
-- **Role**: Owner of internal guidance/policies/instructions.
-- **Scope**: ask (read‑only queries over guidance), update (create/edit/delete guidance entries).
+- **Role**: Owner of procedural how-to information: step-by-step instructions, standard operating procedures, software usage walkthroughs, and strategies for composing functions together.
+- **Scope**: CRUD operations (search, filter, add_guidance, update_guidance, delete_guidance) exposed as first-class JSON tool calls on the CodeActActor — **not** as primitives. Read tools are gated by the discovery-first policy; write tools are available in the doing loop (for user-requested guidance storage) and the storage review loop (for compositional strategy extraction).
 - **Connections**:
-  - **Steered by**: `Actor` (via `primitives.guidance.*`).
-  - **Steers**: reads functions from the shared "Functions" context to surface linked functions. References images by filesystem path; internal tools resolve paths to `image_id`s via `ImageManager` when persisting.
+  - **Steered by**: `Actor` (via top-level `GuidanceManager_*` JSON tool calls, not primitives).
+  - **Steers**: reads functions from the shared "Functions" context to surface linked functions.
 
 ### MemoryManager
 - **Role**: Offline memory maintenance (periodic, non‑interactive).
