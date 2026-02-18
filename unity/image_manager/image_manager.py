@@ -125,6 +125,10 @@ class ImageHandle:
     def timestamp(self) -> datetime:
         return self._image.timestamp
 
+    @property
+    def filepath(self) -> Optional[str]:
+        return self._image.filepath
+
     # ------------------------------ Local-only fields ----------------------
     @property
     def annotation(self) -> Optional[str]:
@@ -159,6 +163,7 @@ class ImageHandle:
         caption: Optional[str] = None,
         timestamp: Optional[datetime] = None,
         data: Optional[Union[bytes, bytearray, str]] = None,
+        filepath: Optional[str] = None,
     ) -> None:
         """
         Update metadata for this image in-place.
@@ -168,6 +173,7 @@ class ImageHandle:
         - If the image is resolved (not pending), also persists to the backend
           via ImageManager.update_images.
         """
+        _PERSIST_KEYS = ("caption", "timestamp", "data", "filepath")
         updates: Dict[str, Any] = {}
         if caption is not None:
             updates["caption"] = caption
@@ -196,6 +202,12 @@ class ImageHandle:
                 self._image.data = data_b64
             except Exception:
                 pass
+        if filepath is not None:
+            updates["filepath"] = filepath
+            try:
+                self._image.filepath = filepath
+            except Exception:
+                pass
 
         if not updates:
             return
@@ -213,7 +225,7 @@ class ImageHandle:
         # Persist to backend
         if not self.is_pending:
             payload: Dict[str, Any] = {"image_id": self.image_id}
-            for k in ("caption", "timestamp", "data"):
+            for k in _PERSIST_KEYS:
                 if k in updates:
                     payload[k] = updates[k]
             try:
@@ -225,7 +237,7 @@ class ImageHandle:
         # If pending, coalesce updates and schedule deferred persistence after resolution
         try:
             with self._deferred_lock:
-                for k in ("caption", "timestamp", "data"):
+                for k in _PERSIST_KEYS:
                     if k in updates:
                         self._deferred_updates[k] = updates[k]
                 if (
@@ -528,7 +540,7 @@ class ImageHandle:
 
                 # Filter to supported keys
                 payload_body: Dict[str, Any] = {}
-                for k in ("caption", "timestamp", "data"):
+                for k in ("caption", "timestamp", "data", "filepath"):
                     if k in pending_updates:
                         payload_body[k] = pending_updates[k]
 
@@ -879,6 +891,7 @@ class ImageManager(BaseImageManager):
             "timestamp": row.get("timestamp") or datetime.utcnow(),
             "caption": row.get("caption"),
             "data": row.get("data"),
+            "filepath": row.get("filepath"),
         }
         [real_id] = self.add_images([payload])  # reuse existing robust path
         try:
@@ -916,7 +929,8 @@ class ImageManager(BaseImageManager):
         return_handles: bool = False,
     ) -> Union[List[int], List[Optional[ImageHandle]]]:
         """
-        Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
+        Add new images. Each item may include ``timestamp``, ``caption``, ``data``,
+        and ``filepath``.
 
         Extended support
         ----------------
@@ -965,6 +979,7 @@ class ImageManager(BaseImageManager):
                     "timestamp": ts,
                     "caption": payload.get("caption"),
                     "data": d_b64,
+                    "filepath": payload.get("filepath"),
                 }
                 try:
                     self._data_store.put(row_local)
@@ -1196,7 +1211,8 @@ class ImageManager(BaseImageManager):
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
         """
         Update existing images. Each update dict must include ``image_id`` and may
-        set ``timestamp``, ``caption``, and/or ``data``. Returns updated ids.
+        set ``timestamp``, ``caption``, ``data``, and/or ``filepath``.
+        Returns updated ids.
         """
         updated: List[int] = []
         for change in updates or []:
@@ -1210,6 +1226,8 @@ class ImageManager(BaseImageManager):
                 entries["timestamp"] = change["timestamp"]
             if "caption" in change:
                 entries["caption"] = change["caption"]
+            if "filepath" in change:
+                entries["filepath"] = change["filepath"]
             if "data" in change and change["data"] is not None:
                 d = change["data"]
                 if isinstance(d, (bytes, bytearray)):

@@ -23,6 +23,10 @@ class Image(BaseModel):
         description="Image payload as base64 (PNG/JPEG) or a URL (GCS signed or https).",
         json_schema_extra={"unify_type": "image"},
     )
+    filepath: Optional[str] = Field(
+        default=None,
+        description="Optional path to the image file on the assistant's local filesystem.",
+    )
 
     @model_validator(mode="before")
     @classmethod

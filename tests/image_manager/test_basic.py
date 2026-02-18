@@ -189,6 +189,93 @@ def test_get_images_order_and_raw():
 
 
 @_handle_project
+def test_add_images_with_filepath():
+    im = ImageManager()
+
+    ids = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "red with path",
+                "data": PNG_RED_B64,
+                "filepath": "/tmp/images/red.png",
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "blue no path",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=True,
+    )
+    assert len(ids) == 2
+
+    # Verify filepath round-trips through filter_images
+    rows = im.filter_images(filter=f"image_id == {ids[0]}")
+    assert rows and rows[0].filepath == "/tmp/images/red.png"
+
+    rows_no_fp = im.filter_images(filter=f"image_id == {ids[1]}")
+    assert rows_no_fp and rows_no_fp[0].filepath is None
+
+
+@_handle_project
+def test_update_filepath():
+    im = ImageManager()
+
+    [img_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "initially no path",
+                "data": PNG_RED_B64,
+            },
+        ],
+    )
+
+    # Filepath starts as None
+    rows = im.filter_images(filter=f"image_id == {img_id}")
+    assert rows and rows[0].filepath is None
+
+    # Update filepath via update_images
+    updated_ids = im.update_images(
+        [{"image_id": img_id, "filepath": "/home/user/photo.png"}],
+    )
+    assert img_id in updated_ids
+
+    rows = im.filter_images(filter=f"image_id == {img_id}")
+    assert rows and rows[0].filepath == "/home/user/photo.png"
+
+
+@_handle_project
+def test_handle_filepath_property_and_update_metadata():
+    im = ImageManager()
+
+    handles = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "handle fp test",
+                "data": PNG_RED_B64,
+                "filepath": "/original/path.png",
+            },
+        ],
+        return_handles=True,
+        synchronous=True,
+    )
+    h = handles[0]
+    assert h is not None
+    assert h.filepath == "/original/path.png"
+
+    # Update filepath via handle's update_metadata
+    h.update_metadata(filepath="/updated/path.png")
+    assert h.filepath == "/updated/path.png"
+
+    # Verify persisted to backend
+    rows = im.filter_images(filter=f"image_id == {h.image_id}")
+    assert rows and rows[0].filepath == "/updated/path.png"
+
+
+@_handle_project
 def test_clear():
     im = ImageManager()
 
