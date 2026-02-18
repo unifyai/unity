@@ -1,33 +1,16 @@
 from __future__ import annotations
 
-from typing import FrozenSet, List, Dict, Optional, Callable, Any, Tuple, Type
+from typing import FrozenSet, List, Dict, Optional, Any, Tuple
 import base64
-import asyncio
 import functools
 import re
-from pydantic import BaseModel
 
 import unify
 
 from ..common.log_utils import log as unity_log
-from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
-from ..common.llm_client import new_llm_client
-from ..common.llm_helpers import (
-    methods_to_tool_dict,
-    make_request_clarification_tool,
-)
-from ..common.async_tool_loop import (
-    start_async_tool_loop,
-    SteerableToolHandle,
-    TOOL_LOOP_LINEAGE,
-)
-from ..settings import SETTINGS
-from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import log_manager_call
 from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
@@ -102,36 +85,6 @@ class GuidanceManager(BaseGuidanceManager):
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
-        # Public tools
-        ask_tools: Dict[str, Callable] = {
-            **methods_to_tool_dict(
-                self._list_columns,
-                self.filter,
-                self.search,
-                # Image-aware tools (read-only / persistent context helpers)
-                self._get_images_for_guidance,
-                self._ask_image,
-                self._attach_image_to_context,
-                self._attach_guidance_images_to_context,
-                # Function-aware helpers (read-only / context helpers)
-                self._get_functions_for_guidance,
-                self._attach_functions_for_guidance_to_context,
-                include_class_name=False,
-            ),
-        }
-        self.add_tools("ask", ask_tools)
-        update_tools: Dict[str, Callable] = {
-            **methods_to_tool_dict(
-                self.ask,
-                self.add_guidance,
-                self.update_guidance,
-                self.delete_guidance,
-                self._create_custom_column,
-                self._delete_custom_column,
-                include_class_name=False,
-            ),
-        }
-        self.add_tools("update", update_tools)
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Get ImageManager via registry for resolving and attaching images
@@ -142,200 +95,6 @@ class GuidanceManager(BaseGuidanceManager):
 
         # Ensure context/schema and prefill known custom fields
         self._provision_storage()
-
-    # ------------------------------- Public API -------------------------------
-    @functools.wraps(BaseGuidanceManager.ask, updated=())
-    @log_manager_call(
-        "GuidanceManager",
-        "ask",
-        payload_key="question",
-        display_label="Reviewing Guidelines",
-    )
-    async def ask(
-        self,
-        text: str,
-        *,
-        response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
-    ) -> SteerableToolHandle:
-        client = new_llm_client()
-
-        tools = dict(self.get_tools("ask"))
-        if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "ask",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
-
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "ask",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
-
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
-
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-
-        client.set_system_message(
-            build_ask_prompt(
-                tools=tools,
-                num_items=self._num_items(),
-                columns=self._list_columns(),
-                include_activity=include_activity,
-            ).to_list(),
-        )
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=_parent_chat_context,
-            tool_policy=self._default_ask_tool_policy,
-            response_format=response_format,
-            handle_cls=(
-                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
-            ),
-        )
-
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result  # type: ignore
-
-        return handle
-
-    @functools.wraps(BaseGuidanceManager.update, updated=())
-    @log_manager_call(
-        "GuidanceManager",
-        "update",
-        payload_key="request",
-        display_label="Updating Guidelines",
-    )
-    async def update(
-        self,
-        text: str,
-        *,
-        response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
-    ) -> SteerableToolHandle:
-        client = new_llm_client()
-
-        tools = dict(self.get_tools("update"))
-        if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "update",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
-
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "update",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
-
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
-
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-
-        client.set_system_message(
-            build_update_prompt(
-                tools,
-                num_items=self._num_items(),
-                columns=self._list_columns(),
-                include_activity=include_activity,
-            ).to_list(),
-        )
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=_parent_chat_context,
-            tool_policy=self._default_update_tool_policy,
-            response_format=response_format,
-        )
-
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result  # type: ignore
-
-        return handle
 
     # ------------------------------- Helpers ---------------------------------
 
@@ -1089,36 +848,3 @@ class GuidanceManager(BaseGuidanceManager):
             from_fields=from_fields,
         )
         return [Guidance(**lg.entries) for lg in logs]
-
-    # ------------------------------- Policies ---------------------------------
-    @staticmethod
-    def _default_ask_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """Require search on the first step (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if (
-            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
-            and step_index < 1
-            and "search" in current_tools
-        ):
-            return ("required", {"search": current_tools["search"]})
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _default_update_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if (
-            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
-            and step_index < 1
-            and "ask" in current_tools
-        ):
-            return ("required", {"ask": current_tools["ask"]})
-        return ("auto", current_tools)
