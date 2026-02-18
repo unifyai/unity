@@ -26,6 +26,7 @@ class Image(BaseModel):
     filepath: Optional[str] = Field(
         default=None,
         description="Optional path to the image file on the assistant's local filesystem.",
+        json_schema_extra={"unique": True},
     )
 
     @model_validator(mode="before")
