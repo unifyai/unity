@@ -1269,6 +1269,44 @@ class ImageManager(BaseImageManager):
             updated.append(image_id)
         return updated
 
+    # ------------------------------ Resolution -----------------------------
+    @functools.wraps(BaseImageManager.resolve_filepath, updated=())
+    def resolve_filepath(self, filepath: str) -> int:
+        from pathlib import Path
+        from datetime import timezone
+
+        existing = self.filter_images(
+            filter=f"filepath == '{filepath}'",
+            limit=1,
+        )
+        if existing:
+            return existing[0].image_id
+
+        path = Path(filepath)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"No image with filepath '{filepath}' in the Images context "
+                f"and the file does not exist on disk",
+            )
+
+        b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
+        ids = self.add_images(
+            [
+                {
+                    "data": b64,
+                    "filepath": filepath,
+                    "timestamp": datetime.now(timezone.utc),
+                },
+            ],
+            synchronous=True,
+        )
+        image_id = ids[0] if ids else None
+        if image_id is None:
+            raise RuntimeError(
+                f"Backend rejected upload for filepath '{filepath}'",
+            )
+        return image_id
+
     # ------------------------------ Maintenance ---------------------------
     @functools.wraps(BaseImageManager.clear, updated=())
     def clear(self) -> None:

@@ -371,3 +371,141 @@ def test_clear():
     )
     row = im.filter_images(filter=f"image_id == {new_id}")
     assert row and row[0].caption == "after clear"
+
+
+# --------------------------------------------------------------------------- #
+#  resolve_filepath / resolve_image_id                                         #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+def test_resolve_filepath_existing():
+    """Fetch path: image already in the Images context."""
+    im = ImageManager()
+    [original_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "already stored",
+                "data": PNG_RED_B64,
+                "filepath": "/tmp/images/resolve_existing.png",
+            },
+        ],
+        synchronous=True,
+    )
+
+    resolved = im.resolve_filepath("/tmp/images/resolve_existing.png")
+    assert resolved == original_id
+
+
+@_handle_project
+def test_resolve_filepath_from_disk():
+    """Store path: read file from disk, upload, and return new image_id."""
+    import tempfile, os
+
+    im = ImageManager()
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        f.write(base64.b64decode(PNG_RED_B64))
+        tmp_path = f.name
+    try:
+        image_id = im.resolve_filepath(tmp_path)
+        assert isinstance(image_id, int)
+
+        rows = im.filter_images(filter=f"image_id == {image_id}")
+        assert rows and rows[0].filepath == tmp_path
+    finally:
+        os.unlink(tmp_path)
+
+
+@_handle_project
+def test_resolve_filepath_idempotent():
+    """Calling resolve_filepath twice for the same path returns the same id."""
+    im = ImageManager()
+    [original_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "idempotent",
+                "data": PNG_BLUE_B64,
+                "filepath": "/tmp/images/resolve_idempotent.png",
+            },
+        ],
+        synchronous=True,
+    )
+
+    id_first = im.resolve_filepath("/tmp/images/resolve_idempotent.png")
+    id_second = im.resolve_filepath("/tmp/images/resolve_idempotent.png")
+    assert id_first == id_second == original_id
+
+
+@_handle_project
+def test_resolve_filepath_missing_file():
+    """FileNotFoundError when no DB row and no file on disk."""
+    im = ImageManager()
+
+    with pytest.raises(FileNotFoundError):
+        im.resolve_filepath("/nonexistent/path/to/image.png")
+
+
+@_handle_project
+def test_raw_ref_resolve_image_id():
+    """RawImageRef.resolve_image_id populates image_id via ImageManager."""
+    from unity.image_manager.types import RawImageRef
+
+    im = ImageManager()
+    [stored_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "ref resolve",
+                "data": PNG_RED_B64,
+                "filepath": "/tmp/images/ref_resolve.png",
+            },
+        ],
+        synchronous=True,
+    )
+
+    ref = RawImageRef(filepath="/tmp/images/ref_resolve.png")
+    assert ref.image_id is None
+
+    result = ref.resolve_image_id(im)
+    assert result == stored_id
+    assert ref.image_id == stored_id
+
+
+@_handle_project
+def test_annotated_ref_resolve_image_id():
+    """AnnotatedImageRef.resolve_image_id delegates to inner RawImageRef."""
+    from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+
+    im = ImageManager()
+    [stored_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "annotated resolve",
+                "data": PNG_BLUE_B64,
+                "filepath": "/tmp/images/ann_ref_resolve.png",
+            },
+        ],
+        synchronous=True,
+    )
+
+    ann = AnnotatedImageRef(
+        raw_image_ref=RawImageRef(filepath="/tmp/images/ann_ref_resolve.png"),
+        annotation="step 1 screenshot",
+    )
+    result = ann.resolve_image_id(im)
+    assert result == stored_id
+    assert ann.raw_image_ref.image_id == stored_id
+
+
+@_handle_project
+def test_raw_ref_resolve_image_id_already_set():
+    """When image_id is already present, resolve returns it without querying."""
+    from unity.image_manager.types import RawImageRef
+
+    ref = RawImageRef(image_id=42)
+    result = ref.resolve_image_id(None)  # type: ignore[arg-type]
+    assert result == 42
