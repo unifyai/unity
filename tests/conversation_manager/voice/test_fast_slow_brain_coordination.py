@@ -216,7 +216,7 @@ class TestSlowBrainDecisionBoundaries:
         5. CallManager.start_call() publishes stored guidance as CallGuidance
         6. Fast brain receives guidance via on_guidance / pending_guidance buffer
         7. PhoneCallStarted arrives → mode set to CALL
-        8. Ongoing call_guidance flows via VoiceResponse structured output as usual
+        8. Ongoing call_guidance flows via tool parameters (e.g. wait(call_guidance="..."))
         """
         cm = initialized_cm.cm
 
@@ -258,64 +258,47 @@ class TestSlowBrainDecisionBoundaries:
             cm.call_manager.is_outbound = False
             cm.mode = Mode.TEXT
 
-    async def test_call_guidance_field_allows_empty_value(
+    async def test_call_guidance_delivered_via_tool_parameter(
         self,
         initialized_cm,
         boss_contact,
     ):
         """
-        FAILING TEST: The call_guidance field should allow an empty value.
+        call_guidance is delivered via the wait() tool parameter, not the response
+        content field. This avoids a known issue where the LLM plans to provide
+        guidance (visible in its thinking block) but produces empty content when
+        tool_choice is "required".
 
-        Currently, VoiceResponse.call_guidance is defined with Field(...) which
-        makes it REQUIRED. The LLM is forced to fill this field even when there's
-        nothing to communicate, leading to unnecessary conversational guidance.
-
-        The system prompt says:
-        "Leave `call_guidance` empty unless you need to exchange specific
-        information with the Voice Agent."
-
-        But the Pydantic model doesn't allow this - the field is required.
-
-        Expected: call_guidance should be optional (Field(default="")) so the
-        LLM can leave it empty when there's nothing to communicate.
+        Verify: wait() accepts a call_guidance parameter, and the response model
+        for voice modes does NOT have a call_guidance field (it's been moved to
+        the tool layer).
         """
-        from pydantic import ValidationError
+        import inspect
         from unity.conversation_manager.domains.brain import build_response_models
+        from unity.conversation_manager.domains.brain_action_tools import (
+            ConversationManagerBrainActionTools,
+        )
         from unity.conversation_manager.types import Mode
 
+        # The wait() tool should accept a call_guidance parameter
+        wait_sig = inspect.signature(ConversationManagerBrainActionTools.wait)
+        assert "call_guidance" in wait_sig.parameters, (
+            "wait() must accept a call_guidance parameter for voice guidance delivery"
+        )
+        param = wait_sig.parameters["call_guidance"]
+        assert param.default == "", (
+            "call_guidance should default to empty string (optional)"
+        )
+
+        # The response model for voice modes should NOT contain call_guidance
+        # (it's been moved to tool parameters for reliable delivery)
         models = build_response_models()
-        VoiceResponse = models[Mode.CALL]
-
-        # Try to create a VoiceResponse with empty call_guidance
-        # This SHOULD succeed but currently FAILS because call_guidance is required
-        try:
-            response = VoiceResponse(thoughts="No action needed", call_guidance="")
-            # If we get here, the field accepts empty string (good!)
-            assert response.call_guidance == ""
-        except ValidationError as e:
-            pytest.fail(
-                f"VoiceResponse.call_guidance should accept empty string!\n"
-                f"Validation error: {e}\n"
-                f"\n"
-                f"The system prompt says to leave call_guidance empty when there's\n"
-                f"nothing to communicate, but the Pydantic model requires a value.\n"
-                f"\n"
-                f"Fix: Change Field(...) to Field(default='') in brain.py",
-            )
-
-        # Also verify the field description doesn't encourage conversational guidance
-        schema = VoiceResponse.model_json_schema()
-        call_guidance_schema = schema.get("properties", {}).get("call_guidance", {})
-        description = call_guidance_schema.get("description", "")
-
-        # The description should make it clear this is for data/notifications ONLY
-        assert "guidance" not in description.lower() or "data" in description.lower(), (
-            f"call_guidance field description is misleading!\n"
-            f"  Current: '{description}'\n"
-            f"\n"
-            f"The description says 'guidance' which makes the LLM think it should\n"
-            f"provide conversational guidance. It should emphasize that this is\n"
-            f"only for data provision, data requests, and notifications."
+        voice_model = models[Mode.CALL]
+        schema = voice_model.model_json_schema()
+        props = schema.get("properties", {})
+        assert "call_guidance" not in props, (
+            "call_guidance should NOT be in the response model — "
+            "it is delivered via tool parameters (e.g. wait(call_guidance='...'))"
         )
 
 
