@@ -14,7 +14,7 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
     Unlike higher-level managers, this interface exposes symbolic methods only
     (no natural-language ask/update). Implementations must manage images stored
     in a backend table with fields: `image_id: int`, `timestamp: datetime`,
-    `caption: str | None`, `data: str` (base64).
+    `caption: str | None`, `data: str` (base64), `filepath: str | None`.
     """
 
     _as_caller_description: str = "the ImageManager, managing images"
@@ -79,7 +79,8 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
     @abstractmethod
     def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
         """
-        Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
+        Add new images. Each item may include ``timestamp``, ``caption``, ``data``,
+        and ``filepath``.
         Returns the allocated ``image_id`` values in insertion order.
         """
 
@@ -87,7 +88,8 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
         """
         Update existing images. Each update dict must include ``image_id`` and may
-        set ``timestamp``, ``caption``, and/or ``data``. Returns updated ids.
+        set ``timestamp``, ``caption``, ``data``, and/or ``filepath``.
+        Returns updated ids.
         """
 
     @abstractmethod
