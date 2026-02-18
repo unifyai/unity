@@ -141,7 +141,6 @@ def test_valid_manager_aliases_contains_expected():
         "transcripts",
         "knowledge",
         "secrets",
-        "guidance",
         "web",
         "data",
         "files",

@@ -1668,9 +1668,6 @@ def get_example_function_map() -> dict[str, callable]:
         "get_primitives_files_filter_example": get_primitives_files_filter_example,
         "get_primitives_files_search_example": get_primitives_files_search_example,
         "get_primitives_files_visualize_example": get_primitives_files_visualize_example,
-        # Guidance
-        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
-        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
         # Web
         "get_primitives_web_ask_example": get_primitives_web_ask_example,
         # Secrets
