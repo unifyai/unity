@@ -3163,6 +3163,7 @@ async def async_tool_loop_inner(
                                 call_dict=call_dict,
                                 call_idx=idx,
                                 is_interjectable=False,
+                                is_dynamic=True,
                                 chat_context=extra_kwargs.get("_parent_chat_context"),
                                 pause_event=None,
                                 # Debug helpers for failure logging
