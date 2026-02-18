@@ -1886,16 +1886,9 @@ class CodeActActor(BaseCodeActActor):
                 # Execute via SessionExecutor. Route primitives if available in current sandbox.
                 primitives = None
                 computer_primitives = self._computer_primitives
-                fm_inject: Dict[str, Any] | None = None
                 try:
                     sb = _CURRENT_SANDBOX.get()
                     primitives = sb.global_state.get("primitives")
-                    if sb._fm_keys:
-                        fm_inject = {
-                            k: sb.global_state[k]
-                            for k in sb._fm_keys
-                            if k in sb.global_state
-                        }
                 except Exception:
                     pass
 
@@ -1910,7 +1903,6 @@ class CodeActActor(BaseCodeActActor):
                             venv_id=venv_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
-                            inject_globals=fm_inject,
                         )
                     except Exception as e:
                         exec_exc = e
@@ -2119,7 +2111,11 @@ class CodeActActor(BaseCodeActActor):
                     _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
-                sb._fm_keys |= set(sb.global_state.keys()) - before
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
 
             FunctionManager_search_functions.__doc__ = (
@@ -2146,7 +2142,11 @@ class CodeActActor(BaseCodeActActor):
                     _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
-                sb._fm_keys |= set(sb.global_state.keys()) - before
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
 
             FunctionManager_filter_functions.__doc__ = (
@@ -2167,7 +2167,11 @@ class CodeActActor(BaseCodeActActor):
                     _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
-                sb._fm_keys |= set(sb.global_state.keys()) - before
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
 
             FunctionManager_list_functions.__doc__ = (
@@ -2385,16 +2389,9 @@ class CodeActActor(BaseCodeActActor):
                     # Resolve primitives from current sandbox.
                     primitives = None
                     computer_primitives = self._computer_primitives
-                    fm_inject: Dict[str, Any] | None = None
                     try:
                         sb = _CURRENT_SANDBOX.get()
                         primitives = sb.global_state.get("primitives")
-                        if sb._fm_keys:
-                            fm_inject = {
-                                k: sb.global_state[k]
-                                for k in sb._fm_keys
-                                if k in sb.global_state
-                            }
                     except Exception:
                         pass
 
@@ -2409,7 +2406,6 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
-                                inject_globals=fm_inject,
                             )
                         except Exception as e:
                             exec_exc = e
