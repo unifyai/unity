@@ -35,7 +35,7 @@ _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
     calls:
 
     1. `FunctionManager_search_functions` — find existing implementations
-    2. `GuidanceManager_search_guidance` — find procedural instructions and
+    2. `GuidanceManager_search` — find procedural instructions and
        compositional strategies
     3. If a function exists, call it in `execute_code`; if guidance exists,
        follow its procedure
@@ -69,7 +69,7 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
     ### Discovery-First Policy (Active)
 
     A tool policy is enforced that **requires** you to call both
-    `FunctionManager_search_functions` and `GuidanceManager_search_guidance`
+    `FunctionManager_search_functions` and `GuidanceManager_search`
     before any other tools become available. Until both have been called at
     least once, only the FunctionManager and GuidanceManager read-only
     discovery tools are visible to you.

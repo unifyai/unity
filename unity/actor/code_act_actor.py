@@ -41,6 +41,7 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
+from unity.common.llm_helpers import methods_to_tool_dict
 from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
@@ -440,68 +441,7 @@ def _start_storage_check_loop(
         """
         return fm.delete_function(function_id=function_ids)
 
-    # ── GuidanceManager tools ─────────────────────────────────────────
-
-    _GuidanceManagerCls = type(gm)
-
-    async def GuidanceManager_search_guidance(
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-    ) -> Any:
-        return gm.search(references=references, k=k)
-
-    GuidanceManager_search_guidance.__doc__ = _GuidanceManagerCls.search.__doc__
-
-    async def GuidanceManager_filter_guidance(
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> Any:
-        return gm.filter(filter=filter, offset=offset, limit=limit)
-
-    GuidanceManager_filter_guidance.__doc__ = _GuidanceManagerCls.filter.__doc__
-
-    async def GuidanceManager_add_guidance(
-        *,
-        title: str,
-        content: str,
-        function_ids: Optional[list[int]] = None,
-    ) -> Any:
-        return gm.add_guidance(
-            title=title,
-            content=content,
-            function_ids=function_ids or [],
-        )
-
-    GuidanceManager_add_guidance.__doc__ = _GuidanceManagerCls.add_guidance.__doc__
-
-    async def GuidanceManager_update_guidance(
-        *,
-        guidance_id: int,
-        title: Optional[str] = None,
-        content: Optional[str] = None,
-        function_ids: Optional[list[int]] = None,
-    ) -> Any:
-        return gm.update_guidance(
-            guidance_id=guidance_id,
-            title=title,
-            content=content,
-            function_ids=function_ids,
-        )
-
-    GuidanceManager_update_guidance.__doc__ = (
-        _GuidanceManagerCls.update_guidance.__doc__
-    )
-
-    async def GuidanceManager_delete_guidance(
-        *,
-        guidance_id: int,
-    ) -> Any:
-        return gm.delete_guidance(guidance_id=guidance_id)
-
-    GuidanceManager_delete_guidance.__doc__ = (
-        _GuidanceManagerCls.delete_guidance.__doc__
-    )
+    # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
     tools: Dict[str, Callable] = {
         "FunctionManager_search_functions": FunctionManager_search_functions,
@@ -509,11 +449,14 @@ def _start_storage_check_loop(
         "FunctionManager_list_functions": FunctionManager_list_functions,
         "FunctionManager_add_functions": FunctionManager_add_functions,
         "FunctionManager_delete_functions": FunctionManager_delete_functions,
-        "GuidanceManager_search_guidance": GuidanceManager_search_guidance,
-        "GuidanceManager_filter_guidance": GuidanceManager_filter_guidance,
-        "GuidanceManager_add_guidance": GuidanceManager_add_guidance,
-        "GuidanceManager_update_guidance": GuidanceManager_update_guidance,
-        "GuidanceManager_delete_guidance": GuidanceManager_delete_guidance,
+        **methods_to_tool_dict(
+            gm.search,
+            gm.filter,
+            gm.add_guidance,
+            gm.update_guidance,
+            gm.delete_guidance,
+            include_class_name=True,
+        ),
     }
 
     # ── Wire ask_about_completed_tool from snapshot ───────────────────
@@ -2208,80 +2151,21 @@ class CodeActActor(BaseCodeActActor):
             tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
-        # GuidanceManager read-only tools: thin wrappers that let the LLM
-        # discover existing guidance entries. Registered alongside (but
-        # independently of) the FM tools so the discovery-first policy can
-        # gate on both.
+        # GuidanceManager tools: bound methods registered directly via
+        # methods_to_tool_dict (no custom wrappers needed — unlike FM, GM
+        # methods are plain CRUD with no sandbox injection side-effects).
         if self.guidance_manager:
             gm = self.guidance_manager
-            _GuidanceManagerCls = type(gm)
-
-            async def GuidanceManager_search_guidance(
-                references: Optional[Dict[str, str]] = None,
-                k: int = 10,
-            ) -> Any:
-                return gm.search(references=references, k=k)
-
-            GuidanceManager_search_guidance.__doc__ = _GuidanceManagerCls.search.__doc__
-
-            async def GuidanceManager_filter_guidance(
-                filter: Optional[str] = None,
-                offset: int = 0,
-                limit: int = 100,
-            ) -> Any:
-                return gm.filter(filter=filter, offset=offset, limit=limit)
-
-            GuidanceManager_filter_guidance.__doc__ = _GuidanceManagerCls.filter.__doc__
-
-            async def GuidanceManager_add_guidance(
-                *,
-                title: str,
-                content: str,
-                function_ids: Optional[list[int]] = None,
-            ) -> Any:
-                return gm.add_guidance(
-                    title=title,
-                    content=content,
-                    function_ids=function_ids or [],
-                )
-
-            GuidanceManager_add_guidance.__doc__ = (
-                _GuidanceManagerCls.add_guidance.__doc__
+            tools.update(
+                methods_to_tool_dict(
+                    gm.search,
+                    gm.filter,
+                    gm.add_guidance,
+                    gm.update_guidance,
+                    gm.delete_guidance,
+                    include_class_name=True,
+                ),
             )
-
-            async def GuidanceManager_update_guidance(
-                *,
-                guidance_id: int,
-                title: Optional[str] = None,
-                content: Optional[str] = None,
-                function_ids: Optional[list[int]] = None,
-            ) -> Any:
-                return gm.update_guidance(
-                    guidance_id=guidance_id,
-                    title=title,
-                    content=content,
-                    function_ids=function_ids,
-                )
-
-            GuidanceManager_update_guidance.__doc__ = (
-                _GuidanceManagerCls.update_guidance.__doc__
-            )
-
-            async def GuidanceManager_delete_guidance(
-                *,
-                guidance_id: int,
-            ) -> Any:
-                return gm.delete_guidance(guidance_id=guidance_id)
-
-            GuidanceManager_delete_guidance.__doc__ = (
-                _GuidanceManagerCls.delete_guidance.__doc__
-            )
-
-            tools["GuidanceManager_search_guidance"] = GuidanceManager_search_guidance
-            tools["GuidanceManager_filter_guidance"] = GuidanceManager_filter_guidance
-            tools["GuidanceManager_add_guidance"] = GuidanceManager_add_guidance
-            tools["GuidanceManager_update_guidance"] = GuidanceManager_update_guidance
-            tools["GuidanceManager_delete_guidance"] = GuidanceManager_delete_guidance
 
         if self.function_manager:
 
