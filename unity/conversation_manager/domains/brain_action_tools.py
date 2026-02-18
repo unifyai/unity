@@ -362,6 +362,7 @@ class ConversationManagerBrainActionTools:
         contact_id: int | str,
         content: str,
         phone_number: str | None = None,
+        call_guidance: str = "",
     ) -> dict[str, Any]:
         """
         Send an SMS message to an existing contact.
@@ -386,6 +387,9 @@ class ConversationManagerBrainActionTools:
             phone_number: The recipient's phone number.  Required when the
                 contact does not yet have a phone number on file; omit when
                 the contact already has one.
+            call_guidance: Guidance for the Voice Agent on a live call. Use
+                to relay progress, data, or notifications to the caller.
+                Ignored when no voice call is active.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
@@ -1046,6 +1050,7 @@ class ConversationManagerBrainActionTools:
         response_format: Optional[dict] = None,
         persist: bool = False,
         include_conversation_context: bool = True,
+        call_guidance: str = "",
     ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
@@ -1461,7 +1466,11 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "updated", "updates": updates}
 
-    async def wait(self, delay: int | None = None) -> dict[str, Any]:
+    async def wait(
+        self,
+        delay: int | None = None,
+        call_guidance: str = "",
+    ) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
 
@@ -1484,6 +1493,14 @@ class ConversationManagerBrainActionTools:
             positive integer, the system schedules a follow-up thinking turn after
             that many seconds — useful for probing a long-running action or
             revisiting a situation after a reasonable interval.
+        call_guidance : str
+            Guidance for the Voice Agent on a live call. Use this to relay data,
+            progress, or notifications to the caller via the Voice Agent. Write in
+            the language currently spoken on the call so the Voice Agent can relay
+            it directly. Examples: "I found 9 backend engineer openings at OpenAI",
+            "Still looking through the results", "The meeting is confirmed for 3pm."
+            Leave empty when there is nothing meaningful to relay that the caller
+            doesn't already know. Ignored when no voice call is active.
         """
         return {"status": "waiting", "delay": delay}
 
