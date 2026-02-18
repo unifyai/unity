@@ -33,11 +33,7 @@ from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
-from unity.conversation_manager.metrics_push import (
-    init_metrics,
-    flush_metrics,
-    shutdown_metrics,
-)
+from unity.conversation_manager.metrics_push import init_metrics, shutdown_metrics
 from unity.helpers import cleanup_dangling_call_processes
 
 if TYPE_CHECKING:
@@ -182,9 +178,8 @@ async def run_conversation_manager(
     # StartupEvent.  Pre-specified assistants (local dev / default) have no
     # startup job or assistant-job logging, so metrics are skipped — all
     # metric instruments remain harmless no-ops.
-    # Disabled because of errors with the container, will get it fixed soon.
-    # if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
-    #     init_metrics()
+    if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+        init_metrics()
 
     # Set the process working directory to the local file root so that relative
     # file paths in CodeActActor-generated code (e.g. "Downloads/report.pdf")
@@ -304,8 +299,7 @@ async def main(project_name: str = "Assistants"):
     await _conversation_manager.cleanup()
     print("Cleanup finished")
 
-    # Push any remaining metrics and tear down the exporter.
-    flush_metrics()
+    # Shut down the metrics exporter (flushes remaining data internally).
     shutdown_metrics()
 
     print("Shutdown finished")
