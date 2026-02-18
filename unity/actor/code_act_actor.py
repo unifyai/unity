@@ -419,27 +419,22 @@ def _start_storage_check_loop(
         language: str = "python",
         overwrite: bool = False,
     ) -> Any:
-        """Store new reusable functions, or update existing ones by name.
-
-        When ``overwrite=True`` and a function with the same name already
-        exists, its implementation is replaced with the new one.
-        """
         return fm.add_functions(
             implementations=implementations,
             language=language,
             overwrite=bool(overwrite),
         )
 
+    FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
+
     async def FunctionManager_delete_functions(
         function_ids: list[int],
     ) -> Any:
-        """Delete functions by their IDs.
-
-        Use this to remove obsolete, redundant, or superseded functions
-        from the store. Obtain ``function_id`` values from the results
-        of search, filter, or list calls.
-        """
         return fm.delete_function(function_id=function_ids)
+
+    FunctionManager_delete_functions.__doc__ = (
+        BaseFunctionManager.delete_function.__doc__
+    )
 
     # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
