@@ -413,7 +413,13 @@ if __name__ == "__main__":
     # Dispatch LiveKit agent
     if should_dispatch_livekit_agent():
         print(f"Dispatching LiveKit agent {livekit_agent_name}")
-        dispatch_livekit_agent(livekit_agent_name, room_name)
+        dispatch_livekit_agent(
+            livekit_agent_name,
+            room_name,
+            record=True,
+            assistant_id=SESSION_DETAILS.assistant.id,
+            user_id=SESSION_DETAILS.user.id,
+        )
         print(f"LiveKit agent {livekit_agent_name} dispatched")
 
     # Run the agent using the standard CLI - this is the natural way to run LiveKit agents.
