@@ -403,6 +403,8 @@ if __name__ == "__main__":
             ("CONTACT", True),
             ("BOSS", True),
             ("ASSISTANT_BIO", False),
+            ("ASSISTANT_ID", False),
+            ("USER_ID", False),
         ],
     )
 

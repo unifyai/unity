@@ -196,6 +196,7 @@ class TestEndToEndCallFlow:
         # Create CallManager with real config
         config = CallConfig(
             assistant_id="e2e_test_assistant",
+            user_id="test_user",
             assistant_bio="A test assistant for end-to-end testing",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -345,6 +346,7 @@ class TestEndToEndCallFlow:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test bio",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -413,6 +415,7 @@ class TestEndToEndCallFlow:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -586,6 +589,7 @@ class TestRoomNameHandling:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test bio",
             assistant_number="+15555550000",
             voice_provider="cartesia",

@@ -311,6 +311,10 @@ def configure_from_cli(
                 SESSION_DETAILS.voice_call.boss_json = value
             elif env_name == "ASSISTANT_BIO":
                 SESSION_DETAILS.assistant.about = value
+            elif env_name == "ASSISTANT_ID":
+                SESSION_DETAILS.assistant.id = value
+            elif env_name == "USER_ID":
+                SESSION_DETAILS.user.id = value
 
         # Export to env for subprocess inheritance
         SESSION_DETAILS.export_to_env()
