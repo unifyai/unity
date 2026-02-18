@@ -26,12 +26,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Awaitable
 from uuid import uuid4
+
+from unity.conversation_manager.tracing import (
+    monotonic_ms,
+    now_utc_iso,
+    payload_trace_id,
+    trace_kv,
+)
+
+_log = logging.getLogger("unity")
 
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
@@ -136,6 +146,11 @@ class CallEventSocketServer:
             self._forward_task = asyncio.create_task(self._forward_events_to_clients())
             await self._forward_ready.wait()
 
+        _log.info(
+            "[CallEventSocketServer] Listening on %s, forward_channels=%s",
+            self._socket_path,
+            self._forward_channels,
+        )
         print(f"[CallEventSocketServer] Listening on {self._socket_path}")
         print(f"[CallEventSocketServer] Forwarding channels: {self._forward_channels}")
         return self._socket_path
@@ -205,9 +220,9 @@ class CallEventSocketServer:
                     loop.sock_accept(self._server_socket),
                     timeout=0.5,
                 )
+                _log.info("[CallEventSocketServer] Client connected")
                 print("[CallEventSocketServer] Client connected")
 
-                # Track connected client for forwarding
                 async with self._clients_lock:
                     self._connected_clients.append(client_socket)
 
@@ -218,6 +233,11 @@ class CallEventSocketServer:
                             f"{len(self._pending_messages)} buffered message(s)",
                         )
                         for channel, event_json in self._pending_messages:
+                            message_id = payload_trace_id(
+                                "ipc",
+                                str(channel),
+                                str(event_json),
+                            )
                             try:
                                 msg = (
                                     json.dumps(
@@ -229,6 +249,16 @@ class CallEventSocketServer:
                                 await loop.sock_sendall(
                                     client_socket,
                                     msg.encode("utf-8"),
+                                )
+                                print(
+                                    trace_kv(
+                                        "IPC_SERVER_FLUSH_BUFFERED",
+                                        channel=channel,
+                                        message_id=message_id,
+                                        ts_utc=now_utc_iso(),
+                                        monotonic_ms=monotonic_ms(),
+                                    ),
+                                    flush=True,
                                 )
                             except Exception as e:
                                 print(
@@ -305,7 +335,17 @@ class CallEventSocketServer:
                 )
                 return
 
-            print(f"[CallEventSocketServer] Received event on {channel}")
+            message_id = payload_trace_id("ipc", channel, event_json)
+            print(
+                trace_kv(
+                    "IPC_SERVER_INBOUND",
+                    channel=channel,
+                    message_id=message_id,
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
 
             if self._on_event:
                 await self._on_event(channel, event_json)
@@ -335,9 +375,12 @@ class CallEventSocketServer:
         """Subscribe to forward channels and send matching events to connected clients."""
         try:
             async with self._event_broker.pubsub() as pubsub:
-                # Subscribe to all forward channel patterns
                 await pubsub.psubscribe(*self._forward_channels)
                 self._forward_ready.set()
+                _log.info(
+                    "[CallEventSocketServer] Forward subscription active, channels=%s",
+                    self._forward_channels,
+                )
                 print(
                     f"[CallEventSocketServer] Subscribed to forward channels: "
                     f"{self._forward_channels}",
@@ -356,18 +399,33 @@ class CallEventSocketServer:
                         data = msg.get("data", "")
 
                         if channel and data:
+                            _log.debug(
+                                "[CallEventSocketServer] Forward: channel=%s "
+                                "clients=%d data_len=%d",
+                                channel,
+                                len(self._connected_clients),
+                                len(data),
+                            )
                             await self._send_to_all_clients(channel, data)
 
                     except asyncio.CancelledError:
                         break
                     except Exception as e:
                         if self._running:
+                            _log.warning(
+                                "[CallEventSocketServer] Forward loop error: %s",
+                                e,
+                            )
                             print(f"[CallEventSocketServer] Forward loop error: {e}")
 
         except asyncio.CancelledError:
             self._forward_ready.set()
         except Exception as e:
             self._forward_ready.set()
+            _log.error(
+                "[CallEventSocketServer] Forward subscription error: %s",
+                e,
+            )
             print(f"[CallEventSocketServer] Forward subscription error: {e}")
 
     async def _send_to_all_clients(self, channel: str, event_json: str) -> None:
@@ -376,6 +434,7 @@ class CallEventSocketServer:
         If no clients are connected, the message is buffered and will be
         flushed when the first client connects.
         """
+        message_id = payload_trace_id("ipc", str(channel), str(event_json))
         message = (
             json.dumps(
                 {
@@ -392,11 +451,24 @@ class CallEventSocketServer:
 
         async with self._clients_lock:
             if not self._connected_clients:
-                # No clients yet -- buffer the message for later delivery
                 self._pending_messages.append((channel, event_json))
+                _log.debug(
+                    "[CallEventSocketServer] Buffered (no clients): channel=%s "
+                    "message_id=%s buffered_count=%d",
+                    channel,
+                    message_id,
+                    len(self._pending_messages),
+                )
                 print(
-                    f"[CallEventSocketServer] No clients connected, buffering "
-                    f"{channel} ({len(self._pending_messages)} buffered)",
+                    trace_kv(
+                        "IPC_SERVER_BUFFER",
+                        channel=channel,
+                        message_id=message_id,
+                        buffered_count=len(self._pending_messages),
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    ),
+                    flush=True,
                 )
                 return
 
@@ -404,6 +476,10 @@ class CallEventSocketServer:
                 try:
                     await loop.sock_sendall(client, message_bytes)
                 except Exception as e:
+                    _log.warning(
+                        "[CallEventSocketServer] sock_sendall failed: %s",
+                        e,
+                    )
                     print(f"[CallEventSocketServer] Failed to send to client: {e}")
                     failed_clients.append(client)
 
@@ -417,9 +493,24 @@ class CallEventSocketServer:
                         pass
 
         if self._connected_clients:
+            _log.debug(
+                "[CallEventSocketServer] Sent: channel=%s message_id=%s "
+                "client_count=%d failed=%d",
+                channel,
+                message_id,
+                len(self._connected_clients),
+                len(failed_clients),
+            )
             print(
-                f"[CallEventSocketServer] Forwarded {channel} to "
-                f"{len(self._connected_clients)} client(s)",
+                trace_kv(
+                    "IPC_SERVER_FORWARD",
+                    channel=channel,
+                    message_id=message_id,
+                    client_count=len(self._connected_clients),
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
             )
 
 
@@ -517,10 +608,21 @@ class CallEventSocketClient:
         buffer = b""
         reconnect_attempts = 0
         max_reconnect_attempts = 3
+        iteration = 0
+        recv_count = 0
+        timeout_count = 0
+
+        print(
+            f"[CallEventSocketClient] _receive_loop ENTERED "
+            f"loop_id={id(loop)} socket_fd={self._socket.fileno() if self._socket else 'None'} "
+            f"connected={self._connected} running={self._running}",
+            flush=True,
+        )
 
         try:
             while self._running:
-                # Ensure we're connected
+                iteration += 1
+
                 if not self._connected:
                     if reconnect_attempts >= max_reconnect_attempts:
                         print(
@@ -533,12 +635,12 @@ class CallEventSocketClient:
                         f"[CallEventSocketClient] Attempting reconnect "
                         f"({reconnect_attempts}/{max_reconnect_attempts})...",
                     )
-                    await asyncio.sleep(0.5)  # Brief delay before reconnect
+                    await asyncio.sleep(0.5)
                     if not await self.connect():
                         continue
-                    buffer = b""  # Reset buffer on reconnect
+                    buffer = b""
                     print("[CallEventSocketClient] Reconnected successfully")
-                    reconnect_attempts = 0  # Reset on successful reconnect
+                    reconnect_attempts = 0
 
                 try:
                     chunk = await asyncio.wait_for(
@@ -546,26 +648,46 @@ class CallEventSocketClient:
                         timeout=1.0,
                     )
                     if not chunk:
-                        # Server disconnected
                         print("[CallEventSocketClient] Server disconnected")
                         self._connected = False
-                        continue  # Try to reconnect
+                        continue
+
+                    recv_count += 1
+                    print(
+                        f"[CallEventSocketClient] sock_recv: "
+                        f"bytes={len(chunk)} iteration={iteration} "
+                        f"total_recv={recv_count}",
+                        flush=True,
+                    )
 
                     buffer += chunk
 
-                    # Process complete messages (newline-delimited JSON)
                     while b"\n" in buffer:
                         line, buffer = buffer.split(b"\n", 1)
                         if line:
                             await self._process_received_message(line.decode("utf-8"))
 
                 except asyncio.TimeoutError:
+                    timeout_count += 1
+                    if timeout_count % 30 == 1:
+                        print(
+                            f"[CallEventSocketClient] heartbeat: "
+                            f"iteration={iteration} timeouts={timeout_count} "
+                            f"recv={recv_count} connected={self._connected} "
+                            f"running={self._running} "
+                            f"socket_fd={self._socket.fileno() if self._socket else 'None'}",
+                            flush=True,
+                        )
                     continue
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     if self._running:
-                        print(f"[CallEventSocketClient] Receive error: {e}")
+                        print(
+                            f"[CallEventSocketClient] Receive error: {e} "
+                            f"iteration={iteration}",
+                            flush=True,
+                        )
                         self._connected = False
                         if self._socket:
                             try:
@@ -573,13 +695,18 @@ class CallEventSocketClient:
                             except Exception:
                                 pass
                             self._socket = None
-                    continue  # Try to reconnect
+                    continue
 
         except Exception as e:
             print(f"[CallEventSocketClient] Receive loop error: {e}")
         finally:
             self._running = False
-            print("[CallEventSocketClient] Receive loop stopped")
+            print(
+                f"[CallEventSocketClient] Receive loop stopped "
+                f"iterations={iteration} recv={recv_count} "
+                f"timeouts={timeout_count}",
+                flush=True,
+            )
 
     async def _process_received_message(self, message: str) -> None:
         """Process a message received from the server."""
@@ -594,7 +721,17 @@ class CallEventSocketClient:
                 )
                 return
 
-            print(f"[CallEventSocketClient] Received event on {channel}")
+            message_id = payload_trace_id("ipc", channel, event_json)
+            print(
+                trace_kv(
+                    "IPC_CLIENT_INBOUND",
+                    channel=channel,
+                    message_id=message_id,
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
 
             if self._on_event:
                 await self._on_event(channel, event_json)
@@ -630,6 +767,7 @@ class CallEventSocketClient:
                 return False
 
         try:
+            message_id = payload_trace_id("ipc", channel, event_json)
             message = (
                 json.dumps(
                     {
@@ -642,6 +780,17 @@ class CallEventSocketClient:
 
             loop = asyncio.get_event_loop()
             await loop.sock_sendall(self._socket, message.encode("utf-8"))
+            print(
+                trace_kv(
+                    "IPC_CLIENT_OUTBOUND",
+                    channel=channel,
+                    message_id=message_id,
+                    retry=retry,
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
             return True
 
         except Exception as e:
