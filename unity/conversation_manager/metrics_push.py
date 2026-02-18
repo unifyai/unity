@@ -1,9 +1,9 @@
 """Metrics push lifecycle: init, periodic export, and shutdown flush.
 
 Call ``init_metrics()`` early in the process to activate the GCP
-Monitoring exporter. Background export happens automatically every 5 s
-via the ``PeriodicExportingMetricReader``.  Call ``flush_metrics()``
-before exit to push any remaining data.
+Monitoring exporter. Background export happens automatically every 15 s
+via the ``PeriodicExportingMetricReader``.  Call ``shutdown_metrics()``
+before exit to flush remaining data and release resources.
 
 In test mode or when GCP credentials are absent the exporter is *not*
 created — metric instruments still exist but record into a no-op provider,
@@ -31,7 +31,8 @@ _provider: MeterProvider | None = None
 def init_metrics() -> None:
     """Initialise the OTel MeterProvider with the GCP Monitoring exporter.
 
-    Skipped automatically when:
+    Fully wrapped in try/except so metrics issues can never crash the
+    container.  Skipped automatically when:
     - ``TEST`` env var is set (unit-test runs)
     - ``GOOGLE_APPLICATION_CREDENTIALS`` is not set (local dev without GCP)
     """
@@ -45,40 +46,44 @@ def init_metrics() -> None:
         print("[metrics] Metrics export disabled (no GCP credentials)")
         return
 
-    # Surface export errors that would otherwise be swallowed by the
-    # background PeriodicExportingMetricReader thread.
-    logging.basicConfig()
-    logging.getLogger("opentelemetry.exporter.cloud_monitoring").setLevel(logging.DEBUG)
-    logging.getLogger("opentelemetry.sdk.metrics").setLevel(logging.DEBUG)
-
-    # Detect GKE resource attributes from the metadata server (gives us
-    # cloud.provider, cloud.account.id, cloud.region, k8s.cluster.name).
-    detected = GoogleCloudResourceDetector().detect()
-
-    # The metadata server doesn't provide pod-level attributes for GKE Jobs.
-    # Without k8s.namespace.name, k8s.pod.name, and k8s.container.name the
-    # exporter can't map to the k8s_container monitored resource type and
-    # data points are silently rejected.  Supply them from the environment.
-    namespace = "staging" if os.getenv("STAGING") else "production"
-    resource = detected.merge(
-        Resource.create(
-            {
-                "k8s.namespace.name": namespace,
-                "k8s.pod.name": socket.gethostname(),
-                "k8s.container.name": "unity-assistant",
-            }
+    try:
+        logging.basicConfig()
+        logging.getLogger("opentelemetry.exporter.cloud_monitoring").setLevel(
+            logging.WARNING,
         )
-    )
-    print(f"[metrics] Resource attributes: {resource.attributes}")
+        logging.getLogger("opentelemetry.sdk.metrics").setLevel(logging.WARNING)
 
-    exporter = CloudMonitoringMetricsExporter()
-    reader = PeriodicExportingMetricReader(
-        exporter,
-        export_interval_millis=5_000,  # 5 seconds — short for ephemeral GKE jobs
-    )
-    _provider = MeterProvider(resource=resource, metric_readers=[reader])
-    metrics.set_meter_provider(_provider)
-    print("[metrics] GMP metrics export initialised (5 s interval)")
+        # Detect GKE resource attributes from the metadata server (gives us
+        # cloud.provider, cloud.account.id, cloud.region, k8s.cluster.name).
+        detected = GoogleCloudResourceDetector().detect()
+
+        # The metadata server doesn't provide pod-level attributes for GKE Jobs.
+        # Without k8s.namespace.name, k8s.pod.name, and k8s.container.name the
+        # exporter can't map to the k8s_container monitored resource type and
+        # data points are silently rejected.  Supply them from the environment.
+        namespace = "staging" if os.getenv("STAGING") else "production"
+        resource = detected.merge(
+            Resource.create(
+                {
+                    "k8s.namespace.name": namespace,
+                    "k8s.pod.name": socket.gethostname(),
+                    "k8s.container.name": "unity-assistant",
+                }
+            )
+        )
+        print(f"[metrics] Resource attributes: {resource.attributes}")
+
+        exporter = CloudMonitoringMetricsExporter()
+        reader = PeriodicExportingMetricReader(
+            exporter,
+            export_interval_millis=15_000,  # Cloud Monitoring requires ≥10s between writes
+        )
+        _provider = MeterProvider(resource=resource, metric_readers=[reader])
+        metrics.set_meter_provider(_provider)
+        print("[metrics] GMP metrics export initialised (15 s interval)")
+    except Exception as exc:
+        print(f"[metrics] Failed to initialise metrics export: {exc}")
+        _provider = None
 
 
 def flush_metrics() -> None:
