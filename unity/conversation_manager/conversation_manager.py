@@ -311,11 +311,26 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"Screenshot capture error: {e}",
             )
 
-    def drain_screenshot_buffer(self) -> list[ScreenshotEntry]:
-        """Drain and return all buffered screenshots, clearing the buffer."""
-        screenshots = list(self._screenshot_buffer)
-        self._screenshot_buffer.clear()
-        return screenshots
+    def peek_screenshot_buffer(self) -> list[ScreenshotEntry]:
+        """Return a snapshot of buffered screenshots without clearing.
+
+        The buffer remains intact so that if the consuming operation
+        (e.g. an LLM turn) is cancelled before completion, the next
+        attempt will re-process the same screenshots.  Call
+        :meth:`commit_screenshot_buffer` after all side effects have
+        succeeded to remove the consumed entries.
+        """
+        return list(self._screenshot_buffer)
+
+    def commit_screenshot_buffer(self, count: int) -> None:
+        """Remove the first *count* entries from the screenshot buffer.
+
+        Called after the LLM turn has successfully consumed and persisted
+        the screenshots returned by :meth:`peek_screenshot_buffer`.
+        Any screenshots that arrived *during* the turn (appended after the
+        peek) are preserved for the next turn.
+        """
+        del self._screenshot_buffer[:count]
 
     def _claim_pending_user_screenshot(self, local_message_id: int) -> None:
         """Stamp the most recent unclaimed user screenshot with the given local_message_id."""
@@ -734,10 +749,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         slow_brain_start_time = datetime.now(timezone.utc)
 
-        # Drain buffered screenshots so the slow brain gets visual context
-        # from screen sharing. The buffer is cleared atomically — new screenshots
-        # captured while this turn is running will accumulate for the next turn.
-        screenshots = self.drain_screenshot_buffer()
+        # Peek at buffered screenshots (non-destructive).  The buffer is
+        # only committed after the full turn succeeds, so if this turn is
+        # cancelled mid-flight the screenshots remain available for retry.
+        screenshots = self.peek_screenshot_buffer()
 
         # Persist each screenshot to disk so the CodeActActor can reference them
         # by filepath for programmatic operations (OCR, comparison, etc.).
@@ -790,6 +805,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     )
 
             # Annotate CM Message objects with filepaths and image_ids.
+            # Uses assignment (not extend) so that re-processing the same
+            # screenshots on a retried turn is idempotent.
             if msg_to_paths:
                 for gte in self.contact_index.global_thread:
                     msg = gte.message
@@ -797,10 +814,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         isinstance(msg, Message)
                         and msg.local_message_id in msg_to_paths
                     ):
-                        msg.screenshots.extend(msg_to_paths.pop(msg.local_message_id))
+                        msg.screenshots = msg_to_paths.pop(msg.local_message_id)
                         if msg.local_message_id in msg_to_image_ids:
-                            msg.image_ids.extend(
-                                msg_to_image_ids.pop(msg.local_message_id),
+                            msg.image_ids = msg_to_image_ids.pop(
+                                msg.local_message_id,
                             )
                     if not msg_to_paths:
                         break
@@ -943,6 +960,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Clear the temporary state snapshots now that tools have executed
         self._current_state_snapshot = None
         self._current_snapshot_state = None
+
+        # The turn completed successfully — commit the screenshot buffer so
+        # these entries are not re-processed on the next turn.  Any new
+        # screenshots that arrived during this turn (appended after the peek)
+        # are preserved.
+        if screenshots:
+            self.commit_screenshot_buffer(len(screenshots))
 
         # Build assistant message for chat history
         assistant_content = (
