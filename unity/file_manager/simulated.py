@@ -482,15 +482,14 @@ class SimulatedFileManager(BaseFileManager):
         _call_id: Optional[str] = None,
         response_format: Optional[Any] = None,
     ) -> SteerableToolHandle:
-        if file_path not in self._files:
-            raise FileNotFoundError(file_path)
         instruction = build_simulated_method_prompt(
             "ask_about_file",
             f"File: {file_path}\nQuestion: {question}",
             parent_chat_context=_parent_chat_context,
         )
-        file_info = self._files[file_path]
-        instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
+        file_info = self._files.get(file_path)
+        if file_info is not None:
+            instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,
