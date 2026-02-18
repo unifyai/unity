@@ -130,9 +130,7 @@ def _default_tool_policy(
                 {
                     k: v
                     for k, v in filtered.items()
-                    if isinstance(k, str)
-                    and k.startswith("FunctionManager_")
-                    and k != "FunctionManager_add_functions"
+                    if isinstance(k, str) and k.startswith("FunctionManager_")
                 },
             )
         if not gm_satisfied:
@@ -140,14 +138,7 @@ def _default_tool_policy(
                 {
                     k: v
                     for k, v in filtered.items()
-                    if isinstance(k, str)
-                    and k.startswith("GuidanceManager_")
-                    and k
-                    not in {
-                        "GuidanceManager_add_guidance",
-                        "GuidanceManager_update_guidance",
-                        "GuidanceManager_delete_guidance",
-                    }
+                    if isinstance(k, str) and k.startswith("GuidanceManager_")
                 },
             )
         return ("required", gated) if gated else ("auto", filtered)
@@ -2249,38 +2240,6 @@ class CodeActActor(BaseCodeActActor):
 
         if self.function_manager:
 
-            async def FunctionManager_add_functions(
-                implementations: str | list[str],
-                *,
-                language: str = "python",
-                overwrite: bool = False,
-                verify: Optional[dict[str, bool]] = None,
-                preconditions: Optional[dict[str, dict]] = None,
-            ) -> Any:
-                """
-                Add/store new functions into the FunctionManager.
-
-                Notes
-                -----
-                - This tool is only available in the post-completion storage review loop,
-                  never in the main execution loop.
-                - Prefer using existing functions (search first) before adding new ones.
-                """
-                fm = self.function_manager
-                if fm is None:
-                    raise RuntimeError(
-                        "FunctionManager is not configured on this actor.",
-                    )
-                return fm.add_functions(
-                    implementations=implementations,
-                    language=language,  # type: ignore[arg-type]
-                    overwrite=bool(overwrite),
-                    verify=(verify or {}),
-                    preconditions=(preconditions or {}),
-                )
-
-            tools["FunctionManager_add_functions"] = FunctionManager_add_functions
-
             async def execute_function(
                 function_name: str,
                 call_kwargs: Optional[Dict[str, Any]] = None,
@@ -3370,14 +3329,11 @@ class CodeActActor(BaseCodeActActor):
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply static per-call filters (can_compose, can_store)."""
+            """Apply static per-call filters (can_compose)."""
             out = dict(tool_dict)
             if not effective_can_compose:
                 for name in _compose_only_tools:
                     out.pop(name, None)
-            # Storage is always deferred to the post-completion loop;
-            # the main loop never exposes the add_functions tool.
-            out.pop("FunctionManager_add_functions", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))
