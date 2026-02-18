@@ -54,9 +54,62 @@ from .utils.storage import (
 )
 from unity.data_manager.types import PlotResult as _VizPlotResult
 
+from unity.file_manager.file_parsers.types.formats import (
+    extension_to_format as _ext_to_fmt,
+    is_image_format as _is_image_format,
+)
+
 if TYPE_CHECKING:
     from unity.file_manager.types.describe import FileStorageMap
     from unity.data_manager.base import BaseDataManager
+
+
+# ---------------------------------------------------------------------------
+# Lightweight handle for single-shot vision answers
+# ---------------------------------------------------------------------------
+class _ImageVisionHandle(SteerableToolHandle):
+    """Wraps a single-shot vision LLM call as a SteerableToolHandle."""
+
+    def __init__(self, coro, *, _return_reasoning_steps: bool = False):
+        self._coro = coro
+        self._return_steps = _return_reasoning_steps
+        self._result: Optional[str] = None
+        self._done = False
+
+    async def result(self):
+        if not self._done:
+            self._result = await self._coro
+            self._done = True
+        if self._return_steps:
+            return self._result, []
+        return self._result
+
+    def done(self) -> bool:
+        return self._done
+
+    async def ask(self, question, *, _parent_chat_context=None):
+        return self
+
+    async def interject(self, message, *, _parent_chat_context_cont=None):
+        pass
+
+    async def stop(self, reason=None, **kwargs):
+        self._done = True
+
+    async def pause(self):
+        return "Single-shot vision call cannot be paused."
+
+    async def resume(self):
+        return "Single-shot vision call is not paused."
+
+    async def next_clarification(self):
+        return {}
+
+    async def next_notification(self):
+        return {}
+
+    async def answer_clarification(self, call_id, answer):
+        pass
 
 
 class FileManager(BaseFileManager):
@@ -1524,6 +1577,19 @@ class FileManager(BaseFileManager):
         response_format: Optional[Any] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:  # type: ignore[override]
+        from pathlib import Path as _Path
+
+        # Detect image files by extension and route to a single-shot vision path
+        ext = _Path(file_path).suffix.lower()
+        fmt = _ext_to_fmt(ext)
+        if _is_image_format(fmt):
+            return self._ask_about_image_file(
+                file_path,
+                question,
+                _return_reasoning_steps=_return_reasoning_steps,
+                _parent_chat_context=_parent_chat_context,
+            )
+
         # Check if file is indexed in Unify (not just filesystem existence)
         # This allows asking about files that were ingested but may not exist on local FS
         storage = self.describe(file_path=file_path)
@@ -1583,6 +1649,88 @@ class FileManager(BaseFileManager):
 
             handle.result = _wrapped_result  # type: ignore[attr-defined]
         return handle
+
+    # ---------------------------------------------------------------------- #
+    # Image-specific vision path                                              #
+    # ---------------------------------------------------------------------- #
+    def _ask_about_image_file(
+        self,
+        file_path: str,
+        question: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+    ) -> SteerableToolHandle:
+        """Single-shot vision LLM call for image files (JPEG/PNG)."""
+        import base64 as _b64
+
+        if not self._adapter.exists(file_path):
+            raise FileNotFoundError(file_path)
+
+        image_bytes = self._adapter.open_bytes(file_path)
+
+        head = image_bytes[:10]
+        if head.startswith(b"\xff\xd8"):
+            mime = "image/jpeg"
+        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime = "image/png"
+        else:
+            mime = "application/octet-stream"
+
+        b64_data = _b64.b64encode(image_bytes).decode("ascii")
+        content_block = {
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{b64_data}"},
+        }
+
+        async def _vision_call() -> str:
+            from unity.image_manager.prompt_builders import build_image_ask_prompt
+
+            client = new_llm_client()
+            client.set_system_message(
+                build_image_ask_prompt(caption=file_path, timestamp=None).to_list(),
+            )
+
+            messages: list[dict] = []
+            if _parent_chat_context:
+                from unity.common.context_dump import (
+                    make_messages_safe_for_context_dump,
+                )
+
+                parent_ctx_safe = make_messages_safe_for_context_dump(
+                    _parent_chat_context,
+                )
+                messages.append(
+                    {
+                        "role": "system",
+                        "_ctx_header": True,
+                        "content": (
+                            "You are handling an image analysis request.\n\n"
+                            "## Parent Chat Context\n"
+                            "This is the broader conversation context from which "
+                            "this image question originated.\n\n"
+                            f"{json.dumps(parent_ctx_safe, indent=2)}\n\n"
+                            "Your task: Analyze the provided image and answer the "
+                            "question. Respond with plain text only."
+                        ),
+                    },
+                )
+
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        content_block,
+                        {"type": "text", "text": question},
+                    ],
+                },
+            )
+            return await client.generate(messages=messages)
+
+        return _ImageVisionHandle(
+            _vision_call(),
+            _return_reasoning_steps=_return_reasoning_steps,
+        )
 
     @functools.wraps(BaseFileManager.clear, updated=())
     def clear(self) -> None:  # type: ignore[override]
