@@ -161,6 +161,23 @@ def test_model_to_fields_mutable_flag():
         assert field_spec.get("mutable") is True, f"Field {name} missing mutable=True"
 
 
+class _UniqueFieldModel(BaseModel):
+    normal: str
+    email: str = Field(json_schema_extra={"unique": True})
+    code: str = Field(json_schema_extra={"unique": True, "unify_type": "str"})
+
+
+def test_model_to_fields_unique_flag():
+    """json_schema_extra={'unique': True} propagates to the field entry."""
+    fields = model_to_fields(_UniqueFieldModel)
+
+    assert "unique" not in fields["normal"]
+    assert fields["email"].get("unique") is True
+    assert fields["code"].get("unique") is True
+    # unify_type override still works alongside unique
+    assert fields["code"]["type"] == "str"
+
+
 def test_model_to_fields_message_schema_complete():
     """Message model produces expected field structure."""
     fields = model_to_fields(Message)
