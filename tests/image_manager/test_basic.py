@@ -219,6 +219,57 @@ def test_add_images_with_filepath():
 
 
 @_handle_project
+def test_filepath_uniqueness():
+    im = ImageManager()
+
+    [id1] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "first",
+                "data": PNG_RED_B64,
+                "filepath": "/tmp/images/unique_path.png",
+            },
+        ],
+        synchronous=True,
+    )
+    assert isinstance(id1, int)
+
+    # Duplicate filepath: add_images swallows per-item errors in its batch
+    # fallback, returning None for failed entries instead of raising.
+    [id2] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "second",
+                "data": PNG_BLUE_B64,
+                "filepath": "/tmp/images/unique_path.png",
+            },
+        ],
+        synchronous=True,
+    )
+    assert id2 is None, "Duplicate filepath should be rejected by backend uniqueness"
+
+    # Multiple None filepaths are allowed (NULL != NULL)
+    ids = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "no path 1",
+                "data": PNG_RED_B64,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "no path 2",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=True,
+    )
+    assert all(isinstance(i, int) for i in ids), "NULL filepaths should not conflict"
+
+
+@_handle_project
 def test_update_filepath():
     im = ImageManager()
 
