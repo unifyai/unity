@@ -92,6 +92,36 @@ class BaseImageManager(BaseStateManager, metaclass=SingletonABCMeta):
         Returns updated ids.
         """
 
+    # ------------------------------ Resolution ------------------------------
+    @abstractmethod
+    def resolve_filepath(self, filepath: str) -> int:
+        """Get-or-create an image by its filesystem path, returning ``image_id``.
+
+        If an image with the given ``filepath`` already exists in the Images
+        context, its ``image_id`` is returned.  Otherwise the file is read from
+        disk, uploaded via :pymeth:`add_images`, and the newly allocated
+        ``image_id`` is returned.
+
+        Parameters
+        ----------
+        filepath : str
+            Absolute or workspace-relative path to the image file.
+
+        Returns
+        -------
+        int
+            The ``image_id`` of the existing or newly created image.
+
+        Raises
+        ------
+        FileNotFoundError
+            If no matching row exists in the backend **and** the file cannot
+            be found on disk.
+        RuntimeError
+            If the backend rejects the upload (e.g. uniqueness violation
+            from a concurrent insert).
+        """
+
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
