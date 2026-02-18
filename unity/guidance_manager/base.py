@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
@@ -25,9 +26,164 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
         "the GuidanceManager, managing procedural instructions and operating procedures"
     )
 
+    # ------------------------------------------------------------------ #
+    # Public interface                                                   #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    def search(
+        self,
+        *,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> List["Guidance"]:
+        """Search for guidance entries by semantic similarity to reference content.
+
+        Guidance entries contain procedural how-to information: step-by-step
+        instructions, operating procedures, software walkthroughs, and
+        strategies for composing functions together.
+
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of source expressions to reference text for semantic
+            search.  Keys are column names or descriptive labels; values
+            are the reference text to compare against.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Guidance]
+            Up to *k* rows ranked by similarity, backfilled to *k* when
+            similarity yields fewer rows.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def filter(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List["Guidance"]:
+        """Filter guidance entries using a Python filter expression.
+
+        Guidance entries contain procedural how-to information: step-by-step
+        instructions, operating procedures, software walkthroughs, and
+        strategies for composing functions together.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in
+            scope (e.g. ``"guidance_id == 42"``).  When ``None``, returns
+            all guidance records subject to pagination.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int, default 100
+            Maximum number of records to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Guidance]
+            Matching guidance records as Guidance models.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def add_guidance(
+        self,
+        *,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        function_ids: Optional[List[int]] = None,
+    ) -> "ToolOutcome":
+        """Create a new guidance entry for procedural or operational how-to
+        information: step-by-step instructions, standard operating procedures,
+        software usage walkthroughs, composition strategies for combining
+        functions, or any other actionable "how to do X" content.
+
+        At least one of ``title`` or ``content`` must be provided.
+
+        Parameters
+        ----------
+        title : str | None
+            Short human-readable title for the guidance entry.
+        content : str | None
+            Longer freeform guidance text describing the procedure.
+        function_ids : list[int] | None
+            Optional ids of related functions to cross-reference.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome string and details containing the newly assigned
+            ``guidance_id``.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_guidance(
+        self,
+        *,
+        guidance_id: int,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+        function_ids: Optional[List[int]] = None,
+    ) -> "ToolOutcome":
+        """Update fields of an existing guidance entry by id.
+
+        Use this to revise procedural instructions, operating procedures,
+        or compositional strategies that are already stored.
+
+        Parameters
+        ----------
+        guidance_id : int
+            Identifier of the row to update.
+        title : str | None
+            New title (omit to keep existing value).
+        content : str | None
+            New content (omit to keep existing value).
+        function_ids : list[int] | None
+            Replacement list of related function ids.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome string and details with the ``guidance_id``.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_guidance(
+        self,
+        *,
+        guidance_id: int,
+    ) -> "ToolOutcome":
+        """Delete a guidance entry by id.
+
+        Parameters
+        ----------
+        guidance_id : int
+            Identifier of the row to delete.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome string and details with the removed ``guidance_id``.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
+
+
+if TYPE_CHECKING:
+    from .types.guidance import Guidance
+    from ..common.tool_outcome import ToolOutcome
 
 
 # Attach centralised docstring
