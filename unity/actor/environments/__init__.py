@@ -16,6 +16,7 @@ from unity.actor.environments.computer import ComputerEnvironment
 from unity.actor.environments.function_store import FunctionStoreEnvironment
 from unity.actor.environments.state_managers import StateManagerEnvironment
 from unity.actor.environments.actor import ActorEnvironment
+from unity.actor.environments.render import RenderEnvironment
 from unity.function_manager.primitives.registry import get_registry
 
 
@@ -97,5 +98,6 @@ __all__ = [
     "FunctionStoreEnvironment",
     "StateManagerEnvironment",
     "ActorEnvironment",
+    "RenderEnvironment",
     "create_env",
 ]
