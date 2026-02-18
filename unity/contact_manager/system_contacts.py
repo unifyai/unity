@@ -210,31 +210,18 @@ def provision_assistant_contact(self, assistant_log) -> None:
             pass
         return
 
-    # Insert the assistant row. Use try-except to handle race conditions where
-    # another process creates the contact concurrently.
+    # Insert the assistant row. Race conditions are handled by Orchestra's
+    # field-level uniqueness enforcement on email_address / phone_number.
     try:
         self._create_contact(**base_fields)
-    except ValueError as e:
-        if "unique fields" in str(e):
-            # Another process created the contact concurrently – that's fine
-            pass
-        else:
-            raise
     except RequestError as e:
-        # Backend can return either:
-        # - 500 due to DB-level race condition
-        # - 400 due to a uniqueness violation surfaced at the API layer
-        # In both cases, the contact already exists and we can treat this as success.
         if e.response is not None and e.response.status_code in (400, 500):
             detail = ""
             try:
                 detail = str(e.response.json().get("detail", ""))
             except Exception:
                 detail = str(getattr(e.response, "text", ""))
-            if (
-                "Duplicate entry for unique field" in detail
-                or "unique" in detail.lower()
-            ):
+            if "unique" in detail.lower():
                 return
         raise
 
@@ -352,29 +339,18 @@ def provision_user_contact(self, user_log) -> None:
             pass
         return
 
-    # Insert the user row. Use try-except to handle race conditions where
-    # another process creates the contact concurrently.
+    # Insert the user row. Race conditions are handled by Orchestra's
+    # field-level uniqueness enforcement on email_address / phone_number.
     try:
         self._create_contact(**{k: v for k, v in base_fields.items() if v is not None})
-    except ValueError as e:
-        if "unique fields" in str(e):
-            # Another process created the contact concurrently – that's fine
-            pass
-        else:
-            raise
     except RequestError as e:
-        # See assistant provisioning: races can present as 500 or as a 400 with a
-        # duplicate/unique violation message, depending on backend behavior.
         if e.response is not None and e.response.status_code in (400, 500):
             detail = ""
             try:
                 detail = str(e.response.json().get("detail", ""))
             except Exception:
                 detail = str(getattr(e.response, "text", ""))
-            if (
-                "Duplicate entry for unique field" in detail
-                or "unique" in detail.lower()
-            ):
+            if "unique" in detail.lower():
                 return
         raise
 

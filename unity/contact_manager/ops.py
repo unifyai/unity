@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 import unify
 from pydantic import ValidationError
@@ -110,44 +110,6 @@ def _maybe_sync_bio_to_backend(
         sync_user_bio(assistant_id, row["email_address"], bio)
 
 
-def _unique_fields() -> Set[str]:
-    return {
-        f
-        for f in Contact.model_fields
-        if f.endswith("_address") or f.endswith("_number")
-    }
-
-
-def _assert_no_duplicate_unique(
-    self,
-    payload: Dict[str, Any],
-    *,
-    exclude_contact_id: Optional[int] = None,
-) -> None:
-    uniq = _unique_fields()
-    constraints = [
-        f"{k} == {v!r}" for k, v in payload.items() if k in uniq and v is not None
-    ]
-    if not constraints:
-        return
-    or_expr = " or ".join(constraints)
-    filt = (
-        or_expr
-        if exclude_contact_id is None
-        else f"({or_expr}) and contact_id != {exclude_contact_id}"
-    )
-    dupes = unify.get_logs(
-        context=self._ctx,
-        filter=filt,
-        limit=1,
-        return_ids_only=True,
-    )
-    if dupes:
-        raise ValueError(
-            "Another contact already exists with one of the provided unique fields.",
-        )
-
-
 def create_contact(
     self,
     *,
@@ -209,8 +171,6 @@ def create_contact(
         except Exception:
             pass
         raise ValueError(msg) from e
-
-    _assert_no_duplicate_unique(self, contact_details)
 
     log = unity_log(
         context=self._ctx,
@@ -289,8 +249,6 @@ def update_contact(
         except Exception:
             pass
         raise ValueError(msg) from e
-
-    _assert_no_duplicate_unique(self, contact_details, exclude_contact_id=contact_id)
 
     if _log_id is None:
         target_ids = unify.get_logs(
