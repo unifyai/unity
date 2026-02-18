@@ -79,8 +79,9 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     Uses Pydantic's JSON Schema with $ref dereferencing via jsonref.
     Nested object schemas are serialized as JSON strings for Orchestra.
 
-    Supports per-field type overrides via:
-    - Field(..., json_schema_extra={"unify_type": "..."})
+    Supports per-field overrides via ``json_schema_extra``:
+    - ``{"unify_type": "..."}`` — override the inferred Orchestra type
+    - ``{"unique": True}`` — mark the field as unique in Orchestra
 
     Examples
     --------
@@ -122,6 +123,9 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
             entry = {"type": _schema_to_column_type(prop)}
 
         entry["mutable"] = True
+
+        if field_info and isinstance(extra, dict) and extra.get("unique"):
+            entry["unique"] = True
 
         # Use Field description (not JSON Schema description which can be very long)
         if field_info and getattr(field_info, "description", None):
