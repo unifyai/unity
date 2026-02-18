@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 @dataclass
 class CallConfig:
     assistant_id: str
+    user_id: str
     assistant_bio: str
     assistant_number: str
     voice_provider: str
@@ -61,6 +62,7 @@ class LivekitCallManager:
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
+        self.user_id = config.user_id
         self.assistant_bio = config.assistant_bio
         self.assistant_number = config.assistant_number
         self.voice_provider = config.voice_provider
@@ -125,6 +127,8 @@ class LivekitCallManager:
             json.dumps(contact),
             json.dumps(boss),
             self.assistant_bio,
+            self.assistant_id,
+            self.user_id,
         ]
         if self.uses_realtime_api:
             target_path = target_path / "sts_call.py"
@@ -208,6 +212,8 @@ class LivekitCallManager:
             json.dumps(contact),
             json.dumps(boss),
             self.assistant_bio,
+            self.assistant_id,
+            self.user_id,
         ]
         if self.uses_realtime_api:
             target_path = target_path / "sts_call.py"

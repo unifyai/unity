@@ -752,7 +752,7 @@ class TestCLIArgumentParsing:
             },
         )
 
-        # Simulate CLI args: script.py dev assistant_number VOICE_PROVIDER VOICE_ID OUTBOUND CHANNEL CONTACT BOSS ASSISTANT_BIO
+        # Simulate CLI args: script.py dev assistant_number VOICE_PROVIDER VOICE_ID OUTBOUND CHANNEL CONTACT BOSS ASSISTANT_BIO ASSISTANT_ID USER_ID
         monkeypatch.setattr(
             common.sys,
             "argv",
@@ -767,6 +767,8 @@ class TestCLIArgumentParsing:
                 contact_json,
                 boss_json,
                 "Test assistant bio",
+                "test_assistant_id",
+                "test_user_id",
             ],
         )
 
@@ -775,6 +777,8 @@ class TestCLIArgumentParsing:
                 ("CONTACT", True),
                 ("BOSS", True),
                 ("ASSISTANT_BIO", False),
+                ("ASSISTANT_ID", False),
+                ("USER_ID", False),
             ],
         )
 
@@ -816,6 +820,8 @@ class TestCLIArgumentParsing:
                 contact_json,
                 boss_json,
                 "Bio",
+                "test_assistant_id",
+                "test_user_id",
             ],
         )
 
@@ -824,6 +830,8 @@ class TestCLIArgumentParsing:
                 ("CONTACT", True),
                 ("BOSS", True),
                 ("ASSISTANT_BIO", False),
+                ("ASSISTANT_ID", False),
+                ("USER_ID", False),
             ],
         )
 
@@ -856,6 +864,8 @@ class TestCLIArgumentParsing:
                 contact_json,
                 boss_json,
                 "Bio",
+                "test_assistant_id",
+                "test_user_id",
             ],
         )
 
@@ -864,6 +874,8 @@ class TestCLIArgumentParsing:
                 ("CONTACT", True),
                 ("BOSS", True),
                 ("ASSISTANT_BIO", False),
+                ("ASSISTANT_ID", False),
+                ("USER_ID", False),
             ],
         )
 

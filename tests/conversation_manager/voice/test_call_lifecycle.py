@@ -67,6 +67,7 @@ class TestCallManagerConfiguration:
 
         config = CallConfig(
             assistant_id="test_assistant",
+            user_id="test_user",
             assistant_bio="A helpful assistant",
             assistant_number="+15551234567",
             voice_provider="cartesia",
@@ -91,6 +92,7 @@ class TestCallManagerConfiguration:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test bio",
             assistant_number="+15551234567",
             voice_provider="cartesia",
@@ -118,6 +120,7 @@ class TestCallManagerConfiguration:
 
         tts_config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test",
             assistant_number="+15551234567",
             voice_provider="cartesia",
@@ -137,6 +140,7 @@ class TestCallManagerConfiguration:
 
         sts_config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test",
             assistant_number="+15551234567",
             voice_provider="openai",
@@ -156,6 +160,7 @@ class TestCallManagerConfiguration:
 
         initial_config = CallConfig(
             assistant_id="initial",
+            user_id="test_user",
             assistant_bio="Initial bio",
             assistant_number="+15551111111",
             voice_provider="cartesia",
@@ -165,6 +170,7 @@ class TestCallManagerConfiguration:
 
         new_config = CallConfig(
             assistant_id="updated",
+            user_id="test_user",
             assistant_bio="Updated bio",
             assistant_number="+15552222222",
             voice_provider="elevenlabs",
@@ -318,6 +324,7 @@ class TestCallSubprocessLifecycle:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test assistant",
             assistant_number="+15551234567",
             voice_provider="cartesia",
@@ -399,6 +406,7 @@ class TestCallSubprocessLifecycle:
 
         sts_config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test",
             assistant_number="+15551234567",
             voice_provider="openai",
@@ -1242,6 +1250,7 @@ class TestCallErrorHandling:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test",
             assistant_number="+15551234567",
             voice_provider="cartesia",

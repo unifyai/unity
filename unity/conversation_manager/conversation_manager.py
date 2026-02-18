@@ -1100,6 +1100,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def get_call_config(self) -> CallConfig:
         return CallConfig(
             assistant_id=self.assistant_id,
+            user_id=self.user_id,
             assistant_bio=self.assistant_about,
             assistant_number=self.assistant_number,
             voice_provider=self.voice_provider,
