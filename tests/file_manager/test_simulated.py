@@ -171,7 +171,7 @@ async def test_interject(monkeypatch, simulated_file_manager):
         file_content="Annual report with financial details",
     )
     assert (
-        verdict.lower().strip().startswith("correct")
+        verdict.lower().strip().strip("*").startswith("correct")
     ), f"Judge deemed interjected ask incorrect. Verdict: {verdict}"
 
 
