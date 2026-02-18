@@ -11,14 +11,18 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract that every concrete guidance-manager must satisfy.
 
-    Exposes CRUD operations on guidance entries (search, filter,
-    add_guidance, update_guidance, delete_guidance) but no high-level
-    tool-loop methods.  Read and mutation orchestration is handled
-    externally by the CodeActActor via top-level JSON tool calls.
+    Stores procedural how-to information: step-by-step instructions,
+    standard operating procedures, software usage walkthroughs, and
+    strategies for composing functions together.
+
+    Exposes CRUD operations (search, filter, add_guidance,
+    update_guidance, delete_guidance) as first-class JSON tool calls
+    on the CodeActActor — both in the main doing loop and in the
+    post-completion storage review loop.
     """
 
     _as_caller_description: str = (
-        "the GuidanceManager, managing assistant guidance and policies"
+        "the GuidanceManager, managing procedural instructions and operating procedures"
     )
 
     @abstractmethod

@@ -536,13 +536,12 @@ class GuidanceManager(BaseGuidanceManager):
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
-        """Create a new guidance entry.
+        """Create a new guidance entry for procedural or operational how-to
+        information: step-by-step instructions, standard operating procedures,
+        software usage walkthroughs, composition strategies for combining
+        functions, or any other actionable "how to do X" content.
 
-        Purpose
-        -------
-        Use this to persist distilled guidance, optionally linking annotated
-        images and related function ids. At least one of ``title``, ``content``
-        or ``images`` must be provided.
+        At least one of ``title``, ``content`` or ``images`` must be provided.
 
         Parameters
         ----------
@@ -596,6 +595,9 @@ class GuidanceManager(BaseGuidanceManager):
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         """Update fields of an existing guidance entry by id.
+
+        Use this to revise procedural instructions, operating procedures,
+        or compositional strategies that are already stored.
 
         Parameters
         ----------
@@ -786,7 +788,11 @@ class GuidanceManager(BaseGuidanceManager):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Guidance]:
-        """Semantic search over guidance rows using shared table helper.
+        """Search for guidance entries by semantic similarity to reference content.
+
+        Guidance entries contain procedural how-to information: step-by-step
+        instructions, operating procedures, software walkthroughs, and
+        strategies for composing functions together.
 
         Parameters
         ----------
@@ -820,8 +826,11 @@ class GuidanceManager(BaseGuidanceManager):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Guidance]:
-        """
-        Filter guidance records using a boolean Python expression evaluated per row.
+        """Filter guidance entries using a Python filter expression.
+
+        Guidance entries contain procedural how-to information: step-by-step
+        instructions, operating procedures, software walkthroughs, and
+        strategies for composing functions together.
 
         Parameters
         ----------
