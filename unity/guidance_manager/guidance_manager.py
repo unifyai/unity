@@ -528,6 +528,7 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return {"attached_count": len(images), "images": images}
 
+    @functools.wraps(BaseGuidanceManager.add_guidance, updated=())
     def add_guidance(
         self,
         *,
@@ -536,30 +537,6 @@ class GuidanceManager(BaseGuidanceManager):
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
-        """Create a new guidance entry for procedural or operational how-to
-        information: step-by-step instructions, standard operating procedures,
-        software usage walkthroughs, composition strategies for combining
-        functions, or any other actionable "how to do X" content.
-
-        At least one of ``title``, ``content`` or ``images`` must be provided.
-
-        Parameters
-        ----------
-        title : str | None
-            Short human-readable title for the guidance entry.
-        content : str | None
-            Longer freeform guidance text.
-        images : AnnotatedImageRefs | None
-            Annotated image references to attach to this guidance entry.
-        function_ids : list[int] | None
-            Optional ids of related functions to surface in read flows.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome string and details containing the newly assigned
-            ``guidance_id``.
-        """
         if not title and not content and not images:
             raise ValueError(
                 "At least one field (title/content/images) must be provided.",
@@ -585,6 +562,7 @@ class GuidanceManager(BaseGuidanceManager):
             "details": {"guidance_id": log.entries["guidance_id"]},
         }
 
+    @functools.wraps(BaseGuidanceManager.update_guidance, updated=())
     def update_guidance(
         self,
         *,
@@ -594,29 +572,6 @@ class GuidanceManager(BaseGuidanceManager):
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
-        """Update fields of an existing guidance entry by id.
-
-        Use this to revise procedural instructions, operating procedures,
-        or compositional strategies that are already stored.
-
-        Parameters
-        ----------
-        guidance_id : int
-            Identifier of the row to update.
-        title : str | None
-            New title (omit to keep existing value).
-        content : str | None
-            New content (omit to keep existing value).
-        images : Any | None
-            Replacement image references; validated to the model format.
-        function_ids : list[int] | None
-            Replacement list of related function ids.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome string and details with the ``guidance_id``.
-        """
         updates: Dict[str, Any] = {}
         if title is not None:
             updates["title"] = title
@@ -752,19 +707,8 @@ class GuidanceManager(BaseGuidanceManager):
                 funcs = funcs[:limit]
         return {"attached_count": len(funcs), "functions": funcs}
 
+    @functools.wraps(BaseGuidanceManager.delete_guidance, updated=())
     def delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
-        """Delete a guidance entry by id.
-
-        Parameters
-        ----------
-        guidance_id : int
-            Identifier of the row to delete.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome string and details with the removed ``guidance_id``.
-        """
         ids = unify.get_logs(
             context=self._ctx,
             filter=f"guidance_id == {int(guidance_id)}",
@@ -782,32 +726,13 @@ class GuidanceManager(BaseGuidanceManager):
         unify.delete_logs(context=self._ctx, logs=ids[0])
         return {"outcome": "guidance deleted", "details": {"guidance_id": guidance_id}}
 
+    @functools.wraps(BaseGuidanceManager.search, updated=())
     def search(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Guidance]:
-        """Search for guidance entries by semantic similarity to reference content.
-
-        Guidance entries contain procedural how-to information: step-by-step
-        instructions, operating procedures, software walkthroughs, and
-        strategies for composing functions together.
-
-        Parameters
-        ----------
-        references : Dict[str, str] | None, default None
-            Mapping of source expressions to reference text for semantic search.
-        k : int, default 10
-            Maximum number of results to return. Must be <= 1000.
-
-        Returns
-        -------
-        List[Guidance]
-            Up to k rows ranked by similarity, backfilled to k when
-            similarity yields fewer rows. Payload is restricted to built‑in
-            fields for efficiency.
-        """
         allowed_fields = list(self._BUILTIN_FIELDS)
         rows = table_search_top_k(
             context=self._ctx,
@@ -819,6 +744,7 @@ class GuidanceManager(BaseGuidanceManager):
         )
         return [Guidance(**r) for r in rows]
 
+    @functools.wraps(BaseGuidanceManager.filter, updated=())
     def filter(
         self,
         *,
@@ -826,27 +752,6 @@ class GuidanceManager(BaseGuidanceManager):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Guidance]:
-        """Filter guidance entries using a Python filter expression.
-
-        Guidance entries contain procedural how-to information: step-by-step
-        instructions, operating procedures, software walkthroughs, and
-        strategies for composing functions together.
-
-        Parameters
-        ----------
-        filter : str | None, default None
-            A Python boolean expression evaluated with column names in scope.
-            When None, returns all guidance records.
-        offset : int, default 0
-            Zero-based index of the first result to include.
-        limit : int, default 100
-            Maximum number of records to return. Must be <= 1000.
-
-        Returns
-        -------
-        List[Guidance]
-            Matching guidance records as Guidance models.
-        """
         from_fields = list(self._BUILTIN_FIELDS)
         normalized = self._scoped_filter(normalize_filter_expr(filter))
         logs = unify.get_logs(
