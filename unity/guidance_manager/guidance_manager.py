@@ -530,9 +530,13 @@ class GuidanceManager(BaseGuidanceManager):
 
     def _resolve_image_refs(
         self,
-        images: AnnotatedImageRefs | list,
+        images: AnnotatedImageRefs | list | str,
     ) -> AnnotatedImageRefs:
         """Ensure every ref in *images* has a concrete ``image_id``."""
+        if isinstance(images, str):
+            import json
+
+            images = json.loads(images)
         if not isinstance(images, AnnotatedImageRefs):
             images = AnnotatedImageRefs.model_validate(images)
         for ref in images.root:
