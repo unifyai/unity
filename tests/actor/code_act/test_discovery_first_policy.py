@@ -12,40 +12,9 @@ import pytest
 from tests.helpers import _handle_project
 from unity.actor.code_act_actor import CodeActActor
 from unity.function_manager.function_manager import FunctionManager
+from unity.guidance_manager.guidance_manager import GuidanceManager
 
 pytestmark = pytest.mark.eval
-
-
-class _StubGuidanceManager:
-    """Minimal GuidanceManager stand-in with the method signatures needed to
-    create the tool surface.  All read operations return empty results."""
-
-    def search(self, references=None, k=10):
-        """Search for guidance entries by semantic similarity to reference content."""
-        return []
-
-    def filter(self, filter=None, offset=0, limit=100):
-        """Filter guidance entries using a Python filter expression."""
-        return []
-
-    def add_guidance(self, *, title, content, function_ids=None):
-        """Add a guidance entry describing a compositional workflow or playbook."""
-        return {"details": {"guidance_id": 1}}
-
-    def update_guidance(
-        self,
-        *,
-        guidance_id,
-        title=None,
-        content=None,
-        function_ids=None,
-    ):
-        """Update an existing guidance entry."""
-        return {"details": {"guidance_id": guidance_id}}
-
-    def delete_guidance(self, *, guidance_id):
-        """Delete a guidance entry by ID."""
-        return {"deleted": True}
 
 
 @pytest.mark.asyncio
@@ -64,7 +33,7 @@ async def test_discovery_first_parallel_fm_and_gm():
        unlocked after discovery).
     """
     fm = FunctionManager(include_primitives=False)
-    gm = _StubGuidanceManager()
+    gm = GuidanceManager()
 
     actor = CodeActActor(
         function_manager=fm,
