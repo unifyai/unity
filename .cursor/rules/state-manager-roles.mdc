@@ -42,32 +42,25 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **File ingestion pipeline**
   - `primitives.files.parse` → `primitives.knowledge.update` (to persist structured facts)
 - **Images**
-  - Use `ImageManager` only through managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`). Pass image_ids and helpful annotations.
+  - Images are referenced **by filesystem path** across the entire stack. Screenshot directories (`Screenshots/User/`, `Screenshots/Assistant/`) and other workspace paths serve as the universal cross‑manager pointer for visual content. Managers and plans reference images via their relative filepath — no special `images` parameter or structured ref types are needed at the public API boundary.
 
 ### ImageManager
-- **Role**: Low‑level image store/retrieval and the cross‑cutting "visual communication" surface used by managers.
+- **Role**: Persistent image store and metadata registry. Provides durable `image_id`‑keyed storage in the `Images` context, backing filesystem images with cloud persistence and queryable metadata.
 - **Data model & identity**:
-  - Every stored image has a unique numeric `image_id` (stable within the active assistant context) that other managers reference.
-  - Image rows may store base64 bytes or a cloud object URL plus metadata (e.g., caption, timestamp, mime/type).
+  - Every stored image has a unique numeric `image_id` (stable within the active assistant context).
+  - Image rows store base64 bytes or a cloud object URL, plus metadata (caption, timestamp, mime/type).
+  - Each image row carries an optional `filepath` field that records the local filesystem path the image was saved to. This is the bridge between the filesystem‑based reference convention and the persistent `Images` context.
 - **ImageHandle wrapper**:
-  - Managers and helpers operate on an `ImageHandle` abstraction that wraps an image row and exposes:
-    - `image_id`, optional `caption`/metadata
-    - `raw()` → returns image bytes suitable for attaching into tool‑loops (resolves base64 vs signed URL transparently)
-    - `ask(question)` → sends the image to a vision‑capable model and returns a text answer (no persistence of visual context)
-  - Where a tool accepts images, it may receive `ImageHandle` instances directly in addition to numeric `image_id`s and annotated refs.
-- **Integration pattern across managers**:
-  - Public manager entry points that support vision accept an optional `images` parameter (`images: ImageRefs | list[RawImageRef | AnnotatedImageRef]`).
-  - When `images` are provided, managers:
-    - inject a concise synthetic overview so attached images are visible to the LLM at the start of the loop,
-    - expose image‑aware helpers where appropriate (e.g., `ask_image`, `attach_image_to_context`, and message‑scoped attachment helpers in transcript flows),
-    - forward images to inner tools that also declare an `images` parameter, rewriting/augmenting annotations to align with the delegated question or action, preserving caller order and preferring `AnnotatedImageRef` when available.
-  - Images do not implicitly propagate into nested tool‑loops; callers must forward them explicitly via the `images` argument when delegating.
-  - Dynamic steering helpers (interjections, clarifications, stop) carry the current images alongside text so visual context is preserved during live control.
-- **Current coverage**:
-  - Integration is complete for `ContactManager`, `TranscriptManager`, and `TaskScheduler`.
+  - Internal code operates on an `ImageHandle` abstraction that wraps an image row and exposes:
+    - `image_id`, optional `caption`/metadata, `filepath`
+    - `raw()` → returns image bytes (resolves base64 vs signed URL transparently)
+    - `ask(question)` → sends the image to a vision‑capable model and returns a text answer
+- **Cross‑manager image convention**:
+  - **Filesystem paths are the universal image reference.** When images need to flow between managers (e.g., from `Actor` plans into `GuidanceManager.update`), they are referenced by their workspace‑relative filepath (e.g., `Screenshots/User/2026-02-16T14-30-45.jpg`). The receiving manager or its internal tools can resolve filepaths to `image_id`s via `ImageManager.filter_images(filter="filepath == '...'")` when persistent storage linkage is needed.
+  - A small number of internal call sites still pass an `images` parameter using `ImageRefs`/`AnnotatedImageRef` types. This is **legacy** and being phased out — do not introduce new usages of this pattern.
 - **Connections**:
-  - **Steered by**: managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`, `ContactManager`, `TaskScheduler`).
-  - **Steers**: — (exposes image records/handles; managers decide when/how to attach or query images).
+  - **Steered by**: managers that persist or query images (e.g., `GuidanceManager`, `TranscriptManager`).
+  - **Steers**: — (exposes image records/handles; managers decide when/how to query or persist images).
 
 ### TaskScheduler
 - **Role**: Owner of durable tasks and their execution.
@@ -87,7 +80,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 
 ### ContactManager
 - **Role**: Source of truth for people/contact records.
-- **Scope**: ask (read‑only), update (create/edit/delete/merge contacts). Supports image references when helpful.
+- **Scope**: ask (read‑only), update (create/edit/delete/merge contacts).
 - **Connections**:
   - **Steered by**: `Actor` (via `primitives.contacts.*`); read‑only usage by `TranscriptManager.ask` (to resolve/compare contacts during transcript queries).
   - **Steers**: —
@@ -98,7 +91,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Edge**: Summarize conversations here; write long‑term distilled facts to `KnowledgeManager` if needed.
 - **Connections**:
   - **Steered by**: `Actor` (via `primitives.transcripts.*`).
-  - **Steers**: `ContactManager.ask` (for participant lookup/attributes in transcript answers); `ImageManager` (image query/attachment helpers for messages).
+  - **Steers**: `ContactManager.ask` (for participant lookup/attributes in transcript answers).
 
 ### FileManager
 - **Role**: Read‑only registry and parsing for received/downloaded files.
@@ -148,7 +141,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Scope**: ask (read‑only queries over guidance), update (create/edit/delete guidance entries).
 - **Connections**:
   - **Steered by**: `Actor` (via `primitives.guidance.*`).
-  - **Steers**: `ImageManager` (image attach/ask for guidance rows); reads functions from the shared "Functions" context to surface linked functions.
+  - **Steers**: reads functions from the shared "Functions" context to surface linked functions. References images by filesystem path; internal tools resolve paths to `image_id`s via `ImageManager` when persisting.
 
 ### MemoryManager
 - **Role**: Offline memory maintenance (periodic, non‑interactive).
