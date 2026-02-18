@@ -20,25 +20,38 @@ from unity.actor.prompt_examples import (
 _FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
     ### Function & Guidance Library
 
-    You have access to two complementary discovery systems:
+    You have access to two complementary systems:
 
-    * **FunctionManager** — stores concrete, reusable function implementations
-      (the building blocks). Search results include a `guidance_ids` field
-      linking to related guidance entries.
-    * **GuidanceManager** — stores high-level guidance on composing functions
-      together to accomplish broader tasks (the recipes / playbooks). Search
-      results include `function_ids` pointing back to concrete implementations.
+    * **FunctionManager** (read-only) — stores concrete, reusable function
+      implementations (the building blocks). Search results include a
+      `guidance_ids` field linking to related guidance entries.
+    * **GuidanceManager** (read + write) — stores procedural how-to
+      information: step-by-step instructions, standard operating procedures,
+      software usage walkthroughs, and strategies for composing functions
+      together. Search results include `function_ids` pointing back to
+      concrete implementations.
 
     Always search **both** before writing new code with raw `primitives.*`
     calls:
 
     1. `FunctionManager_search_functions` — find existing implementations
-    2. `GuidanceManager_search_guidance` — find compositional guidance and
-       workflows
+    2. `GuidanceManager_search_guidance` — find procedural instructions and
+       compositional strategies
     3. If a function exists, call it in `execute_code`; if guidance exists,
-       follow its workflow
+       follow its procedure
     4. Only fall back to raw `primitives.*` if neither library has relevant
        entries
+
+    #### Writing Guidance
+
+    When the user provides procedural instructions, operating procedures,
+    or step-by-step walkthroughs that should be remembered for future use,
+    store them directly via `GuidanceManager_add_guidance`. This is
+    appropriate when the *act of persisting the guidance is the task itself*
+    (e.g. "remember how to log into X", "here are the steps for Y").
+
+    Function storage is handled separately by a post-completion review
+    process — do not attempt to store functions during this loop.
 
     #### Function Execution Modes
 
@@ -58,13 +71,15 @@ _DISCOVERY_FIRST_POLICY = textwrap.dedent("""
     A tool policy is enforced that **requires** you to call both
     `FunctionManager_search_functions` and `GuidanceManager_search_guidance`
     before any other tools become available. Until both have been called at
-    least once, only the FunctionManager and GuidanceManager discovery tools
-    are visible to you.
+    least once, only the FunctionManager and GuidanceManager read-only
+    discovery tools are visible to you.
 
     **Call both on your first turn** — they are independent and can be issued
     as parallel tool calls in a single assistant message. Once both discovery
-    calls complete, the full tool set (execute_code, primitives, etc.) unlocks
-    automatically.
+    calls complete, the full tool set unlocks automatically — including
+    `execute_code`, primitives, and GuidanceManager write tools
+    (`GuidanceManager_add_guidance`, `GuidanceManager_update_guidance`,
+    `GuidanceManager_delete_guidance`).
 
     This policy exists to ensure you always check the existing function and
     guidance libraries before attempting to solve a task from scratch.
@@ -128,21 +143,21 @@ _EXECUTION_RULES = textwrap.dedent("""
 """).strip()
 
 _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
-    ### Skill Storage Is Handled Separately
+    ### Function Storage Is Handled Separately
 
     A dedicated skill-consolidation process will run automatically after you
     return your result. It will review your full execution trajectory and
-    decide which functions, compositional guidance, or workflows are worth
-    storing for future reuse — both as concrete function implementations
-    and as high-level guidance on how to compose them.
+    decide which **functions** are worth storing as reusable implementations,
+    and which **compositional strategies** deserve guidance entries.
 
     This means:
-    - **Ignore** any language in the request about "remembering",
-      "storing", or "saving" skills, workflows, or functions. That concern
+    - Do not spend effort on storing or managing *functions* — that concern
       is fully covered by the follow-up process.
-    - **Focus entirely on producing the best possible result.** Do not
-      spend any effort on persistence, storage, or skill management.
-    - You do not have storage tools available, and you do not need them.
+    - **Guidance is different**: if the user explicitly asks you to remember
+      procedures, instructions, or how-to information, store it directly via
+      `GuidanceManager_add_guidance` as part of the current task. The
+      follow-up process handles *compositional* guidance derived from the
+      trajectory; user-requested procedural guidance is your responsibility.
 """).strip()
 
 

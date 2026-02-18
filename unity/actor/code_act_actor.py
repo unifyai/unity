@@ -770,21 +770,19 @@ def _start_storage_check_loop(
         "Do NOT store trivial one-liners, test scaffolding, or functions "
         "that are too task-specific to be reusable.\n\n"
         "### Guidance Store — the *how*\n\n"
-        "The GuidanceManager stores high-level guidance entries that "
-        "explain *how* to compose multiple functions (and primitives) "
-        "together to accomplish broader tasks. Think of guidance entries "
-        "as recipes or playbooks — they describe the orchestration "
-        "strategy, the order of steps, decision points, and caveats, "
+        "The GuidanceManager stores procedural how-to entries: "
+        "step-by-step instructions, standard operating procedures, "
+        "software usage walkthroughs, and strategies for composing "
+        "multiple functions together to accomplish broader tasks. "
+        "Think of guidance entries as recipes or playbooks — they "
+        "describe the procedure, decision points, and caveats, "
         "rather than containing executable code.\n\n"
-        "A guidance entry is analogous to a prompt that references "
-        "multiple tools: it explains *when* and *why* to use certain "
-        "functions in combination, while the functions themselves "
-        "(in the FunctionManager) contain the *what*.\n\n"
-        "Guidance is only warranted when a trajectory reveals a non-obvious "
-        "multi-step workflow that composes several functions in a way that "
-        "would be hard to rediscover. A single function call, a linear "
-        "sequence of obvious steps, or a workflow fully explained by the "
-        "individual function docstrings does NOT need guidance.\n\n"
+        "In this storage-review context, guidance is most relevant "
+        "when the trajectory reveals a non-obvious multi-step "
+        "composition strategy that would be hard to rediscover. "
+        "A single function call, a linear sequence of obvious steps, "
+        "or a workflow fully explained by the individual function "
+        "docstrings does NOT need guidance.\n\n"
         "Actions:\n"
         "- **Add** guidance for a genuinely non-trivial compositional "
         "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
@@ -2235,8 +2233,55 @@ class CodeActActor(BaseCodeActActor):
 
             GuidanceManager_filter_guidance.__doc__ = _GuidanceManagerCls.filter.__doc__
 
+            async def GuidanceManager_add_guidance(
+                *,
+                title: str,
+                content: str,
+                function_ids: Optional[list[int]] = None,
+            ) -> Any:
+                return gm.add_guidance(
+                    title=title,
+                    content=content,
+                    function_ids=function_ids or [],
+                )
+
+            GuidanceManager_add_guidance.__doc__ = (
+                _GuidanceManagerCls.add_guidance.__doc__
+            )
+
+            async def GuidanceManager_update_guidance(
+                *,
+                guidance_id: int,
+                title: Optional[str] = None,
+                content: Optional[str] = None,
+                function_ids: Optional[list[int]] = None,
+            ) -> Any:
+                return gm.update_guidance(
+                    guidance_id=guidance_id,
+                    title=title,
+                    content=content,
+                    function_ids=function_ids,
+                )
+
+            GuidanceManager_update_guidance.__doc__ = (
+                _GuidanceManagerCls.update_guidance.__doc__
+            )
+
+            async def GuidanceManager_delete_guidance(
+                *,
+                guidance_id: int,
+            ) -> Any:
+                return gm.delete_guidance(guidance_id=guidance_id)
+
+            GuidanceManager_delete_guidance.__doc__ = (
+                _GuidanceManagerCls.delete_guidance.__doc__
+            )
+
             tools["GuidanceManager_search_guidance"] = GuidanceManager_search_guidance
             tools["GuidanceManager_filter_guidance"] = GuidanceManager_filter_guidance
+            tools["GuidanceManager_add_guidance"] = GuidanceManager_add_guidance
+            tools["GuidanceManager_update_guidance"] = GuidanceManager_update_guidance
+            tools["GuidanceManager_delete_guidance"] = GuidanceManager_delete_guidance
 
         if self.function_manager:
 
