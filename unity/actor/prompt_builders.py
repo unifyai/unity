@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
 from unity.actor.prompt_examples import (
     get_code_act_pattern_examples,
-    get_code_act_function_first_examples,
+    get_code_act_discovery_first_examples,
     get_code_act_session_examples,
 )
 
@@ -17,20 +17,28 @@ from unity.actor.prompt_examples import (
 # Static prompt content (inlined rather than wrapped in trivial functions)
 # ---------------------------------------------------------------------------
 
-_FUNCTION_LIBRARY = textwrap.dedent("""
-    ### Function Library
+_FUNCTION_AND_GUIDANCE_LIBRARY = textwrap.dedent("""
+    ### Function & Guidance Library
 
-    When FunctionManager tools are available, always search for an existing
-    function before writing new code with raw `primitives.*` calls.
+    You have access to two complementary discovery systems:
 
-    1. Search with `FunctionManager_search_functions`
-    2. If a function exists, call it in `execute_code`
-    3. Only fall back to raw `primitives.*` if no relevant function exists
+    * **FunctionManager** — stores concrete, reusable function implementations
+      (the building blocks). Search results include a `guidance_ids` field
+      linking to related guidance entries.
+    * **GuidanceManager** — stores high-level guidance on composing functions
+      together to accomplish broader tasks (the recipes / playbooks). Search
+      results include `function_ids` pointing back to concrete implementations.
 
-    Function results include a `guidance_ids` field linking to related
-    guidance entries that describe compositional workflows. Retrieve them
-    via `primitives.guidance.ask(...)`. Conversely, guidance entries
-    include `function_ids` pointing back to concrete implementations.
+    Always search **both** before writing new code with raw `primitives.*`
+    calls:
+
+    1. `FunctionManager_search_functions` — find existing implementations
+    2. `GuidanceManager_search_guidance` — find compositional guidance and
+       workflows
+    3. If a function exists, call it in `execute_code`; if guidance exists,
+       follow its workflow
+    4. Only fall back to raw `primitives.*` if neither library has relevant
+       entries
 
     #### Function Execution Modes
 
@@ -42,6 +50,24 @@ _FUNCTION_LIBRARY = textwrap.dedent("""
     | **stateful** (default) | `await func(...)` | Function's internal state persists across calls |
     | **stateless** | `await func.stateless(...)` | Fresh environment, no inherited state |
     | **read_only** | `await func.read_only(...)` | Sees current state, changes discarded |
+""").strip()
+
+_DISCOVERY_FIRST_POLICY = textwrap.dedent("""
+    ### Discovery-First Policy (Active)
+
+    A tool policy is enforced that **requires** you to call both
+    `FunctionManager_search_functions` and `GuidanceManager_search_guidance`
+    before any other tools become available. Until both have been called at
+    least once, only the FunctionManager and GuidanceManager discovery tools
+    are visible to you.
+
+    **Call both on your first turn** — they are independent and can be issued
+    as parallel tool calls in a single assistant message. Once both discovery
+    calls complete, the full tool set (execute_code, primitives, etc.) unlocks
+    automatically.
+
+    This policy exists to ensure you always check the existing function and
+    guidance libraries before attempting to solve a task from scratch.
 """).strip()
 
 _EXECUTION_RULES = textwrap.dedent("""
@@ -250,10 +276,10 @@ def _build_code_act_rules_and_examples(
         if core_patterns:
             parts.append(f"### Core Patterns\n\n{core_patterns}")
 
-        function_first = get_code_act_function_first_examples()
-        if function_first:
+        discovery_first = get_code_act_discovery_first_examples()
+        if discovery_first:
             parts.append(
-                f"### Function-First Workflow\n\n{function_first}",
+                f"### Discovery-First Workflow\n\n{discovery_first}",
             )
 
         session_examples = get_code_act_session_examples()
@@ -296,18 +322,28 @@ def build_code_act_prompt(
     tools: Optional[Dict[str, Callable]] = None,
     can_store: bool = False,
     guidelines: Optional[str] = None,
+    discovery_first_policy: bool = False,
 ) -> str:
     """Build the system prompt for the CodeActActor.
 
     Assembles prompt sections in a fixed order, skipping sections that
     don't apply to the current configuration. This is intentionally a
     pure prompt builder (no side effects).
+
+    Parameters
+    ----------
+    discovery_first_policy:
+        When ``True``, appends guidance explaining the discovery-first tool
+        policy (both FM and GM must be called before other tools unlock).
     """
     from unity.common.prompt_helpers import render_tools_block
 
     has_execute_code = bool(tools and "execute_code" in tools)
     has_fm_tools = bool(
         tools and any(str(k).startswith("FunctionManager_") for k in tools.keys()),
+    )
+    has_gm_tools = bool(
+        tools and any(str(k).startswith("GuidanceManager_") for k in tools.keys()),
     )
 
     additional_tools_block = _build_additional_tools_block(
@@ -361,8 +397,10 @@ def build_code_act_prompt(
 
         parts.append(_EXECUTION_RULES)
 
-        if has_fm_tools:
-            parts.append(_FUNCTION_LIBRARY)
+        if has_fm_tools or has_gm_tools:
+            parts.append(_FUNCTION_AND_GUIDANCE_LIBRARY)
+            if discovery_first_policy:
+                parts.append(_DISCOVERY_FIRST_POLICY)
 
         if can_store:
             parts.append(_STORAGE_DEFERRED_NOTICE)

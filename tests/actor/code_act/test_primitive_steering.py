@@ -106,10 +106,9 @@ async def test_execute_function_primitive_steering(monkeypatch):
 
     try:
         # can_compose=False forces the LLM to use execute_function (no code sandbox).
-        # The tool_policy requires a FunctionManager discovery call on step 0.
         # Primitives may not appear in search results immediately after sync
         # (backend embedding computation is async), so we give the LLM the
-        # exact function name to use on step 1.
+        # exact function name to use after the discovery step.
         handle = await actor.act(
             "Step 1: Call FunctionManager_list_functions (required first step).\n"
             "Step 2: Call execute_function with function_name='primitives.contacts.ask' "

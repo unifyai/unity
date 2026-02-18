@@ -75,46 +75,82 @@ filtered_tools_dict)`` where *tool_choice_mode* is ``"auto"`` or
 """
 
 _USE_DEFAULT: object = object()
-"""Sentinel indicating 'use the built-in function-first tool policy'."""
+"""Sentinel indicating 'use the built-in discovery-first tool policy'."""
 
 
 def _default_tool_policy(
     has_fm_tools: bool,
+    has_gm_tools: bool,
     filter_tools: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> ToolPolicyFn:
-    """Build the default *function-first* tool policy.
+    """Build the default *discovery-first* tool policy.
 
-    On step 0, if FunctionManager discovery tools exist, only those tools are
-    exposed and a tool call is *required*.  On all subsequent steps the full
-    (statically-filtered) tool set is returned with ``"auto"`` mode.
+    Until **both** a ``FunctionManager_*`` and a ``GuidanceManager_*`` tool
+    have been called at least once, the LLM is restricted to only those
+    discovery tools (with ``tool_choice="required"``).  Once both gates are
+    satisfied the full (statically-filtered) tool set is returned with
+    ``"auto"`` mode.
+
+    When only one of the two manager tool families is present, that single
+    family acts as the sole gate.  When neither is present the policy is a
+    no-op pass-through.
 
     Parameters
     ----------
     has_fm_tools:
         Whether the base tool set contains any ``FunctionManager_*`` tools.
+    has_gm_tools:
+        Whether the base tool set contains any ``GuidanceManager_*`` tools.
     filter_tools:
         The static-filter callable (``_filter_tools``) that enforces
         ``can_compose`` / ``can_store`` / ``can_spawn_sub_agents``.
     """
 
-    def _policy(step: int, tools: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    def _policy(
+        step: int,
+        tools: Dict[str, Any],
+        called_tools: list[str],
+    ) -> tuple[str, Dict[str, Any]]:
         filtered = filter_tools(tools)
 
-        # Function-first: on the first model turn, require a FunctionManager call
-        # (search/filter/list) when those tools exist.  This avoids the model
-        # skipping the function library and going straight to execution.
-        if step == 0 and has_fm_tools:
-            fm_only = {
-                k: v
-                for k, v in filtered.items()
-                if isinstance(k, str)
-                and k.startswith("FunctionManager_")
-                and k != "FunctionManager_add_functions"
-            }
-            if fm_only:
-                return "required", fm_only
+        fm_satisfied = (not has_fm_tools) or any(
+            t.startswith("FunctionManager_") for t in called_tools
+        )
+        gm_satisfied = (not has_gm_tools) or any(
+            t.startswith("GuidanceManager_") for t in called_tools
+        )
 
-        return "auto", filtered
+        if fm_satisfied and gm_satisfied:
+            return "auto", filtered
+
+        # Expose only the unsatisfied gate(s) and require a call.
+        gated: Dict[str, Any] = {}
+        if not fm_satisfied:
+            gated.update(
+                {
+                    k: v
+                    for k, v in filtered.items()
+                    if isinstance(k, str)
+                    and k.startswith("FunctionManager_")
+                    and k != "FunctionManager_add_functions"
+                },
+            )
+        if not gm_satisfied:
+            gated.update(
+                {
+                    k: v
+                    for k, v in filtered.items()
+                    if isinstance(k, str)
+                    and k.startswith("GuidanceManager_")
+                    and k
+                    not in {
+                        "GuidanceManager_add_guidance",
+                        "GuidanceManager_update_guidance",
+                        "GuidanceManager_delete_guidance",
+                    }
+                },
+            )
+        return ("required", gated) if gated else ("auto", filtered)
 
     return _policy
 
@@ -1312,8 +1348,9 @@ class CodeActActor(BaseCodeActActor):
                 Enables Anthropic prompt caching for the specified components to reduce
                 costs and latency. Valid values: "tools", "system", "messages".
             tool_policy: Controls per-turn dynamic tool filtering and tool-choice mode.
-                - ``_USE_DEFAULT`` (default): uses the built-in "function-first" policy
-                  that requires a FunctionManager discovery call on step 0.
+                - ``_USE_DEFAULT`` (default): uses the built-in "discovery-first"
+                  policy that requires both a FunctionManager and a GuidanceManager
+                  discovery call before unlocking the full tool set.
                 - A custom ``ToolPolicyFn`` callable: receives ``(step, tools)`` and
                   returns ``(mode, filtered_tools)``.  Static filters (``can_compose``,
                   ``can_store``, etc.) are always applied before the custom policy sees
@@ -2181,6 +2218,36 @@ class CodeActActor(BaseCodeActActor):
             tools["FunctionManager_search_functions"] = FunctionManager_search_functions
             tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
+
+        # GuidanceManager read-only tools: thin wrappers that let the LLM
+        # discover existing guidance entries. Registered alongside (but
+        # independently of) the FM tools so the discovery-first policy can
+        # gate on both.
+        if self.guidance_manager:
+            gm = self.guidance_manager
+            _GuidanceManagerCls = type(gm)
+
+            async def GuidanceManager_search_guidance(
+                references: Optional[Dict[str, str]] = None,
+                k: int = 10,
+            ) -> Any:
+                return gm.search(references=references, k=k)
+
+            GuidanceManager_search_guidance.__doc__ = _GuidanceManagerCls.search.__doc__
+
+            async def GuidanceManager_filter_guidance(
+                filter: Optional[str] = None,
+                offset: int = 0,
+                limit: int = 100,
+            ) -> Any:
+                return gm.filter(filter=filter, offset=offset, limit=limit)
+
+            GuidanceManager_filter_guidance.__doc__ = _GuidanceManagerCls.filter.__doc__
+
+            tools["GuidanceManager_search_guidance"] = GuidanceManager_search_guidance
+            tools["GuidanceManager_filter_guidance"] = GuidanceManager_filter_guidance
+
+        if self.function_manager:
 
             async def FunctionManager_add_functions(
                 implementations: str | list[str],
@@ -3376,6 +3443,7 @@ class CodeActActor(BaseCodeActActor):
             tools=base_tools,
             can_store=effective_can_store,
             guidelines=guidelines,
+            discovery_first_policy=self.tool_policy is _USE_DEFAULT,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
@@ -3389,12 +3457,20 @@ class CodeActActor(BaseCodeActActor):
 
             tool_policy: Optional[ToolPolicyFn] = _static_only_policy
         elif self.tool_policy is _USE_DEFAULT:
-            # Default function-first policy.
+            # Default discovery-first policy (both FM and GM gates).
             _has_fm_tools = any(
                 isinstance(k, str) and k.startswith("FunctionManager_")
                 for k in base_tools.keys()
             )
-            tool_policy = _default_tool_policy(_has_fm_tools, _filter_tools)
+            _has_gm_tools = any(
+                isinstance(k, str) and k.startswith("GuidanceManager_")
+                for k in base_tools.keys()
+            )
+            tool_policy = _default_tool_policy(
+                _has_fm_tools,
+                _has_gm_tools,
+                _filter_tools,
+            )
         else:
             # Custom caller-provided policy.  Wrap it so that _filter_tools
             # is always applied first (static filters are never bypassed).
