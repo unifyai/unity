@@ -21,6 +21,12 @@ from unity.conversation_manager.domains.ipc_socket import (
     start_socket_receive_loop,
     stop_socket_client,
 )
+from unity.conversation_manager.tracing import (
+    monotonic_ms,
+    now_utc_iso,
+    payload_trace_id,
+    trace_kv,
+)
 from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
@@ -68,7 +74,18 @@ class SocketAwareEventBroker:
 
         async def on_event(channel: str, event_json: str) -> None:
             """Invoke registered callback when event arrives."""
-            print(f"[SocketAwareEventBroker] Received: {channel}")
+            message_id = payload_trace_id("ipc", channel, event_json)
+            print(
+                trace_kv(
+                    "SOCKET_BROKER_INBOUND",
+                    channel=channel,
+                    message_id=message_id,
+                    has_callback=channel in self._callbacks,
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
             if channel in self._callbacks:
                 try:
                     data = json.loads(event_json)
@@ -89,10 +106,21 @@ class SocketAwareEventBroker:
 
     async def publish(self, channel: str, message: str) -> int:
         """Publish an event, using socket if available."""
+        message_id = payload_trace_id("ipc", channel, message)
         if self._socket_client:
             success = await send_event_to_parent(channel, message)
             if success:
-                print(f"[SocketAwareEventBroker] Sent via socket: {channel}")
+                print(
+                    trace_kv(
+                        "SOCKET_BROKER_OUTBOUND",
+                        channel=channel,
+                        message_id=message_id,
+                        via_socket=True,
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    ),
+                    flush=True,
+                )
                 return 1
             else:
                 print(
@@ -100,6 +128,17 @@ class SocketAwareEventBroker:
                 )
 
         # Fall back to in-memory broker (won't work cross-process but useful for testing)
+        print(
+            trace_kv(
+                "SOCKET_BROKER_OUTBOUND",
+                channel=channel,
+                message_id=message_id,
+                via_socket=False,
+                ts_utc=now_utc_iso(),
+                monotonic_ms=monotonic_ms(),
+            ),
+            flush=True,
+        )
         return await self._fallback_broker.publish(channel, message)
 
 

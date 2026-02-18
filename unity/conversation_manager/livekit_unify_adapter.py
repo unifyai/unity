@@ -7,6 +7,7 @@ giving us local caching (helpful for CI) and usage tracking.
 
 from __future__ import annotations
 
+from collections import deque
 import uuid
 from typing import Any
 
@@ -21,6 +22,8 @@ from livekit.agents.types import (
 )
 
 from unity.common.llm_client import new_llm_client
+from unity.conversation_manager.tracing import monotonic_ms, now_utc_iso, trace_kv
+from unity.logger import LOGGER
 
 
 class UnifyLLM(llm.LLM):
@@ -52,10 +55,15 @@ class UnifyLLM(llm.LLM):
         self._service_tier = service_tier
         self._temperature = temperature
         self._extra_kwargs = kwargs
+        self._pending_trace_contexts: deque[dict[str, Any]] = deque()
 
     @property
     def model(self) -> str:
         return self._model
+
+    def enqueue_trace_context(self, trace_context: dict[str, Any]) -> None:
+        """Attach metadata to the next generation request."""
+        self._pending_trace_contexts.append(dict(trace_context))
 
     def chat(
         self,
@@ -67,6 +75,11 @@ class UnifyLLM(llm.LLM):
         tool_choice: NotGivenOr[llm.ToolChoice] = NOT_GIVEN,
         extra_kwargs: NotGivenOr[dict[str, Any]] = NOT_GIVEN,
     ) -> "UnifyLLMStream":
+        trace_context = (
+            self._pending_trace_contexts.popleft()
+            if self._pending_trace_contexts
+            else None
+        )
         return UnifyLLMStream(
             llm=self,
             chat_ctx=chat_ctx,
@@ -77,6 +90,7 @@ class UnifyLLM(llm.LLM):
             service_tier=self._service_tier,
             temperature=self._temperature,
             extra_kwargs=self._extra_kwargs,
+            trace_context=trace_context,
         )
 
 
@@ -94,6 +108,7 @@ class UnifyLLMStream(llm.LLMStream):
         service_tier: str | None,
         temperature: float | None,
         extra_kwargs: dict[str, Any],
+        trace_context: dict[str, Any] | None,
     ) -> None:
         super().__init__(
             llm=llm,
@@ -107,6 +122,7 @@ class UnifyLLMStream(llm.LLMStream):
         self._temperature = temperature
         self._extra_kwargs = extra_kwargs
         self._request_id = str(uuid.uuid4())
+        self._trace_context = trace_context or {}
 
     async def _run(self) -> None:
         """Stream responses from Unify and emit ChatChunk events."""
@@ -149,16 +165,43 @@ class UnifyLLMStream(llm.LLMStream):
         if self._temperature is not None:
             generate_kwargs["temperature"] = self._temperature
 
-        response = await client.generate(**generate_kwargs)
+        LOGGER.info(
+            trace_kv(
+                "FAST_BRAIN_REQUEST_START",
+                request_id=self._request_id,
+                model=self._model,
+                message_count=len(messages),
+                system_message_count=len(system_messages),
+                trigger=self._trace_context,
+                ts_utc=now_utc_iso(),
+                monotonic_ms=monotonic_ms(),
+            ),
+        )
 
-        # Emit chunks
-        async for chunk_text in response:
-            if chunk_text:
-                chat_chunk = ChatChunk(
-                    id=self._request_id,
-                    delta=ChoiceDelta(
-                        role="assistant",
-                        content=chunk_text,
-                    ),
-                )
-                self._event_ch.send_nowait(chat_chunk)
+        chunk_count = 0
+        try:
+            response = await client.generate(**generate_kwargs)
+
+            # Emit chunks
+            async for chunk_text in response:
+                if chunk_text:
+                    chunk_count += 1
+                    chat_chunk = ChatChunk(
+                        id=self._request_id,
+                        delta=ChoiceDelta(
+                            role="assistant",
+                            content=chunk_text,
+                        ),
+                    )
+                    self._event_ch.send_nowait(chat_chunk)
+        finally:
+            LOGGER.info(
+                trace_kv(
+                    "FAST_BRAIN_REQUEST_END",
+                    request_id=self._request_id,
+                    chunk_count=chunk_count,
+                    trigger_id=self._trace_context.get("generation_id", ""),
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+            )
