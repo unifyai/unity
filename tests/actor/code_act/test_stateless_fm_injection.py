@@ -1,9 +1,8 @@
-"""Tests verifying that FM-discovered functions are available in stateless execute_code.
+"""Tests verifying that FM-discovered functions are available across all sessions.
 
 When the LLM discovers functions via FunctionManager discovery tools, those
-callables are injected into session 0's namespace. These tests verify that
-subsequent stateless execute_code calls can access those functions — the core
-behavior introduced by the _fm_keys tracking and inject_globals plumbing.
+callables are registered on the SessionExecutor and injected into every
+in-process Python session (stateless, stateful, read-only) before execution.
 """
 
 from __future__ import annotations
@@ -103,8 +102,8 @@ async def test_stateless_execute_code_can_call_fm_discovered_function():
             "sentinel_func" in sandbox.global_state
         ), "FM discovery should have injected sentinel_func into the sandbox"
         assert (
-            "sentinel_func" in sandbox._fm_keys
-        ), "sentinel_func should be tracked in _fm_keys"
+            "sentinel_func" in actor._session_executor._fm_globals
+        ), "sentinel_func should be registered in executor._fm_globals"
 
         # Step 2: stateless execute_code calling the FM-discovered function.
         res = await execute_code(
@@ -189,5 +188,44 @@ async def test_stateless_does_not_inherit_intermediate_variables():
         assert (
             "NOT_FOUND" in stdout
         ), "Intermediate variable should NOT be available in stateless session"
+    finally:
+        _CURRENT_SANDBOX.reset(sb_token)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_fm_functions_available_in_stateful_session_gt_zero():
+    """FM-discovered functions are broadcast to stateful sessions beyond
+    session 0 (e.g. session_id=1) via the executor-level _fm_globals registry."""
+
+    fm = _InjectingFunctionManager()
+    actor = CodeActActor(environments=[], function_manager=fm)
+
+    tools = actor.get_tools("act")
+    execute_code = tools["execute_code"]
+    search_fn = tools["FunctionManager_search_functions"]
+
+    sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
+    sb_token = _CURRENT_SANDBOX.set(sandbox)
+    try:
+        # Step 1: FM discovery (injects into session 0, registers on executor)
+        await search_fn(query="sentinel")
+
+        # Step 2: execute in a *different* stateful session (session_id=1)
+        res = await execute_code(
+            thought="call FM function in a different stateful session",
+            code="result = sentinel_func()\nprint(result)",
+            language="python",
+            state_mode="stateful",
+            session_id=1,
+            session_name=None,
+            venv_id=None,
+            _notification_up_q=None,
+        )
+
+        assert (
+            _result_error(res) is None
+        ), f"Stateful session 1 should have FM function but got: {_result_error(res)}"
+        assert "SENTINEL_OK" in _result_stdout_text(res)
     finally:
         _CURRENT_SANDBOX.reset(sb_token)
