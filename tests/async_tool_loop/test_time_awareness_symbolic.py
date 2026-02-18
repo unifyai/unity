@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common._async_tool.time_context import (
+    format_offset,
+    format_duration,
+    TimeContext,
+)
 
 # --------------------------------------------------------------------------- #
 #  SIMULATED TIME FIXTURE                                                     #
@@ -20,55 +26,21 @@ _SIMULATED_BASE = datetime(2026, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
 @pytest.fixture
 def simulated_time(monkeypatch):
-    """Fixture that patches now() and perf_counter() for deterministic time.
+    """Patch perf_counter() for deterministic time.
 
-    Each call to now(as_string=False) increments by 1 second, simulating
-    time progression during the conversation. This allows testing that
-    elapsed time displays correctly (e.g., "Conversation started: 3.0s ago").
-
-    Each call to perf_counter() also increments by 1 second, making tool
-    timing ("Started (relative)", "Duration") deterministic across test runs.
-
-    Returns a dict with:
-    - 'now_call_count': number of times now() was called
-    - 'perf_call_count': number of times perf_counter() was called
-    - 'base': the base datetime
-    - 'increment_seconds': seconds added per call (default 1)
+    Each call to perf_counter() increments by 1 second so offsets and
+    durations are reproducible across test runs.
     """
     state = {
-        "now_call_count": 0,
         "perf_call_count": 0,
-        "base": _SIMULATED_BASE,
         "increment_seconds": 1,
     }
 
-    def _simulated_now(time_only: bool = False, as_string: bool = True):
-        """Return incrementing datetime for simulated time progression."""
-        current_time = state["base"] + timedelta(
-            seconds=state["now_call_count"] * state["increment_seconds"],
-        )
-        state["now_call_count"] += 1
-
-        if not as_string:
-            return current_time
-
-        label = "UTC"
-        if time_only:
-            return current_time.strftime("%I:%M %p ") + label
-        return current_time.strftime("%A, %B %d, %Y at %I:%M %p ") + label
-
     def _simulated_perf_counter() -> float:
-        """Return incrementing perf_counter value for deterministic tool timing."""
         value = state["perf_call_count"] * state["increment_seconds"]
         state["perf_call_count"] += 1
         return float(value)
 
-    # Patch now() in all relevant modules
-    monkeypatch.setattr("unity.common.prompt_helpers.now", _simulated_now)
-    monkeypatch.setattr("unity.common._async_tool.time_context.now", _simulated_now)
-
-    # Patch perf_counter() for deterministic tool timing
-    # Single patch at definition site — consumers access via time_context.perf_counter
     monkeypatch.setattr(
         "unity.common._async_tool.time_context.perf_counter",
         _simulated_perf_counter,
@@ -78,7 +50,7 @@ def simulated_time(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-#  TOOL IMPLEMENTATIONS FOR TESTING                                           #
+#  TOOL IMPLEMENTATIONS                                                       #
 # --------------------------------------------------------------------------- #
 
 
@@ -94,223 +66,251 @@ async def timed_tool(duration: float = 0.1) -> str:
 
 
 # --------------------------------------------------------------------------- #
-#  HELPER FUNCTIONS                                                           #
+#  UNIT TESTS – format_offset / format_duration                               #
 # --------------------------------------------------------------------------- #
 
 
-def find_time_context_in_messages(messages: list) -> dict | None:
-    """Find the system message containing time context."""
+class TestFormatOffset:
+    def test_zero(self):
+        assert format_offset(0) == "+0s"
+
+    def test_negative(self):
+        assert format_offset(-5) == "+0s"
+
+    def test_seconds_only(self):
+        assert format_offset(45) == "+45s"
+
+    def test_minutes_and_seconds(self):
+        assert format_offset(192) == "+3m12s"
+
+    def test_hours_minutes_seconds(self):
+        assert format_offset(3750) == "+1h2m30s"
+
+    def test_exact_minute(self):
+        assert format_offset(60) == "+1m"
+
+    def test_exact_hour(self):
+        assert format_offset(3600) == "+1h"
+
+
+class TestFormatDuration:
+    def test_zero(self):
+        assert format_duration(0) == "0s"
+
+    def test_negative(self):
+        assert format_duration(-1) == "0s"
+
+    def test_milliseconds_only(self):
+        assert format_duration(0.1) == "100ms"
+
+    def test_seconds_and_ms(self):
+        assert format_duration(2.045) == "2s45ms"
+
+    def test_seconds_only(self):
+        assert format_duration(5.0) == "5s"
+
+    def test_minutes_and_seconds(self):
+        assert format_duration(90) == "1m30s"
+
+    def test_hours_suppress_ms(self):
+        assert format_duration(5400.5) == "1h30m"
+
+
+# --------------------------------------------------------------------------- #
+#  UNIT TESTS – TimeContext methods                                           #
+# --------------------------------------------------------------------------- #
+
+
+class TestTimeContextWrapResult:
+    def test_wraps_string_content(self):
+        ctx = TimeContext(perf_counter_start=0.0)
+        result = ctx.wrap_result('"hello"', scheduled_time=10.0)
+        parsed = json.loads(result)
+        assert parsed["tool_result"] == '"hello"'
+        assert "called_at" in parsed["metadata"]
+        assert "duration" in parsed["metadata"]
+
+    def test_wraps_list_content_with_metadata_block(self):
+        ctx = TimeContext(perf_counter_start=0.0)
+        blocks = [{"type": "text", "text": "payload"}]
+        result = ctx.wrap_result(blocks, scheduled_time=5.0)
+        assert isinstance(result, list)
+        assert result[0]["type"] == "text"
+        meta = json.loads(result[0]["text"])
+        assert "metadata" in meta
+        assert result[1] == blocks[0]
+
+    def test_called_at_uses_scheduled_time(self):
+        ctx = TimeContext(perf_counter_start=100.0)
+        result = ctx.wrap_result('"x"', scheduled_time=192.0)
+        parsed = json.loads(result)
+        assert parsed["metadata"]["called_at"] == "+1m32s"
+
+
+class TestTimeContextPrefixUserMessage:
+    def test_prefix_format(self):
+        ctx = TimeContext(perf_counter_start=0.0)
+        prefixed = ctx.prefix_user_message("hello")
+        assert prefixed.startswith("[elapsed: +")
+        assert prefixed.endswith("] hello")
+
+
+class TestBuildExplanationPrompt:
+    def test_contains_key_sections(self):
+        prompt = TimeContext.build_explanation_prompt()
+        assert "## Time Annotations" in prompt
+        assert "tool_result" in prompt
+        assert "called_at" in prompt
+        assert "[elapsed:" in prompt
+        assert "meta:started" in prompt
+
+
+# --------------------------------------------------------------------------- #
+#  HELPERS                                                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _find_explanation_msg(messages: list) -> dict | None:
     for msg in messages:
-        if msg.get("role") == "system" and msg.get("_time_context"):
+        if msg.get("role") == "system" and msg.get("_time_explanation"):
             return msg
     return None
 
 
+def _find_tool_results(messages: list) -> list[dict]:
+    """Return all tool messages whose content contains 'tool_result'."""
+    results = []
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            continue
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict) and "tool_result" in parsed:
+                results.append(parsed)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return results
+
+
+def _find_user_messages(messages: list) -> list[dict]:
+    return [m for m in messages if m.get("role") == "user" and not m.get("_ctx_header")]
+
+
+_ELAPSED_RE = re.compile(r"^\[elapsed: \+\d+[hms\d]*\] ")
+
+
+# --------------------------------------------------------------------------- #
+#  INTEGRATION TESTS (against real LLM with cache)                            #
+# --------------------------------------------------------------------------- #
+
+
 @pytest.mark.asyncio
 @_handle_project
-async def test_time_context_injected(llm_config):
-    """Verify that the system message contains the ## Time Context section."""
+async def test_explanation_prompt_injected(llm_config):
+    """Static explanation system message is present when time_awareness=True."""
     client = new_llm_client(**llm_config)
 
-    # Run a simple tool loop
-    answer = await start_async_tool_loop(
+    await start_async_tool_loop(
         client,
         message="Call simple_tool and reply with 'ok'.",
         tools={"simple_tool": simple_tool},
+        time_awareness=True,
     ).result()
 
-    assert answer.strip()
-
-    # Find the dedicated time context system message
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None, "Time context system message not found"
-
-    # Verify it contains the Time Context section
-    content = time_msg.get("content", "")
-    assert (
-        "## Time Context" in content
-    ), "Time Context section not found in system message"
-    assert (
-        "Conversation started:" in content
-    ), "Conversation start time not in system message"
+    explanation = _find_explanation_msg(client.messages)
+    assert explanation is not None, "Time explanation system message not found"
+    assert "## Time Annotations" in explanation["content"]
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_timing_recorded(llm_config):
-    """Verify that tool execution timing appears in the time context."""
+async def test_tool_result_wrapped_with_metadata(llm_config):
+    """Completed base-tool results contain tool_result + metadata envelope."""
     client = new_llm_client(**llm_config)
 
-    # Run a loop with a tool that takes some time
-    answer = await start_async_tool_loop(
+    await start_async_tool_loop(
         client,
-        message="Call timed_tool with duration=0.1 and reply with 'ok'.",
-        tools={"timed_tool": timed_tool},
+        message="Call simple_tool and reply with 'ok'.",
+        tools={"simple_tool": simple_tool},
+        time_awareness=True,
     ).result()
 
-    assert answer.strip()
+    wrapped = _find_tool_results(client.messages)
+    assert len(wrapped) >= 1, "No wrapped tool results found"
 
-    # Find the dedicated time context message
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None
-
-    content = time_msg.get("content", "")
-
-    # Verify tool execution history is present
-    assert "### Tool Execution History" in content, "Tool history section not found"
-    assert "timed_tool" in content, "Tool name not in history"
-    assert "call_" in content.lower() or "|" in content, "call_id table not found"
+    for item in wrapped:
+        assert "tool_result" in item
+        meta = item["metadata"]
+        assert "called_at" in meta
+        assert "duration" in meta
+        assert meta["called_at"].startswith("+")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_history_cumulative(llm_config):
-    """Verify that multiple tool calls build cumulative history with offsets."""
+async def test_user_message_prefixed_with_elapsed(llm_config):
+    """Initial user message should have [elapsed: +XmYs] prefix."""
     client = new_llm_client(**llm_config)
 
-    # Run a loop that calls multiple tools
-    answer = await start_async_tool_loop(
+    await start_async_tool_loop(
+        client,
+        message="Call simple_tool and reply with 'ok'.",
+        tools={"simple_tool": simple_tool},
+        time_awareness=True,
+    ).result()
+
+    user_msgs = _find_user_messages(client.messages)
+    assert len(user_msgs) >= 1, "No user messages found"
+
+    first_user = user_msgs[0]
+    assert _ELAPSED_RE.match(
+        first_user["content"],
+    ), f"User message not prefixed with elapsed: {first_user['content']!r}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_time_deterministic_offsets(llm_config, simulated_time):
+    """With simulated perf_counter, offsets are deterministic."""
+    client = new_llm_client(**llm_config)
+
+    await start_async_tool_loop(
+        client,
+        message="Call simple_tool and reply with 'ok'.",
+        tools={"simple_tool": simple_tool},
+        time_awareness=True,
+    ).result()
+
+    assert simulated_time["perf_call_count"] > 0, "perf_counter() was not invoked"
+
+    wrapped = _find_tool_results(client.messages)
+    assert len(wrapped) >= 1
+
+    for item in wrapped:
+        assert item["metadata"]["called_at"].startswith("+")
+        assert any(
+            c in item["metadata"]["duration"] for c in ("s", "ms")
+        ), f"Duration missing time unit: {item['metadata']['duration']}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_multiple_tools_each_wrapped(llm_config):
+    """Each tool invocation gets its own metadata envelope."""
+    client = new_llm_client(**llm_config)
+
+    await start_async_tool_loop(
         client,
         message=(
             "Call simple_tool first, then call timed_tool with duration=0.05. "
             "Reply with 'done' after both complete."
         ),
         tools={"simple_tool": simple_tool, "timed_tool": timed_tool},
+        time_awareness=True,
     ).result()
 
-    assert answer.strip()
-
-    # Find the dedicated time context message
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None
-
-    content = time_msg.get("content", "")
-
-    # Count tool entries in the history (look for table rows with tool names)
-    simple_count = content.count("simple_tool")
-    timed_count = content.count("timed_tool")
-
-    # At least one of each tool should be in the history
-    assert simple_count >= 1, "simple_tool not found in tool history"
-    assert timed_count >= 1, "timed_tool not found in tool history"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_loop_start_time_captured(llm_config):
-    """Verify conversation start time is captured and shown as elapsed."""
-    client = new_llm_client(**llm_config)
-
-    # Run a simple loop
-    answer = await start_async_tool_loop(
-        client,
-        message="Call simple_tool and reply 'ok'.",
-        tools={"simple_tool": simple_tool},
-    ).result()
-
-    assert answer.strip()
-
-    # Find the dedicated time context message
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None
-
-    content = time_msg.get("content", "")
-
-    # Should show "Conversation started: X ago" format
-    assert "Conversation started:" in content
-    assert "ago" in content
-
-
-def extract_elapsed_seconds(content: str) -> float | None:
-    """Extract the elapsed seconds from 'Conversation started: X ago' text."""
-    # Match patterns like "0.0s ago", "1.0s ago", "5.0s ago"
-    match = re.search(r"Conversation started:\s*([\d.]+)s\s*ago", content)
-    if match:
-        return float(match.group(1))
-    return None
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_simulated_time_progression(llm_config, simulated_time):
-    """Verify that simulated time increments correctly per now() call.
-
-    With simulated_time fixture, each call to now() adds 1 second.
-    The elapsed time shown should reflect the difference between
-    loop start time and current time.
-    """
-    client = new_llm_client(**llm_config)
-
-    # Run a simple loop - the LLM will make multiple calls triggering now()
-    answer = await start_async_tool_loop(
-        client,
-        message="Call simple_tool and reply with 'ok'.",
-        tools={"simple_tool": simple_tool},
-    ).result()
-
-    assert answer.strip()
-
-    # Find the dedicated time context message
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None
-
-    content = time_msg.get("content", "")
-
-    # Verify time context section exists
-    assert "## Time Context" in content
-    assert "Conversation started:" in content
-
-    # The elapsed time should be a positive number of seconds
-    elapsed = extract_elapsed_seconds(content)
-    assert elapsed is not None, f"Could not extract elapsed time from: {content}"
-    # With simulated time, elapsed should be >= 0 (at least some time passed)
-    assert elapsed >= 0, f"Elapsed time should be non-negative, got {elapsed}"
-
-    # Verify the simulated_time fixture was used
-    assert simulated_time["now_call_count"] > 0, "now() was not invoked"
-    assert simulated_time["perf_call_count"] > 0, "perf_counter() was not invoked"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_simulated_time_shows_elapsed_correctly(llm_config, simulated_time):
-    """Verify that elapsed time calculation is correct with simulated time.
-
-    The elapsed time shown should equal (current_call_count - start_call_count) seconds.
-    """
-    client = new_llm_client(**llm_config)
-
-    # Record the call counts before the loop starts
-    initial_now_count = simulated_time["now_call_count"]
-    initial_perf_count = simulated_time["perf_call_count"]
-
-    # Run a loop with a tool
-    answer = await start_async_tool_loop(
-        client,
-        message="Call simple_tool and reply 'ok'.",
-        tools={"simple_tool": simple_tool},
-    ).result()
-
-    assert answer.strip()
-
-    # The fixtures should have been called multiple times
-    assert (
-        simulated_time["now_call_count"] > initial_now_count
-    ), "now() should have been called during loop"
-    assert (
-        simulated_time["perf_call_count"] > initial_perf_count
-    ), "perf_counter() should have been called during loop"
-
-    # Find the dedicated time context message
-    time_msg = find_time_context_in_messages(client.messages)
-    assert time_msg is not None
-
-    content = time_msg.get("content", "")
-    elapsed = extract_elapsed_seconds(content)
-
-    # The elapsed time in the message reflects the difference between
-    # when build_system_message() was called and when the loop started
-    # Since each now() call increments by 1 second, elapsed should be
-    # a whole number of seconds
-    assert elapsed is not None, f"Could not parse elapsed from: {content}"
-    assert elapsed == int(elapsed), f"Elapsed should be whole seconds, got {elapsed}"
+    wrapped = _find_tool_results(client.messages)
+    assert len(wrapped) >= 2, f"Expected at least 2 wrapped results, got {len(wrapped)}"
