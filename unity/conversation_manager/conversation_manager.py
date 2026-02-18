@@ -768,8 +768,12 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
                 image_manager = ManagerRegistry.get_image_manager()
                 items = [
-                    {"data": entry.b64, "timestamp": entry.timestamp}
-                    for entry in screenshots
+                    {
+                        "data": entry.b64,
+                        "timestamp": entry.timestamp,
+                        "filepath": path,
+                    }
+                    for entry, path in zip(screenshots, screenshot_paths)
                 ]
                 image_ids = await asyncio.to_thread(
                     image_manager.add_images,
