@@ -16,7 +16,6 @@ from typing import (
     TYPE_CHECKING,
 )
 from .tools_utils import ToolCallMetadata, create_tool_call_message
-from . import time_context
 from .messages import (
     insert_tool_message_after_assistant,
     _normalise_kwargs_for_bound_method,
@@ -258,7 +257,6 @@ class ToolsData:
         client,
         logger: "LoopLogger",
         time_ctx: "Optional[TimeContext]" = None,
-        time_ctx_msg: "Optional[dict]" = None,
     ):
         self._client = client
         self._logger = logger
@@ -276,9 +274,8 @@ class ToolsData:
         self._completed_tool_names: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
-        # Time context for tracking tool execution timings
+        # Time context for inline timing annotations on tool results
         self._time_ctx: Optional["TimeContext"] = time_ctx
-        self._time_ctx_msg: Optional[dict] = time_ctx_msg
         # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
         # Set by the loop after the factory is initialised each turn.
         self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
@@ -786,6 +783,10 @@ class ToolsData:
             # Centralized serialization for final tool results
             result = serialize_tool_content(tool_name=name, payload=raw, is_final=True)
 
+            # Wrap with inline timing metadata for non-dynamic (base) tools
+            if self._time_ctx is not None and not info.is_dynamic:
+                result = self._time_ctx.wrap_result(result, info.scheduled_time)
+
             consecutive_failures.reset_failures()
         except Exception:
             # Multi-handle child error: update shared placeholder and return early
@@ -890,24 +891,7 @@ class ToolsData:
             except Exception:
                 pass
 
-        # 5️⃣  record tool timing to time context ─────────────────────────────
-        #     Update the time context system message with this tool's execution info
-        if self._time_ctx is not None:
-            try:
-                start_offset = self._time_ctx.compute_start_offset(info.scheduled_time)
-                self._time_ctx.add_tool_timing(
-                    call_id=call_id,
-                    name=name,
-                    start_offset=start_offset,
-                    duration=time_context.perf_counter() - info.scheduled_time,
-                )
-                # Update the time context system message content
-                if self._time_ctx_msg is not None:
-                    self._time_ctx.update_system_message(self._time_ctx_msg)
-            except Exception:
-                pass  # Time context is best-effort; don't break the loop
-
-        # 6️⃣  failure guard -------------------------------------------------
+        # 5️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():
             if self._logger.log_steps:
                 self._logger.error(f"Aborting: too many tool failures.", prefix="🚨")

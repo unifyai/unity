@@ -545,15 +545,15 @@ async def async_tool_loop_inner(
             sys_msg["_parent_chat_context"] = True
         msgs_to_append.append(sys_msg)
 
-    time_ctx_sys_msg: Optional[dict] = None
     if time_ctx is not None:
-        time_ctx_sys_msg = {
-            "role": "system",
-            "_time_context": True,
-            "_ctx_header": True,
-            "content": time_ctx.build_system_message(),
-        }
-        msgs_to_append.append(time_ctx_sys_msg)
+        msgs_to_append.append(
+            {
+                "role": "system",
+                "_time_explanation": True,
+                "_ctx_header": True,
+                "content": TimeContext.build_explanation_prompt(),
+            },
+        )
 
     await _msg_dispatcher.append_msgs(msgs_to_append)
 
@@ -597,7 +597,6 @@ async def async_tool_loop_inner(
         client=client,
         logger=logger,
         time_ctx=time_ctx,
-        time_ctx_msg=time_ctx_sys_msg,
     )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
@@ -1058,6 +1057,10 @@ async def async_tool_loop_inner(
             initial_user_msg = message
         else:
             initial_user_msg = {"role": "user", "content": message}
+        if time_ctx is not None and isinstance(initial_user_msg.get("content"), str):
+            initial_user_msg["content"] = time_ctx.prefix_user_message(
+                initial_user_msg["content"],
+            )
         await _msg_dispatcher.append_msgs([initial_user_msg])
 
     # ── helper: graceful early-exit when limits are hit ────────────────────
@@ -1300,6 +1303,7 @@ async def async_tool_loop_inner(
                                     assistant_meta=assistant_meta,
                                     client=client,
                                     msg_dispatcher=_msg_dispatcher,
+                                    time_ctx=time_ctx,
                                 )
                 # Give any pending tool tasks a chance to finish OR wait until the
                 # loop is resumed / cancelled.  Every coroutine is wrapped in an
@@ -1373,6 +1377,7 @@ async def async_tool_loop_inner(
                                     assistant_meta=assistant_meta,
                                     client=client,
                                     msg_dispatcher=_msg_dispatcher,
+                                    time_ctx=time_ctx,
                                 )
                     done, _ = await asyncio.wait(
                         {
@@ -1626,7 +1631,12 @@ async def async_tool_loop_inner(
                     )
                 # Only append user message if there's actual content
                 if _msg_text:
-                    msgs_to_append.append({"role": "user", "content": _msg_text})
+                    _user_content = (
+                        time_ctx.prefix_user_message(_msg_text)
+                        if time_ctx is not None
+                        else _msg_text
+                    )
+                    msgs_to_append.append({"role": "user", "content": _user_content})
                 if msgs_to_append:
                     await _msg_dispatcher.append_msgs(msgs_to_append)
                 # Update history only if there was user message content
@@ -1797,6 +1807,7 @@ async def async_tool_loop_inner(
                     assistant_meta=assistant_meta,
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
+                    time_ctx=time_ctx,
                 )
                 continue  # still waiting for other tool tasks
 
@@ -2030,6 +2041,7 @@ async def async_tool_loop_inner(
                 assistant_meta=assistant_meta,
                 client=client,
                 msg_dispatcher=_msg_dispatcher,
+                time_ctx=time_ctx,
             )
 
             # Merge helpers into the visible toolkit for the upcoming LLM step
@@ -3255,6 +3267,7 @@ async def async_tool_loop_inner(
                             assistant_meta=assistant_meta,
                             client=client,
                             msg_dispatcher=_msg_dispatcher,
+                            time_ctx=time_ctx,
                         )
                     except Exception as _ph_exc:
                         logger.error(
