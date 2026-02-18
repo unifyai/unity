@@ -8,9 +8,6 @@ from pydantic import BaseModel
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.state_managers import BaseStateManager
-from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
-from unity.image_manager.types.image_refs import ImageRefs
-from unity.image_manager.types.raw_image_ref import RawImageRef
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +278,6 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,

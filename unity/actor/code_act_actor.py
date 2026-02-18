@@ -45,9 +45,6 @@ from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
 from unity.events.manager_event_logging import log_manager_call
-from unity.image_manager.types.image_refs import ImageRefs
-from unity.image_manager.types.raw_image_ref import RawImageRef
-from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from unity.common.hierarchical_logger import (
     build_hierarchy_label,
@@ -3044,7 +3041,6 @@ class CodeActActor(BaseCodeActActor):
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
