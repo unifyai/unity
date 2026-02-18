@@ -1689,8 +1689,10 @@ class CodeActActor(BaseCodeActActor):
             -----------
             - **language**: "python" | "bash" | "zsh" | "sh" | "powershell"
             - **state_mode**:
-              - "stateless": no session; clean execution; no persistence
-              - "stateful": persistent session; state accumulates
+              - "stateless": fresh execution; no persistence of intermediate variables.
+                Environment globals and FunctionManager-discovered functions are
+                always available.
+              - "stateful": persistent session; state accumulates across calls
               - "read_only": reads from an existing session but does not persist changes
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
@@ -1884,9 +1886,16 @@ class CodeActActor(BaseCodeActActor):
                 # Execute via SessionExecutor. Route primitives if available in current sandbox.
                 primitives = None
                 computer_primitives = self._computer_primitives
+                fm_inject: Dict[str, Any] | None = None
                 try:
                     sb = _CURRENT_SANDBOX.get()
                     primitives = sb.global_state.get("primitives")
+                    if sb._fm_keys:
+                        fm_inject = {
+                            k: sb.global_state[k]
+                            for k in sb._fm_keys
+                            if k in sb.global_state
+                        }
                 except Exception:
                     pass
 
@@ -1901,6 +1910,7 @@ class CodeActActor(BaseCodeActActor):
                             venv_id=venv_id,
                             primitives=primitives,
                             computer_primitives=computer_primitives,
+                            inject_globals=fm_inject,
                         )
                     except Exception as e:
                         exec_exc = e
@@ -2099,14 +2109,17 @@ class CodeActActor(BaseCodeActActor):
                 _namespace: Optional[Dict[str, Any]] = None,
                 _also_return_metadata: bool = False,
             ) -> Any:
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.search_functions(
                     query=query,
                     n=n,
                     include_implementations=include_implementations,
                     _return_callable=True,
-                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
+                sb._fm_keys |= set(sb.global_state.keys()) - before
                 return result["metadata"]
 
             FunctionManager_search_functions.__doc__ = (
@@ -2122,15 +2135,18 @@ class CodeActActor(BaseCodeActActor):
                 _namespace: Optional[Dict[str, Any]] = None,
                 _also_return_metadata: bool = False,
             ) -> Any:
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.filter_functions(
                     filter=filter,
                     offset=offset,
                     limit=limit,
                     include_implementations=include_implementations,
                     _return_callable=True,
-                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
+                sb._fm_keys |= set(sb.global_state.keys()) - before
                 return result["metadata"]
 
             FunctionManager_filter_functions.__doc__ = (
@@ -2143,12 +2159,15 @@ class CodeActActor(BaseCodeActActor):
                 _namespace: Optional[Dict[str, Any]] = None,
                 _also_return_metadata: bool = False,
             ) -> Any:
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.list_functions(
                     include_implementations=include_implementations,
                     _return_callable=True,
-                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
+                sb._fm_keys |= set(sb.global_state.keys()) - before
                 return result["metadata"]
 
             FunctionManager_list_functions.__doc__ = (
@@ -2366,9 +2385,16 @@ class CodeActActor(BaseCodeActActor):
                     # Resolve primitives from current sandbox.
                     primitives = None
                     computer_primitives = self._computer_primitives
+                    fm_inject: Dict[str, Any] | None = None
                     try:
                         sb = _CURRENT_SANDBOX.get()
                         primitives = sb.global_state.get("primitives")
+                        if sb._fm_keys:
+                            fm_inject = {
+                                k: sb.global_state[k]
+                                for k in sb._fm_keys
+                                if k in sb.global_state
+                            }
                     except Exception:
                         pass
 
@@ -2383,6 +2409,7 @@ class CodeActActor(BaseCodeActActor):
                                 venv_id=venv_id,
                                 primitives=primitives,
                                 computer_primitives=computer_primitives,
+                                inject_globals=fm_inject,
                             )
                         except Exception as e:
                             exec_exc = e

@@ -20,41 +20,23 @@ from unity.actor.prompt_examples import (
 _CRITICAL_RULES_FM = textwrap.dedent("""
     ### 🚨 CRITICAL RULES (READ FIRST)
 
-    #### 1. FunctionManager + Stateful Sessions (MOST IMPORTANT)
-
-    When using FunctionManager tools, you **MUST** use `state_mode="stateful"` in `execute_code`:
-
-    | Step | What Happens |
-    |------|--------------|
-    | `FunctionManager_search_functions(...)` | Function is **injected into Session 0's namespace** |
-    | `execute_code(state_mode="stateful", ...)` | ✅ Uses Session 0 → function **available** |
-    | `execute_code(state_mode="stateless", ...)` | ❌ Creates NEW session → function **NOT available** → `NameError` |
-
-    **✅ CORRECT workflow:**
-    ```
-    Step 1: FunctionManager_search_functions(query="...", n=5)  # JSON tool call
-    Step 2: execute_code(language="python", state_mode="stateful", code="result = await found_function(...)")
-    ```
-
-    **❌ WRONG workflow (causes NameError):**
-    ```
-    Step 1: FunctionManager_search_functions(query="...", n=5)  # JSON tool call
-    Step 2: execute_code(language="python", state_mode="stateless", code="result = await found_function(...)")
-    #        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ BUG: stateless creates fresh session, function NOT available!
-    ```
-
-    #### 2. Function-First Workflow
+    #### 1. Function-First Workflow (MOST IMPORTANT)
 
     If FunctionManager tools are available, **ALWAYS search BEFORE calling `execute_code`** for a new request:
     1. Search with `FunctionManager_search_functions` (even for "simple" requests)
-    2. If a function exists → use it with `state_mode="stateful"`
+    2. If a function exists → call it in `execute_code`
     3. Only fall back to raw `primitives.*` if no relevant function exists
 
-    #### 3. Default is Stateless (But FunctionManager Requires Stateful)
+    FunctionManager-discovered functions are automatically available in **all**
+    `execute_code` calls — both stateful and stateless. You do not need to
+    switch to `state_mode="stateful"` just to use them.
+
+    #### 2. When to Use Stateful vs Stateless
 
     - `execute_code` defaults to `state_mode="stateless"` (fresh, isolated execution)
-    - **EXCEPTION**: After FunctionManager search, you MUST use `state_mode="stateful"`
-    - For multi-step workflows building state, also use `state_mode="stateful"`
+    - Use `state_mode="stateful"` when you need **intermediate variables** to persist
+      across multiple `execute_code` calls (e.g., load data in one call, analyze in the next)
+    - Stateless is preferred for self-contained, one-shot operations
 """).strip()
 
 _FM_GUIDANCE_CROSS_REFERENCE = textwrap.dedent("""
@@ -76,7 +58,7 @@ _EXECUTION_RULES = textwrap.dedent("""
     1. **Session-Based Execution**:
        - All code execution happens via the `execute_code` tool (JSON tool call).
        - **Default is `state_mode="stateless"`** (fresh run; no persistence).
-       - Choose `state_mode="stateful"` when you need persistent state across multiple calls (including FunctionManager — see Critical Rules above).
+       - Choose `state_mode="stateful"` when you need intermediate variables to persist across multiple calls.
        - Choose `state_mode="read_only"` when you need to use an existing session's state without persisting changes.
        - Use `list_sessions()` / `inspect_state()` to discover and understand active sessions.
 
@@ -272,7 +254,7 @@ There are two independent "state" concepts in this system:
 
 | Concept | What It Controls | When to Use |
 |---------|------------------|-------------|
-| **CodeAct Session State** (`execute_code` `state_mode` parameter) | Whether variables/imports persist between `execute_code` calls | Use `stateful` for multi-step work AND when using FunctionManager functions |
+| **CodeAct Session State** (`execute_code` `state_mode` parameter) | Whether variables/imports persist between `execute_code` calls | Use `stateful` for multi-step work that builds on intermediate variables |
 | **Function Execution Mode** (`.stateless()` / `.read_only()` methods) | Whether a FunctionManager function's internal state persists | Use `.stateless()` for pure functions, default for iterative work |
 
 **Key insight**: These are independent! You can call a stateless function in a stateful session.
