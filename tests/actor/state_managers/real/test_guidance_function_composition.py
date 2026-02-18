@@ -91,10 +91,3 @@ def calculate_total(subtotal: float, tax_rate_pct: float, discount_pct: float = 
         # The actor should have used FunctionManager tools to discover
         # the stored calculate_total function.
         assert_code_act_function_manager_used(handle)
-
-        # The actor should have consulted GuidanceManager for the pricing
-        # policy to determine the correct tax rate and VIP discount.
-        assert "primitives.guidance.ask" in calls, (
-            f"Expected primitives.guidance.ask to be called for the pricing "
-            f"policy lookup. Primitive calls seen: {calls}"
-        )

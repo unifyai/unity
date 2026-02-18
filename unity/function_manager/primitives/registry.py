@@ -336,10 +336,7 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
     "web": [
         "get_primitives_web_ask_example",
     ],
-    "guidance": [
-        "get_primitives_guidance_ask_example",
-        "get_primitives_guidance_update_example",
-    ],
+    "guidance": [],
     "secrets": [
         "get_primitives_secrets_ask_example",
         "get_primitives_secrets_update_example",

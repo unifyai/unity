@@ -1142,58 +1142,6 @@ async def plot_distribution(table_context: str) -> str:
 '''
 
 
-def get_primitives_guidance_ask_example() -> str:
-    """Example: read-only guidance query."""
-
-    return '''
-# Example: Read-only guidance query
-async def get_incident_response_guidance() -> str:
-    """Ask for incident response guidance."""
-    notify({
-        "type": "progress",
-        "message": "Retrieving incident response guidance.",
-        "step": 1,
-        "total": 2
-    })
-    handle = await primitives.guidance.ask("What guidance do you have for incident response?")
-    result = await handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "guidance_lookup",
-        "result_summary": "Guidance query completed."
-    })
-    return result
-'''
-
-
-def get_primitives_guidance_update_example() -> str:
-    """Example: guidance mutation via `primitives.guidance.update(...)`."""
-
-    return '''
-# Example: Guidance update (create/edit)
-async def create_runbook_entry() -> str:
-    """Create a new guidance entry (runbook)."""
-    notify({
-        "type": "progress",
-        "message": "Creating runbook guidance entry.",
-        "step": 1,
-        "total": 2
-    })
-    instruction = (
-        "Create a new guidance entry titled 'Runbook: DB Failover'. "
-        "Include step-by-step failover procedure, validation checks, and rollback steps."
-    )
-    handle = await primitives.guidance.update(instruction)
-    result = await handle.result()
-    notify({
-        "type": "step_complete",
-        "step_name": "guidance_update",
-        "result_summary": "Runbook entry creation completed."
-    })
-    return result
-'''
-
-
 def get_primitives_web_ask_example() -> str:
     """Example: web research query via `primitives.web.ask(...)`."""
 
@@ -1735,17 +1683,17 @@ def get_example_function_map() -> dict[str, callable]:
 
 
 # ---------------------------------------------------------------------------
-# 8. Function-First Pattern Examples (for CodeActActor)
+# 8. Discovery-First Pattern Examples (for CodeActActor)
 # ---------------------------------------------------------------------------
 
 
-def get_function_first_pattern_example() -> str:
-    """Example: prioritizing pre-saved functions via FunctionManager tools (CodeAct style)."""
+def get_discovery_first_pattern_example() -> str:
+    """Example: prioritizing pre-saved functions and guidance via discovery tools (CodeAct style)."""
 
     return r"""
-# ✅ PATTERN: Function-First Workflow (CodeActActor)
-# If FunctionManager tools are available, ALWAYS search for an existing function
-# BEFORE writing custom logic with raw primitives.
+# ✅ PATTERN: Discovery-First Workflow (CodeActActor)
+# If FunctionManager and GuidanceManager tools are available, ALWAYS search both
+# for existing functions and guidance BEFORE writing custom logic with raw primitives.
 #
 # Step 1 (JSON TOOL CALL): search for an existing function
 # {
@@ -1772,8 +1720,8 @@ def get_function_first_pattern_example() -> str:
 """
 
 
-def get_function_first_anti_pattern_example() -> str:
-    """Anti-pattern: skipping FunctionManager search when it exists (CodeAct style)."""
+def get_discovery_first_anti_pattern_example() -> str:
+    """Anti-pattern: skipping FunctionManager/GuidanceManager search when they exist (CodeAct style)."""
 
     return r"""
 # ❌ ANTI-PATTERN #1: Skipping FunctionManager when it's available
@@ -1815,11 +1763,11 @@ def get_function_parameter_exploration_example() -> str:
 """
 
 
-def get_code_act_function_first_examples() -> str:
-    """Get function-first examples for CodeActActor."""
+def get_code_act_discovery_first_examples() -> str:
+    """Get discovery-first examples for CodeActActor."""
     examples = [
-        get_function_first_pattern_example().strip(),
-        get_function_first_anti_pattern_example().strip(),
+        get_discovery_first_pattern_example().strip(),
+        get_discovery_first_anti_pattern_example().strip(),
         get_function_parameter_exploration_example().strip(),
     ]
     return "\n\n".join(examples)
@@ -1954,7 +1902,7 @@ def get_core_pattern_examples() -> str:
 def get_code_act_pattern_examples() -> str:
     """Get core pattern examples relevant to CodeActActor.
 
-    Includes error handling, clarification patterns, and function-first workflow
+    Includes error handling, clarification patterns, and discovery-first workflow
     that complement the primitives examples.
     """
 
