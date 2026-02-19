@@ -217,6 +217,7 @@ async def test_custom_abort_finishes_nested(client):
         tools={"spawn_custom_handle": spawn_custom_handle},
         timeout=60,
         max_steps=20,
+        time_awareness=False,
     )
 
     # Ensure the spawn tool has been requested so helpers will be exposed

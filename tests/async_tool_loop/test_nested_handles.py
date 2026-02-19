@@ -102,6 +102,7 @@ async def test_nested_async_tool_loop(llm_config):
         tools={"outer_tool": outer_tool},
         max_steps=10,
         timeout=240,
+        time_awareness=False,
     )
 
     # Wait for the outer loop to finish.
