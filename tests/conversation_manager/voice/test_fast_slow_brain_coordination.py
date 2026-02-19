@@ -592,7 +592,7 @@ class TestRapidUtteranceHandling:
                 f"No LLM runs completed!\n"
                 f"  Completed: {completed_count}\n"
                 f"  Cancelled: {cancelled_count}\n"
-                f"  Wait time: {max_wait_time}s\n"
+                f"  Wait time: {MAX_WAIT}s\n"
             )
 
         finally:
