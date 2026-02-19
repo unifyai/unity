@@ -104,7 +104,7 @@ The egress is started via `start_room_egress()` (or `create_room_and_dispatch_ag
 | **Phone call** (Twilio inbound) | After Twilio conference setup in the adapter webhook | `adapters/main.py` line ~177: `await start_room_egress(room_name, assistant_id)` |
 | **Unify Meet** (browser WebRTC) | Inside `create_room_and_dispatch_agent()` when `record=True` | `common/livekit.py` — called from the `/dispatch-livekit-agent` endpoint |
 
-For phone calls, the LiveKit room name is `unity_{twilio_number}` (e.g. `unity_12025551234`). For Unify Meets, it defaults to `unity_{assistant_id}_web` or a custom name passed by the caller.
+All room names are produced by `make_room_name(assistant_id, medium)` which returns `unity_{assistant_id}_{medium}`. For phone calls: `unity_25_phone`. For Unify Meets: `unity_25_meet`. For Teams calls: `unity_25_teams`. The same value is used as both the LiveKit room name and the agent name.
 
 ### Egress Lifecycle
 
@@ -124,8 +124,8 @@ For phone calls, the LiveKit room name is `unity_{twilio_number}` (e.g. `unity_1
 
 | Environment | Prefix | Example Path |
 |-------------|--------|--------------|
-| Staging | `staging/` | `staging/25/unity_12025551234.mp3` |
-| Production | `production/` | `production/25/unity_12025551234.mp3` |
+| Staging | `staging/` | `staging/25/unity_25_phone.mp3` |
+| Production | `production/` | `production/25/unity_25_phone.mp3` |
 
 The environment is determined by the `STAGING` env var in the Communication service. If `STAGING` is truthy, the prefix is `staging`; otherwise `production`.
 
@@ -146,14 +146,14 @@ When LiveKit Egress completes and the webhook fires, the **adapter** (not the co
     "thread": "recording_ready",
     "event": {
         "assistant_id": "25",
-        "conference_name": "unity_12025551234",
-        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_12025551234.mp3"
+        "conference_name": "unity_25_phone",
+        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_25_phone.mp3"
     }
 }
 ```
 
 **Key fields:**
-- `conference_name` — the LiveKit room name. This is the join key used to match the recording to its exchange. For phone calls this is the room name (e.g. `unity_12025551234`), for Unify Meets it's also the room name (e.g. `unity_25_web`).
+- `conference_name` — the LiveKit room name (produced by `make_room_name()`). This is the join key used to match the recording to its exchange. For phone calls: `unity_25_phone`, for Unify Meets: `unity_25_meet`.
 - `recording_url` — the public GCS URL for the MP3 file.
 
 ### Publishing Logic
@@ -177,7 +177,7 @@ Exchanges support arbitrary `metadata` (a dict). The recording-related keys are:
 | Key | Set When | Set By | Value |
 |-----|----------|--------|-------|
 | `conference_name` | Phone call ends (`PhoneCallEnded`) | Event handler in `event_handlers.py` | Twilio conference name, e.g. `Unity_12025551234_2026_02_18_10_30_00` |
-| `room_name` | Unify Meet ends (`UnifyMeetEnded`) | Event handler in `event_handlers.py` | LiveKit room name, e.g. `unity_25_web` |
+| `room_name` | Unify Meet ends (`UnifyMeetEnded`) | Event handler in `event_handlers.py` | LiveKit room name, e.g. `unity_25_meet` |
 | `recording_url` | Recording is ready (`RecordingReady`) | Event handler in `event_handlers.py` | Full GCS public URL |
 
 ### How Exchange Metadata is Populated
@@ -212,7 +212,7 @@ After both steps complete, the exchange for a call looks like:
     "medium": "phone_call",  # or "unify_meet"
     "metadata": {
         "conference_name": "Unity_12025551234_2026_02_18_10_30_00",  # or "room_name" for meets
-        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_12025551234.mp3"
+        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_25_phone.mp3"
     },
     "messages": [
         {"content": "Hello?", "sender_id": 1, "metadata": {"call_utterance_timestamp": "00.03"}},
@@ -255,7 +255,7 @@ Per-utterance timestamps enable precise time-alignment of transcript text to aud
 
 1. **Incoming call** → Twilio webhook hits `adapters/main.py` `/twilio/call`
 2. **Conference setup** → `create_conference_response()` creates a Twilio Conference (no recording flag — recording is handled by LiveKit)
-3. **SIP bridge** → Twilio bridges the PSTN caller to a LiveKit room via SIP trunk. Room name: `unity_{twilio_number}`
+3. **SIP bridge** → Twilio bridges the PSTN caller to a LiveKit room via SIP trunk. Room name: `unity_{assistant_id}_phone` (from `make_room_name()`)
 4. **Start egress** → `await start_room_egress(room_name, assistant_id)` starts LiveKit Room Composite Egress on the room (fire-and-forget, errors are non-fatal)
 5. **Pub/Sub** → Adapter publishes `call` thread event to `unity-{assistant_id}[-staging]` topic
 6. **Unity receives call** → `CommsManager` routes to `PhoneCallReceived` event → sets `conference_name` on `call_manager`
@@ -297,7 +297,7 @@ Per-utterance timestamps enable precise time-alignment of transcript text to aud
 
 | File | Role |
 |------|------|
-| `common/livekit.py` | Shared LiveKit utilities: `get_livekit_api()`, `create_room_and_dispatch_agent()`, `start_room_egress()`, `_start_room_egress()`, `verify_livekit_webhook()` |
+| `common/livekit.py` | Shared LiveKit utilities: `make_room_name()`, `get_livekit_api()`, `create_room_and_dispatch_agent()`, `start_room_egress()`, `_start_room_egress()`, `verify_livekit_webhook()` |
 | `adapters/main.py` | `/livekit/recording-complete` webhook handler (verifies signature, ensures job, publishes Pub/Sub); Twilio call webhook (starts egress after conference setup) |
 | `adapters/helpers.py` | Imports `start_room_egress` from `common.livekit`, `create_conference_response()` (no recording flag) |
 | `communication/phone/views.py` | `/dispatch-livekit-agent` endpoint (for Unify Meets) |
@@ -309,7 +309,7 @@ Per-utterance timestamps enable precise time-alignment of transcript text to aud
 | `unity/conversation_manager/events.py` | `RecordingReady` event dataclass |
 | `unity/conversation_manager/comms_manager.py` | Routes `recording_ready` Pub/Sub thread to `RecordingReady` event |
 | `unity/conversation_manager/domains/event_handlers.py` | `RecordingReady` handler (stores URL on exchange), `PhoneCallEnded`/`UnifyMeetEnded` handler (stores session ID on exchange) |
-| `unity/conversation_manager/domains/call_manager.py` | `conference_name` and `room_name` attributes, `start_unify_meet()` |
+| `unity/conversation_manager/domains/call_manager.py` | `make_room_name()`, `conference_name` and `room_name` attributes, `start_call()`, `start_unify_meet()` |
 | `unity/conversation_manager/domains/managers_utils.py` | `call_utterance_timestamp` computation and storage in message metadata |
 | `unity/conversation_manager/conversation_manager.py` | `_recording_exchange_ids: dict[str, int]` in-memory mapping |
 
@@ -408,7 +408,7 @@ All egress-related code is wrapped in exception handlers. If any prerequisite is
 
 2. **No signed URL generation in the recording flow.** The `recording_url` stored on exchange metadata is a raw GCS public URL. The Console's `AudioPlayer` handles signed URL generation client-side. Direct API consumers would need to generate their own signed URLs or rely on the Console's `/api/media/get` route.
 
-3. **Phone call room name reuse.** Phone call LiveKit room names are `unity_{twilio_number}` — they're tied to the assistant's phone number, not to the specific call. If two calls arrive on the same number in quick succession, the second call's egress could overwrite the first call's recording file (same filename). The `conference_name` (which includes a timestamp, e.g. `Unity_12025551234_2026_02_18_10_30_00`) is unique per call but is stored in exchange metadata, not used as the GCS filename.
+3. **Room name reuse across sessions.** Room names are `unity_{assistant_id}_{medium}` — they're tied to the assistant, not to the specific call. If two calls arrive in quick succession, the second call's egress could overwrite the first call's recording file (same filename). The `conference_name` (which includes a timestamp, e.g. `Unity_12025551234_2026_02_18_10_30_00`) is unique per call but is stored in exchange metadata, not used as the GCS filename. Adding a timestamp to the GCS filepath would resolve this.
 
 4. **Egress start timing for phone calls.** Egress is started in the adapter webhook, which runs during Twilio's initial callback. The LiveKit room may not have audio tracks yet if the SIP bridge hasn't connected. LiveKit Egress should wait for tracks to appear, but this is an edge case that hasn't been validated in production.
 

@@ -334,24 +334,17 @@ def configure_from_cli(
       argv[5] = OUTBOUND
       argv[6...] = extra_env[...]
 
-    Returns the computed livekit_agent_name ("unity_<assistant_number>").
+    Returns the canonical room name passed as argv[2] (produced by
+    make_room_name() in call_manager). This is used as both the LiveKit
+    room name and the agent worker registration name.
     """
-    assistant_number = ""
-    livekit_agent_name = ""
     room_name = ""
     print("sys.argv", sys.argv)
 
     # max index used = 6 + len(extra_env)
     required_len = 6 + len(extra_env)
     if len(sys.argv) > required_len:
-        assistant_number = sys.argv[2]
-        if ":" in assistant_number:
-            # UnifyMeet: caller passes "livekit_agent_name:room_name" with prefix already applied
-            livekit_agent_name, room_name = assistant_number.split(":")
-        else:
-            # Phone: caller passes raw assistant_number, we add the unity_ prefix
-            livekit_agent_name = f"unity_{assistant_number}"
-            room_name = livekit_agent_name
+        room_name = sys.argv[2]
 
         # Populate SESSION_DETAILS with voice config
         SESSION_DETAILS.voice.provider = (
@@ -396,7 +389,7 @@ def configure_from_cli(
         print("Not enough arguments provided")
         sys.exit(1)
 
-    return livekit_agent_name, room_name
+    return room_name
 
 
 def should_dispatch_livekit_agent() -> bool:
