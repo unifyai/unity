@@ -145,6 +145,12 @@ different question about it), the guidance is relevant and must be sent.
 - The guidance provides useful context about the topic currently being discussed
 - The guidance is a notification the user should hear now
 - The guidance fulfills or partially fulfills a user request
+- The guidance adds specificity beyond what the fast brain already said. A generic deferral
+  ("let me check on that") is a placeholder — it tells the user NOTHING about what is
+  actually happening. Guidance that describes a concrete step, partial result, or status
+  change is NEW information the fast brain cannot produce on its own, because the fast brain
+  has zero visibility into backend processes. Do not conflate a generic deferral with a
+  specific progress update — they are fundamentally different.
 - This is the DEFAULT when guidance is relevant — if the user would benefit from hearing
   the information, speak it. You are the gatekeeper; the fast brain will NOT speak on its
   own in response to guidance.
@@ -231,6 +237,18 @@ CONVERSATION:
 Decision: send_guidance=true, should_speak=false, response_text=""
 Reason: Useful preference for how to reach out, but not something to say aloud now.
 The fast brain can factor it in when choosing the communication method.
+
+### Example 8: SPEAK — Specific Progress vs Generic Deferral
+GUIDANCE: "Contacting the venue to confirm availability for Saturday."
+CONVERSATION:
+  [user]: Can you find out if that venue is free on Saturday?
+  [assistant]: Let me look into that.
+
+Decision: send_guidance=true, should_speak=true, response_text="I'm checking with the venue about Saturday availability now."
+Reason: "Let me look into that" is a generic placeholder — it says nothing about what is
+actually happening. The guidance describes a concrete step (contacting the venue). These are
+fundamentally different: one is a deferral, the other is real status. The fast brain cannot
+produce this update because it has no visibility into backend processes.
 
 ## Output
 Return a JSON object with: thoughts, send_guidance, should_speak, response_text"""

@@ -566,6 +566,61 @@ class ConversationManager(metaclass=SingletonABCMeta):
             demo_mode=SETTINGS.DEMO_MODE,
         ).flatten()
 
+    async def _articulate_and_publish_notification(
+        self,
+        notification_text: str,
+    ) -> None:
+        """Forward an actor notification directly to the articulator for voice-UX decision.
+
+        Bypasses the slow-brain's call_guidance gate. The articulator is the sole
+        decision-maker on whether the user hears this notification.
+        """
+        from datetime import datetime, timezone
+
+        guidance_id = content_trace_id("guid", notification_text)
+        self._session_logger.info(
+            "call_guidance",
+            f"Direct notification to articulator guidance_id={guidance_id}",
+        )
+
+        decision = await self._articulate_guidance(
+            notification_text,
+            datetime.now(timezone.utc),
+            guidance_id=guidance_id,
+        )
+
+        if decision.send_guidance:
+            contact = self.get_active_contact()
+            event = CallGuidance(
+                contact=contact or {},
+                content=notification_text,
+                response_text=decision.response_text,
+                should_speak=decision.should_speak,
+                source="actor_notification",
+            )
+            self._session_logger.info(
+                "call_guidance",
+                (
+                    f"Publishing notification guidance guidance_id={guidance_id} "
+                    f"speak={decision.should_speak}"
+                ),
+            )
+            event_json = event.to_json()
+            await self.event_broker.publish(
+                "app:call:call_guidance",
+                event_json,
+            )
+            await self.event_broker.publish(
+                "app:comms:assistant_call_guidance",
+                event_json,
+            )
+            self._recent_guidance.append(notification_text)
+        else:
+            self._session_logger.info(
+                "guidance_blocked",
+                f"Blocked notification guidance_id={guidance_id}: {notification_text[:50]}...",
+            )
+
     async def _articulate_guidance(
         self,
         guidance_content: str,
@@ -1002,7 +1057,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Handle call_guidance for voice modes.
         # Extracted from tool call arguments (e.g. wait(call_guidance="...")).
-        if self.mode.is_voice:
+        # Skip for ActorNotification-origin runs — those are handled by the
+        # direct articulator path in the event handler.
+        is_notification_origin = origin_event_name == "ActorNotification"
+        if self.mode.is_voice and not is_notification_origin:
             call_guidance = ""
             for tool_exec in result.tools:
                 call_guidance = (tool_exec.args or {}).get("call_guidance", "")
