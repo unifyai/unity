@@ -64,17 +64,66 @@ ManagerMethodCallback = (
 )
 
 
+def _contact_label(contact: object, *, fallback: str) -> str:
+    """Best-effort display label for a contact dict."""
+    try:
+        if isinstance(contact, dict):
+            first = str(contact.get("first_name") or "").strip()
+            last = str(contact.get("surname") or "").strip()
+            full = " ".join([p for p in (first, last) if p]).strip()
+            if full:
+                return full
+            for key in ("name", "phone_number", "email_address", "email"):
+                val = str(contact.get(key) or "").strip()
+                if val:
+                    return val
+    except Exception:
+        pass
+    return fallback
+
+
 def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[str]:
+    if isinstance(event, InboundPhoneUtterance):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[{sender} → Assistant • Phone] {event.content}"
+    if isinstance(event, InboundUnifyMeetUtterance):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[{sender} → Assistant • Unify Meet] {event.content}"
+    if isinstance(event, SMSReceived):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[{sender} → Assistant • SMS] {event.content}"
+    if isinstance(event, UnifyMessageReceived):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        content = str(getattr(event, "content", "") or "").strip()
+        attachments = getattr(event, "attachments", []) or []
+        if attachments:
+            return (
+                f"[{sender} → Assistant • Unify] {content} [+{len(attachments)} files]"
+            )
+        return f"[{sender} → Assistant • Unify] {content}"
+    if isinstance(event, EmailReceived):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        subject = str(getattr(event, "subject", "") or "").strip()
+        body = str(getattr(event, "body", "") or "").strip()
+        attachments = getattr(event, "attachments", []) or []
+        header = f"[{sender} → Assistant • Email] Subject: {subject}"
+        if attachments:
+            header += f" [+{len(attachments)} files]"
+        if body:
+            return f"{header}\n{body}"
+        return header
+    if isinstance(event, PhoneCallReceived):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[{sender} → Assistant • Phone] Incoming call"
+    if isinstance(event, UnifyMeetReceived):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[{sender} → Assistant • Unify Meet] Session connected"
+    if isinstance(event, VoiceInterrupt):
+        sender = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[{sender} → Assistant • Phone] (interrupt)"
+
     if isinstance(event, SMSSent):
-        try:
-            c = getattr(event, "contact", None) or {}
-            first = (c.get("first_name") or "").strip()
-            last = (c.get("surname") or "").strip()
-            to_name = " ".join([p for p in (first, last) if p]).strip()
-            if not to_name:
-                to_name = c.get("phone_number") or c.get("email_address") or "recipient"
-        except Exception:
-            to_name = "recipient"
+        to_name = _contact_label(getattr(event, "contact", {}), fallback="recipient")
         return f"[SMS → {to_name}] {event.content}"
     if isinstance(event, EmailSent):
         return f"[Email → User] Subject: {event.subject}\n{event.body}"
