@@ -162,7 +162,7 @@ def _derive_all_contexts(context: str) -> List[str]:
         try:
             user_idx = parts.index(DEFAULT_USER_CONTEXT)
         except ValueError:
-            # Can't determine structure without the DefaultUser marker
+            # Can't determine structure without the DEFAULT_USER_CONTEXT marker
             return []
 
         # Need at least User/Assistant/Suffix after the test root

@@ -278,7 +278,7 @@ def _upload_trace_to_context(
         - UNITY_TRACE_EXCLUDE_PATTERNS: Exclude spans matching patterns
 
     Args:
-        test_ctx: The test context path (e.g., tests/.../test_name/DefaultUser/Assistant)
+        test_ctx: The test context path (e.g., tests/.../test_name/{user_id}/{assistant_id})
         trace_id: The 32-char hex trace_id for this test run
         max_spans: Maximum number of spans to upload (default 1000 to avoid slow uploads)
     """
