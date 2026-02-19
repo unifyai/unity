@@ -651,6 +651,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         default_decision = GuidanceDecision(
             thoughts="No filtering needed.",
             send_guidance=True,
+            can_speak_without_fabricating=True,
             should_speak=False,
             response_text="",
         )

@@ -365,6 +365,7 @@ Is this guidance still relevant? Should you speak it, silently notify, or block 
             return GuidanceDecision(
                 thoughts=f"Articulator error: {e}. Defaulting to notify-only.",
                 send_guidance=True,
+                can_speak_without_fabricating=False,
                 should_speak=False,
                 response_text="",
             )
