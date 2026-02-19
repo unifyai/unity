@@ -18,6 +18,7 @@ from unity.conversation_manager.domains.call_manager import (
 from unity.conversation_manager.domains.contact_index import (
     ContactIndex,
     CommsMessage,
+    GuidanceMessage,
     Message,
 )
 from unity.conversation_manager.domains.brain import build_brain_spec
@@ -680,17 +681,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Convert to ConversationMessage format with is_new flag
             conversation_messages = []
             for msg in voice_thread:
+                # GuidanceMessage is internal orchestration — not a real
+                # utterance. Its content is already in RECENTLY SENT GUIDANCE.
+                # Including it here would duplicate entries and, because it
+                # lacks a `role` attribute, the fallback would mislabel it.
+                if isinstance(msg, GuidanceMessage):
+                    continue
+
                 content = (msg.content or "").strip()
 
                 # Skip system messages (e.g., "<Call Started>")
                 if content.startswith("<") and content.endswith(">"):
                     continue
 
-                # Determine role
-                if hasattr(msg, "role"):
-                    role = msg.role
-                else:
-                    role = "assistant" if msg.name == "You" else "user"
+                role = getattr(msg, "role", "assistant")
 
                 # Check if this message arrived AFTER slow brain started
                 msg_time = getattr(msg, "timestamp", None)
