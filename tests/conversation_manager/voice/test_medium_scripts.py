@@ -1668,6 +1668,89 @@ class TestFastBrainGuidanceFlow:
         assert session.say_calls[0] == "It's at 3pm."
 
 
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestFastBrainOpeningGreeting:
+    """The fast brain's first turn (session_start, zero user messages) should
+    produce a short, natural greeting — not an acknowledgment of the system
+    prompt, not a capability list, and not a tutorial."""
+
+    async def test_session_start_produces_natural_greeting(self):
+        """With only the system prompt and no user messages, the fast brain
+        should greet briefly and naturally.
+
+        Uses reasoning_effort='low' to match the production voice pipeline
+        (call.py UnifyLLM configuration)."""
+        from unity.common.llm_client import new_llm_client
+        from unity.conversation_manager.prompt_builders import (
+            build_voice_agent_prompt,
+        )
+        from unity.settings import SETTINGS
+
+        prompt = build_voice_agent_prompt(
+            bio="A helpful AI assistant.",
+            boss_first_name="Yusha",
+            boss_surname="",
+            boss_phone_number="+15550000001",
+            boss_email_address="yusha@example.com",
+            is_boss_user=True,
+        ).flatten()
+
+        client = new_llm_client(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+            reasoning_effort="low",
+        )
+        response = await client.generate(
+            system_message=prompt,
+            messages=[],
+        )
+
+        response_lower = response.lower().strip()
+
+        assert len(response) < 200, (
+            f"Opening greeting is too long ({len(response)} chars).\n"
+            f"Response: {response}\n"
+            f"The first turn should be a brief greeting (1-2 sentences), "
+            f"not a list of suggestions or a tutorial."
+        )
+
+        bullet_indicators = ["- ", "* ", "1.", "2.", "3."]
+        has_bullets = any(ind in response for ind in bullet_indicators)
+        assert not has_bullets, (
+            f"Opening greeting contains a bulleted list.\n"
+            f"Response: {response}\n"
+            f"The first turn should be a conversational greeting, "
+            f"not a list of options or suggestions."
+        )
+
+        filler_phrases = [
+            "here are a few",
+            "here are some",
+            "you can say",
+            "depending on what you need",
+            "for example",
+            "check something",
+            "pull up an email",
+            "draft a",
+        ]
+        has_filler = any(p in response_lower for p in filler_phrases)
+        assert not has_filler, (
+            f"Opening greeting sounds like a tutorial/help menu.\n"
+            f"Response: {response}\n"
+            f"The first turn should be a natural greeting like "
+            f"'Hey, how can I help?' — not suggestions for what the "
+            f"user can do."
+        )
+
+        starts_with_ack = response_lower.startswith("got it")
+        assert not starts_with_ack, (
+            f"Opening greeting starts with an acknowledgment ('Got it').\n"
+            f"Response: {response}\n"
+            f"There is nothing to acknowledge at the start of a call. "
+            f"The model is echoing an example from the system prompt."
+        )
+
+
 class TestSayMetaTextMatching:
     """Regression tests for _last_say_meta text matching.
 
