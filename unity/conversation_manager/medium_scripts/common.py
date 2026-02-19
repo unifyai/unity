@@ -281,6 +281,38 @@ def setup_inactivity_timeout(
     return touch
 
 
+# -------- Say-meta matching -------- #
+
+
+def match_say_meta(
+    meta: dict | None,
+    utterance_text: str,
+) -> dict | None:
+    """Match a _last_say_meta dict against an utterance's text content.
+
+    Returns the meta dict if it should be consumed for this utterance,
+    or None if the utterance didn't originate from the session.say() call
+    that set the meta.
+
+    When meta includes a "text" key (set by maybe_speak_queued), the
+    utterance must start with the same prefix to match — preventing a
+    fast brain response from stealing metadata intended for a session.say()
+    utterance. Meta dicts without a "text" key match unconditionally
+    (backward compatibility).
+    """
+    if meta is None:
+        return None
+    expected_text = meta.get("text")
+    if expected_text is None:
+        return meta
+    if not utterance_text or not expected_text:
+        return None
+    prefix_len = min(50, len(expected_text), len(utterance_text))
+    if utterance_text[:prefix_len] == expected_text[:prefix_len]:
+        return meta
+    return None
+
+
 # -------- CLI / env helpers -------- #
 
 
