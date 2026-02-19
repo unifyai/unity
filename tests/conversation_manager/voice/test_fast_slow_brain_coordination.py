@@ -466,7 +466,7 @@ class TestRapidUtteranceHandling:
             2.0  # seconds (realistic ratio to utterance timing)
         )
 
-        async def tracked_run_llm_with_simulated_delay():
+        async def tracked_run_llm_with_simulated_delay(**kwargs):
             """
             Simulates realistic LLM thinking time and tracks completion/cancellation.
 
@@ -669,6 +669,7 @@ class TestGuidanceRelevanceGuardrails:
                 conversation_messages,
                 voice_agent_prompt,
                 recent_guidance=None,
+                **kwargs,
             ):
                 articulator_calls["count"] += 1
                 articulator_calls["recent_guidance"] = recent_guidance
@@ -963,7 +964,7 @@ class TestStaleGuidanceArticulation:
             # Track when guidance has been published
             guidance_published = asyncio.Event()
 
-            async def slow_brain_with_delay_and_stale_guidance():
+            async def slow_brain_with_delay_and_stale_guidance(**kwargs):
                 """
                 Simulates slow brain that:
                 1. Waits for signal to finish (after topic change)
@@ -1192,7 +1193,7 @@ class TestStaleGuidanceArticulation:
             slow_brain_can_finish = asyncio.Event()
             guidance_published = asyncio.Event()
 
-            async def slow_brain_with_relevant_guidance():
+            async def slow_brain_with_relevant_guidance(**kwargs):
                 from unity.common.prompt_helpers import now as prompt_now
 
                 # Get the timestamp of the last message in the voice thread
@@ -1406,7 +1407,7 @@ class TestUserCorrectionsAndRestatements:
             slow_brain_can_finish = asyncio.Event()
             guidance_published = asyncio.Event()
 
-            async def slow_brain_with_status_meeting_guidance():
+            async def slow_brain_with_status_meeting_guidance(**kwargs):
                 """
                 Simulates slow brain that:
                 1. Started thinking about "status meeting"
@@ -1650,7 +1651,7 @@ class TestFastBrainIncorrectInformation:
             slow_brain_can_finish = asyncio.Event()
             guidance_published = asyncio.Event()
 
-            async def slow_brain_with_correct_meeting_time():
+            async def slow_brain_with_correct_meeting_time(**kwargs):
                 """
                 Simulates slow brain that:
                 1. Started looking up the actual meeting time
