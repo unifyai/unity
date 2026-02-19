@@ -892,6 +892,9 @@ class ToolSurfaceRegistry:
                 "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed",
             )
             lines.append(
+                "- Don't call `ask(...)` before `update(...)`/`execute(...)` on the same manager to pre-check state; mutation methods already inspect existing records, so a preemptive read is duplicative",
+            )
+            lines.append(
                 "- When in doubt between managers, prefer the most specific domain match",
             )
 
