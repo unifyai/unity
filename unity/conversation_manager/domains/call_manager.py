@@ -13,6 +13,7 @@ from unity.conversation_manager.domains.ipc_socket import (
     CallEventSocketServer,
     CM_EVENT_SOCKET_ENV,
 )
+from unity.conversation_manager.tracing import content_trace_id, trace_kv
 from unity.helpers import (
     cleanup_dangling_call_processes,
     run_script,
@@ -143,9 +144,11 @@ class LivekitCallManager:
         # directly into the socket server buffer so the message cannot be lost
         # due to the forward-subscription task not having subscribed yet.
         if self.initial_call_guidance:
+            guidance_id = content_trace_id("guid", self.initial_call_guidance)
             guidance_event = CallGuidance(
                 contact=contact,
                 content=self.initial_call_guidance,
+                source="initial_call",
             )
             # Direct socket delivery to the fast brain subprocess
             await self._socket_server.queue_for_clients(
@@ -158,8 +161,12 @@ class LivekitCallManager:
                 guidance_event.to_json(),
             )
             print(
-                f"[LivekitCallManager] Published initial call guidance: "
-                f"{self.initial_call_guidance[:80]}",
+                trace_kv(
+                    "CALL_MANAGER_INITIAL_GUIDANCE",
+                    guidance_id=guidance_id,
+                    content_preview=self.initial_call_guidance[:80],
+                ),
+                flush=True,
             )
             self.initial_call_guidance = ""
 

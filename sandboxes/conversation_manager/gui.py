@@ -759,7 +759,11 @@ if _TEXTUAL_AVAILABLE:
                 try:
                     cm_log.write(lg.render_expanded("cm"))
                     actor_log.write(
-                        lg.render_expanded("actor", group_by_handle=group_actor),
+                        lg.render_expanded(
+                            "actor",
+                            group_by_handle=group_actor,
+                            max_message_length=0,
+                        ),
                     )
                     mgr_log.write(
                         lg.render_expanded("manager", group_by_handle=group_mgr),

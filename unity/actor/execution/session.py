@@ -681,6 +681,15 @@ class SessionExecutor:
         ] = {}
         self._python_session_meta: Dict[Tuple[Optional[int], int], dict[str, str]] = {}
 
+        self._fm_globals: Dict[str, Any] = {}
+
+    def register_fm_globals(self, globals_dict: Dict[str, Any]) -> None:
+        self._fm_globals.update(globals_dict)
+
+    def _inject_fm_globals(self, sb: PythonExecutionSession) -> None:
+        if self._fm_globals:
+            sb.global_state.update(self._fm_globals)
+
     def has_python_session(
         self,
         *,
@@ -758,6 +767,7 @@ class SessionExecutor:
             if state_mode == "stateful" and venv_id is None and session_id == 0:
                 try:
                     sb0 = _CURRENT_SANDBOX.get()
+                    self._inject_fm_globals(sb0)
                     res = await sb0.execute(code)
                     return {
                         **res,
@@ -781,6 +791,7 @@ class SessionExecutor:
                     venv_pool=self._venv_pool,
                     shell_pool=self._shell_pool,
                 )
+                self._inject_fm_globals(sb)
                 try:
                     res = await sb.execute(code)
                 finally:
@@ -896,6 +907,7 @@ class SessionExecutor:
                         "last_used": now,
                     }
                 sb = self._python_sessions[key]
+                self._inject_fm_globals(sb)
                 res = await sb.execute(code)
                 meta = self._python_session_meta.get(key)
                 if meta is not None:
@@ -928,6 +940,7 @@ class SessionExecutor:
                 try:
                     # Shallow copy globals to allow read access while avoiding persistence.
                     sb.global_state.update(dict(base.global_state))
+                    self._inject_fm_globals(sb)
                     res = await sb.execute(code)
                 finally:
                     try:

@@ -34,6 +34,12 @@ except ImportError:
 from unity.conversation_manager.utils import dispatch_livekit_agent
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.conversation_manager.tracing import (
+    content_trace_id,
+    monotonic_ms,
+    now_utc_iso,
+    trace_kv,
+)
 from unity.session_details import SESSION_DETAILS
 
 # Shared helpers
@@ -42,6 +48,7 @@ import unillm
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,
+    match_say_meta,
     setup_inactivity_timeout,
     setup_participant_disconnect_handler,
     publish_call_started,
@@ -153,7 +160,62 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     user_is_speaking = False
-    _queued_speech: list[str] = []
+    _queued_speech: list[tuple[str, str, str]] = []  # (text, guidance_id, source)
+    _last_say_meta: dict | None = None
+    generation_seq = 0
+    user_state_seq = 0
+
+    def log_fast_brain_trace(event: str, **fields) -> None:
+        print(
+            trace_kv(
+                "FAST_BRAIN_STS",
+                event=event,
+                ts_utc=now_utc_iso(),
+                monotonic_ms=monotonic_ms(),
+                **fields,
+            ),
+            flush=True,
+        )
+
+    def _log_reply_task(task: asyncio.Task) -> None:
+        try:
+            task.result()
+            log_fast_brain_trace("generate_reply_task_completed")
+        except asyncio.CancelledError:
+            log_fast_brain_trace("generate_reply_task_cancelled")
+        except Exception as exc:  # noqa: BLE001
+            log_fast_brain_trace(
+                "generate_reply_task_error",
+                error=str(exc),
+            )
+
+    def trigger_generate_reply(
+        reason: str,
+        source_id: str,
+        *,
+        allow_interruptions: bool = True,
+        wait_for_completion: bool = False,
+    ):
+        nonlocal generation_seq
+        generation_seq += 1
+        generation_id = f"gen-{generation_seq:06d}"
+        log_fast_brain_trace(
+            "generate_reply_trigger",
+            generation_id=generation_id,
+            reason=reason,
+            source_id=source_id,
+            user_is_speaking=user_is_speaking,
+            queued_speech_count=len(_queued_speech),
+        )
+        maybe_result = session.generate_reply(
+            allow_interruptions=allow_interruptions,
+        )
+        if isinstance(maybe_result, asyncio.Task):
+            maybe_result.add_done_callback(_log_reply_task)
+        if wait_for_completion:
+            return maybe_result
+        return maybe_result
+
     if channel == "phone":
         user_utterance_event = InboundPhoneUtterance
         assistant_utterance_event = OutboundPhoneUtterance
@@ -168,8 +230,16 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("user_state_changed")
     def _on_user_state_changed(ev: "UserStateChangedEvent"):
-        nonlocal user_is_speaking
+        nonlocal user_is_speaking, user_state_seq
+        user_state_seq += 1
+        state_id = f"usrstate-{user_state_seq:06d}"
         user_is_speaking = ev.new_state == "speaking"
+        log_fast_brain_trace(
+            "user_state_changed",
+            state_id=state_id,
+            new_state=ev.new_state,
+            user_is_speaking=user_is_speaking,
+        )
         touch_activity()
 
     @session.on("agent_state_changed")
@@ -190,8 +260,21 @@ async def entrypoint(ctx: JobContext) -> None:
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
         """Publish both user and assistant utterances from a single location."""
+        nonlocal _last_say_meta
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""  # reliably the final text
+        utterance_id = content_trace_id("utt", f"{role}:{text}")
+        say_meta = match_say_meta(_last_say_meta, text) if role == "assistant" else None
+        if say_meta:
+            _last_say_meta = None
+        log_fast_brain_trace(
+            "conversation_item_added",
+            role=role,
+            utterance_id=utterance_id,
+            text_preview=text[:120],
+            speech_source=(say_meta or {}).get("source", "generate_reply"),
+            guidance_id=(say_meta or {}).get("guidance_id", ""),
+        )
         if role == "user":
             event = user_utterance_event(contact, content=text)
             # Capture the user's screen if they are sharing it.
@@ -257,14 +340,16 @@ async def entrypoint(ctx: JobContext) -> None:
     await publish_call_started(contact, channel)
     touch_activity()
 
-    # Buffer for guidance that arrives before session is ready
-    pending_guidance: list[tuple[str, str, bool]] = []
+    pending_guidance: list[tuple[str, str, bool, str, str]] = (
+        []
+    )  # (content, response_text, should_speak, guidance_id, guidance_source)
     session_ready = False
 
     def on_status(data: dict) -> None:
         """Handle status events (call_answered, stop)."""
         event_type = data.get("type", "")
         print(f"[Status] {event_type}")
+        log_fast_brain_trace("status", event_type=event_type)
         touch_activity()
 
         if event_type == "call_answered":
@@ -277,22 +362,35 @@ async def entrypoint(ctx: JobContext) -> None:
         content: str,
         response_text: str = "",
         should_speak: bool = False,
+        *,
+        guidance_id: str = "",
+        source: str = "",
+        guidance_source: str = "",
     ) -> None:
-        """Apply guidance to chat context and optionally queue pre-generated speech."""
-        chat_ctx = rt.chat_ctx
-        chat_ctx.add_message(
-            role="system",
-            content=[f"[notification] {content}"],
+        log_fast_brain_trace(
+            "guidance_applied",
+            guidance_id=guidance_id,
+            source=source,
+            guidance_source=guidance_source,
+            content_preview=content[:120],
         )
 
-        async def update_ctx():
-            await rt.update_chat_ctx(chat_ctx)
-
-        asyncio.create_task(update_ctx())
-
         if should_speak and response_text:
-            _queued_speech.append(response_text)
+            _queued_speech.append(
+                (response_text, guidance_id, guidance_source, content),
+            )
             maybe_speak_queued()
+        else:
+            chat_ctx = rt.chat_ctx
+            chat_ctx.add_message(
+                role="system",
+                content=[f"[notification] {content}"],
+            )
+
+            async def update_ctx():
+                await rt.update_chat_ctx(chat_ctx)
+
+            asyncio.create_task(update_ctx())
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
@@ -302,6 +400,7 @@ async def entrypoint(ctx: JobContext) -> None:
         speaking → listening. We only speak queued text once the agent has settled
         back to a quiescent state, guaranteeing the fast brain's reply comes first.
         """
+        nonlocal _last_say_meta
         if not _queued_speech or user_is_speaking:
             return
         if session.agent_state not in ("listening", "idle"):
@@ -309,7 +408,30 @@ async def entrypoint(ctx: JobContext) -> None:
         current = session.current_speech
         if current is not None and not current.done:
             return
-        text = _queued_speech.pop(0)
+        text, guidance_id, guidance_source, notification_content = _queued_speech.pop(0)
+        _last_say_meta = {
+            "guidance_id": guidance_id,
+            "source": guidance_source,
+            "text": text,
+        }
+
+        chat_ctx = rt.chat_ctx
+        chat_ctx.add_message(
+            role="system",
+            content=[f"[notification] {notification_content}"],
+        )
+
+        async def update_ctx():
+            await rt.update_chat_ctx(chat_ctx)
+
+        asyncio.create_task(update_ctx())
+
+        log_fast_brain_trace(
+            "session_say",
+            guidance_id=guidance_id,
+            guidance_source=guidance_source,
+            text_preview=text[:120],
+        )
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
     def on_guidance(data: dict) -> None:
@@ -318,20 +440,50 @@ async def entrypoint(ctx: JobContext) -> None:
         content = payload.get("content", "")
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
+        guidance_source = payload.get("source", "")
+        guidance_id = content_trace_id("guid", content)
         print(
             (
-                f"[Guidance] speak={should_speak} {content[:50]}..."
+                f"[Guidance] speak={should_speak} source={guidance_source} {content[:50]}..."
                 if len(content) > 50
-                else f"[Guidance] speak={should_speak} {content}"
+                else f"[Guidance] speak={should_speak} source={guidance_source} {content}"
             ),
+        )
+        log_fast_brain_trace(
+            "guidance_received",
+            guidance_id=guidance_id,
+            guidance_source=guidance_source,
+            session_ready=session_ready,
+            user_is_speaking=user_is_speaking,
+            content_preview=content[:120],
         )
         touch_activity()
 
         if content:
             if not session_ready:
-                pending_guidance.append((content, response_text, should_speak))
+                pending_guidance.append(
+                    (
+                        content,
+                        response_text,
+                        should_speak,
+                        guidance_id,
+                        guidance_source,
+                    ),
+                )
+                log_fast_brain_trace(
+                    "guidance_buffered",
+                    guidance_id=guidance_id,
+                    buffered_count=len(pending_guidance),
+                )
             else:
-                apply_guidance(content, response_text, should_speak)
+                apply_guidance(
+                    content,
+                    response_text,
+                    should_speak,
+                    guidance_id=guidance_id,
+                    guidance_source=guidance_source,
+                    source="socket_callback",
+                )
 
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
@@ -389,11 +541,29 @@ async def entrypoint(ctx: JobContext) -> None:
     session_ready = True
     if pending_guidance:
         print(f"[Guidance] Applying {len(pending_guidance)} buffered message(s)")
-        for content, response_text, should_speak in pending_guidance:
-            apply_guidance(content, response_text, should_speak)
+        for (
+            content,
+            response_text,
+            should_speak,
+            guidance_id,
+            guidance_source,
+        ) in pending_guidance:
+            apply_guidance(
+                content,
+                response_text,
+                should_speak,
+                guidance_id=guidance_id,
+                source="pending_buffer_flush",
+                guidance_source=guidance_source,
+            )
         pending_guidance.clear()
 
-    await session.generate_reply(allow_interruptions=True)
+    await trigger_generate_reply(
+        reason="session_start",
+        source_id="startup",
+        allow_interruptions=True,
+        wait_for_completion=True,
+    )
 
 
 if __name__ == "__main__":

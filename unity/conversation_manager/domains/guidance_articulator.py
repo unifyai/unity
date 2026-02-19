@@ -59,6 +59,18 @@ class GuidanceDecision(BaseModel):
             "True if the user is still on the same general subject."
         ),
     )
+    can_speak_without_fabricating: bool = Field(
+        description=(
+            "Can you generate an honest spoken response using ONLY what the "
+            "guidance contains — without inventing, inferring, or guessing any "
+            "facts? True if you can speak the guidance content faithfully "
+            "(a specific update, an answer, an action description, an apology, "
+            "a concrete status). False if speaking would force you to fabricate "
+            "information not present in the guidance (e.g., the guidance says "
+            "'lookup completed' but not what was found — any spoken response "
+            "would require you to invent the results)."
+        ),
+    )
     should_speak: bool = Field(
         description=(
             "Whether to speak the response_text aloud to the user. "
@@ -66,7 +78,9 @@ class GuidanceDecision(BaseModel):
             "and provide response_text. The fast brain will NOT speak on its own "
             "in response to a notification — you are the sole gatekeeper. "
             "Set to False for background context the fast brain should absorb "
-            "silently without speaking."
+            "silently without speaking. "
+            "MUST be False when can_speak_without_fabricating is False — you "
+            "cannot speak what you do not have."
         ),
     )
     response_text: str = Field(
@@ -145,6 +159,12 @@ different question about it), the guidance is relevant and must be sent.
 - The guidance provides useful context about the topic currently being discussed
 - The guidance is a notification the user should hear now
 - The guidance fulfills or partially fulfills a user request
+- The guidance adds specificity beyond what the fast brain already said. A generic deferral
+  ("let me check on that") is a placeholder — it tells the user NOTHING about what is
+  actually happening. Guidance that describes a concrete step, partial result, or status
+  change is NEW information the fast brain cannot produce on its own, because the fast brain
+  has zero visibility into backend processes. Do not conflate a generic deferral with a
+  specific progress update — they are fundamentally different.
 - This is the DEFAULT when guidance is relevant — if the user would benefit from hearing
   the information, speak it. You are the gatekeeper; the fast brain will NOT speak on its
   own in response to guidance.
@@ -173,7 +193,7 @@ CONVERSATION:
   **NEW** [user]: Actually, never mind that. Can you call Sarah for me?
   **NEW** [assistant]: Sure, I'll give Sarah a call now.
 
-Decision: send_guidance=false, should_speak=false, response_text=""
+Decision: send_guidance=false, can_speak_without_fabricating=false, should_speak=false, response_text=""
 Reason: User abandoned the budget request and moved to an unrelated task (calling Sarah).
 
 ### Example 2: SPEAK — Answering User's Question
@@ -182,7 +202,7 @@ CONVERSATION:
   [user]: What are the dinner plans tonight?
   **NEW** [assistant]: Let me check on that.
 
-Decision: send_guidance=true, should_speak=true, response_text="It's at 7:30 at Chez Laurent, table for four."
+Decision: send_guidance=true, can_speak_without_fabricating=true, should_speak=true, response_text="It's at 7:30 at Chez Laurent, table for four."
 Reason: User asked about dinner plans; guidance has the answer. Speak it naturally.
 
 ### Example 3: SPEAK — Same Subject, Different Facet
@@ -191,7 +211,7 @@ CONVERSATION:
   [user]: What time is my flight?
   **NEW** [user]: And do I need to check a bag?
 
-Decision: send_guidance=true, should_speak=true, response_text="Your flight's at 6am out of Terminal 2, gate B14."
+Decision: send_guidance=true, can_speak_without_fabricating=true, should_speak=true, response_text="Your flight's at 6am out of Terminal 2, gate B14."
 Reason: The user is still discussing the same trip. The flight details are useful context
 even though the latest question is about baggage.
 
@@ -201,7 +221,7 @@ CONVERSATION:
   [user]: I have that client call coming up, right?
   **NEW** [assistant]: Yes, let me check if there are any updates.
 
-Decision: send_guidance=true, should_speak=true, response_text="The client just emailed — they've pushed the call to 3pm."
+Decision: send_guidance=true, can_speak_without_fabricating=true, should_speak=true, response_text="The client just emailed — they've pushed the call to 3pm."
 Reason: The notification is directly relevant to the active discussion.
 
 ### Example 5: BLOCK — Already Covered
@@ -211,7 +231,7 @@ CONVERSATION:
   **NEW** [assistant]: Sarah's extension is 4412. Want me to transfer you?
   **NEW** [user]: Yes please.
 
-Decision: send_guidance=false, should_speak=false, response_text=""
+Decision: send_guidance=false, can_speak_without_fabricating=true, should_speak=false, response_text=""
 Reason: The fast brain already provided the extension. Repeating it would be redundant.
 
 ### Example 6: BLOCK — Redundant With Recently Sent Guidance
@@ -219,7 +239,7 @@ GUIDANCE: "The vendor confirmed delivery for Thursday morning."
 RECENTLY SENT GUIDANCE:
   - "Vendor confirmed: Thursday AM delivery, before noon."
 
-Decision: send_guidance=false, should_speak=false, response_text=""
+Decision: send_guidance=false, can_speak_without_fabricating=true, should_speak=false, response_text=""
 Reason: Same delivery confirmation already sent. Different phrasing, same facts.
 
 ### Example 7: NOTIFY ONLY — Background Context
@@ -228,12 +248,37 @@ CONVERSATION:
   [user]: Let's reach out to them about the proposal.
   **NEW** [assistant]: Sure, I'll get on that.
 
-Decision: send_guidance=true, should_speak=false, response_text=""
+Decision: send_guidance=true, can_speak_without_fabricating=true, should_speak=false, response_text=""
 Reason: Useful preference for how to reach out, but not something to say aloud now.
 The fast brain can factor it in when choosing the communication method.
 
+### Example 8: SPEAK — Specific Progress vs Generic Deferral
+GUIDANCE: "Contacting the venue to confirm availability for Saturday."
+CONVERSATION:
+  [user]: Can you find out if that venue is free on Saturday?
+  [assistant]: Let me look into that.
+
+Decision: send_guidance=true, can_speak_without_fabricating=true, should_speak=true, response_text="I'm checking with the venue about Saturday availability now."
+Reason: "Let me look into that" is a generic placeholder — it says nothing about what is
+actually happening. The guidance describes a concrete step (contacting the venue). These are
+fundamentally different: one is a deferral, the other is real status. The fast brain cannot
+produce this update because it has no visibility into backend processes.
+
+### Example 9: NOTIFY — Step Completed, Results Pending
+GUIDANCE: "Calendar lookup for Friday meetings finished."
+CONVERSATION:
+  [user]: Do I have any meetings on Friday?
+  [assistant]: Let me check on that.
+  [assistant]: Still pulling that up.
+
+Decision: send_guidance=true, can_speak_without_fabricating=false, should_speak=false, response_text=""
+Reason: The user asked a question ("do I have meetings?"). The guidance says the lookup
+"finished" but does not say what was found — no meeting names, times, or even whether
+any exist. Speaking would require fabricating meeting details not in the guidance. Notify
+silently; the actual findings will arrive in a follow-up.
+
 ## Output
-Return a JSON object with: thoughts, send_guidance, should_speak, response_text"""
+Return a JSON object with: thoughts, send_guidance, can_speak_without_fabricating, should_speak, response_text"""
 
 
 class GuidanceArticulator:
@@ -320,6 +365,7 @@ Is this guidance still relevant? Should you speak it, silently notify, or block 
             return GuidanceDecision(
                 thoughts=f"Articulator error: {e}. Defaulting to notify-only.",
                 send_guidance=True,
+                can_speak_without_fabricating=False,
                 should_speak=False,
                 response_text="",
             )

@@ -1241,6 +1241,228 @@ class TestFastBrainGuidanceFlow:
             session.generate_reply_calls == baseline_reply_calls
         ), "Notify-only guidance must NOT trigger generate_reply()."
 
+    async def test_should_speak_guidance_not_injected_into_chat_ctx(
+        self,
+        monkeypatch,
+    ):
+        """Guidance with should_speak=True must NOT inject a [notification] into
+        chat_ctx. The queued session.say(add_to_chat_ctx=True) handles context
+        synchronization when the speech plays.
+
+        If the notification is injected eagerly, the fast brain can see it and
+        paraphrase it in its next generate_reply — causing the user to hear the
+        same answer twice (once from the fast brain, once from session.say).
+        """
+        from livekit.agents import llm
+        from unity.conversation_manager.medium_scripts import call as call_script
+
+        contact = {
+            "contact_id": 2,
+            "first_name": "Caller",
+            "surname": "Example",
+            "phone_number": "+15550100002",
+            "email_address": "caller@example.com",
+        }
+        boss = {
+            "contact_id": 1,
+            "first_name": "Manager",
+            "surname": "Example",
+            "phone_number": "+15550100001",
+            "email_address": "manager@example.com",
+        }
+
+        class _ImmediateAwaitable:
+            def __await__(self):
+                async def _done():
+                    return None
+
+                return _done().__await__()
+
+        class _FakeRoom:
+            def on(self, *args, **kwargs):
+                return lambda fn: fn
+
+        class _FakeJobContext:
+            def __init__(self):
+                self.room = _FakeRoom()
+
+            async def connect(self):
+                return None
+
+        class _FakeEventBroker:
+            def __init__(self):
+                self.callbacks = {}
+
+            def register_callback(self, channel, handler):
+                self.callbacks[channel] = handler
+
+            async def publish(self, channel, message):
+                return 1
+
+        fake_session_holder = {}
+
+        class _FakeSession:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.current_agent = None
+                self._events = {}
+                self.generate_reply_calls = 0
+                self.say_calls = []
+                self.agent_state = "listening"
+                self.current_speech = None
+                fake_session_holder["session"] = self
+
+            def on(self, event_name):
+                def _decorator(fn):
+                    self._events[event_name] = fn
+                    return fn
+
+                return _decorator
+
+            async def start(self, room, agent, room_input_options=None):
+                self.current_agent = agent
+
+            def generate_reply(self, **kwargs):
+                self.generate_reply_calls += 1
+                return _ImmediateAwaitable()
+
+            def say(self, text, **kwargs):
+                self.say_calls.append(text)
+                return _ImmediateAwaitable()
+
+        class _FakeAssistant:
+            def __init__(self, *args, **kwargs):
+                self._chat_ctx = llm.ChatContext()
+                self.call_received = True
+
+            def set_call_received(self):
+                self.call_received = True
+
+        async def _noop_async(*args, **kwargs):
+            return None
+
+        async def _noop_end_call():
+            return None
+
+        fake_broker = _FakeEventBroker()
+        fake_session_details = SimpleNamespace(
+            populate_from_env=lambda: None,
+            voice=SimpleNamespace(provider="cartesia", id=""),
+            voice_call=SimpleNamespace(
+                outbound=False,
+                channel="meet",
+                contact_json=json.dumps(contact),
+                boss_json=json.dumps(boss),
+            ),
+            assistant=SimpleNamespace(about="Assistant bio", name="Ava"),
+        )
+
+        monkeypatch.setattr(call_script, "event_broker", fake_broker)
+        monkeypatch.setattr(call_script, "SESSION_DETAILS", fake_session_details)
+        monkeypatch.setattr(call_script, "AgentSession", _FakeSession)
+        monkeypatch.setattr(call_script, "Assistant", _FakeAssistant)
+        monkeypatch.setattr(call_script, "UnifyLLM", lambda *args, **kwargs: object())
+        monkeypatch.setattr(
+            call_script,
+            "build_voice_agent_prompt",
+            lambda **kwargs: SimpleNamespace(flatten=lambda: "system prompt"),
+        )
+        monkeypatch.setattr(call_script, "start_event_broker_receive", _noop_async)
+        monkeypatch.setattr(call_script, "publish_call_started", _noop_async)
+        monkeypatch.setattr(
+            call_script,
+            "create_end_call",
+            lambda *args, **kwargs: _noop_end_call,
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_inactivity_timeout",
+            lambda end_call: (lambda: None),
+        )
+        monkeypatch.setattr(
+            call_script,
+            "setup_participant_disconnect_handler",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(call_script, "RoomInputOptions", lambda **kwargs: object())
+        monkeypatch.setattr(call_script, "EnglishModel", lambda: object())
+        monkeypatch.setattr(call_script.cartesia, "TTS", lambda **kwargs: object())
+        monkeypatch.setattr(call_script.elevenlabs, "TTS", lambda **kwargs: object())
+        if hasattr(call_script, "noise_cancellation"):
+            monkeypatch.setattr(call_script.noise_cancellation, "BVC", lambda: object())
+
+        monkeypatch.setattr(call_script, "STT", object())
+        monkeypatch.setattr(call_script, "VAD", object())
+
+        await call_script.entrypoint(_FakeJobContext())
+
+        session = fake_session_holder["session"]
+        assistant = session.current_agent
+
+        # User is speaking — guidance will be queued but not spoken yet
+        state_cb = session._events["user_state_changed"]
+        state_cb(SimpleNamespace(new_state="speaking"))
+
+        # Send should_speak=True guidance while user is speaking
+        guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
+        guidance_cb(
+            {
+                "payload": {
+                    "content": "No contact named Bob was found.",
+                    "response_text": "There's no contact named Bob in your list.",
+                    "should_speak": True,
+                },
+            },
+        )
+
+        # The notification must NOT be in chat_ctx yet — it should be deferred
+        # until maybe_speak_queued() fires (when the agent is idle).
+        # If injected eagerly, the fast brain sees it during generate_reply
+        # and paraphrases it before session.say() plays — double delivery.
+        session_texts = [
+            item.text_content or ""
+            for item in session._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        has_notification = any("No contact named Bob" in txt for txt in session_texts)
+        assert not has_notification, (
+            f"should_speak=True guidance injected a [notification] into chat_ctx "
+            f"while speech is still queued (user speaking). The notification must "
+            f"be deferred until maybe_speak_queued() fires.\n"
+            f"Chat context messages: {session_texts}"
+        )
+
+        # Speech should NOT have fired yet (user is speaking)
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire while user is speaking."
+
+        # User stops, agent settles → maybe_speak_queued fires
+        state_cb(SimpleNamespace(new_state="listening"))
+        session.agent_state = "listening"
+        agent_state_cb = session._events["agent_state_changed"]
+        agent_state_cb(SimpleNamespace(new_state="listening"))
+
+        # NOW the notification should be in chat_ctx (injected at speech time)
+        session_texts_after = [
+            item.text_content or ""
+            for item in session._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        has_notification_after = any(
+            "No contact named Bob" in txt for txt in session_texts_after
+        )
+        assert has_notification_after, (
+            "After session.say() fires, the notification should be in chat_ctx "
+            "so the fast brain's history shows the correct pattern: "
+            "notification → assistant response."
+        )
+
+        # The speech SHOULD have fired
+        assert (
+            len(session.say_calls) == 1
+        ), "should_speak=True guidance must queue speech via session.say()."
+
     async def test_unify_llm_preserves_base_system_prompt_with_notification(
         self,
         monkeypatch,
@@ -1666,3 +1888,147 @@ class TestFastBrainGuidanceFlow:
             len(session.say_calls) == 1
         ), "Queued speech should fire after agent returns to listening."
         assert session.say_calls[0] == "It's at 3pm."
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestFastBrainOpeningGreeting:
+    """The fast brain's first turn (session_start, zero user messages) should
+    produce a short, natural greeting — not an acknowledgment of the system
+    prompt, not a capability list, and not a tutorial."""
+
+    async def test_session_start_produces_natural_greeting(self):
+        """With only the system prompt and no user messages, the fast brain
+        should greet briefly and naturally.
+
+        Uses reasoning_effort='low' to match the production voice pipeline
+        (call.py UnifyLLM configuration)."""
+        from unity.common.llm_client import new_llm_client
+        from unity.conversation_manager.prompt_builders import (
+            build_voice_agent_prompt,
+        )
+        from unity.settings import SETTINGS
+
+        prompt = build_voice_agent_prompt(
+            bio="A helpful AI assistant.",
+            boss_first_name="Yusha",
+            boss_surname="",
+            boss_phone_number="+15550000001",
+            boss_email_address="yusha@example.com",
+            is_boss_user=True,
+        ).flatten()
+
+        client = new_llm_client(
+            model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+            reasoning_effort="low",
+        )
+        response = await client.generate(
+            system_message=prompt,
+            messages=[],
+        )
+
+        response_lower = response.lower().strip()
+
+        assert len(response) < 200, (
+            f"Opening greeting is too long ({len(response)} chars).\n"
+            f"Response: {response}\n"
+            f"The first turn should be a brief greeting (1-2 sentences), "
+            f"not a list of suggestions or a tutorial."
+        )
+
+        bullet_indicators = ["- ", "* ", "1.", "2.", "3."]
+        has_bullets = any(ind in response for ind in bullet_indicators)
+        assert not has_bullets, (
+            f"Opening greeting contains a bulleted list.\n"
+            f"Response: {response}\n"
+            f"The first turn should be a conversational greeting, "
+            f"not a list of options or suggestions."
+        )
+
+        filler_phrases = [
+            "here are a few",
+            "here are some",
+            "you can say",
+            "depending on what you need",
+            "for example",
+            "check something",
+            "pull up an email",
+            "draft a",
+        ]
+        has_filler = any(p in response_lower for p in filler_phrases)
+        assert not has_filler, (
+            f"Opening greeting sounds like a tutorial/help menu.\n"
+            f"Response: {response}\n"
+            f"The first turn should be a natural greeting like "
+            f"'Hey, how can I help?' — not suggestions for what the "
+            f"user can do."
+        )
+
+        starts_with_ack = response_lower.startswith("got it")
+        assert not starts_with_ack, (
+            f"Opening greeting starts with an acknowledgment ('Got it').\n"
+            f"Response: {response}\n"
+            f"There is nothing to acknowledge at the start of a call. "
+            f"The model is echoing an example from the system prompt."
+        )
+
+
+class TestSayMetaTextMatching:
+    """Regression tests for _last_say_meta text matching.
+
+    When session.say() and generate_reply produce concurrent TTS, the
+    _last_say_meta (set by session.say) can be consumed by the wrong
+    conversation_item_added event. The fix is to store the spoken text
+    in the meta and only consume it when the utterance text matches.
+    """
+
+    def test_match_say_meta_exists(self):
+        """The match_say_meta helper must exist in common.py."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        assert callable(match_say_meta)
+
+    def test_matching_text_consumes_meta(self):
+        """When utterance text matches the session.say text, return the meta."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        meta = {
+            "guidance_id": "guid-abc",
+            "source": "proactive_speech",
+            "text": "Still there, Yusha?",
+        }
+        result = match_say_meta(meta, "Still there, Yusha?")
+        assert result is not None
+        assert result["guidance_id"] == "guid-abc"
+
+    def test_different_text_does_not_consume_meta(self):
+        """When utterance text differs from session.say text, return None.
+
+        This is the exact bug: a fast brain response like
+        'One moment - I am pulling that up.' should NOT consume meta
+        set by session.say('Sure, go ahead - what is the task?').
+        """
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        meta = {
+            "guidance_id": "guid-abc",
+            "source": "proactive_speech",
+            "text": "Sure, go ahead — what's the task?",
+        }
+        result = match_say_meta(meta, "One moment — I'm pulling that up.")
+        assert result is None
+
+    def test_none_meta_returns_none(self):
+        """When no meta is set, return None regardless of text."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        assert match_say_meta(None, "anything") is None
+
+    def test_meta_without_text_key_always_matches(self):
+        """Legacy meta dicts without a text key match any utterance
+        (backward compatible with pre-fix code)."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        meta = {"guidance_id": "guid-abc", "source": "slow_brain"}
+        result = match_say_meta(meta, "Some text")
+        assert result is not None

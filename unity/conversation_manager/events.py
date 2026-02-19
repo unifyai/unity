@@ -296,6 +296,7 @@ class CallGuidance(Event):
     content: str
     response_text: str = ""
     should_speak: bool = False
+    source: str = ""
 
 
 @dataclass

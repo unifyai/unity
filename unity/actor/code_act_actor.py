@@ -6,7 +6,6 @@ import inspect
 import json
 import traceback
 import uuid
-from datetime import datetime, timezone
 from secrets import token_hex as _token_hex
 import logging
 from typing import (
@@ -41,6 +40,7 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
+from unity.common.llm_helpers import methods_to_tool_dict
 from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
@@ -75,46 +75,73 @@ filtered_tools_dict)`` where *tool_choice_mode* is ``"auto"`` or
 """
 
 _USE_DEFAULT: object = object()
-"""Sentinel indicating 'use the built-in function-first tool policy'."""
+"""Sentinel indicating 'use the built-in discovery-first tool policy'."""
 
 
 def _default_tool_policy(
     has_fm_tools: bool,
+    has_gm_tools: bool,
     filter_tools: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> ToolPolicyFn:
-    """Build the default *function-first* tool policy.
+    """Build the default *discovery-first* tool policy.
 
-    On step 0, if FunctionManager discovery tools exist, only those tools are
-    exposed and a tool call is *required*.  On all subsequent steps the full
-    (statically-filtered) tool set is returned with ``"auto"`` mode.
+    Until **both** a ``FunctionManager_*`` and a ``GuidanceManager_*`` tool
+    have been called at least once, the LLM is restricted to only those
+    discovery tools (with ``tool_choice="required"``).  Once both gates are
+    satisfied the full (statically-filtered) tool set is returned with
+    ``"auto"`` mode.
+
+    When only one of the two manager tool families is present, that single
+    family acts as the sole gate.  When neither is present the policy is a
+    no-op pass-through.
 
     Parameters
     ----------
     has_fm_tools:
         Whether the base tool set contains any ``FunctionManager_*`` tools.
+    has_gm_tools:
+        Whether the base tool set contains any ``GuidanceManager_*`` tools.
     filter_tools:
         The static-filter callable (``_filter_tools``) that enforces
         ``can_compose`` / ``can_store`` / ``can_spawn_sub_agents``.
     """
 
-    def _policy(step: int, tools: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    def _policy(
+        step: int,
+        tools: Dict[str, Any],
+        called_tools: list[str],
+    ) -> tuple[str, Dict[str, Any]]:
         filtered = filter_tools(tools)
 
-        # Function-first: on the first model turn, require a FunctionManager call
-        # (search/filter/list) when those tools exist.  This avoids the model
-        # skipping the function library and going straight to execution.
-        if step == 0 and has_fm_tools:
-            fm_only = {
-                k: v
-                for k, v in filtered.items()
-                if isinstance(k, str)
-                and k.startswith("FunctionManager_")
-                and k != "FunctionManager_add_functions"
-            }
-            if fm_only:
-                return "required", fm_only
+        fm_satisfied = (not has_fm_tools) or any(
+            t.startswith("FunctionManager_") for t in called_tools
+        )
+        gm_satisfied = (not has_gm_tools) or any(
+            t.startswith("GuidanceManager_") for t in called_tools
+        )
 
-        return "auto", filtered
+        if fm_satisfied and gm_satisfied:
+            return "auto", filtered
+
+        # Expose only the unsatisfied gate(s) and require a call.
+        gated: Dict[str, Any] = {}
+        if not fm_satisfied:
+            gated.update(
+                {
+                    k: v
+                    for k, v in filtered.items()
+                    if isinstance(k, str) and k.startswith("FunctionManager_")
+                },
+            )
+        if not gm_satisfied:
+            gated.update(
+                {
+                    k: v
+                    for k, v in filtered.items()
+                    if isinstance(k, str) and k.startswith("GuidanceManager_")
+                },
+            )
+        return ("required", gated) if gated else ("auto", filtered)
 
     return _policy
 
@@ -391,90 +418,24 @@ def _start_storage_check_loop(
         language: str = "python",
         overwrite: bool = False,
     ) -> Any:
-        """Store new reusable functions, or update existing ones by name.
-
-        When ``overwrite=True`` and a function with the same name already
-        exists, its implementation is replaced with the new one.
-        """
         return fm.add_functions(
             implementations=implementations,
             language=language,
             overwrite=bool(overwrite),
         )
 
+    FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
+
     async def FunctionManager_delete_functions(
         function_ids: list[int],
     ) -> Any:
-        """Delete functions by their IDs.
-
-        Use this to remove obsolete, redundant, or superseded functions
-        from the store. Obtain ``function_id`` values from the results
-        of search, filter, or list calls.
-        """
         return fm.delete_function(function_id=function_ids)
 
-    # ── GuidanceManager tools ─────────────────────────────────────────
-
-    _GuidanceManagerCls = type(gm)
-
-    async def GuidanceManager_search_guidance(
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-    ) -> Any:
-        return gm.search(references=references, k=k)
-
-    GuidanceManager_search_guidance.__doc__ = _GuidanceManagerCls.search.__doc__
-
-    async def GuidanceManager_filter_guidance(
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> Any:
-        return gm.filter(filter=filter, offset=offset, limit=limit)
-
-    GuidanceManager_filter_guidance.__doc__ = _GuidanceManagerCls.filter.__doc__
-
-    async def GuidanceManager_add_guidance(
-        *,
-        title: str,
-        content: str,
-        function_ids: Optional[list[int]] = None,
-    ) -> Any:
-        return gm.add_guidance(
-            title=title,
-            content=content,
-            function_ids=function_ids or [],
-        )
-
-    GuidanceManager_add_guidance.__doc__ = _GuidanceManagerCls.add_guidance.__doc__
-
-    async def GuidanceManager_update_guidance(
-        *,
-        guidance_id: int,
-        title: Optional[str] = None,
-        content: Optional[str] = None,
-        function_ids: Optional[list[int]] = None,
-    ) -> Any:
-        return gm.update_guidance(
-            guidance_id=guidance_id,
-            title=title,
-            content=content,
-            function_ids=function_ids,
-        )
-
-    GuidanceManager_update_guidance.__doc__ = (
-        _GuidanceManagerCls.update_guidance.__doc__
+    FunctionManager_delete_functions.__doc__ = (
+        BaseFunctionManager.delete_function.__doc__
     )
 
-    async def GuidanceManager_delete_guidance(
-        *,
-        guidance_id: int,
-    ) -> Any:
-        return gm.delete_guidance(guidance_id=guidance_id)
-
-    GuidanceManager_delete_guidance.__doc__ = (
-        _GuidanceManagerCls.delete_guidance.__doc__
-    )
+    # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
     tools: Dict[str, Callable] = {
         "FunctionManager_search_functions": FunctionManager_search_functions,
@@ -482,11 +443,14 @@ def _start_storage_check_loop(
         "FunctionManager_list_functions": FunctionManager_list_functions,
         "FunctionManager_add_functions": FunctionManager_add_functions,
         "FunctionManager_delete_functions": FunctionManager_delete_functions,
-        "GuidanceManager_search_guidance": GuidanceManager_search_guidance,
-        "GuidanceManager_filter_guidance": GuidanceManager_filter_guidance,
-        "GuidanceManager_add_guidance": GuidanceManager_add_guidance,
-        "GuidanceManager_update_guidance": GuidanceManager_update_guidance,
-        "GuidanceManager_delete_guidance": GuidanceManager_delete_guidance,
+        **methods_to_tool_dict(
+            gm.search,
+            gm.filter,
+            gm.add_guidance,
+            gm.update_guidance,
+            gm.delete_guidance,
+            include_class_name=True,
+        ),
     }
 
     # ── Wire ask_about_completed_tool from snapshot ───────────────────
@@ -743,21 +707,19 @@ def _start_storage_check_loop(
         "Do NOT store trivial one-liners, test scaffolding, or functions "
         "that are too task-specific to be reusable.\n\n"
         "### Guidance Store — the *how*\n\n"
-        "The GuidanceManager stores high-level guidance entries that "
-        "explain *how* to compose multiple functions (and primitives) "
-        "together to accomplish broader tasks. Think of guidance entries "
-        "as recipes or playbooks — they describe the orchestration "
-        "strategy, the order of steps, decision points, and caveats, "
+        "The GuidanceManager stores procedural how-to entries: "
+        "step-by-step instructions, standard operating procedures, "
+        "software usage walkthroughs, and strategies for composing "
+        "multiple functions together to accomplish broader tasks. "
+        "Think of guidance entries as recipes or playbooks — they "
+        "describe the procedure, decision points, and caveats, "
         "rather than containing executable code.\n\n"
-        "A guidance entry is analogous to a prompt that references "
-        "multiple tools: it explains *when* and *why* to use certain "
-        "functions in combination, while the functions themselves "
-        "(in the FunctionManager) contain the *what*.\n\n"
-        "Guidance is only warranted when a trajectory reveals a non-obvious "
-        "multi-step workflow that composes several functions in a way that "
-        "would be hard to rediscover. A single function call, a linear "
-        "sequence of obvious steps, or a workflow fully explained by the "
-        "individual function docstrings does NOT need guidance.\n\n"
+        "In this storage-review context, guidance is most relevant "
+        "when the trajectory reveals a non-obvious multi-step "
+        "composition strategy that would be hard to rediscover. "
+        "A single function call, a linear sequence of obvious steps, "
+        "or a workflow fully explained by the individual function "
+        "docstrings does NOT need guidance.\n\n"
         "Actions:\n"
         "- **Add** guidance for a genuinely non-trivial compositional "
         "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
@@ -1312,8 +1274,9 @@ class CodeActActor(BaseCodeActActor):
                 Enables Anthropic prompt caching for the specified components to reduce
                 costs and latency. Valid values: "tools", "system", "messages".
             tool_policy: Controls per-turn dynamic tool filtering and tool-choice mode.
-                - ``_USE_DEFAULT`` (default): uses the built-in "function-first" policy
-                  that requires a FunctionManager discovery call on step 0.
+                - ``_USE_DEFAULT`` (default): uses the built-in "discovery-first"
+                  policy that requires both a FunctionManager and a GuidanceManager
+                  discovery call before unlocking the full tool set.
                 - A custom ``ToolPolicyFn`` callable: receives ``(step, tools)`` and
                   returns ``(mode, filtered_tools)``.  Static filters (``can_compose``,
                   ``can_store``, etc.) are always applied before the custom policy sees
@@ -1689,8 +1652,10 @@ class CodeActActor(BaseCodeActActor):
             -----------
             - **language**: "python" | "bash" | "zsh" | "sh" | "powershell"
             - **state_mode**:
-              - "stateless": no session; clean execution; no persistence
-              - "stateful": persistent session; state accumulates
+              - "stateless": fresh execution; no persistence of intermediate variables.
+                Environment globals and FunctionManager-discovered functions are
+                always available.
+              - "stateful": persistent session; state accumulates across calls
               - "read_only": reads from an existing session but does not persist changes
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
@@ -1868,19 +1833,6 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
 
-                if notification_q is not None and str(language) == "python":
-                    try:
-                        await notification_q.put(
-                            {
-                                "type": "execution_started",
-                                "message": "execution_started",
-                                "sandbox_id": sandbox_id,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                    except Exception:
-                        pass
-
                 # Execute via SessionExecutor. Route primitives if available in current sandbox.
                 primitives = None
                 computer_primitives = self._computer_primitives
@@ -1906,22 +1858,6 @@ class CodeActActor(BaseCodeActActor):
                         exec_exc = e
                         tb = traceback.format_exc()
                         tb_str = tb
-                        if notification_q is not None and str(language) == "python":
-                            try:
-                                await notification_q.put(
-                                    {
-                                        "type": "execution_error",
-                                        "message": "execution_error",
-                                        "sandbox_id": sandbox_id,
-                                        "error_kind": "exception",
-                                        "traceback_preview": tb[:2000],
-                                        "timestamp": datetime.now(
-                                            timezone.utc,
-                                        ).isoformat(),
-                                    },
-                                )
-                            except Exception:
-                                pass
                         out = {
                             "stdout": "",
                             "stderr": "",
@@ -1947,23 +1883,6 @@ class CodeActActor(BaseCodeActActor):
                     )
                 else:
                     out["session_name"] = None
-
-                if notification_q is not None and str(language) == "python":
-                    try:
-                        _status = "ok" if not out.get("error") else "error"
-                        await notification_q.put(
-                            {
-                                "type": "execution_finished",
-                                "sandbox_id": sandbox_id,
-                                "status": _status,
-                                "message": f"execution_finished:{_status}",
-                                "stdout_len": len(out.get("stdout") or ""),
-                                "stderr_len": len(out.get("stderr") or ""),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                    except Exception:
-                        pass
 
                 # Wrap in-process Python results in ExecutionResult for proper LLM
                 # image formatting. In-process Python has stdout as List[OutputPart];
@@ -2099,14 +2018,21 @@ class CodeActActor(BaseCodeActActor):
                 _namespace: Optional[Dict[str, Any]] = None,
                 _also_return_metadata: bool = False,
             ) -> Any:
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.search_functions(
                     query=query,
                     n=n,
                     include_implementations=include_implementations,
                     _return_callable=True,
-                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
 
             FunctionManager_search_functions.__doc__ = (
@@ -2122,15 +2048,22 @@ class CodeActActor(BaseCodeActActor):
                 _namespace: Optional[Dict[str, Any]] = None,
                 _also_return_metadata: bool = False,
             ) -> Any:
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.filter_functions(
                     filter=filter,
                     offset=offset,
                     limit=limit,
                     include_implementations=include_implementations,
                     _return_callable=True,
-                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
 
             FunctionManager_filter_functions.__doc__ = (
@@ -2143,12 +2076,19 @@ class CodeActActor(BaseCodeActActor):
                 _namespace: Optional[Dict[str, Any]] = None,
                 _also_return_metadata: bool = False,
             ) -> Any:
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.list_functions(
                     include_implementations=include_implementations,
                     _return_callable=True,
-                    _namespace=_CURRENT_SANDBOX.get().global_state,
+                    _namespace=sb.global_state,
                     _also_return_metadata=True,
                 )
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
 
             FunctionManager_list_functions.__doc__ = (
@@ -2159,37 +2099,23 @@ class CodeActActor(BaseCodeActActor):
             tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
-            async def FunctionManager_add_functions(
-                implementations: str | list[str],
-                *,
-                language: str = "python",
-                overwrite: bool = False,
-                verify: Optional[dict[str, bool]] = None,
-                preconditions: Optional[dict[str, dict]] = None,
-            ) -> Any:
-                """
-                Add/store new functions into the FunctionManager.
+        # GuidanceManager tools: bound methods registered directly via
+        # methods_to_tool_dict (no custom wrappers needed — unlike FM, GM
+        # methods are plain CRUD with no sandbox injection side-effects).
+        if self.guidance_manager:
+            gm = self.guidance_manager
+            tools.update(
+                methods_to_tool_dict(
+                    gm.search,
+                    gm.filter,
+                    gm.add_guidance,
+                    gm.update_guidance,
+                    gm.delete_guidance,
+                    include_class_name=True,
+                ),
+            )
 
-                Notes
-                -----
-                - This tool is only available in the post-completion storage review loop,
-                  never in the main execution loop.
-                - Prefer using existing functions (search first) before adding new ones.
-                """
-                fm = self.function_manager
-                if fm is None:
-                    raise RuntimeError(
-                        "FunctionManager is not configured on this actor.",
-                    )
-                return fm.add_functions(
-                    implementations=implementations,
-                    language=language,  # type: ignore[arg-type]
-                    overwrite=bool(overwrite),
-                    verify=(verify or {}),
-                    preconditions=(preconditions or {}),
-                )
-
-            tools["FunctionManager_add_functions"] = FunctionManager_add_functions
+        if self.function_manager:
 
             async def execute_function(
                 function_name: str,
@@ -2348,21 +2274,6 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
-                    if notification_q is not None and str(language) == "python":
-                        try:
-                            await notification_q.put(
-                                {
-                                    "type": "execution_started",
-                                    "message": "execution_started",
-                                    "sandbox_id": sandbox_id,
-                                    "timestamp": datetime.now(
-                                        timezone.utc,
-                                    ).isoformat(),
-                                },
-                            )
-                        except Exception:
-                            pass
-
                     # Resolve primitives from current sandbox.
                     primitives = None
                     computer_primitives = self._computer_primitives
@@ -2388,22 +2299,6 @@ class CodeActActor(BaseCodeActActor):
                             exec_exc = e
                             tb = traceback.format_exc()
                             tb_str = tb
-                            if notification_q is not None and str(language) == "python":
-                                try:
-                                    await notification_q.put(
-                                        {
-                                            "type": "execution_error",
-                                            "message": "execution_error",
-                                            "sandbox_id": sandbox_id,
-                                            "error_kind": "exception",
-                                            "traceback_preview": tb[:2000],
-                                            "timestamp": datetime.now(
-                                                timezone.utc,
-                                            ).isoformat(),
-                                        },
-                                    )
-                                except Exception:
-                                    pass
                             out = {
                                 "stdout": "",
                                 "stderr": "",
@@ -2429,25 +2324,6 @@ class CodeActActor(BaseCodeActActor):
                         )
                     else:
                         out["session_name"] = None
-
-                    if notification_q is not None and str(language) == "python":
-                        try:
-                            _status = "ok" if not out.get("error") else "error"
-                            await notification_q.put(
-                                {
-                                    "type": "execution_finished",
-                                    "sandbox_id": sandbox_id,
-                                    "status": _status,
-                                    "message": f"execution_finished:{_status}",
-                                    "stdout_len": len(out.get("stdout") or ""),
-                                    "stderr_len": len(out.get("stderr") or ""),
-                                    "timestamp": datetime.now(
-                                        timezone.utc,
-                                    ).isoformat(),
-                                },
-                            )
-                        except Exception:
-                            pass
 
                     # Wrap in-process Python results in ExecutionResult.
                     if out.get("language") == "python" and isinstance(
@@ -3280,14 +3156,11 @@ class CodeActActor(BaseCodeActActor):
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply static per-call filters (can_compose, can_store)."""
+            """Apply static per-call filters (can_compose)."""
             out = dict(tool_dict)
             if not effective_can_compose:
                 for name in _compose_only_tools:
                     out.pop(name, None)
-            # Storage is always deferred to the post-completion loop;
-            # the main loop never exposes the add_functions tool.
-            out.pop("FunctionManager_add_functions", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))
@@ -3353,6 +3226,7 @@ class CodeActActor(BaseCodeActActor):
             tools=base_tools,
             can_store=effective_can_store,
             guidelines=guidelines,
+            discovery_first_policy=self.tool_policy is _USE_DEFAULT,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
@@ -3366,12 +3240,20 @@ class CodeActActor(BaseCodeActActor):
 
             tool_policy: Optional[ToolPolicyFn] = _static_only_policy
         elif self.tool_policy is _USE_DEFAULT:
-            # Default function-first policy.
+            # Default discovery-first policy (both FM and GM gates).
             _has_fm_tools = any(
                 isinstance(k, str) and k.startswith("FunctionManager_")
                 for k in base_tools.keys()
             )
-            tool_policy = _default_tool_policy(_has_fm_tools, _filter_tools)
+            _has_gm_tools = any(
+                isinstance(k, str) and k.startswith("GuidanceManager_")
+                for k in base_tools.keys()
+            )
+            tool_policy = _default_tool_policy(
+                _has_fm_tools,
+                _has_gm_tools,
+                _filter_tools,
+            )
         else:
             # Custom caller-provided policy.  Wrap it so that _filter_tools
             # is always applied first (static filters are never bypassed).

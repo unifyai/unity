@@ -50,6 +50,7 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -69,6 +70,8 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
         self._log_label = SimulatedLineage.make_label(
             "SimulatedFileManager.ask_about_file",
         )
+
+        self._init_completion_gate(hold_completion)
 
         # fire clarification question immediately if queues supplied
         if self._needs_clar:
@@ -163,6 +166,7 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done_event.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -202,6 +206,7 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
         """
         self._log_stop(reason)
         self._cancelled = True
+        self._open_completion_gate()
         try:
             self._cancel_event.set()
         except Exception:
@@ -223,7 +228,7 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
         return "Resumed."
 
     def done(self) -> bool:
-        return self._done_event.is_set()
+        return self._done_event.is_set() and self._gate_open
 
     async def ask(
         self,
@@ -477,15 +482,14 @@ class SimulatedFileManager(BaseFileManager):
         _call_id: Optional[str] = None,
         response_format: Optional[Any] = None,
     ) -> SteerableToolHandle:
-        if file_path not in self._files:
-            raise FileNotFoundError(file_path)
         instruction = build_simulated_method_prompt(
             "ask_about_file",
             f"File: {file_path}\nQuestion: {question}",
             parent_chat_context=_parent_chat_context,
         )
-        file_info = self._files[file_path]
-        instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
+        file_info = self._files.get(file_path)
+        if file_info is not None:
+            instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,

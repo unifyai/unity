@@ -208,7 +208,13 @@ async def async_tool_loop_inner(
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     tool_policy: Optional[
-        Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
+        Union[
+            Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]],
+            Callable[
+                [int, Dict[str, Callable], list[str]],
+                Tuple[str, Dict[str, Callable]],
+            ],
+        ]
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     outer_handle_container: Optional[list] = None,
@@ -603,6 +609,22 @@ async def async_tool_loop_inner(
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
     assistant_meta: Dict[int, Dict[str, Any]] = {}
     step_index: int = 0  # per assistant turn
+    called_tools: list[str] = []  # tool names in invocation order across all turns
+
+    # Pre-compute whether tool_policy accepts a third positional arg
+    # (called_tools history) so we avoid per-turn introspection overhead.
+    _policy_accepts_history = False
+    if tool_policy is not None:
+        with suppress(Exception):
+            _sig = inspect.signature(tool_policy)
+            _positional_kinds = (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+            _n_positional = sum(
+                1 for p in _sig.parameters.values() if p.kind in _positional_kinds
+            )
+            _policy_accepts_history = _n_positional >= 3
     # Expose live task_info mapping on the current Task so outer handles/tests
     # can introspect currently running nested handles (used by ask/stop helpers).
     with suppress(Exception):
@@ -1833,18 +1855,24 @@ async def async_tool_loop_inner(
 
             # 0.  Decide policy & tool-subset for this turn  ───────────────
             if tool_policy is not None:
+                _tools_snapshot = {n: s.fn for n, s in tools_data.normalized.items()}
                 try:
-                    tool_choice_mode, filtered = tool_policy(
-                        step_index,
-                        {n: s.fn for n, s in tools_data.normalized.items()},
-                    )
+                    if _policy_accepts_history:
+                        tool_choice_mode, filtered = tool_policy(
+                            step_index,
+                            _tools_snapshot,
+                            list(called_tools),
+                        )
+                    else:
+                        tool_choice_mode, filtered = tool_policy(
+                            step_index,
+                            _tools_snapshot,
+                        )
                 except Exception as _e:  # never abort the loop on mis-behaving policies
                     logger.error(
                         f"tool_policy raised on turn {step_index}: {_e!r}",
                     )
-                    tool_choice_mode, filtered = "auto", {
-                        n: s.fn for n, s in tools_data.normalized.items()
-                    }
+                    tool_choice_mode, filtered = "auto", _tools_snapshot
                 policy_tools_norm = normalise_tools(filtered)
             else:
                 tool_choice_mode = "auto"
@@ -2394,6 +2422,7 @@ async def async_tool_loop_inner(
 
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
+                    called_tools.append(name)
 
                     # Parse arguments - handle both string and dict formats
                     _raw_args = call["function"]["arguments"]

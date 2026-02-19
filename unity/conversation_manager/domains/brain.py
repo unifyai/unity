@@ -34,42 +34,13 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
         __base__=BaseModel,
     )
 
-    # Voice mode: thoughts + optional call_guidance for the Voice Agent
-    # Both TTS and Realtime modes use call_guidance - the Main CM Brain
-    # provides data/notifications to the voice agent (fast brain) which handles
-    # the actual conversation autonomously.
-    #
-    # IMPORTANT: call_guidance is OPTIONAL (default="") because the Voice Agent
-    # handles all conversational aspects independently. The slow brain should
-    # only provide call_guidance when it has specific data, requests, or
-    # notifications to communicate - NOT for conversational steering.
-    VoiceResponse = create_model(
-        "VoiceResponse",
-        thoughts=(
-            str,
-            Field(..., description="Your concise reasoning before taking actions"),
-        ),
-        call_guidance=(
-            str,
-            Field(
-                default="",
-                description=(
-                    "Data, requests, or notifications for the Voice Agent. "
-                    "Write in the language currently being spoken on the call "
-                    "so the Voice Agent can relay it directly. "
-                    "Leave empty unless you need to provide specific information "
-                    "(e.g., 'The meeting time was 3pm'), request data from the caller, "
-                    "or relay a notification from another channel. "
-                    "Do NOT use for conversational guidance - the Voice Agent handles that autonomously."
-                ),
-            ),
-        ),
-        __base__=BaseModel,
-    )
-
+    # Voice mode uses the same response model as text mode.
+    # call_guidance is now delivered via tool parameters (e.g. wait(call_guidance="..."))
+    # rather than the response content, because the model reliably populates tool
+    # arguments but intermittently skips the content field when tool_choice is required.
     return {
-        Mode.CALL: VoiceResponse,
-        Mode.MEET: VoiceResponse,
+        Mode.CALL: TextResponse,
+        Mode.MEET: TextResponse,
         Mode.TEXT: TextResponse,
     }
 
@@ -224,7 +195,7 @@ def build_brain_spec(
         surname=boss_contact.get("surname") or "",
         phone_number=boss_contact.get("phone_number"),
         email_address=boss_contact.get("email_address"),
-        is_voice_call=cm.call_manager.uses_realtime_api,
+        is_voice_call=cm.mode.is_voice,
         demo_mode=SETTINGS.DEMO_MODE,
     )
 

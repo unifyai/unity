@@ -6,6 +6,7 @@ from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
+from unity.conversation_manager.tracing import content_trace_id
 from unity.conversation_manager.types import Medium, Mode
 
 if TYPE_CHECKING:
@@ -50,7 +51,14 @@ class EventHandler:
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         event_key = _event_type_to_log_key(event.__class__)
         if hasattr(cm, "_session_logger"):
-            cm._session_logger.info(event_key, f"Event: {event.__class__.__name__}")
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                event_key,
+                (
+                    f"Event: {event.__class__.__name__} "
+                    f"(event_id={event_trace.get('event_id', '-')})"
+                ),
+            )
 
         if event.__class__.loggable:
             asyncio.create_task(
@@ -339,9 +347,10 @@ async def _(
     *args,
     **kwargs,
 ):
+    guidance_id = content_trace_id("guid", event.content or "")
     cm._session_logger.info(
         "call_guidance",
-        f"Received guidance: {event.content[:50]}...",
+        f"Received guidance guidance_id={guidance_id}: {event.content[:50]}...",
     )
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -357,6 +366,9 @@ async def _(
         message_content=event.content,
         role="guidance",
     )
+
+    if event.should_speak:
+        await cm.schedule_proactive_speech()
 
 
 @EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
@@ -952,6 +964,10 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
 
     Unlike ``ActorResponse``, notifications arrive while the actor is still
     working.  Progress is recorded in the action's history.
+
+    In voice mode, the notification is forwarded directly to the articulator
+    for an immediate voice-UX decision, bypassing the slow-brain's
+    call_guidance gate.
     """
     if event.handle_id in cm.in_flight_actions:
         from unity.common.prompt_helpers import now as prompt_now
@@ -964,6 +980,9 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
             },
         )
     await cm.request_llm_run()
+
+    if cm.mode.is_voice and event.response:
+        asyncio.create_task(cm._articulate_and_publish_notification(event.response))
 
 
 @EventHandler.register(SyncContacts)
@@ -1115,7 +1134,19 @@ async def _(
     if fast_brain_text and cm.mode.is_voice:
         contact = cm.get_active_contact()
         if contact:
-            guidance_event = CallGuidance(contact, fast_brain_text)
+            guidance_id = content_trace_id("guid", fast_brain_text)
+            cm._session_logger.info(
+                "call_guidance",
+                (
+                    f"Publishing meet interaction guidance_id={guidance_id} "
+                    f"reason={event_name}"
+                ),
+            )
+            guidance_event = CallGuidance(
+                contact=contact,
+                content=fast_brain_text,
+                source="meet_interaction",
+            )
             await cm.event_broker.publish(
                 "app:call:call_guidance",
                 guidance_event.to_json(),
@@ -1167,6 +1198,11 @@ async def _(event: DirectMessageEvent, cm: "ConversationManager", *args, **kwarg
     )
 
     if cm.mode.is_voice:
+        guidance_id = content_trace_id("guid", event.content or "")
+        cm._session_logger.info(
+            "call_guidance",
+            f"Publishing direct-message guidance guidance_id={guidance_id}",
+        )
         await cm.event_broker.publish(
             "app:call:call_guidance",
             json.dumps({"content": event.content}),

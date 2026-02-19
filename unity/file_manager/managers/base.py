@@ -1632,6 +1632,12 @@ class BaseFileManager(BaseStateManager):
         and wants a focused analysis (e.g., summarise this PDF, extract a key
         value from a document).
 
+        For image files (JPEG/PNG), the method bypasses the normal tool‑loop
+        pipeline and instead sends the raw image to a vision‑capable model in a
+        single‑shot call, returning the textual answer directly.  This makes it
+        suitable for querying screenshots and other raster images stored on the
+        filesystem (e.g., ``Screenshots/User/*.jpg``).
+
         Clarifications
         --------------
         Do not use this method to ask the human follow‑up questions. If the

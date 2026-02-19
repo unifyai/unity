@@ -18,6 +18,7 @@ from unity.conversation_manager.domains.call_manager import (
 from unity.conversation_manager.domains.contact_index import (
     ContactIndex,
     CommsMessage,
+    GuidanceMessage,
     Message,
 )
 from unity.conversation_manager.domains.brain import build_brain_spec
@@ -47,6 +48,7 @@ from unity.conversation_manager.domains.guidance_articulator import (
     ConversationMessage,
 )
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.conversation_manager.tracing import content_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +218,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # LLM run requests recorded during event handling (production path).
         # In step() mode, requests are recorded via a contextvar instead.
         self._pending_llm_requests: list[tuple[float, bool]] = []
+        self._pending_llm_request_meta: list[dict[str, str]] = []
+        self._current_event_trace: dict[str, str] | None = None
+        self._event_trace_seq: int = 0
+        self._llm_request_seq: int = 0
+        self._llm_run_seq: int = 0
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
@@ -560,10 +567,68 @@ class ConversationManager(metaclass=SingletonABCMeta):
             demo_mode=SETTINGS.DEMO_MODE,
         ).flatten()
 
+    async def _articulate_and_publish_notification(
+        self,
+        notification_text: str,
+    ) -> None:
+        """Forward an actor notification directly to the articulator for voice-UX decision.
+
+        Bypasses the slow-brain's call_guidance gate. The articulator is the sole
+        decision-maker on whether the user hears this notification.
+        """
+        from datetime import datetime, timezone
+
+        guidance_id = content_trace_id("guid", notification_text)
+        self._session_logger.info(
+            "call_guidance",
+            f"Direct notification to articulator guidance_id={guidance_id}",
+        )
+
+        decision = await self._articulate_guidance(
+            notification_text,
+            datetime.now(timezone.utc),
+            guidance_id=guidance_id,
+        )
+
+        if decision.send_guidance:
+            contact = self.get_active_contact()
+            event = CallGuidance(
+                contact=contact or {},
+                content=notification_text,
+                response_text=decision.response_text,
+                should_speak=decision.should_speak,
+                source="actor_notification",
+            )
+            self._session_logger.info(
+                "call_guidance",
+                (
+                    f"Publishing notification guidance guidance_id={guidance_id} "
+                    f"speak={decision.should_speak}"
+                ),
+            )
+            event_json = event.to_json()
+            await self.event_broker.publish(
+                "app:call:call_guidance",
+                event_json,
+            )
+            await self.event_broker.publish(
+                "app:comms:assistant_call_guidance",
+                event_json,
+            )
+            self._recent_guidance.append(notification_text)
+        else:
+            self._session_logger.info(
+                "guidance_blocked",
+                f"Blocked notification guidance_id={guidance_id}: {notification_text[:50]}...",
+            )
+
     async def _articulate_guidance(
         self,
         guidance_content: str,
         slow_brain_start_time: "datetime",
+        *,
+        trace_run_id: str = "",
+        guidance_id: str = "",
     ) -> GuidanceDecision:
         """
         Decide what to do with slow brain guidance: block, silently notify, or speak.
@@ -586,6 +651,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         default_decision = GuidanceDecision(
             thoughts="No filtering needed.",
             send_guidance=True,
+            can_speak_without_fabricating=True,
             should_speak=False,
             response_text="",
         )
@@ -616,17 +682,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
             # Convert to ConversationMessage format with is_new flag
             conversation_messages = []
             for msg in voice_thread:
+                # GuidanceMessage is internal orchestration — not a real
+                # utterance. Its content is already in RECENTLY SENT GUIDANCE.
+                # Including it here would duplicate entries and, because it
+                # lacks a `role` attribute, the fallback would mislabel it.
+                if isinstance(msg, GuidanceMessage):
+                    continue
+
                 content = (msg.content or "").strip()
 
                 # Skip system messages (e.g., "<Call Started>")
                 if content.startswith("<") and content.endswith(">"):
                     continue
 
-                # Determine role
-                if hasattr(msg, "role"):
-                    role = msg.role
-                else:
-                    role = "assistant" if msg.name == "You" else "user"
+                role = getattr(msg, "role", "assistant")
 
                 # Check if this message arrived AFTER slow brain started
                 msg_time = getattr(msg, "timestamp", None)
@@ -678,9 +747,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             self._session_logger.debug(
                 "guidance_articulator",
-                f"Decision: send={decision.send_guidance}, "
-                f"speak={decision.should_speak}, "
-                f"thoughts={decision.thoughts[:100]}...",
+                (
+                    f"Decision run_id={trace_run_id or '-'} "
+                    f"guidance_id={guidance_id or '-'} "
+                    f"send={decision.send_guidance}, "
+                    f"speak={decision.should_speak}, "
+                    f"thoughts={decision.thoughts[:100]}..."
+                ),
             )
 
             return decision
@@ -688,7 +761,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception as e:
             self._session_logger.error(
                 "guidance_articulator",
-                f"Error in guidance articulator, defaulting to notify-only: {e}",
+                (
+                    f"Error in guidance articulator run_id={trace_run_id or '-'} "
+                    f"guidance_id={guidance_id or '-'}, defaulting to notify-only: {e}"
+                ),
             )
             return default_decision
 
@@ -719,9 +795,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     # this is non-blocking, it will quickly submit the
     # coro and return
-    async def run_llm(self, delay=0, cancel_running=False):
+    async def run_llm(
+        self,
+        delay: float = 0,
+        cancel_running: bool = False,
+        trace_meta: dict[str, str] | None = None,
+    ):
         await self.debouncer.submit(
             self._run_llm,
+            kwargs={"trace_meta": trace_meta or {}},
             delay=delay,
             cancel_running=cancel_running,
         )
@@ -732,20 +814,82 @@ class ConversationManager(metaclass=SingletonABCMeta):
         The request is recorded and later scheduled by the event loop after
         the current event is handled.
         """
+        self._llm_request_seq += 1
+        request_id = f"llmreq-{self._llm_request_seq:06d}"
+        event_trace = self._current_event_trace or {}
+        request_meta = {
+            "request_id": request_id,
+            "origin_event_id": event_trace.get("event_id", ""),
+            "origin_event_name": event_trace.get("event_name", ""),
+        }
         self._pending_llm_requests.append((delay, cancel_running))
+        self._pending_llm_request_meta.append(request_meta)
+        self._session_logger.debug(
+            "llm_queue",
+            (
+                f"Queued slow-brain run request_id={request_id} "
+                f"origin_event_id={request_meta['origin_event_id'] or '-'} "
+                f"origin_event={request_meta['origin_event_name'] or '-'} "
+                f"delay={delay} cancel_running={cancel_running}"
+            ),
+        )
 
     async def flush_llm_requests(self) -> None:
         """Schedule any pending LLM runs recorded during event handling."""
         if not self._pending_llm_requests:
             return
-        delay, cancel_running = self._pending_llm_requests[-1]
-        self._pending_llm_requests.clear()
-        await self.run_llm(delay=delay, cancel_running=cancel_running)
 
-    async def _run_llm(self) -> str | None:
+        dropped_requests = max(len(self._pending_llm_requests) - 1, 0)
+        delay, cancel_running = self._pending_llm_requests[-1]
+        selected_meta = (
+            dict(self._pending_llm_request_meta[-1])
+            if self._pending_llm_request_meta
+            else {}
+        )
+        self._pending_llm_requests.clear()
+        self._pending_llm_request_meta.clear()
+
+        self._llm_run_seq += 1
+        run_id = f"llmrun-{self._llm_run_seq:06d}"
+        selected_meta["run_id"] = run_id
+        selected_meta["dropped_requests"] = str(dropped_requests)
+
+        self._session_logger.info(
+            "llm_thinking",
+            (
+                f"Dispatching slow-brain run_id={run_id} "
+                f"request_id={selected_meta.get('request_id', '-')} "
+                f"origin_event_id={selected_meta.get('origin_event_id', '-') or '-'} "
+                f"origin_event={selected_meta.get('origin_event_name', '-') or '-'} "
+                f"dropped_requests={dropped_requests} delay={delay} "
+                f"cancel_running={cancel_running}"
+            ),
+        )
+        await self.run_llm(
+            delay=delay,
+            cancel_running=cancel_running,
+            trace_meta=selected_meta,
+        )
+
+    async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> str | None:
         """Run a single LLM decision and return the tool name that was called."""
         # Capture when slow brain starts thinking (for guidance staleness detection)
         from datetime import datetime, timezone
+
+        trace_meta = trace_meta or {}
+        run_id = trace_meta.get("run_id", "llmrun-unknown")
+        request_id = trace_meta.get("request_id", "")
+        origin_event_id = trace_meta.get("origin_event_id", "")
+        origin_event_name = trace_meta.get("origin_event_name", "")
+        self._session_logger.info(
+            "llm_thinking",
+            (
+                f"Slow-brain run started run_id={run_id} "
+                f"request_id={request_id or '-'} "
+                f"origin_event_id={origin_event_id or '-'} "
+                f"origin_event={origin_event_name or '-'} mode={self.mode}"
+            ),
+        )
 
         slow_brain_start_time = datetime.now(timezone.utc)
 
@@ -910,50 +1054,85 @@ class ConversationManager(metaclass=SingletonABCMeta):
             response_format=response_model,
         )
 
-        # Extract structured output (thoughts, call_guidance)
+        # Extract structured output (thoughts)
         structured = result.structured_output
         thoughts = ""
         if structured is not None:
             thoughts = getattr(structured, "thoughts", "")
 
-            # Handle call_guidance for voice modes
-            if self.mode.is_voice:
-                call_guidance = getattr(structured, "call_guidance", "")
+        # Handle call_guidance for voice modes.
+        # Extracted from tool call arguments (e.g. wait(call_guidance="...")).
+        # Skip for ActorNotification-origin runs — those are handled by the
+        # direct articulator path in the event handler.
+        is_notification_origin = origin_event_name == "ActorNotification"
+        if self.mode.is_voice and not is_notification_origin:
+            call_guidance = ""
+            for tool_exec in result.tools:
+                call_guidance = (tool_exec.args or {}).get("call_guidance", "")
                 if call_guidance:
-                    decision = await self._articulate_guidance(
-                        call_guidance,
-                        slow_brain_start_time,
-                    )
+                    break
 
-                    if decision.send_guidance:
-                        contact = self.get_active_contact()
-                        event = CallGuidance(
-                            contact=contact,
-                            content=call_guidance,
-                            response_text=decision.response_text,
-                            should_speak=decision.should_speak,
-                        )
-                        await self.event_broker.publish(
-                            "app:call:call_guidance",
-                            event.to_json(),
-                        )
-                        await self.event_broker.publish(
-                            "app:comms:assistant_call_guidance",
-                            event.to_json(),
-                        )
-                        self._recent_guidance.append(call_guidance)
-                    else:
-                        self._session_logger.info(
-                            "guidance_blocked",
-                            f"Guidance blocked: {call_guidance[:50]}...",
-                        )
+            if call_guidance:
+                guidance_id = content_trace_id("guid", call_guidance)
+                self._session_logger.debug(
+                    "call_guidance",
+                    (
+                        f"Evaluating guidance_id={guidance_id} run_id={run_id} "
+                        f"chars={len(call_guidance)}"
+                    ),
+                )
+                decision = await self._articulate_guidance(
+                    call_guidance,
+                    slow_brain_start_time,
+                    trace_run_id=run_id,
+                    guidance_id=guidance_id,
+                )
+
+                if decision.send_guidance:
+                    contact = self.get_active_contact()
+                    event = CallGuidance(
+                        contact=contact,
+                        content=call_guidance,
+                        response_text=decision.response_text,
+                        should_speak=decision.should_speak,
+                        source="slow_brain",
+                    )
+                    self._session_logger.info(
+                        "call_guidance",
+                        (
+                            f"Publishing guidance guidance_id={guidance_id} "
+                            f"run_id={run_id} contact_id={contact.get('contact_id') if contact else 'unknown'}"
+                        ),
+                    )
+                    event_json = event.to_json()
+                    subscribers = await self.event_broker.publish(
+                        "app:call:call_guidance",
+                        event_json,
+                    )
+                    self._session_logger.debug(
+                        "call_guidance",
+                        f"Published to app:call:call_guidance subscribers={subscribers} guidance_id={guidance_id}",
+                    )
+                    await self.event_broker.publish(
+                        "app:comms:assistant_call_guidance",
+                        event_json,
+                    )
+                    self._recent_guidance.append(call_guidance)
+                else:
+                    self._session_logger.info(
+                        "guidance_blocked",
+                        (
+                            f"Blocked guidance guidance_id={guidance_id} "
+                            f"run_id={run_id}: {call_guidance[:50]}..."
+                        ),
+                    )
 
         # Log LLM response
         self._session_logger.log_llm_response(
             (
-                f"thoughts: {thoughts[:100]}..."
+                f"run_id={run_id} thoughts: {thoughts[:100]}..."
                 if len(thoughts) > 100
-                else f"thoughts: {thoughts}"
+                else f"run_id={run_id} thoughts: {thoughts}"
             )
             + (f" | action: {result.tool_name}" if result.tool_name else ""),
         )
@@ -985,6 +1164,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             if delay is not None:
                 await self.request_llm_run(delay=delay)
 
+        self._session_logger.info(
+            "llm_response",
+            (
+                f"Slow-brain run completed run_id={run_id} "
+                f"tool={result.tool_name or '-'}"
+            ),
+        )
+
         return result.tool_name
 
     async def wait_for_events(self):
@@ -1010,13 +1197,32 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
-
-                await EventHandler.handle_event(
-                    event,
-                    self,
-                    is_voice_call=self.call_manager.uses_realtime_api,
+                channel = msg.get("channel", "")
+                if isinstance(channel, bytes):
+                    channel = channel.decode("utf-8", errors="replace")
+                self._event_trace_seq += 1
+                event_id = f"evt-{self._event_trace_seq:06d}"
+                event_name = event.__class__.__name__
+                self._current_event_trace = {
+                    "event_id": event_id,
+                    "event_name": event_name,
+                }
+                self._session_logger.debug(
+                    "event_trace",
+                    (
+                        f"Processing event_id={event_id} "
+                        f"event={event_name} channel={channel or '-'}"
+                    ),
                 )
-                await self.flush_llm_requests()
+                try:
+                    await EventHandler.handle_event(
+                        event,
+                        self,
+                        is_voice_call=self.call_manager.uses_realtime_api,
+                    )
+                    await self.flush_llm_requests()
+                finally:
+                    self._current_event_trace = None
 
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""
@@ -1243,14 +1449,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            # Deliver to the fast brain via the call_guidance channel.
-            # The fast brain will speak this via session.say(), producing an
-            # OutboundUtterance event that restarts the proactive speech cycle.
+            guidance_id = content_trace_id("guid", decision.content)
+            self._session_logger.info(
+                "call_guidance",
+                f"Publishing proactive guidance guidance_id={guidance_id}",
+            )
             event = CallGuidance(
                 contact=contact or {},
                 content=decision.content,
                 response_text=decision.content,
                 should_speak=True,
+                source="proactive_speech",
             )
             await self.event_broker.publish(
                 "app:call:call_guidance",

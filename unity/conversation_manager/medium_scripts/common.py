@@ -21,6 +21,12 @@ from unity.conversation_manager.domains.ipc_socket import (
     start_socket_receive_loop,
     stop_socket_client,
 )
+from unity.conversation_manager.tracing import (
+    monotonic_ms,
+    now_utc_iso,
+    payload_trace_id,
+    trace_kv,
+)
 from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
@@ -68,7 +74,18 @@ class SocketAwareEventBroker:
 
         async def on_event(channel: str, event_json: str) -> None:
             """Invoke registered callback when event arrives."""
-            print(f"[SocketAwareEventBroker] Received: {channel}")
+            message_id = payload_trace_id("ipc", channel, event_json)
+            print(
+                trace_kv(
+                    "SOCKET_BROKER_INBOUND",
+                    channel=channel,
+                    message_id=message_id,
+                    has_callback=channel in self._callbacks,
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
             if channel in self._callbacks:
                 try:
                     data = json.loads(event_json)
@@ -89,10 +106,21 @@ class SocketAwareEventBroker:
 
     async def publish(self, channel: str, message: str) -> int:
         """Publish an event, using socket if available."""
+        message_id = payload_trace_id("ipc", channel, message)
         if self._socket_client:
             success = await send_event_to_parent(channel, message)
             if success:
-                print(f"[SocketAwareEventBroker] Sent via socket: {channel}")
+                print(
+                    trace_kv(
+                        "SOCKET_BROKER_OUTBOUND",
+                        channel=channel,
+                        message_id=message_id,
+                        via_socket=True,
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    ),
+                    flush=True,
+                )
                 return 1
             else:
                 print(
@@ -100,6 +128,17 @@ class SocketAwareEventBroker:
                 )
 
         # Fall back to in-memory broker (won't work cross-process but useful for testing)
+        print(
+            trace_kv(
+                "SOCKET_BROKER_OUTBOUND",
+                channel=channel,
+                message_id=message_id,
+                via_socket=False,
+                ts_utc=now_utc_iso(),
+                monotonic_ms=monotonic_ms(),
+            ),
+            flush=True,
+        )
         return await self._fallback_broker.publish(channel, message)
 
 
@@ -240,6 +279,38 @@ def setup_inactivity_timeout(
         state["last_activity"] = loop.time()
 
     return touch
+
+
+# -------- Say-meta matching -------- #
+
+
+def match_say_meta(
+    meta: dict | None,
+    utterance_text: str,
+) -> dict | None:
+    """Match a _last_say_meta dict against an utterance's text content.
+
+    Returns the meta dict if it should be consumed for this utterance,
+    or None if the utterance didn't originate from the session.say() call
+    that set the meta.
+
+    When meta includes a "text" key (set by maybe_speak_queued), the
+    utterance must start with the same prefix to match — preventing a
+    fast brain response from stealing metadata intended for a session.say()
+    utterance. Meta dicts without a "text" key match unconditionally
+    (backward compatibility).
+    """
+    if meta is None:
+        return None
+    expected_text = meta.get("text")
+    if expected_text is None:
+        return meta
+    if not utterance_text or not expected_text:
+        return None
+    prefix_len = min(50, len(expected_text), len(utterance_text))
+    if utterance_text[:prefix_len] == expected_text[:prefix_len]:
+        return meta
+    return None
 
 
 # -------- CLI / env helpers -------- #

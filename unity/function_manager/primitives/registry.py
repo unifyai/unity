@@ -147,17 +147,6 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         examples="Rarely used directly in plans",
     ),
     ManagerSpec(
-        manager_alias="guidance",
-        manager_registry_key="guidance",
-        primitive_class_path="unity.guidance_manager.guidance_manager.GuidanceManager",
-        excluded_methods=frozenset(),
-        priority=6,
-        domain="Function & Task Guidance",
-        description="Execution instructions, runbooks, how-to guides for functions/tasks",
-        use_when="Questions about HOW to execute something, operational runbooks, incident response procedures",
-        examples="'How do I handle DB failover?', 'Incident response for API outage?'",
-    ),
-    ManagerSpec(
         manager_alias="web",
         manager_registry_key="web_search",
         primitive_class_path="unity.web_searcher.web_searcher.WebSearcher",
@@ -335,10 +324,6 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
     ],
     "web": [
         "get_primitives_web_ask_example",
-    ],
-    "guidance": [
-        "get_primitives_guidance_ask_example",
-        "get_primitives_guidance_update_example",
     ],
     "secrets": [
         "get_primitives_secrets_ask_example",
@@ -869,7 +854,6 @@ class ToolSurfaceRegistry:
             lines.append(
                 "5. **web** for current external information (weather, news, real-time data)",
             )
-            lines.append("6. **guidance** for execution instructions and runbooks")
             lines.append(
                 "7. **files** when dealing with specific documents or file-level operations",
             )
@@ -906,6 +890,9 @@ class ToolSurfaceRegistry:
             )
             lines.append(
                 "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed",
+            )
+            lines.append(
+                "- Don't call `ask(...)` before `update(...)`/`execute(...)` on the same manager to pre-check state; mutation methods already inspect existing records, so a preemptive read is duplicative",
             )
             lines.append(
                 "- When in doubt between managers, prefer the most specific domain match",

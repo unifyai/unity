@@ -3,7 +3,6 @@ import functools
 import inspect
 import sys
 import time
-import traceback
 import os
 from os import sep
 from pathlib import Path
@@ -494,10 +493,6 @@ def _handle_project(
                 result = test_fn(*args, **kwargs)
                 if inspect.isawaitable(result):
                     await result
-            except Exception:
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-                raise Exception(tb)
             finally:
                 ctx.teardown()
 
@@ -516,10 +511,6 @@ def _handle_project(
             ctx.set_trace_id(_get_current_trace_id())
             try:
                 test_fn(*args, **kwargs)
-            except Exception:
-                exc_type, exc_value, exc_tb = sys.exc_info()
-                tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-                raise Exception(tb)
             finally:
                 ctx.teardown()
 
