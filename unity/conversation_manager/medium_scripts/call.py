@@ -433,7 +433,9 @@ async def entrypoint(ctx: agents.JobContext):
         )
 
         if should_speak and response_text:
-            _queued_speech.append((response_text, guidance_id, guidance_source))
+            _queued_speech.append(
+                (response_text, guidance_id, guidance_source, content),
+            )
             maybe_speak_queued()
         else:
             guidance_message = f"[notification] {content}"
@@ -462,12 +464,23 @@ async def entrypoint(ctx: agents.JobContext):
         current = session.current_speech
         if current is not None and not current.done:
             return
-        text, guidance_id, guidance_source = _queued_speech.pop(0)
+        text, guidance_id, guidance_source, notification_content = _queued_speech.pop(0)
         _last_say_meta = {
             "guidance_id": guidance_id,
             "source": guidance_source,
             "text": text,
         }
+
+        guidance_message = f"[notification] {notification_content}"
+        assistant._chat_ctx.add_message(
+            role="system",
+            content=[guidance_message],
+        )
+        session._chat_ctx.add_message(
+            role="system",
+            content=[guidance_message],
+        )
+
         log_fast_brain_trace(
             "session_say",
             guidance_id=guidance_id,
