@@ -436,9 +436,8 @@ class _TestContext:
             test_fn_name = self.test_fn.__name__
 
         test_path = _ctx_name(self.test_fn, test_fn_name)
-        # Append default user/assistant to create proper context hierarchy for testing
-        # This results in: tests/.../test_name/DefaultUser/Assistant
-        # Which mirrors production structure and enables proper All context derivation
+        # Append default user_id/assistant_id for proper context hierarchy
+        # Mirrors production structure and enables proper All context derivation
         self.ctx = f"{test_path}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
         self.fpath = _test_fpath(self.test_fn, test_fn_name)
 
