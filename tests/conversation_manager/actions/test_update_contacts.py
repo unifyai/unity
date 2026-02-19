@@ -39,8 +39,9 @@ def _assert_contact_update_triggered(
     *,
     expected_substrings: list[str],
 ) -> None:
-    """Assert ``update_contacts`` was called and each expected substring
-    appears in the query text OR in the ``response_format`` keys.
+    """Assert ``update_contacts`` was called with no preemptive
+    ``ask_about_contacts``, and each expected substring appears in
+    the query text OR in the ``response_format`` keys.
     """
     events = filter_events_by_type(result.output_events, ActorHandleStarted)
     contact_events = [e for e in events if e.action_name == "update_contacts"]
@@ -48,6 +49,14 @@ def _assert_contact_update_triggered(
         f"Expected update_contacts to be triggered, "
         f"but got action(s): {[e.action_name for e in events] or 'none'}"
     )
+
+    ask_events = [e for e in events if e.action_name == "ask_about_contacts"]
+    assert not ask_events, (
+        f"Expected NO preemptive ask_about_contacts before update_contacts, "
+        f"but got {len(ask_events)} ask_about_contacts call(s) with "
+        f"queries: {[e.query for e in ask_events]}"
+    )
+
     evt = contact_events[0]
     query = evt.query.lower()
     rf_keys = " ".join((evt.response_format or {}).keys()).lower()
@@ -157,5 +166,31 @@ async def test_update_existing_contact(initialized_cm):
     _assert_contact_update_triggered(
         result,
         expected_substrings=["bob"],
+    )
+    assert_efficient(result, 3)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_check_then_save_bundled(initialized_cm):
+    """When the user implies 'check if exists, then save', the CM should
+    bundle this into a single ``update_contacts`` call — not a preemptive
+    ``ask_about_contacts`` followed by ``update_contacts``."""
+    cm = initialized_cm
+    _patch_simulated_update(cm)
+
+    result = await cm.step_until_wait(
+        SMSReceived(
+            contact=BOSS,
+            content=(
+                "Check if we already have a contact for Jane Doe, "
+                "and if not save her email jane@example.com."
+            ),
+        ),
+    )
+
+    _assert_contact_update_triggered(
+        result,
+        expected_substrings=["jane"],
     )
     assert_efficient(result, 3)

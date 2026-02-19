@@ -558,7 +558,14 @@ Examples of requests that should use the direct tools:
 - "Show me the latest SMS from Alice" → `query_past_transcripts`
 - "Summarise my conversation with David last week" → `query_past_transcripts`
 
-**When to use `act` instead:** If the request spans multiple domains (e.g. "find Sarah's email and send her a task update", or "check what Bob said and update his contact record"), use `act`. The `act` pathway can also access contacts and transcripts — the direct tools just provide a faster path for single-domain work.""",
+**When to use `act` instead:** If the request spans multiple domains (e.g. "find Sarah's email and send her a task update", or "check what Bob said and update his contact record"), use `act`. The `act` pathway can also access contacts and transcripts — the direct tools just provide a faster path for single-domain work.
+
+**Don't ask before updating.** If the request involves storing, saving, or modifying something, go straight to the mutation tool (`update_contacts` or `act`) — do NOT first call a read tool (`ask_about_contacts`, `query_past_transcripts`) to check existing records. The mutation pathways already check existing state before writing, so a preemptive read is duplicative. Bundle the intent into a single call.
+
+- BAD: `ask_about_contacts("do we have Jane Doe?")` → then → `update_contacts("save Jane Doe's email")`
+- GOOD: `update_contacts("save Jane Doe's email jane@example.com — check if she already exists first")`
+- BAD: `act("check what tasks are due")` → then → `act("update priorities on overdue tasks")`
+- GOOD: `act("check what tasks are due and update priorities on any overdue ones")`""",
         )
 
         parts.add(
