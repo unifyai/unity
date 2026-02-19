@@ -679,6 +679,7 @@ class TestGuidanceRelevanceGuardrails:
                 return GuidanceDecision(
                     thoughts="sentinel",
                     send_guidance=True,
+                    can_speak_without_fabricating=True,
                     should_speak=True,
                     response_text="There is no contact named Bob.",
                 )
