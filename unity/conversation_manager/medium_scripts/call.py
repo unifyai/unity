@@ -448,6 +448,10 @@ async def entrypoint(ctx: agents.JobContext):
                 role="system",
                 content=[guidance_message],
             )
+            trigger_generate_reply(
+                reason="notification",
+                source_id=guidance_id or "guidance_notify",
+            )
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
@@ -569,6 +573,10 @@ async def entrypoint(ctx: agents.JobContext):
             session._chat_ctx.add_message(
                 role="system",
                 content=[notification_msg],
+            )
+            trigger_generate_reply(
+                reason="boss_event",
+                source_id="system_event",
             )
 
         event_broker.register_callback("app:comms:*", on_system_event)

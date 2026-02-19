@@ -1053,12 +1053,13 @@ class TestInactivityTimeout:
 class TestFastBrainGuidanceFlow:
     """Coverage for guidance delivery in the TTS fast brain path."""
 
-    async def test_notify_only_guidance_injected_without_triggering_speech(
+    async def test_notify_only_guidance_triggers_reply_but_not_speech(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=False injects into chat context but does
-        NOT trigger session.say() or generate_reply()."""
+        """Guidance with should_speak=False injects into chat context and
+        triggers generate_reply() (so the LLM can decide whether to respond)
+        but does NOT trigger session.say()."""
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
 
@@ -1224,13 +1225,14 @@ class TestFastBrainGuidanceFlow:
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
 
-        # Neither say() nor generate_reply() should have been triggered
+        # say() must NOT fire (the articulator decided not to speak), but
+        # generate_reply() SHOULD fire so the LLM gets a chance to react.
         assert (
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say()."
         assert (
-            session.generate_reply_calls == baseline_reply_calls
-        ), "Notify-only guidance must NOT trigger generate_reply()."
+            session.generate_reply_calls > baseline_reply_calls
+        ), "Notify-only guidance must trigger generate_reply()."
 
     async def test_should_speak_guidance_not_injected_into_chat_ctx(
         self,
