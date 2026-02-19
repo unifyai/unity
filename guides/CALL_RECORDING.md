@@ -118,7 +118,7 @@ For phone calls, the LiveKit room name is `unity_{twilio_number}` (e.g. `unity_1
 
 ## GCS Storage Layout
 
-**Bucket:** `assistant-call-recordings` (configurable via `LIVEKIT_EGRESS_GCS_BUCKET`)
+**Bucket:** `unity-call-recordings` (configurable via `LIVEKIT_EGRESS_GCS_BUCKET`)
 
 **File path pattern:** `{environment}/{assistant_id}/{room_name}.mp3`
 
@@ -129,7 +129,7 @@ For phone calls, the LiveKit room name is `unity_{twilio_number}` (e.g. `unity_1
 
 The environment is determined by the `STAGING` env var in the Communication service. If `STAGING` is truthy, the prefix is `staging`; otherwise `production`.
 
-**Public URL format:** `https://storage.googleapis.com/assistant-call-recordings/{prefix}/{assistant_id}/{room_name}.mp3`
+**Public URL format:** `https://storage.googleapis.com/unity-call-recordings/{prefix}/{assistant_id}/{room_name}.mp3`
 
 This is the URL stored in exchange metadata as `recording_url`. The Console's `AudioPlayer` component can take this URL and generate a signed URL for playback via the Console's own `/api/media/get` route.
 
@@ -147,7 +147,7 @@ When LiveKit Egress completes and the webhook fires, the **adapter** (not the co
     "event": {
         "assistant_id": "25",
         "conference_name": "unity_12025551234",
-        "recording_url": "https://storage.googleapis.com/assistant-call-recordings/staging/25/unity_12025551234.mp3"
+        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_12025551234.mp3"
     }
 }
 ```
@@ -212,7 +212,7 @@ After both steps complete, the exchange for a call looks like:
     "medium": "phone_call",  # or "unify_meet"
     "metadata": {
         "conference_name": "Unity_12025551234_2026_02_18_10_30_00",  # or "room_name" for meets
-        "recording_url": "https://storage.googleapis.com/assistant-call-recordings/staging/25/unity_12025551234.mp3"
+        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_12025551234.mp3"
     },
     "messages": [
         {"content": "Hello?", "sender_id": 1, "metadata": {"call_utterance_timestamp": "00.03"}},
@@ -346,7 +346,7 @@ No Console changes were needed for recording support.
 
 | Variable | Service | Default | Purpose |
 |----------|---------|---------|---------|
-| `LIVEKIT_EGRESS_GCS_BUCKET` | Communication | `assistant-call-recordings` | GCS bucket name for recordings |
+| `LIVEKIT_EGRESS_GCS_BUCKET` | Communication | `unity-call-recordings` | GCS bucket name for recordings |
 
 ---
 
@@ -383,13 +383,13 @@ For recording to work end-to-end, the following must be true:
 
 1. **LiveKit Egress must be enabled** on the LiveKit Cloud project (or a self-hosted Egress service must be running). Without this, `start_room_composite_egress` API calls will fail.
 
-2. **`LIVEKIT_EGRESS_GCS_CREDENTIALS`** must be set on both the adapters and communication Cloud Run services. This is a GCS service account JSON string with `Storage Object Creator` permissions on the `assistant-call-recordings` bucket.
+2. **`GOOGLE_APPLICATION_CREDENTIALS`** must be set on both the adapters and communication Cloud Run services. This is a GCS service account JSON string with `Storage Object Creator` permissions on the `unity-call-recordings` bucket.
 
 3. **`UNITY_ADAPTERS_URL` must be publicly reachable** from LiveKit's infrastructure, so the egress completion webhook can reach `/livekit/recording-complete` on the adapters.
 
 4. **The `/livekit/recording-complete` adapter endpoint** has no application-level auth beyond LiveKit's own webhook signing (verified via `WebhookReceiver`/`TokenVerifier`). If there's infrastructure-level auth (API gateway, load balancer) that blocks unauthenticated requests to the adapters service, the webhook will be rejected.
 
-5. **The GCS bucket `assistant-call-recordings` must exist** in the GCP project, with the service account from `LIVEKIT_EGRESS_GCS_CREDENTIALS` having write access.
+5. **The GCS bucket `unity-call-recordings` must exist** in the GCP project (`responsive-city-458413-a2`), with the service account from `GOOGLE_APPLICATION_CREDENTIALS` having write access.
 
 6. **GCP_PROJECT_ID** must be set (already required for all other Pub/Sub publishing).
 
