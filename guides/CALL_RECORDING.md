@@ -120,16 +120,18 @@ All room names are produced by `make_room_name(assistant_id, medium)` which retu
 
 **Bucket:** `unity-call-recordings` (configurable via `LIVEKIT_EGRESS_GCS_BUCKET`)
 
-**File path pattern:** `{environment}/{assistant_id}/{room_name}.mp3`
+**File path pattern:** `{environment}/{assistant_id}/{room_name}_{timestamp}.mp3`
+
+The timestamp is UTC in `YYYY-MM-DDTHH-MM-SS` format, generated at egress start time. This ensures each recording gets a unique filename even if the same room name is reused across sessions.
 
 | Environment | Prefix | Example Path |
 |-------------|--------|--------------|
-| Staging | `staging/` | `staging/25/unity_25_phone.mp3` |
-| Production | `production/` | `production/25/unity_25_phone.mp3` |
+| Staging | `staging/` | `staging/25/unity_25_phone_2026-02-19T16-30-45.mp3` |
+| Production | `production/` | `production/25/unity_25_phone_2026-02-19T16-30-45.mp3` |
 
 The environment is determined by the `STAGING` env var in the Communication service. If `STAGING` is truthy, the prefix is `staging`; otherwise `production`.
 
-**Public URL format:** `https://storage.googleapis.com/unity-call-recordings/{prefix}/{assistant_id}/{room_name}.mp3`
+**Public URL format:** `https://storage.googleapis.com/unity-call-recordings/{prefix}/{assistant_id}/{room_name}_{timestamp}.mp3`
 
 This is the URL stored in exchange metadata as `recording_url`. The Console's `AudioPlayer` component can take this URL and generate a signed URL for playback via the Console's own `/api/media/get` route.
 
@@ -147,7 +149,7 @@ When LiveKit Egress completes and the webhook fires, the **adapter** (not the co
     "event": {
         "assistant_id": "25",
         "conference_name": "unity_25_phone",
-        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_25_phone.mp3"
+        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_25_phone_2026-02-19T16-30-45.mp3"
     }
 }
 ```
@@ -212,7 +214,7 @@ After both steps complete, the exchange for a call looks like:
     "medium": "phone_call",  # or "unify_meet"
     "metadata": {
         "conference_name": "Unity_12025551234_2026_02_18_10_30_00",  # or "room_name" for meets
-        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_25_phone.mp3"
+        "recording_url": "https://storage.googleapis.com/unity-call-recordings/staging/25/unity_25_phone_2026-02-19T16-30-45.mp3"
     },
     "messages": [
         {"content": "Hello?", "sender_id": 1, "metadata": {"call_utterance_timestamp": "00.03"}},
@@ -408,10 +410,8 @@ All egress-related code is wrapped in exception handlers. If any prerequisite is
 
 2. **No signed URL generation in the recording flow.** The `recording_url` stored on exchange metadata is a raw GCS public URL. The Console's `AudioPlayer` handles signed URL generation client-side. Direct API consumers would need to generate their own signed URLs or rely on the Console's `/api/media/get` route.
 
-3. **Room name reuse across sessions.** Room names are `unity_{assistant_id}_{medium}` — they're tied to the assistant, not to the specific call. If two calls arrive in quick succession, the second call's egress could overwrite the first call's recording file (same filename). The `conference_name` (which includes a timestamp, e.g. `Unity_12025551234_2026_02_18_10_30_00`) is unique per call but is stored in exchange metadata, not used as the GCS filename. Adding a timestamp to the GCS filepath would resolve this.
+3. **Egress start timing for phone calls.** Egress is started in the adapter webhook, which runs during Twilio's initial callback. The LiveKit room may not have audio tracks yet if the SIP bridge hasn't connected. LiveKit Egress should wait for tracks to appear, but this is an edge case that hasn't been validated in production.
 
-4. **Egress start timing for phone calls.** Egress is started in the adapter webhook, which runs during Twilio's initial callback. The LiveKit room may not have audio tracks yet if the SIP bridge hasn't connected. LiveKit Egress should wait for tracks to appear, but this is an edge case that hasn't been validated in production.
+4. **No retry on webhook failure.** If the `/livekit/recording-complete` webhook fails (network issue, adapters service down), LiveKit may retry depending on its configuration, but there's no application-level retry or dead-letter queue. The recording file would exist in GCS but the Pub/Sub event would never be published.
 
-5. **No retry on webhook failure.** If the `/livekit/recording-complete` webhook fails (network issue, adapters service down), LiveKit may retry depending on its configuration, but there's no application-level retry or dead-letter queue. The recording file would exist in GCS but the Pub/Sub event would never be published.
-
-6. **`user_id` is accepted but unused.** The `/dispatch-livekit-agent` endpoint accepts a `user_id` parameter and passes it to `create_room_and_dispatch_agent()`, but the function doesn't use it. It could be useful for organizing recordings by user in the future.
+5. **`user_id` is accepted but unused.** The `/dispatch-livekit-agent` endpoint accepts a `user_id` parameter and passes it to `create_room_and_dispatch_agent()`, but the function doesn't use it. It could be useful for organizing recordings by user in the future.
