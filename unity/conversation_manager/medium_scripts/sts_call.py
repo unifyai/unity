@@ -376,7 +376,9 @@ async def entrypoint(ctx: JobContext) -> None:
         )
 
         if should_speak and response_text:
-            _queued_speech.append((response_text, guidance_id, guidance_source))
+            _queued_speech.append(
+                (response_text, guidance_id, guidance_source, content),
+            )
             maybe_speak_queued()
         else:
             chat_ctx = rt.chat_ctx
@@ -406,12 +408,24 @@ async def entrypoint(ctx: JobContext) -> None:
         current = session.current_speech
         if current is not None and not current.done:
             return
-        text, guidance_id, guidance_source = _queued_speech.pop(0)
+        text, guidance_id, guidance_source, notification_content = _queued_speech.pop(0)
         _last_say_meta = {
             "guidance_id": guidance_id,
             "source": guidance_source,
             "text": text,
         }
+
+        chat_ctx = rt.chat_ctx
+        chat_ctx.add_message(
+            role="system",
+            content=[f"[notification] {notification_content}"],
+        )
+
+        async def update_ctx():
+            await rt.update_chat_ctx(chat_ctx)
+
+        asyncio.create_task(update_ctx())
+
         log_fast_brain_trace(
             "session_say",
             guidance_id=guidance_id,

@@ -1399,7 +1399,11 @@ class TestFastBrainGuidanceFlow:
         session = fake_session_holder["session"]
         assistant = session.current_agent
 
-        # Send should_speak=True guidance
+        # User is speaking — guidance will be queued but not spoken yet
+        state_cb = session._events["user_state_changed"]
+        state_cb(SimpleNamespace(new_state="speaking"))
+
+        # Send should_speak=True guidance while user is speaking
         guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
         guidance_cb(
             {
@@ -1411,7 +1415,10 @@ class TestFastBrainGuidanceFlow:
             },
         )
 
-        # The notification must NOT be in chat_ctx — session.say() handles delivery
+        # The notification must NOT be in chat_ctx yet — it should be deferred
+        # until maybe_speak_queued() fires (when the agent is idle).
+        # If injected eagerly, the fast brain sees it during generate_reply
+        # and paraphrases it before session.say() plays — double delivery.
         session_texts = [
             item.text_content or ""
             for item in session._chat_ctx.items
@@ -1419,13 +1426,39 @@ class TestFastBrainGuidanceFlow:
         ]
         has_notification = any("No contact named Bob" in txt for txt in session_texts)
         assert not has_notification, (
-            f"should_speak=True guidance injected a [notification] into chat_ctx.\n"
-            f"This causes double-delivery: the fast brain paraphrases the "
-            f"notification in generate_reply, then session.say() speaks it again.\n"
+            f"should_speak=True guidance injected a [notification] into chat_ctx "
+            f"while speech is still queued (user speaking). The notification must "
+            f"be deferred until maybe_speak_queued() fires.\n"
             f"Chat context messages: {session_texts}"
         )
 
-        # The speech SHOULD be queued
+        # Speech should NOT have fired yet (user is speaking)
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire while user is speaking."
+
+        # User stops, agent settles → maybe_speak_queued fires
+        state_cb(SimpleNamespace(new_state="listening"))
+        session.agent_state = "listening"
+        agent_state_cb = session._events["agent_state_changed"]
+        agent_state_cb(SimpleNamespace(new_state="listening"))
+
+        # NOW the notification should be in chat_ctx (injected at speech time)
+        session_texts_after = [
+            item.text_content or ""
+            for item in session._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        has_notification_after = any(
+            "No contact named Bob" in txt for txt in session_texts_after
+        )
+        assert has_notification_after, (
+            "After session.say() fires, the notification should be in chat_ctx "
+            "so the fast brain's history shows the correct pattern: "
+            "notification → assistant response."
+        )
+
+        # The speech SHOULD have fired
         assert (
             len(session.say_calls) == 1
         ), "should_speak=True guidance must queue speech via session.say()."
