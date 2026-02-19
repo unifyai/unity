@@ -367,6 +367,9 @@ async def _(
         role="guidance",
     )
 
+    if event.should_speak:
+        await cm.schedule_proactive_speech()
+
 
 @EventHandler.register((PhoneCallEnded, UnifyMeetEnded))
 async def _(
