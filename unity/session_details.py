@@ -46,11 +46,10 @@ DEFAULT_USER_EMAIL = "user@example.com"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Context Path Defaults (for Unify context hierarchy)
-# Format: {UserContext}/{AssistantContext}/... e.g., "DefaultUser/DefaultAssistant/Contacts"
-# Values derived from {FirstName}{Surname} for consistency
+# Format: {user_id}/{assistant_id}/... e.g., "default/default-assistant/Contacts"
 # ─────────────────────────────────────────────────────────────────────────────
-DEFAULT_USER_CONTEXT = "DefaultUser"
-DEFAULT_ASSISTANT_CONTEXT = "DefaultAssistant"
+DEFAULT_USER_CONTEXT = DEFAULT_USER_ID
+DEFAULT_ASSISTANT_CONTEXT = DEFAULT_ASSISTANT_ID
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voice Defaults
@@ -158,34 +157,23 @@ class SessionDetails:
 
     @property
     def assistant_context(self) -> str:
-        """Derived context string for the assistant (e.g., 'JohnSmith').
+        """The assistant's ID used as the context path component.
 
-        Used for Unify context paths like '{user_context}/{assistant_context}/...'.
+        Used for Unify context paths like '{user_id}/{assistant_id}/...'.
         """
-        # Prefer deriving from assistant_record if available (has first_name/surname)
         if self.assistant_record:
-            first = self.assistant_record.get("first_name") or ""
-            surname = self.assistant_record.get("surname") or ""
-            if first or surname:
-                first_part = "".join(chunk.capitalize() for chunk in first.split())
-                surname_part = "".join(chunk.capitalize() for chunk in surname.split())
-                return first_part + surname_part
-        # Fall back to assistant.name if populated
-        name = self.assistant.name
-        if name:
-            return "".join(chunk.capitalize() for chunk in name.split())
-        return DEFAULT_ASSISTANT_CONTEXT
+            agent_id = self.assistant_record.get("agent_id")
+            if agent_id is not None:
+                return str(agent_id)
+        return self.assistant.id or DEFAULT_ASSISTANT_CONTEXT
 
     @property
     def user_context(self) -> str:
-        """Derived context string for the user (e.g., 'JohnDoe').
+        """The user's ID used as the context path component.
 
-        Used for Unify context paths like '{user_context}/{assistant_context}/...'.
+        Used for Unify context paths like '{user_id}/{assistant_id}/...'.
         """
-        name = self.user.name
-        if name:
-            return "".join(chunk.capitalize() for chunk in name.split())
-        return DEFAULT_USER_CONTEXT
+        return self.user.id or DEFAULT_USER_CONTEXT
 
     @property
     def is_initialized(self) -> bool:

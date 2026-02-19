@@ -82,10 +82,9 @@ class SyncConfig:
             print(f"[FileSync] Could not extract host from desktop_url: {desktop_url}")
             return cls(enabled=False)
 
-        # Use assistant_context directly - matches Unify context naming convention
-        ssh_user = SESSION_DETAILS.assistant_context
+        ssh_user = SESSION_DETAILS.assistant.name
         if not ssh_user:
-            print("[FileSync] Could not derive SSH user from assistant_context")
+            print("[FileSync] No assistant name configured for SSH user")
             return cls(enabled=False)
 
         # Temp file for SSH key (secure permissions set on write)

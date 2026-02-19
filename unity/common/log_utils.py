@@ -1,9 +1,9 @@
 """
 Wrappers around unify.log/create_logs with:
-1. _user injection (user's name from USER_CONTEXT)
-2. _user_id injection (from USER_ID environment variable)
-3. _assistant injection (assistant's name from ASSISTANT_CONTEXT)
-4. _assistant_id injection (assistant's ID from ASSISTANT["agent_id"])
+1. _user injection (user ID, matches user_context path component)
+2. _user_id injection (user ID from SESSION_DETAILS)
+3. _assistant injection (assistant ID, matches assistant_context path component)
+4. _assistant_id injection (assistant's agent_id from assistant_record)
 5. Automatic addition to aggregation contexts by reference (copy=False)
 
 Usage
@@ -21,11 +21,11 @@ Replace direct unify.log/create_logs calls with these wrappers:
 The wrappers automatically:
 - Inject _user, _user_id, _assistant, _assistant_id as private fields
 - Add logs to aggregation contexts by reference (when add_to_all_context=True):
-  - {UserName}/All/{Suffix} - user-level aggregation (all assistants for this user)
+  - {user_id}/All/{Suffix} - user-level aggregation (all assistants for this user)
   - All/{Suffix} - global aggregation (all users, all assistants)
 
 For test contexts (starting with "tests/"), aggregation is scoped to the test root:
-  - {test_root}/{UserName}/All/{Suffix}
+  - {test_root}/{user_id}/All/{Suffix}
   - {test_root}/All/{Suffix}
 """
 
@@ -44,12 +44,12 @@ from unity.settings import SETTINGS
 logger = logging.getLogger(__name__)
 
 
-def _get_user_name() -> Optional[str]:
-    """Retrieve user's context name from SESSION_DETAILS.
+def _get_user_context() -> Optional[str]:
+    """Retrieve user's context path component (user ID) from SESSION_DETAILS.
 
-    Returns the user context name, including default values like "DefaultUser".
-    These are always injected because they are part of the context path structure
-    and are needed by orchestra for 3-tier deletion cascade.
+    Injected as _user into every log entry. Matches the user_id path segment
+    in context paths like {user_id}/{assistant_id}/Contacts.
+    Needed by orchestra for 3-tier deletion cascade.
     """
     return SESSION_DETAILS.user_context or None
 
@@ -59,18 +59,18 @@ def _get_user_id() -> Optional[str]:
     return SESSION_DETAILS.user.id or None
 
 
-def _get_assistant_name() -> Optional[str]:
-    """Retrieve assistant's context name from SESSION_DETAILS.
+def _get_assistant_context() -> Optional[str]:
+    """Retrieve assistant's context path component (assistant ID) from SESSION_DETAILS.
 
-    Returns the assistant context name, including default values like "Assistant".
-    These are always injected because they are part of the context path structure
-    and are needed by orchestra for 3-tier deletion cascade.
+    Injected as _assistant into every log entry. Matches the assistant_id path
+    segment in context paths like {user_id}/{assistant_id}/Contacts.
+    Needed by orchestra for 3-tier deletion cascade.
     """
     return SESSION_DETAILS.assistant_context or None
 
 
 def _get_assistant_id() -> Optional[str]:
-    """Retrieve assistant's ID from SESSION_DETAILS as a string."""
+    """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
     if SESSION_DETAILS.assistant_record is not None:
         agent_id = SESSION_DETAILS.assistant_record.get("agent_id")
         if agent_id is not None:
@@ -98,17 +98,17 @@ def _inject_private_fields(entries: Dict[str, Any]) -> Dict[str, Any]:
     """Inject _user, _user_id, _assistant, _assistant_id, _org, and _org_id into entries."""
     result = dict(entries)
 
-    user_name = _get_user_name()
-    if user_name is not None:
-        result["_user"] = user_name
+    user_ctx = _get_user_context()
+    if user_ctx is not None:
+        result["_user"] = user_ctx
 
     user_id = _get_user_id()
     if user_id is not None:
         result["_user_id"] = user_id
 
-    assistant_name = _get_assistant_name()
-    if assistant_name is not None:
-        result["_assistant"] = assistant_name
+    assistant_ctx = _get_assistant_context()
+    if assistant_ctx is not None:
+        result["_assistant"] = assistant_ctx
 
     assistant_id = _get_assistant_id()
     if assistant_id is not None:
@@ -130,32 +130,32 @@ def _derive_all_contexts(context: str) -> List[str]:
     Derive aggregation contexts from a user/assistant-scoped context.
 
     Returns two contexts for cross-assistant and cross-user aggregation:
-      - {UserName}/All/{suffix} - all assistants for this user
-      - All/{suffix}            - all users, all assistants
+      - {user_id}/All/{suffix} - all assistants for this user
+      - All/{suffix}           - all users, all assistants
 
     For test contexts (starting with "tests/"), the aggregation contexts are
     scoped to the test root for proper isolation:
-      - {test_root}/{UserName}/All/{suffix}
+      - {test_root}/{user_id}/All/{suffix}
       - {test_root}/All/{suffix}
 
     Examples:
         Production:
-        "JohnDoe/MyAssistant/Contacts" -> ["JohnDoe/All/Contacts", "All/Contacts"]
+        "42/7/Contacts" -> ["42/All/Contacts", "All/Contacts"]
 
         Testing:
-        "tests/foo/DefaultUser/Assistant/Contacts" ->
-            ["tests/foo/DefaultUser/All/Contacts", "tests/foo/All/Contacts"]
+        "tests/foo/default/default-assistant/Contacts" ->
+            ["tests/foo/default/All/Contacts", "tests/foo/All/Contacts"]
 
         Invalid (too few parts):
-        "JohnDoe/Contacts" -> []
+        "42/Contacts" -> []
         "Contacts" -> []
     """
     parts = context.split("/")
     if len(parts) < 3:
         return []
 
-    # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
-    # Find the User position by looking for "DefaultUser" marker
+    # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
+    # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
     if parts[0] == "tests":
         from unity.session_details import DEFAULT_USER_CONTEXT
 
@@ -217,10 +217,10 @@ def log(
     Parameters
     ----------
     context : str
-        The context to log to (e.g., "JohnDoe/MyAssistant/Contacts")
+        The context to log to (e.g., "42/7/Contacts")
     add_to_all_context : bool, default False
         If True, add the log to aggregation contexts by reference:
-        - {UserName}/All/{Ctx} (user-level)
+        - {user_id}/All/{Ctx} (user-level)
         - All/{Ctx} (global)
     new : bool, default True
         Whether to create a new log entry
@@ -259,12 +259,12 @@ def create_logs(
     Parameters
     ----------
     context : str
-        The context to log to (e.g., "JohnDoe/MyAssistant/Tasks")
+        The context to log to (e.g., "42/7/Tasks")
     entries : List[Dict[str, Any]]
         List of entry dicts to create
     add_to_all_context : bool, default False
         If True, add logs to aggregation contexts by reference:
-        - {UserName}/All/{Ctx} (user-level)
+        - {user_id}/All/{Ctx} (user-level)
         - All/{Ctx} (global)
     **kwargs
         Additional arguments passed to unify.create_logs (e.g., batched=True)
@@ -332,7 +332,7 @@ async def atomic_upsert(
     Parameters
     ----------
     context : str
-        The context to upsert to (e.g., "JohnDoe/AdaLovelace/Spending/Monthly")
+        The context to upsert to (e.g., "42/7/Spending/Monthly")
     unique_keys : Dict[str, str]
         Key names to types for matching/creating logs
         (e.g., {"_assistant_id": "str", "month": "str"})
