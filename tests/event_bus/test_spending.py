@@ -1232,7 +1232,7 @@ async def e2e_config():
         if response.status_code == 404:
             # Create the test user
             response = await client.post(
-                f"{config.base_url}/admin/auth-user",
+                f"{config.base_url}/admin/user",
                 headers=admin_headers,
                 json={
                     "email": f"{config.test_user_id}@test.local",
