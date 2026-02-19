@@ -722,3 +722,61 @@ class TestResponseModel:
             should_speak=False,
         )
         assert decision.response_text == ""
+
+
+class TestGuidanceMessageRoleMapping:
+    """Regression tests for how GuidanceMessage entries are mapped to roles
+    when building the articulator's conversation context.
+
+    GuidanceMessage (internal orchestration) has no `role` attribute. The
+    fallback logic in _articulate_guidance() must not label these as "user",
+    or the articulator sees guidance content as if the user said it —
+    corrupting its relevance and redundancy judgments.
+    """
+
+    def test_guidance_message_not_labeled_as_user(self):
+        """GuidanceMessage entries must not be assigned role='user'."""
+        from unity.conversation_manager.domains.contact_index import GuidanceMessage
+
+        guidance = GuidanceMessage(
+            name="guidance",
+            content="Checking your contacts for Bob.",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0),
+        )
+
+        # This replicates the role determination in _articulate_guidance()
+        if hasattr(guidance, "role"):
+            role = guidance.role
+        else:
+            role = "assistant" if guidance.name == "You" else "user"
+
+        assert role != "user", (
+            f"GuidanceMessage was assigned role='user' (name={guidance.name!r}). "
+            f"Guidance messages must not appear as user speech in the "
+            f"articulator's conversation — this corrupts relevance judgments."
+        )
+
+    def test_regular_message_roles_preserved(self):
+        """Normal Message entries with role='user' or role='assistant' are
+        correctly preserved by the same fallback logic."""
+        from unity.conversation_manager.domains.contact_index import Message
+
+        user_msg = Message(
+            name="Yusha",
+            content="Check my contacts.",
+            timestamp=datetime(2025, 6, 13, 12, 0, 0),
+            role="user",
+        )
+        asst_msg = Message(
+            name="You",
+            content="One moment.",
+            timestamp=datetime(2025, 6, 13, 12, 0, 1),
+            role="assistant",
+        )
+
+        for msg, expected in [(user_msg, "user"), (asst_msg, "assistant")]:
+            if hasattr(msg, "role"):
+                role = msg.role
+            else:
+                role = "assistant" if msg.name == "You" else "user"
+            assert role == expected
