@@ -41,6 +41,7 @@ from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager.medium_scripts.common import (
     event_broker,
     create_end_call,
+    match_say_meta,
     setup_inactivity_timeout,
     setup_participant_disconnect_handler,
     publish_call_started,
@@ -339,7 +340,7 @@ async def entrypoint(ctx: agents.JobContext):
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""
         utterance_id = content_trace_id("utt", f"{role}:{text}")
-        say_meta = _last_say_meta if role == "assistant" else None
+        say_meta = match_say_meta(_last_say_meta, text) if role == "assistant" else None
         if say_meta:
             _last_say_meta = None
         log_fast_brain_trace(
@@ -462,7 +463,11 @@ async def entrypoint(ctx: agents.JobContext):
         if current is not None and not current.done:
             return
         text, guidance_id, guidance_source = _queued_speech.pop(0)
-        _last_say_meta = {"guidance_id": guidance_id, "source": guidance_source}
+        _last_say_meta = {
+            "guidance_id": guidance_id,
+            "source": guidance_source,
+            "text": text,
+        }
         log_fast_brain_trace(
             "session_say",
             guidance_id=guidance_id,
