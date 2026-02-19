@@ -424,7 +424,6 @@ async def entrypoint(ctx: agents.JobContext):
         source: str = "",
         guidance_source: str = "",
     ) -> None:
-        guidance_message = f"[notification] {content}"
         log_fast_brain_trace(
             "guidance_applied",
             guidance_id=guidance_id,
@@ -433,18 +432,19 @@ async def entrypoint(ctx: agents.JobContext):
             content_preview=content[:120],
         )
 
-        assistant._chat_ctx.add_message(
-            role="system",
-            content=[guidance_message],
-        )
-        session._chat_ctx.add_message(
-            role="system",
-            content=[guidance_message],
-        )
-
         if should_speak and response_text:
             _queued_speech.append((response_text, guidance_id, guidance_source))
             maybe_speak_queued()
+        else:
+            guidance_message = f"[notification] {content}"
+            assistant._chat_ctx.add_message(
+                role="system",
+                content=[guidance_message],
+            )
+            session._chat_ctx.add_message(
+                role="system",
+                content=[guidance_message],
+            )
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
