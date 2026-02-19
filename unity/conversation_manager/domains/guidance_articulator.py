@@ -104,8 +104,30 @@ class ConversationMessage:
     is_new: bool = False  # True if this message arrived AFTER slow brain started
 
 
-def _build_system_prompt(voice_agent_prompt: str) -> str:
+def _build_system_prompt(voice_agent_prompt: str, *, boss_on_call: bool = False) -> str:
     """Build the articulator system prompt with the full voice agent persona embedded."""
+    boss_visibility_note = ""
+    if boss_on_call:
+        boss_visibility_note = """
+
+## IMPORTANT: Boss-On-Call — Fast Brain Has Direct Event Visibility
+
+The boss is on this call. The fast brain receives ALL system events (incoming SMS, emails,
+action progress, action results, etc.) directly as [notification] messages — it has the
+SAME raw event stream that triggered this guidance.
+
+This changes your decision criteria significantly:
+- If the guidance merely restates what a raw event already contains (e.g., "SMS received
+  from John: running late" when the fast brain already received that exact event), BLOCK it.
+  The fast brain already has this information and will handle it on its own.
+- Only SEND guidance when it adds value BEYOND the raw event: additional context, domain
+  knowledge, relationship history, nuance, or corrective direction.
+- When you do SPEAK, frame it as supplementary: acknowledge the fast brain may have already
+  handled it (e.g., "If you haven't mentioned this already, ...").
+- The bar for sending guidance is higher in boss-on-call mode — you are adding insight,
+  not relaying information.
+"""
+
     return f"""You are a guidance articulator for a voice call system.
 
 ## Your Role
@@ -120,6 +142,7 @@ Your job is threefold:
 
 When you generate speech, it will be spoken directly by the voice agent's TTS — the fast
 brain's LLM is bypassed entirely. You are the sole author of what the user hears.
+{boss_visibility_note}
 
 ## Voice Agent Persona
 
@@ -302,6 +325,7 @@ class GuidanceArticulator:
         conversation: list[ConversationMessage],
         voice_agent_prompt: str,
         recent_guidance: list[str] | None = None,
+        boss_on_call: bool = False,
     ) -> GuidanceDecision:
         """
         Decide what to do with slow brain guidance and optionally generate speech.
@@ -314,6 +338,9 @@ class GuidanceArticulator:
                                 match persona when generating speech.
             recent_guidance: Guidance strings already published by previous slow-brain
                             runs. Used for redundancy detection.
+            boss_on_call: Whether the boss is on the call. When True, the fast brain
+                          has direct event visibility and the bar for sending guidance
+                          is higher.
 
         Returns:
             GuidanceDecision with the action to take and optional speech text.
@@ -349,7 +376,10 @@ Is this guidance still relevant? Should you speak it, silently notify, or block 
             )
             client.set_response_format(GuidanceDecision)
 
-            system_prompt = _build_system_prompt(voice_agent_prompt)
+            system_prompt = _build_system_prompt(
+                voice_agent_prompt,
+                boss_on_call=boss_on_call,
+            )
             response = await client.generate(
                 user_prompt,
                 system=system_prompt,

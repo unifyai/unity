@@ -734,6 +734,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
             # Build the full fast brain prompt for persona matching
             voice_agent_prompt = self._build_voice_agent_prompt()
+            boss_on_call = contact.get("contact_id") == 1
 
             articulator = GuidanceArticulator()
             decision = await articulator.articulate_guidance(
@@ -743,6 +744,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 recent_guidance=(
                     list(self._recent_guidance) if needs_relevance_check else None
                 ),
+                boss_on_call=boss_on_call,
             )
 
             self._session_logger.debug(

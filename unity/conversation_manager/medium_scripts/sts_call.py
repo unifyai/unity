@@ -56,6 +56,7 @@ from unity.conversation_manager.medium_scripts.common import (
     should_dispatch_livekit_agent,
     start_event_broker_receive,
     UserScreenCaptureManager,
+    render_event_for_fast_brain,
 )
 
 logger = logging.getLogger("gpt-realtime-agent")
@@ -488,6 +489,42 @@ async def entrypoint(ctx: JobContext) -> None:
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
 
+    # When the boss is on the call, register pattern callbacks to inject all
+    # system events into the chat context as [notification] messages.
+    # rt_ref is populated after session.start(); handlers gate on session_ready.
+    is_boss_user = contact.get("contact_id") == 1
+    rt_ref: list = []  # mutable container so the closure captures the live value
+
+    if is_boss_user:
+
+        def on_system_event(data: dict) -> None:
+            raw = data.get("event") if "event" in data else json.dumps(data)
+            text = render_event_for_fast_brain(
+                raw if isinstance(raw, str) else json.dumps(raw),
+            )
+            if not text:
+                return
+            print(f"[BossEvent] {text[:80]}")
+            touch_activity()
+            if not session_ready or not rt_ref:
+                return
+            current_rt = rt_ref[0]
+            chat_ctx = current_rt.chat_ctx
+            chat_ctx.add_message(
+                role="system",
+                content=[f"[notification] {text}"],
+            )
+
+            async def _update():
+                await current_rt.update_chat_ctx(chat_ctx)
+
+            asyncio.create_task(_update())
+
+        event_broker.register_callback("app:comms:*", on_system_event)
+        event_broker.register_callback("app:actor:*", on_system_event)
+        event_broker.register_callback("app:managers:output", on_system_event)
+        event_broker.register_callback("app:logging:message_logged", on_system_event)
+
     # Handle call_answered that arrived during initialization
     if call_answered_flag.is_set():
         print("[Status] call_answered arrived during init - applying now")
@@ -498,6 +535,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Get realtime session (only available after session.start())
     rt = agent.realtime_llm_session
+    rt_ref.append(rt)
 
     # Log real usage per turn via unillm (replaces duration-based heuristic)
     @rt.on("metrics_collected")

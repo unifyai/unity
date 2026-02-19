@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
 import sys
@@ -10,10 +11,20 @@ from typing import Awaitable, Callable, Iterable, Optional
 
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
+    Event,
     PhoneCallStarted,
     PhoneCallEnded,
     UnifyMeetEnded,
     UnifyMeetStarted,
+    SMSReceived,
+    EmailReceived,
+    UnifyMessageReceived,
+    ActorNotification,
+    ActorResult,
+    ActorHandleStarted,
+    ActorSessionResponse,
+    NotificationInjectedEvent,
+    CallGuidance,
 )
 from unity.conversation_manager.domains.ipc_socket import (
     get_socket_client,
@@ -48,15 +59,19 @@ class SocketAwareEventBroker:
         self._fallback_broker = get_event_broker()
         self._receive_started = False
         self._callbacks: dict[str, Callable[[dict], None]] = {}
+        self._pattern_callbacks: list[tuple[str, Callable[[dict], None]]] = []
 
     def register_callback(self, channel: str, handler: Callable[[dict], None]) -> None:
         """
         Register a callback for events on a channel.
 
-        The handler is invoked immediately when an event arrives on the channel.
-        Handler receives the parsed JSON data (dict).
+        Supports glob patterns (e.g., ``app:comms:*``).  Exact-match
+        callbacks take precedence over patterns.
         """
-        self._callbacks[channel] = handler
+        if "*" in channel or "?" in channel or "[" in channel:
+            self._pattern_callbacks.append((channel, handler))
+        else:
+            self._callbacks[channel] = handler
 
     async def start_receiving(self) -> bool:
         """
@@ -75,23 +90,37 @@ class SocketAwareEventBroker:
         async def on_event(channel: str, event_json: str) -> None:
             """Invoke registered callback when event arrives."""
             message_id = payload_trace_id("ipc", channel, event_json)
+            has_exact = channel in self._callbacks
+            has_pattern = any(
+                fnmatch.fnmatch(channel, pat) for pat, _ in self._pattern_callbacks
+            )
             print(
                 trace_kv(
                     "SOCKET_BROKER_INBOUND",
                     channel=channel,
                     message_id=message_id,
-                    has_callback=channel in self._callbacks,
+                    has_callback=has_exact or has_pattern,
                     ts_utc=now_utc_iso(),
                     monotonic_ms=monotonic_ms(),
                 ),
                 flush=True,
             )
-            if channel in self._callbacks:
+            try:
+                data = json.loads(event_json)
+            except Exception as e:
+                print(f"[SocketAwareEventBroker] JSON parse error: {e}")
+                return
+            if has_exact:
                 try:
-                    data = json.loads(event_json)
                     self._callbacks[channel](data)
                 except Exception as e:
                     print(f"[SocketAwareEventBroker] Callback error: {e}")
+            for pat, handler in self._pattern_callbacks:
+                if fnmatch.fnmatch(channel, pat):
+                    try:
+                        handler(data)
+                    except Exception as e:
+                        print(f"[SocketAwareEventBroker] Pattern callback error: {e}")
 
         success = await start_socket_receive_loop(on_event)
         if success:
@@ -520,3 +549,56 @@ class UserScreenCaptureManager:
         self._capture_task = None
         self._latest_frame_data = None
         self._stream = None
+
+
+# -------- Event rendering for boss-on-call mode -------- #
+
+
+def _contact_name(contact: dict) -> str:
+    first = contact.get("first_name", "")
+    last = contact.get("surname", "")
+    name = f"{first} {last}".strip()
+    return (
+        name or contact.get("phone_number") or contact.get("email_address") or "Unknown"
+    )
+
+
+def render_event_for_fast_brain(event_json: str) -> str | None:
+    """Render a CM event as a concise human-readable string for the fast brain.
+
+    Returns None for events that should be silently ignored (e.g. own
+    utterances, call guidance which is handled by a dedicated callback, or
+    events with no user-meaningful content).
+    """
+    try:
+        event = Event.from_json(event_json)
+    except Exception:
+        return None
+
+    if isinstance(event, CallGuidance):
+        return None
+
+    if isinstance(event, SMSReceived):
+        return f"SMS from {_contact_name(event.contact)}: {event.content}"
+    if isinstance(event, EmailReceived):
+        subj = event.subject or "(no subject)"
+        return f"Email from {_contact_name(event.contact)}: {subj}"
+    if isinstance(event, UnifyMessageReceived):
+        return f"Unify message from {_contact_name(event.contact)}: {event.content}"
+    if isinstance(event, ActorNotification):
+        return f"Action progress: {event.response}"
+    if isinstance(event, ActorResult):
+        status = "completed successfully" if event.success else "failed"
+        detail = event.result or event.error or ""
+        if isinstance(detail, dict):
+            detail = detail.get("summary", str(detail))
+        snippet = str(detail)[:200]
+        return f"Action {status}: {snippet}" if snippet else f"Action {status}"
+    if isinstance(event, ActorHandleStarted):
+        return f"Action started: {event.action_name} — {event.query}"
+    if isinstance(event, ActorSessionResponse):
+        return f"Action update: {event.content}"
+    if isinstance(event, NotificationInjectedEvent):
+        return event.content
+
+    return None
