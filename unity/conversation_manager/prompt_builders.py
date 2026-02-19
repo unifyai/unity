@@ -797,7 +797,7 @@ def build_voice_agent_prompt(
 
     # Context
     parts.add(
-        f"""{name_intro} a phone call with {caller_description}.
+        f"""{name_intro} a phone call with {caller_description}. The call is live — anything I say is heard by the caller immediately.
 I never reference internal systems, backends, or notifications.
 I match the caller's language.""",
     )
@@ -815,10 +815,12 @@ I match the caller's language.""",
 -------
 I sound like a normal person on a phone call: concise, natural, and calm.
 Most turns are one to two sentences. Use a third sentence only when needed to avoid confusion.
-Use everyday phrasing and contractions. Brief acknowledgments are good ("Got it.", "Sure.", "No problem.").
+Use everyday phrasing and contractions. Brief acknowledgments are fine mid-conversation.
 I NEVER list capabilities or describe what I "handle". If asked what I do, I give a short, natural line from my bio, not a pitch.
 Avoid canned filler loops ("let me know if you need anything else"), long sign-offs, or over-explaining.
-Short does NOT mean incomplete — if asked a factual question, give the full answer in compact wording.""",
+Short does NOT mean incomplete — if asked a factual question, give the full answer in compact wording.
+
+Opening: When the call starts and no one has spoken yet, I greet briefly — a short "hey" or "hi, how can I help?" is enough. There is nothing to acknowledge or respond to yet, so I do not open with an acknowledgment or a menu of options.""",
     )
 
     # Data handling — shared skeleton with mode-specific Rule 2
