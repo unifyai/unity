@@ -488,7 +488,60 @@ class TestProactiveSpeechDecideIntegration:
 
 @pytest.mark.asyncio
 class TestEventHandlerProactiveSpeechIntegration:
-    """Tests verifying event handlers properly cancel proactive speech."""
+    """Tests verifying event handlers properly reset/cancel proactive speech."""
+
+    async def test_call_guidance_should_speak_resets_proactive(self, mock_cm):
+        """CallGuidance with should_speak=True resets (reschedules) proactive speech.
+
+        Regression test for a coordination gap: when slow-brain guidance is
+        dispatched with should_speak=True, it will be spoken via session.say()
+        and can take many seconds of TTS playback. During that window, the
+        proactive speech timer (reset only by OutboundUtterance events) can
+        fire and produce stale filler that contradicts the just-delivered
+        content.
+
+        The fix: the CallGuidance handler must reset the proactive timer when
+        should_speak=True, preventing stale proactive speech from queueing
+        during TTS playback of substantive guidance.
+        """
+        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.domains.event_handlers import EventHandler
+
+        mock_cm.schedule_proactive_speech = AsyncMock()
+
+        event = CallGuidance(
+            contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
+            content="I found several backend engineer openings at OpenAI.",
+            response_text="I found several backend engineer openings at OpenAI.",
+            should_speak=True,
+            source="slow_brain",
+        )
+
+        await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
+
+        mock_cm.schedule_proactive_speech.assert_called_once()
+
+    async def test_call_guidance_notify_only_does_not_reset_proactive(self, mock_cm):
+        """CallGuidance with should_speak=False does NOT reset proactive speech.
+
+        Notify-only guidance is silently injected into the fast brain's context.
+        The user is still in silence, so proactive speech may still be warranted.
+        """
+        from unity.conversation_manager.events import CallGuidance
+        from unity.conversation_manager.domains.event_handlers import EventHandler
+
+        mock_cm.schedule_proactive_speech = AsyncMock()
+
+        event = CallGuidance(
+            contact={"contact_id": 1, "first_name": "Boss", "surname": "User"},
+            content="Checking your contacts for Bob.",
+            should_speak=False,
+            source="slow_brain",
+        )
+
+        await EventHandler.handle_event(event, mock_cm, is_voice_call=False)
+
+        mock_cm.schedule_proactive_speech.assert_not_called()
 
     async def test_inbound_phone_utterance_resets_proactive(self, mock_cm):
         """InboundPhoneUtterance event resets (reschedules) proactive speech."""
