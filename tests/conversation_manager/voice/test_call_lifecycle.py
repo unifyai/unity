@@ -296,7 +296,6 @@ class TestCallEventSerialization:
         """UnifyMeet events serialize correctly."""
         received = UnifyMeetReceived(
             contact=sample_contact,
-            livekit_agent_name="test_agent",
             room_name="test_room",
         )
         started = UnifyMeetStarted(contact=sample_contact)
@@ -444,15 +443,13 @@ class TestCallSubprocessLifecycle:
             await call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
-                livekit_agent_name="test_agent",
-                room_name="test_room",
+                room_name="unity_25_meet",
             )
 
             mock_run_script.assert_called_once()
             call_args = mock_run_script.call_args
             assert "call.py" in str(call_args[0][0])  # script path
-            # LiveKit agent name and room name should be combined in args
-            assert any("test_agent:test_room" in str(arg) for arg in call_args[0])
+            assert any("unity_25_meet" in str(arg) for arg in call_args[0])
 
     @pytest.mark.asyncio
     async def test_start_unify_meet_default_names(
@@ -461,7 +458,7 @@ class TestCallSubprocessLifecycle:
         sample_contact,
         boss_contact,
     ):
-        """start_unify_meet() generates default livekit_agent_name/room names from assistant_id."""
+        """start_unify_meet() generates default room name from assistant_id."""
         call_manager.assistant_id = "my_assistant"
 
         with patch(
@@ -473,13 +470,12 @@ class TestCallSubprocessLifecycle:
             await call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
-                livekit_agent_name=None,
                 room_name=None,
             )
 
             call_args = mock_run_script.call_args
-            # Default names should use assistant_id
-            assert any("unity_my_assistant_web" in str(arg) for arg in call_args[0])
+            # Default names should use make_room_name(assistant_id, "meet")
+            assert any("unity_my_assistant_meet" in str(arg) for arg in call_args[0])
 
     @pytest.mark.asyncio
     async def test_cleanup_call_proc_no_process(self, call_manager):
@@ -758,7 +754,6 @@ class TestUnifyMeetEventHandlers:
         ) as mock_start:
             event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
             await initialized_cm.step(event)
@@ -1109,7 +1104,6 @@ class TestFullCallLifecycle:
         ) as mock_start:
             received_event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
             await initialized_cm.step(received_event)

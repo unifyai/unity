@@ -24,6 +24,15 @@ if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 
+def make_room_name(assistant_id: str, medium: str) -> str:
+    """Canonical LiveKit room name for a given assistant and medium.
+
+    Format: unity_{assistant_id}_{medium}
+    Examples: unity_25_phone, unity_25_meet, unity_25_teams
+    """
+    return f"unity_{assistant_id}_{medium}"
+
+
 @dataclass
 class CallConfig:
     assistant_id: str
@@ -120,7 +129,7 @@ class LivekitCallManager:
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
         args = [
-            self.assistant_number,
+            make_room_name(self.assistant_id, "phone"),
             self.voice_provider,
             self.voice_id,
             outbound,
@@ -174,7 +183,6 @@ class LivekitCallManager:
         self,
         contact: dict,
         boss: dict,
-        livekit_agent_name: str | None,
         room_name: str | None,
     ):
         # Unify Meet is always inbound (user initiates)
@@ -189,29 +197,12 @@ class LivekitCallManager:
             print(f"[LivekitCallManager] Socket server at {socket_path}")
 
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        livekit_agent_name = (
-            livekit_agent_name
-            if livekit_agent_name
-            else (
-                f"unity_{self.assistant_id}_web"
-                if self.assistant_id
-                else "unity_unify_meet_1"
-            )
-        )
-        room_name = (
-            room_name
-            if room_name
-            else (
-                f"unity_{self.assistant_id}_web"
-                if self.assistant_id
-                else "unity_unify_meet_1"
-            )
-        )
+        room_name = room_name or make_room_name(self.assistant_id, "meet")
         self.room_name = room_name
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
         args = [
-            f"{livekit_agent_name}:{room_name}",
+            room_name,
             self.voice_provider,
             self.voice_id,
             False,

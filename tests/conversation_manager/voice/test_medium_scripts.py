@@ -752,14 +752,14 @@ class TestCLIArgumentParsing:
             },
         )
 
-        # Simulate CLI args: script.py dev assistant_number VOICE_PROVIDER VOICE_ID OUTBOUND CHANNEL CONTACT BOSS ASSISTANT_BIO ASSISTANT_ID USER_ID
+        # argv[2] is the canonical room name from make_room_name() in call_manager
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "12345",
+                "unity_test_assistant_id_phone",
                 "elevenlabs",
                 "voice123",
                 "True",
@@ -772,7 +772,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        livekit_agent_name, room_name = common.configure_from_cli(
+        room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -782,20 +782,14 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        assert livekit_agent_name == "unity_12345"
-        assert room_name == "unity_12345"
+        assert room_name == "unity_test_assistant_id_phone"
         assert SESSION_DETAILS.voice.provider == "elevenlabs"
         assert SESSION_DETAILS.voice.id == "voice123"
         assert SESSION_DETAILS.voice_call.outbound is True
         assert SESSION_DETAILS.voice_call.channel == "phone"
 
-    def test_configure_from_cli_livekit_agent_name_with_room(self, monkeypatch):
-        """configure_from_cli handles livekit_agent_name:room_name format for UnifyMeet calls.
-
-        For UnifyMeet, the caller (LivekitCallManager.start_unify_meet) passes
-        "livekit_agent_name:room_name" where both are already prefixed with "unity_".
-        The function splits on ":" and returns the two parts.
-        """
+    def test_configure_from_cli_meet_room_name(self, monkeypatch):
+        """configure_from_cli returns the canonical room name for UnifyMeet calls."""
         from unity.conversation_manager.medium_scripts import common
         from unity.session_details import SESSION_DETAILS
 
@@ -804,15 +798,15 @@ class TestCLIArgumentParsing:
         contact_json = json.dumps({"contact_id": 1, "first_name": "Test"})
         boss_json = json.dumps({"contact_id": 1, "first_name": "Boss"})
 
-        # Simulate UnifyMeet call with colon-separated livekit_agent_name:room_name
-        # (This matches what LivekitCallManager.start_unify_meet passes)
+        # Simulate UnifyMeet call — argv[2] is the canonical room name
+        # (same as phone calls; agent_name = room_name for all mediums)
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "unity_assistant_web:unity_assistant_web",  # Already prefixed by caller
+                "unity_25_meet",
                 "cartesia",
                 "voice456",
                 "False",
@@ -825,7 +819,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        livekit_agent_name, room_name = common.configure_from_cli(
+        room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -835,10 +829,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        # Colon triggers the split: "unity_assistant_web:unity_assistant_web"
-        # becomes livekit_agent_name="unity_assistant_web", room_name="unity_assistant_web"
-        assert livekit_agent_name == "unity_assistant_web"
-        assert room_name == "unity_assistant_web"
+        assert room_name == "unity_25_meet"
 
     def test_configure_from_cli_defaults_none_voice_provider(self, monkeypatch):
         """configure_from_cli defaults 'None' voice provider to cartesia."""

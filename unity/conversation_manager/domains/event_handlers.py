@@ -137,7 +137,6 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
             await cm.call_manager.start_unify_meet(
                 contact,
                 boss,
-                e.livekit_agent_name,
                 e.room_name,
             )
             message_content = "<Recieving Call...>"

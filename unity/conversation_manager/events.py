@@ -146,7 +146,6 @@ class UnifyMeetReceived(Event):
     topic: ClassVar[str | None] = "app:comms:unify_meet_received"
 
     contact: dict
-    livekit_agent_name: str | None = None
     room_name: str | None = None
 
 

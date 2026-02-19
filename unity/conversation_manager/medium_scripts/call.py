@@ -585,7 +585,7 @@ async def entrypoint(ctx: agents.JobContext):
 
 if __name__ == "__main__":
     # Shared CLI handling (same as sts_call.py)
-    livekit_agent_name, room_name = configure_from_cli(
+    room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),
             ("BOSS", True),
@@ -597,22 +597,21 @@ if __name__ == "__main__":
 
     # Dispatch LiveKit agent
     if should_dispatch_livekit_agent():
-        print(f"Dispatching LiveKit agent {livekit_agent_name}")
+        print(f"Dispatching LiveKit agent {room_name}")
         dispatch_livekit_agent(
-            livekit_agent_name,
             room_name,
             record=True,
             assistant_id=SESSION_DETAILS.assistant.id,
             user_id=SESSION_DETAILS.user.id,
         )
-        print(f"LiveKit agent {livekit_agent_name} dispatched")
+        print(f"LiveKit agent {room_name} dispatched")
 
     # Run the agent using the standard CLI - this is the natural way to run LiveKit agents.
     # The process will be terminated via SIGTERM when cleanup_call_proc() is called.
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
-            agent_name=livekit_agent_name,
+            agent_name=room_name,
             prewarm_fnc=prewarm,
             initialize_process_timeout=60,
         ),

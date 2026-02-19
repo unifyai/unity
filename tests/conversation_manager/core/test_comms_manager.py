@@ -817,7 +817,6 @@ class TestUnifyMeetHandling:
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMeetReceived)
-            assert event.livekit_agent_name == "TestAgent"
             assert event.room_name == "room_123"
 
 

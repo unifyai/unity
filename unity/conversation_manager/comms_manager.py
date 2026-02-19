@@ -605,7 +605,6 @@ class CommsManager:
                         # unify_meet is internal, no blacklist check needed
                         call_event = UnifyMeetReceived(
                             contact=next(c for c in contacts if c["contact_id"] == 1),
-                            livekit_agent_name=event.get("livekit_agent_name"),
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_meet_received"
