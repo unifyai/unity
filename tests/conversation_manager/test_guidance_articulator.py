@@ -687,15 +687,18 @@ class TestResponseModel:
         decision = GuidanceDecision(
             thoughts="Test reasoning",
             send_guidance=True,
+            can_speak_without_fabricating=True,
             should_speak=True,
             response_text="It's at 3pm.",
         )
         assert hasattr(decision, "thoughts")
         assert hasattr(decision, "send_guidance")
+        assert hasattr(decision, "can_speak_without_fabricating")
         assert hasattr(decision, "should_speak")
         assert hasattr(decision, "response_text")
         assert isinstance(decision.thoughts, str)
         assert isinstance(decision.send_guidance, bool)
+        assert isinstance(decision.can_speak_without_fabricating, bool)
         assert isinstance(decision.should_speak, bool)
         assert isinstance(decision.response_text, str)
 
@@ -704,6 +707,7 @@ class TestResponseModel:
         decision = GuidanceDecision(
             thoughts="The guidance is relevant",
             send_guidance=True,
+            can_speak_without_fabricating=True,
             should_speak=True,
             response_text="It's at 3pm in Conference Room B.",
         )
@@ -711,6 +715,10 @@ class TestResponseModel:
         restored = GuidanceDecision.model_validate_json(json_str)
         assert restored.thoughts == decision.thoughts
         assert restored.send_guidance == decision.send_guidance
+        assert (
+            restored.can_speak_without_fabricating
+            == decision.can_speak_without_fabricating
+        )
         assert restored.should_speak == decision.should_speak
         assert restored.response_text == decision.response_text
 
@@ -719,6 +727,7 @@ class TestResponseModel:
         decision = GuidanceDecision(
             thoughts="Blocked",
             send_guidance=False,
+            can_speak_without_fabricating=False,
             should_speak=False,
         )
         assert decision.response_text == ""
