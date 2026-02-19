@@ -89,7 +89,7 @@ class TableStore:
 
         # Production path: User/Assistant/Suffix
         user_ctx = parts[0]
-        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+        suffix = "/".join(parts[2:])  # Everything after user_id/assistant_id
         return [
             f"{user_ctx}/All/{suffix}",
             f"All/{suffix}",

@@ -98,20 +98,20 @@ class TasksStore:
         Derive aggregation contexts for this user/assistant-scoped context.
 
         Returns two contexts for cross-assistant and cross-user aggregation:
-          - {UserName}/All/{suffix} - all assistants for this user
-          - All/{suffix}            - all users, all assistants
+          - {user_id}/All/{suffix} - all assistants for this user
+          - All/{suffix}           - all users, all assistants
 
-        Example: "JohnDoe/MyAssistant/Tasks" returns:
-          - "JohnDoe/All/Tasks"
+        Example: "42/7/Tasks" returns:
+          - "42/All/Tasks"
           - "All/Tasks"
 
-        Returns empty list if context doesn't have UserName/AssistantName prefix.
+        Returns empty list if context doesn't have user_id/assistant_id prefix.
         """
         parts = self._ctx.split("/")
         if len(parts) < 3:
             return []
         user_ctx = parts[0]
-        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+        suffix = "/".join(parts[2:])  # Everything after user_id/assistant_id
         return [
             f"{user_ctx}/All/{suffix}",  # User-level aggregation
             f"All/{suffix}",  # Global aggregation
