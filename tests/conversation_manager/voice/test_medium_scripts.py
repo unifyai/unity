@@ -1666,3 +1666,64 @@ class TestFastBrainGuidanceFlow:
             len(session.say_calls) == 1
         ), "Queued speech should fire after agent returns to listening."
         assert session.say_calls[0] == "It's at 3pm."
+
+
+class TestSayMetaTextMatching:
+    """Regression tests for _last_say_meta text matching.
+
+    When session.say() and generate_reply produce concurrent TTS, the
+    _last_say_meta (set by session.say) can be consumed by the wrong
+    conversation_item_added event. The fix is to store the spoken text
+    in the meta and only consume it when the utterance text matches.
+    """
+
+    def test_match_say_meta_exists(self):
+        """The match_say_meta helper must exist in common.py."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        assert callable(match_say_meta)
+
+    def test_matching_text_consumes_meta(self):
+        """When utterance text matches the session.say text, return the meta."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        meta = {
+            "guidance_id": "guid-abc",
+            "source": "proactive_speech",
+            "text": "Still there, Yusha?",
+        }
+        result = match_say_meta(meta, "Still there, Yusha?")
+        assert result is not None
+        assert result["guidance_id"] == "guid-abc"
+
+    def test_different_text_does_not_consume_meta(self):
+        """When utterance text differs from session.say text, return None.
+
+        This is the exact bug: a fast brain response like
+        'One moment - I am pulling that up.' should NOT consume meta
+        set by session.say('Sure, go ahead - what is the task?').
+        """
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        meta = {
+            "guidance_id": "guid-abc",
+            "source": "proactive_speech",
+            "text": "Sure, go ahead — what's the task?",
+        }
+        result = match_say_meta(meta, "One moment — I'm pulling that up.")
+        assert result is None
+
+    def test_none_meta_returns_none(self):
+        """When no meta is set, return None regardless of text."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        assert match_say_meta(None, "anything") is None
+
+    def test_meta_without_text_key_always_matches(self):
+        """Legacy meta dicts without a text key match any utterance
+        (backward compatible with pre-fix code)."""
+        from unity.conversation_manager.medium_scripts.common import match_say_meta
+
+        meta = {"guidance_id": "guid-abc", "source": "slow_brain"}
+        result = match_say_meta(meta, "Some text")
+        assert result is not None
