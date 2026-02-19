@@ -282,13 +282,13 @@ class TestSlowBrainDecisionBoundaries:
 
         # The wait() tool should accept a call_guidance parameter
         wait_sig = inspect.signature(ConversationManagerBrainActionTools.wait)
-        assert "call_guidance" in wait_sig.parameters, (
-            "wait() must accept a call_guidance parameter for voice guidance delivery"
-        )
+        assert (
+            "call_guidance" in wait_sig.parameters
+        ), "wait() must accept a call_guidance parameter for voice guidance delivery"
         param = wait_sig.parameters["call_guidance"]
-        assert param.default == "", (
-            "call_guidance should default to empty string (optional)"
-        )
+        assert (
+            param.default == ""
+        ), "call_guidance should default to empty string (optional)"
 
         # The response model for voice modes should NOT contain call_guidance
         # (it's been moved to tool parameters for reliable delivery)
