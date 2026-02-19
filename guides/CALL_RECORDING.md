@@ -383,13 +383,13 @@ For recording to work end-to-end, the following must be true:
 
 1. **LiveKit Egress must be enabled** on the LiveKit Cloud project (or a self-hosted Egress service must be running). Without this, `start_room_composite_egress` API calls will fail.
 
-2. **`GOOGLE_APPLICATION_CREDENTIALS`** must be set on both the adapters and communication Cloud Run services. This is a GCS service account JSON string with `Storage Object Creator` permissions on the `unity-call-recordings` bucket.
+2. **`GCP_SA_KEY`** must be set on both the adapters and communication Cloud Run services. This is a GCS service account JSON string with write permissions on the `unity-call-recordings` bucket. This is the same key already used by the adapters for other GCS operations (message attachments, Gmail).
 
 3. **`UNITY_ADAPTERS_URL` must be publicly reachable** from LiveKit's infrastructure, so the egress completion webhook can reach `/livekit/recording-complete` on the adapters.
 
 4. **The `/livekit/recording-complete` adapter endpoint** has no application-level auth beyond LiveKit's own webhook signing (verified via `WebhookReceiver`/`TokenVerifier`). If there's infrastructure-level auth (API gateway, load balancer) that blocks unauthenticated requests to the adapters service, the webhook will be rejected.
 
-5. **The GCS bucket `unity-call-recordings` must exist** in the GCP project (`responsive-city-458413-a2`), with the service account from `GOOGLE_APPLICATION_CREDENTIALS` having write access.
+5. **The GCS bucket `unity-call-recordings` must exist** in the GCP project (`responsive-city-458413-a2`), with the service account from `GCP_SA_KEY` having write access.
 
 6. **GCP_PROJECT_ID** must be set (already required for all other Pub/Sub publishing).
 
