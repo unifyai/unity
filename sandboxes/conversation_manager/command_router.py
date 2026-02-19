@@ -262,19 +262,41 @@ class CommandRouter:
                 ],
             )
 
-        return RouterResult(
-            lines=[
-                f"💾 State saved:",
-                f"   JSON: {json_path}",
-                f"   Text: {text_path}",
-                f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
-                f"{snapshot.summary['total_cm_logs']} CM logs, "
-                f"{snapshot.summary['total_actor_logs']} actor logs, "
-                f"{snapshot.summary['total_manager_logs']} manager logs, "
-                f"{snapshot.summary['total_traces']} traces, "
-                f"{snapshot.summary['total_event_trees']} trees",
-            ],
-        )
+        result_lines = [
+            f"💾 State saved:",
+            f"   JSON: {json_path}",
+            f"   Text: {text_path}",
+            f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
+            f"{snapshot.summary['total_cm_logs']} CM logs, "
+            f"{snapshot.summary['total_actor_logs']} actor logs, "
+            f"{snapshot.summary['total_manager_logs']} manager logs, "
+            f"{snapshot.summary['total_traces']} traces, "
+            f"{snapshot.summary['total_event_trees']} trees",
+        ]
+
+        # Generate call transcript from the voice agent log if available.
+        voice_log = repo_root / ".logs_voice_agent.txt"
+        if voice_log.exists():
+            try:
+                from sandboxes.conversation_manager.call_transcript import (
+                    build_timeline,
+                    format_timeline,
+                    parse_voice_log,
+                )
+
+                voice_data = parse_voice_log(voice_log)
+                if voice_data.utterances:
+                    timeline = build_timeline(voice_data)
+                    transcript_path = json_path.with_name(
+                        json_path.stem + "_transcript.txt",
+                    )
+                    with open(transcript_path, "w") as f:
+                        f.write(format_timeline(timeline, verbose=True))
+                    result_lines.append(f"   Transcript: {transcript_path}")
+            except Exception as exc:
+                LG.warning("Failed to generate call transcript: %s", exc)
+
+        return RouterResult(lines=result_lines)
 
     async def _handle_log_expansion(self, args: str, *, expand: bool) -> RouterResult:
         lg = self.log_aggregator
