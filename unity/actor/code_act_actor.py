@@ -6,7 +6,6 @@ import inspect
 import json
 import traceback
 import uuid
-from datetime import datetime, timezone
 from secrets import token_hex as _token_hex
 import logging
 from typing import (
@@ -1834,19 +1833,6 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
 
-                if notification_q is not None and str(language) == "python":
-                    try:
-                        await notification_q.put(
-                            {
-                                "type": "execution_started",
-                                "message": "execution_started",
-                                "sandbox_id": sandbox_id,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                    except Exception:
-                        pass
-
                 # Execute via SessionExecutor. Route primitives if available in current sandbox.
                 primitives = None
                 computer_primitives = self._computer_primitives
@@ -1872,22 +1858,6 @@ class CodeActActor(BaseCodeActActor):
                         exec_exc = e
                         tb = traceback.format_exc()
                         tb_str = tb
-                        if notification_q is not None and str(language) == "python":
-                            try:
-                                await notification_q.put(
-                                    {
-                                        "type": "execution_error",
-                                        "message": "execution_error",
-                                        "sandbox_id": sandbox_id,
-                                        "error_kind": "exception",
-                                        "traceback_preview": tb[:2000],
-                                        "timestamp": datetime.now(
-                                            timezone.utc,
-                                        ).isoformat(),
-                                    },
-                                )
-                            except Exception:
-                                pass
                         out = {
                             "stdout": "",
                             "stderr": "",
@@ -1913,23 +1883,6 @@ class CodeActActor(BaseCodeActActor):
                     )
                 else:
                     out["session_name"] = None
-
-                if notification_q is not None and str(language) == "python":
-                    try:
-                        _status = "ok" if not out.get("error") else "error"
-                        await notification_q.put(
-                            {
-                                "type": "execution_finished",
-                                "sandbox_id": sandbox_id,
-                                "status": _status,
-                                "message": f"execution_finished:{_status}",
-                                "stdout_len": len(out.get("stdout") or ""),
-                                "stderr_len": len(out.get("stderr") or ""),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                    except Exception:
-                        pass
 
                 # Wrap in-process Python results in ExecutionResult for proper LLM
                 # image formatting. In-process Python has stdout as List[OutputPart];
@@ -2321,21 +2274,6 @@ class CodeActActor(BaseCodeActActor):
                     except Exception:
                         pass
 
-                    if notification_q is not None and str(language) == "python":
-                        try:
-                            await notification_q.put(
-                                {
-                                    "type": "execution_started",
-                                    "message": "execution_started",
-                                    "sandbox_id": sandbox_id,
-                                    "timestamp": datetime.now(
-                                        timezone.utc,
-                                    ).isoformat(),
-                                },
-                            )
-                        except Exception:
-                            pass
-
                     # Resolve primitives from current sandbox.
                     primitives = None
                     computer_primitives = self._computer_primitives
@@ -2361,22 +2299,6 @@ class CodeActActor(BaseCodeActActor):
                             exec_exc = e
                             tb = traceback.format_exc()
                             tb_str = tb
-                            if notification_q is not None and str(language) == "python":
-                                try:
-                                    await notification_q.put(
-                                        {
-                                            "type": "execution_error",
-                                            "message": "execution_error",
-                                            "sandbox_id": sandbox_id,
-                                            "error_kind": "exception",
-                                            "traceback_preview": tb[:2000],
-                                            "timestamp": datetime.now(
-                                                timezone.utc,
-                                            ).isoformat(),
-                                        },
-                                    )
-                                except Exception:
-                                    pass
                             out = {
                                 "stdout": "",
                                 "stderr": "",
@@ -2402,25 +2324,6 @@ class CodeActActor(BaseCodeActActor):
                         )
                     else:
                         out["session_name"] = None
-
-                    if notification_q is not None and str(language) == "python":
-                        try:
-                            _status = "ok" if not out.get("error") else "error"
-                            await notification_q.put(
-                                {
-                                    "type": "execution_finished",
-                                    "sandbox_id": sandbox_id,
-                                    "status": _status,
-                                    "message": f"execution_finished:{_status}",
-                                    "stdout_len": len(out.get("stdout") or ""),
-                                    "stderr_len": len(out.get("stderr") or ""),
-                                    "timestamp": datetime.now(
-                                        timezone.utc,
-                                    ).isoformat(),
-                                },
-                            )
-                        except Exception:
-                            pass
 
                     # Wrap in-process Python results in ExecutionResult.
                     if out.get("language") == "python" and isinstance(
