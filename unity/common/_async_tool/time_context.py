@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import time as _time
 from dataclasses import dataclass
 from typing import Union
@@ -29,40 +28,26 @@ def perf_counter() -> float:
 # --------------------------------------------------------------------------- #
 
 
-def format_offset(seconds: float) -> str:
-    """Format *seconds* as a compact signed offset string.
+def _fmt(seconds: float, *, prefix: str = "") -> str:
+    """Core formatter for compact time strings.
 
-    Examples: ``+0s``, ``+45s``, ``+1m30s``, ``+1h2m30s``.
+    Milliseconds are included only when the total value is under one minute.
+
+    Examples: ``0s``, ``100ms``, ``2s50ms``, ``1m30s``, ``1h2m30s``.
+
+    Parameters
+    ----------
+    seconds
+        Duration in seconds to format.
+    prefix
+        String prepended to the result (e.g. ``"+"`` for offsets).
     """
     if seconds < 0:
-        return "+0s"
-
-    total = int(math.floor(seconds))
-    h, remainder = divmod(total, 3600)
-    m, s = divmod(remainder, 60)
-
-    parts: list[str] = []
-    if h:
-        parts.append(f"{h}h")
-    if m:
-        parts.append(f"{m}m")
-    if s or not parts:
-        parts.append(f"{s}s")
-    return "+" + "".join(parts)
-
-
-def format_duration(seconds: float) -> str:
-    """Format *seconds* as a compact human-readable duration.
-
-    Sub-second precision uses milliseconds.
-    Examples: ``0s``, ``100ms``, ``2s45ms``, ``1m30s``, ``1h2m30s``.
-    """
-    if seconds < 0:
-        return "0s"
+        return f"{prefix}0s"
 
     total_ms = int(round(seconds * 1000))
     if total_ms == 0:
-        return "0s"
+        return f"{prefix}0s"
 
     h, remainder_ms = divmod(total_ms, 3_600_000)
     m, remainder_ms = divmod(remainder_ms, 60_000)
@@ -75,11 +60,21 @@ def format_duration(seconds: float) -> str:
         parts.append(f"{m}m")
     if s:
         parts.append(f"{s}s")
-    if ms and not h:
+    if ms and not h and not m:
         parts.append(f"{ms}ms")
     if not parts:
         parts.append("0s")
-    return "".join(parts)
+    return prefix + "".join(parts)
+
+
+def format_offset(seconds: float) -> str:
+    """Format *seconds* as a compact signed offset string."""
+    return _fmt(seconds, prefix="+")
+
+
+def format_duration(seconds: float) -> str:
+    """Format *seconds* as a compact human-readable duration."""
+    return _fmt(seconds)
 
 
 # --------------------------------------------------------------------------- #
