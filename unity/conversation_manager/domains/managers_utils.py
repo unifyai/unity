@@ -407,12 +407,15 @@ async def actor_watch_notifications(
             # - Notifications may be plain strings (already display-ready), OR
             # - Structured dict payloads (recommended: include both "type" and "message").
             #
-            # We keep this adapter strict and predictable: prefer "message";
-            # otherwise fall back to "type"; otherwise JSON-dump the payload.
+            # Fallback chain: "message" → "result_summary" → "type" → JSON dump.
+            # "result_summary" is checked before "type" because step_complete
+            # payloads carry their useful content in that field, not "message".
             msg: str
             if isinstance(notif, dict):
                 if notif.get("message") is not None:
                     msg = str(notif.get("message"))
+                elif notif.get("result_summary") is not None:
+                    msg = str(notif.get("result_summary"))
                 elif notif.get("type") is not None:
                     msg = str(notif.get("type"))
                 else:
