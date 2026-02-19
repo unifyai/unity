@@ -50,18 +50,15 @@ class ProactiveSpeech:
         system_prompt: str,
     ) -> ProactiveDecision:
         """Decides whether to speak proactively based on the conversation history."""
-        messages = [
-            {"role": "system", "content": system_prompt},
-            *chat_history,
-            {"role": "system", "content": PROACTIVE_PROMPT},
-        ]
-
         try:
             client = new_llm_client(
                 debug_marker="ConversationManager.proactive_speech",
             )
             client.set_response_format(ProactiveDecision)
-            response = await client.generate(messages)
+            response = await client.generate(
+                system_message=f"{system_prompt}\n\n{PROACTIVE_PROMPT}",
+                messages=chat_history,
+            )
             return ProactiveDecision.model_validate_json(response)
         except Exception as e:
             print(f"Error in ProactiveSpeech decision: {e}")
