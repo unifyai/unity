@@ -392,6 +392,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 await rt.update_chat_ctx(chat_ctx)
 
             asyncio.create_task(update_ctx())
+            trigger_generate_reply(
+                reason="notification",
+                source_id=guidance_id or "guidance_notify",
+            )
 
     def maybe_speak_queued() -> None:
         """Speak the next queued response when user is silent and assistant is idle.
@@ -519,6 +523,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 await current_rt.update_chat_ctx(chat_ctx)
 
             asyncio.create_task(_update())
+            trigger_generate_reply(
+                reason="boss_event",
+                source_id="system_event",
+            )
 
         event_broker.register_callback("app:comms:*", on_system_event)
         event_broker.register_callback("app:actor:*", on_system_event)
