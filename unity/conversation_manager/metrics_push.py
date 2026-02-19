@@ -68,8 +68,8 @@ def init_metrics() -> None:
                     "k8s.namespace.name": namespace,
                     "k8s.pod.name": socket.gethostname(),
                     "k8s.container.name": "unity-assistant",
-                }
-            )
+                },
+            ),
         )
         print(f"[metrics] Resource attributes: {resource.attributes}")
 
