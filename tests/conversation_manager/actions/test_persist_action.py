@@ -30,6 +30,7 @@ from unity.conversation_manager.events import (
     ActorNotification,
     ActorSessionResponse,
 )
+from unity.conversation_manager.types.mode import Mode
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -40,7 +41,7 @@ from unity.conversation_manager.events import (
 def mock_cm():
     """Minimal mock ConversationManager for unit-level tests."""
     cm = MagicMock()
-    cm.mode = "text"
+    cm.mode = Mode.TEXT
     cm.contact_index = ContactIndex()
     cm.in_flight_actions = {}
     cm.completed_actions = {}
@@ -239,6 +240,37 @@ class TestActorNotificationHandler:
         await EventHandler.handle_event(event, mock_cm)
 
         mock_cm.request_llm_run.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_notification_forwards_to_articulator_in_voice_mode(self, mock_cm):
+        """In voice mode, ActorNotification forwards directly to the articulator.
+
+        The direct path bypasses the slow-brain's call_guidance gate. The
+        articulator is the sole voice-UX gatekeeper for actor notifications.
+        """
+        mock_cm.mode = Mode.CALL
+        mock_cm._articulate_and_publish_notification = AsyncMock()
+        mock_cm.in_flight_actions = {
+            1: {"query": "Check something", "handle_actions": []},
+        }
+        event = ActorNotification(handle_id=1, response="Searching the web now.")
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm._articulate_and_publish_notification.assert_called_once_with(
+            "Searching the web now.",
+        )
+
+    @pytest.mark.asyncio
+    async def test_notification_does_not_forward_in_text_mode(self, mock_cm):
+        """In text mode, ActorNotification does NOT call the direct articulator path."""
+        mock_cm.mode = Mode.TEXT
+        mock_cm._articulate_and_publish_notification = AsyncMock()
+        event = ActorNotification(handle_id=1, response="Searching the web now.")
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm._articulate_and_publish_notification.assert_not_called()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
