@@ -551,6 +551,7 @@ async def async_tool_loop_inner(
                 "role": "system",
                 "_time_explanation": True,
                 "_ctx_header": True,
+                "_runtime_context": True,
                 "content": TimeContext.build_explanation_prompt(),
             },
         )
