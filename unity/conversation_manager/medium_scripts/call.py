@@ -310,7 +310,7 @@ async def entrypoint(ctx: agents.JobContext):
         assistant_utterance_event = OutboundUnifyMeetUtterance
 
     # Shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact, channel)
+    end_call = create_end_call(contact, channel, room_name=ctx.room.name)
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
@@ -732,7 +732,6 @@ if __name__ == "__main__":
         ],
     )
 
-    # Dispatch LiveKit agent
     if should_dispatch_livekit_agent():
         print(f"Dispatching LiveKit agent {room_name}")
         dispatch_livekit_agent(

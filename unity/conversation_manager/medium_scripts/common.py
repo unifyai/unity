@@ -213,11 +213,13 @@ async def publish_call_ended(contact: dict, channel: str) -> None:
 def create_end_call(
     contact: dict,
     channel: str,
+    room_name: str = "",
     pre_shutdown_callback: Optional[Callable[[], None]] = None,
 ) -> Callable[[], Awaitable[None]]:
     """
     Returns an async function that:
       - calls optional pre_shutdown_callback (e.g., for usage logging)
+      - deletes the LiveKit room (evicting agents / cancelling dispatches)
       - publishes the call ended event
       - cancels all other asyncio tasks
 
@@ -226,6 +228,7 @@ def create_end_call(
     Args:
         contact: Contact dictionary for the call.
         channel: Channel type ("phone" or other).
+        room_name: LiveKit room name to delete on shutdown.
         pre_shutdown_callback: Optional sync callback to run before shutdown.
             Useful for logging call usage/metrics before tasks are cancelled.
     """
@@ -239,6 +242,11 @@ def create_end_call(
                 pre_shutdown_callback()
             except Exception as e:  # noqa: BLE001
                 print(f"Error in pre-shutdown callback: {e}")
+
+        # Delete room before notifying the parent, since the parent will
+        # SIGKILL us immediately after receiving the call-ended event.
+        if room_name:
+            await delete_livekit_room(room_name)
 
         # Send end call event before cleaning tasks and closing connection
         await publish_call_ended(contact, channel)
@@ -426,6 +434,21 @@ def should_dispatch_livekit_agent() -> bool:
     True when we should actually call dispatch_livekit_agent() for this process.
     """
     return len(sys.argv) > 1 and sys.argv[1] != "download-files"
+
+
+async def delete_livekit_room(room_name: str) -> None:
+    """Delete a LiveKit room to evict lingering agents and cancel dispatches."""
+    try:
+        from livekit.api import LiveKitAPI, DeleteRoomRequest
+
+        api = LiveKitAPI()
+        try:
+            await api.room.delete_room(DeleteRoomRequest(room=room_name))
+            print(f"Deleted LiveKit room '{room_name}'")
+        finally:
+            await api.aclose()
+    except Exception as e:
+        print(f"Failed to delete LiveKit room '{room_name}': {e}")
 
 
 # -------- User screen share capture -------- #
