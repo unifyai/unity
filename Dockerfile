@@ -50,6 +50,10 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
 COPY . /app
 RUN uv pip install --system --no-cache .
 
+# Clone magnitude fork (agent-service's package.json references ../magnitude via file: deps)
+# Must come after COPY so it isn't overwritten by the gitignored local magnitude/ directory
+RUN git clone --depth 1 --branch unity-modifications https://github.com/unifyai/magnitude.git /app/magnitude
+
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
 
