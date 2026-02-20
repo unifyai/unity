@@ -1384,6 +1384,84 @@ class TestMeetInteractionEventHandlers:
             assert len(_MEET_FAST_BRAIN_GUIDANCE[cls]) > 0
 
     # --------------------------------------------------------------------- #
+    # Call-started screen share state sync (initialization race fix)
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_call_started_syncs_screen_share_state_to_fast_brain(
+        self,
+        mock_cm,
+    ):
+        """When assistant_screen_share_active is already True at call start,
+        the handler queues screen share guidance to the fast brain socket."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, event_json = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:call_guidance"
+        import json
+
+        event_data = json.loads(event_json)
+        content = event_data.get("payload", {}).get("content", "")
+        assert "screen sharing is now on" in content.lower()
+
+    @pytest.mark.asyncio
+    async def test_call_started_does_not_sync_when_screen_share_inactive(
+        self,
+        mock_cm,
+    ):
+        """When assistant_screen_share_active is False, no guidance is queued."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_started_no_crash_without_socket_server(
+        self,
+        mock_cm,
+    ):
+        """If socket server is not yet created, the handler skips gracefully."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_cm.call_manager._socket_server = None
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+        # Should not raise — the falsy check on _socket_server prevents the call.
+
+    @pytest.mark.asyncio
+    async def test_phone_call_started_also_syncs_screen_share_state(
+        self,
+        mock_cm,
+    ):
+        """PhoneCallStarted handler also syncs screen share state."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = PhoneCallStarted(
+            contact={"contact_id": 2, "phone_number": "+15555552222"},
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, _ = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:call_guidance"
+
+    # --------------------------------------------------------------------- #
     # Renderer tests
     # --------------------------------------------------------------------- #
 
