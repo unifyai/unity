@@ -44,6 +44,7 @@ from unity.conversation_manager.types.screenshot import (
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 from unity.conversation_manager.tracing import content_trace_id
+from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 
 MAX_CONV_MANAGER_MSGS = 50
 
@@ -187,6 +188,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
         self._fast_brain_active: bool = False
+        self._proactive_logger = FastBrainLogger(mode="tts")
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -1123,20 +1125,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         Called on every user/assistant utterance event to reset the silence
         timer.  Only operates in voice modes (call / meet).
         """
-        self._session_logger.debug(
-            "proactive_speech",
-            f"schedule_proactive_speech called, mode={self.mode}",
-        )
         await self.cancel_proactive_speech()
 
         if not self.mode.is_voice:
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Skipping: mode {self.mode} not a voice mode",
-            )
             return
 
-        self._session_logger.debug("proactive_speech", "Creating proactive speech task")
         self._proactive_speech_task = asyncio.create_task(
             self._proactive_speech_loop(),
         )
@@ -1153,19 +1146,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self._proactive_speech_task = None
 
     async def _proactive_speech_loop(self):
+        _log = self._proactive_logger
         try:
-            # Debounce: wait for silence before consulting the LLM.
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Waiting {self.PROACTIVE_DEBOUNCE_SECONDS}s debounce",
-            )
+            _log.proactive_debounce(self.PROACTIVE_DEBOUNCE_SECONDS)
             await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
 
             if self._fast_brain_active:
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Fast brain is active — deferring to next cycle",
-                )
+                _log.proactive_deferred("fast brain is active")
                 return
 
             # Gather context for the decision.
@@ -1176,25 +1163,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
             )
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Decision: should_speak={decision.should_speak}, delay={decision.delay}s",
-            )
+            _log.proactive_decision(decision.should_speak, decision.delay)
 
             if not decision.should_speak:
-                # Go dormant.  The next utterance event will restart the cycle.
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Not speaking — going dormant until next utterance event",
-                )
+                _log.proactive_dormant()
                 return
 
             # Wait the requested delay (cancellable if an utterance arrives).
             if decision.delay > 0:
-                self._session_logger.info(
-                    "proactive_speech",
-                    f"Speaking in {decision.delay}s: {decision.content}",
-                )
+                _log.proactive_speaking(decision.delay, decision.content)
                 await asyncio.sleep(decision.delay)
 
             # Record in contact_index.
@@ -1213,10 +1190,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
 
             guidance_id = content_trace_id("guid", decision.content)
-            self._session_logger.info(
-                "call_guidance",
-                f"Publishing proactive guidance guidance_id={guidance_id}",
-            )
             event = CallGuidance(
                 contact=contact or {},
                 content=decision.content,
@@ -1228,13 +1201,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "app:call:call_guidance",
                 event.to_json(),
             )
-            self._session_logger.info(
-                "proactive_speech",
-                f"Spoke: {decision.content}",
-            )
+            _log.proactive_published(guidance_id, decision.content)
 
         except asyncio.CancelledError:
-            self._session_logger.debug("proactive_speech", "Task cancelled")
+            _log.proactive_cancelled()
             raise
         except Exception as e:
-            self._session_logger.error("proactive_speech", f"Error in loop: {e}")
+            _log.proactive_error(str(e))

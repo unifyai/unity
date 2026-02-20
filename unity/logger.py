@@ -356,11 +356,21 @@ def get_otel_log_dir() -> Optional[Path]:
 # Console (Terminal) Logging
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+class _MillisFormatter(logging.Formatter):
+    """Formatter that prepends ``HH:MM:SS.mmm`` to each log line."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc).astimezone()
+        ts = dt.strftime("%H:%M:%S") + f".{int(dt.microsecond / 1000):03d}"
+        return f"{ts} {record.getMessage()}"
+
+
 if SETTINGS.UNITY_TERMINAL_LOG:
     import sys
 
     _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _handler.setFormatter(_MillisFormatter())
 
     _already_configured = any(
         isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)

@@ -65,6 +65,15 @@ FB_ICONS = {
     "guidance_applied": "🎙️",
     "guidance_buffered": "⏳",
     "guidance_say": "🗣️",
+    # Proactive speech
+    "proactive_debounce": "⏱️",
+    "proactive_decision": "🎯",
+    "proactive_deferred": "⏸️",
+    "proactive_dormant": "💤",
+    "proactive_speaking": "🗣️",
+    "proactive_published": "📤",
+    "proactive_cancelled": "🚫",
+    "proactive_error": "❌",
     # Call / session lifecycle
     "call_status": "📞",
     "session_start": "🚀",
@@ -108,6 +117,9 @@ class FastBrainLogger:
 
     def _emit(self, icon: str, msg: str) -> None:
         LOGGER.info(f"{icon} [{self._label}] {msg}")
+
+    def _emit_debug(self, icon: str, msg: str) -> None:
+        LOGGER.debug(f"{icon} [{self._label}] {msg}")
 
     # ── typed helpers ────────────────────────────────────────────────────
 
@@ -182,6 +194,49 @@ class FastBrainLogger:
             f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
         )
 
+    # ── proactive speech helpers ─────────────────────────────────────────
+
+    def proactive_debounce(self, seconds: float) -> None:
+        self._emit(
+            FB_ICONS["proactive_debounce"],
+            f"Proactive speech debounce {seconds}s",
+        )
+
+    def proactive_decision(self, should_speak: bool, delay: float) -> None:
+        self._emit(
+            FB_ICONS["proactive_decision"],
+            f"Proactive decision: should_speak={should_speak}, delay={delay}s",
+        )
+
+    def proactive_deferred(self, reason: str) -> None:
+        self._emit(FB_ICONS["proactive_deferred"], f"Proactive deferred: {reason}")
+
+    def proactive_dormant(self) -> None:
+        self._emit(
+            FB_ICONS["proactive_dormant"],
+            "Proactive dormant until next utterance",
+        )
+
+    def proactive_speaking(self, delay: float, content: str) -> None:
+        self._emit(
+            FB_ICONS["proactive_speaking"],
+            f"Proactive speaking in {delay}s: {_trunc(content)}",
+        )
+
+    def proactive_published(self, guidance_id: str, content: str) -> None:
+        self._emit(
+            FB_ICONS["proactive_published"],
+            f"Proactive spoke guidance_id={guidance_id}: {_trunc(content)}",
+        )
+
+    def proactive_cancelled(self) -> None:
+        self._emit_debug(FB_ICONS["proactive_cancelled"], "Proactive speech cancelled")
+
+    def proactive_error(self, error: str) -> None:
+        LOGGER.error(
+            f"{FB_ICONS['proactive_error']} [{self._label}] Proactive error: {error}",
+        )
+
     def call_status(self, event_type: str) -> None:
         self._emit(FB_ICONS["call_status"], event_type)
 
@@ -202,23 +257,23 @@ class FastBrainLogger:
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(FB_ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
+        self._emit_debug(FB_ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
 
     def ipc_outbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(FB_ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
+        self._emit_debug(FB_ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
 
     def ipc_error(self, msg: str) -> None:
-        self._emit(FB_ICONS["ipc_error"], msg)
+        self._emit_debug(FB_ICONS["ipc_error"], msg)
 
     def screenshot(self, msg: str) -> None:
         self._emit(FB_ICONS["screenshot"], msg)
 
     def config(self, msg: str) -> None:
-        self._emit(FB_ICONS["config"], msg)
+        self._emit_debug(FB_ICONS["config"], msg)
 
     def dispatch(self, msg: str) -> None:
-        self._emit(FB_ICONS["dispatch"], msg)
+        self._emit_debug(FB_ICONS["dispatch"], msg)
 
     def info(self, msg: str) -> None:
         self._emit(FB_ICONS["info"], msg)
