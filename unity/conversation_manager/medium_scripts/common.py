@@ -54,58 +54,13 @@ from unity.conversation_manager.tracing import (
 )
 from unity.session_details import SESSION_DETAILS
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FastBrainLogger — mirrors the async tool loop's LoopLogger format so all
 # terminal output uses a consistent  ``{emoji} [{label}] {message}``  style.
+# Icons are read from the central ``ICONS`` registry in hierarchical_logger.
 # ─────────────────────────────────────────────────────────────────────────────
-
-FB_ICONS = {
-    # LLM generation
-    "llm_thinking": "🔄",
-    "llm_completed": "✅",
-    "llm_cancelled": "⏹️",
-    "llm_error": "❌",
-    # User / assistant speech
-    "user_speech": "🧑‍💻",
-    "user_state": "🎤",
-    "assistant_speech": "🔊",
-    # Guidance pipeline
-    "guidance_received": "📨",
-    "guidance_applied": "🎙️",
-    "guidance_buffered": "⏳",
-    "guidance_say": "🗣️",
-    # Proactive speech
-    "proactive_debounce": "⏱️",
-    "proactive_decision": "🎯",
-    "proactive_deferred": "⏸️",
-    "proactive_dormant": "💤",
-    "proactive_speaking": "🗣️",
-    "proactive_published": "📤",
-    "proactive_cancelled": "🚫",
-    "proactive_error": "❌",
-    # Call / session lifecycle
-    "call_status": "📞",
-    "session_start": "🚀",
-    "session_end": "🏁",
-    "session_ready": "⚡",
-    # Inbound comms & boss events
-    "participant_comms": "📱",
-    "boss_event": "📣",
-    # IPC / socket
-    "ipc_inbound": "⬇️",
-    "ipc_outbound": "⬆️",
-    "ipc_error": "❌",
-    # Screenshots / media
-    "screenshot": "📸",
-    # Misc
-    "config": "📋",
-    "dispatch": "🚀",
-    "info": "ℹ️",
-    "warning": "⚠️",
-    "error": "❌",
-    "shutdown": "🏁",
-}
 
 
 class FastBrainLogger:
@@ -135,36 +90,36 @@ class FastBrainLogger:
 
     def llm_thinking(self, reason: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(FB_ICONS["llm_thinking"], f"LLM thinking… reason={reason}{extra}")
+        self._emit(ICONS["llm_thinking"], f"LLM thinking… reason={reason}{extra}")
 
     def llm_completed(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            FB_ICONS["llm_completed"],
+            ICONS["llm_completed"],
             f"Generation completed{_id(generation_id)}{extra}",
         )
 
     def llm_cancelled(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            FB_ICONS["llm_cancelled"],
+            ICONS["llm_cancelled"],
             f"Generation cancelled{_id(generation_id)}{extra}",
         )
 
     def llm_error(self, error: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(FB_ICONS["llm_error"], f"Generation error: {error}{extra}")
+        self._emit(ICONS["llm_error"], f"Generation error: {error}{extra}")
 
     def user_speech(self, text: str) -> None:
-        self._emit(FB_ICONS["user_speech"], _trunc(text))
+        self._emit(ICONS["user_speech"], _trunc(text))
 
     def user_state(self, new_state: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(FB_ICONS["user_state"], f"User state: {new_state}{extra}")
+        self._emit(ICONS["user_state"], f"User state: {new_state}{extra}")
 
     def assistant_speech(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(FB_ICONS["assistant_speech"], f"{_trunc(text)}{extra}")
+        self._emit(ICONS["assistant_speech"], f"{_trunc(text)}{extra}")
 
     def guidance_received(
         self,
@@ -175,7 +130,7 @@ class FastBrainLogger:
     ) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            FB_ICONS["guidance_received"],
+            ICONS["guidance_received"],
             f"Guidance from {source}: speak={should_speak} {_trunc(content)}{extra}",
         )
 
@@ -187,20 +142,20 @@ class FastBrainLogger:
     ) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            FB_ICONS["guidance_applied"],
+            ICONS["guidance_applied"],
             f"Applied guidance {guidance_id} source={source}{extra}",
         )
 
     def guidance_buffered(self, guidance_id: str, count: int) -> None:
         self._emit(
-            FB_ICONS["guidance_buffered"],
+            ICONS["guidance_buffered"],
             f"Buffered guidance {guidance_id} (total={count})",
         )
 
     def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            FB_ICONS["guidance_say"],
+            ICONS["guidance_say"],
             f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
         )
 
@@ -208,94 +163,94 @@ class FastBrainLogger:
 
     def proactive_debounce(self, seconds: float) -> None:
         self._emit(
-            FB_ICONS["proactive_debounce"],
+            ICONS["proactive_debounce"],
             f"Proactive speech debounce {seconds}s",
         )
 
     def proactive_decision(self, should_speak: bool, delay: float) -> None:
         self._emit(
-            FB_ICONS["proactive_decision"],
+            ICONS["proactive_decision"],
             f"Proactive decision: should_speak={should_speak}, delay={delay}s",
         )
 
     def proactive_deferred(self, reason: str) -> None:
-        self._emit(FB_ICONS["proactive_deferred"], f"Proactive deferred: {reason}")
+        self._emit(ICONS["proactive_deferred"], f"Proactive deferred: {reason}")
 
     def proactive_dormant(self) -> None:
         self._emit(
-            FB_ICONS["proactive_dormant"],
+            ICONS["proactive_dormant"],
             "Proactive dormant until next utterance",
         )
 
     def proactive_speaking(self, delay: float, content: str) -> None:
         self._emit(
-            FB_ICONS["proactive_speaking"],
+            ICONS["proactive_speaking"],
             f"Proactive speaking in {delay}s: {_trunc(content)}",
         )
 
     def proactive_published(self, guidance_id: str, content: str) -> None:
         self._emit(
-            FB_ICONS["proactive_published"],
+            ICONS["proactive_published"],
             f"Proactive spoke guidance_id={guidance_id}: {_trunc(content)}",
         )
 
     def proactive_cancelled(self) -> None:
-        self._emit_debug(FB_ICONS["proactive_cancelled"], "Proactive speech cancelled")
+        self._emit_debug(ICONS["proactive_cancelled"], "Proactive speech cancelled")
 
     def proactive_error(self, error: str) -> None:
         LOGGER.error(
-            f"{FB_ICONS['proactive_error']} [{self._label}] Proactive error: {error}",
+            f"{ICONS['proactive_error']} [{self._label}] Proactive error: {error}",
         )
 
     def call_status(self, event_type: str) -> None:
-        self._emit(FB_ICONS["call_status"], event_type)
+        self._emit(ICONS["call_status"], event_type)
 
     def session_start(self, msg: str = "Session starting") -> None:
-        self._emit(FB_ICONS["session_start"], msg)
+        self._emit(ICONS["session_start"], msg)
 
     def session_end(self, msg: str = "Session ended") -> None:
-        self._emit(FB_ICONS["session_end"], msg)
+        self._emit(ICONS["session_end"], msg)
 
     def session_ready(self, msg: str = "Session ready") -> None:
-        self._emit(FB_ICONS["session_ready"], msg)
+        self._emit(ICONS["session_ready"], msg)
 
     def participant_comms(self, text: str) -> None:
-        self._emit(FB_ICONS["participant_comms"], _trunc(text))
+        self._emit(ICONS["participant_comms"], _trunc(text))
 
     def boss_event(self, text: str) -> None:
-        self._emit(FB_ICONS["boss_event"], _trunc(text))
+        self._emit(ICONS["boss_event"], _trunc(text))
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit_debug(FB_ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
+        self._emit_debug(ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
 
     def ipc_outbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit_debug(FB_ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
+        self._emit_debug(ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
 
     def ipc_error(self, msg: str) -> None:
-        self._emit_debug(FB_ICONS["ipc_error"], msg)
+        self._emit_debug(ICONS["ipc_error"], msg)
 
     def screenshot(self, msg: str) -> None:
-        self._emit(FB_ICONS["screenshot"], msg)
+        self._emit(ICONS["screenshot"], msg)
 
     def config(self, msg: str) -> None:
-        self._emit_debug(FB_ICONS["config"], msg)
+        self._emit_debug(ICONS["config"], msg)
 
     def dispatch(self, msg: str) -> None:
-        self._emit_debug(FB_ICONS["dispatch"], msg)
+        self._emit_debug(ICONS["dispatch"], msg)
 
     def info(self, msg: str) -> None:
-        self._emit(FB_ICONS["info"], msg)
+        self._emit(ICONS["info"], msg)
 
     def warning(self, msg: str) -> None:
-        self._emit(FB_ICONS["warning"], msg)
+        self._emit(ICONS["warning"], msg)
 
     def error(self, msg: str) -> None:
-        self._emit(FB_ICONS["error"], msg)
+        self._emit(ICONS["error"], msg)
 
     def shutdown(self, msg: str) -> None:
-        self._emit(FB_ICONS["shutdown"], msg)
+        self._emit(ICONS["shutdown"], msg)
 
 
 def _kv_suffix(kv: dict[str, object]) -> str:
@@ -490,14 +445,14 @@ def create_end_call(
     """
 
     async def end_call() -> None:
-        LOGGER.info("Initiating graceful shutdown...")
+        LOGGER.info(f"{ICONS['lifecycle']} Initiating graceful shutdown...")
 
         # Run pre-shutdown callback (e.g., usage logging) before cleanup
         if pre_shutdown_callback is not None:
             try:
                 pre_shutdown_callback()
             except Exception as e:  # noqa: BLE001
-                LOGGER.error(f"Error in pre-shutdown callback: {e}")
+                LOGGER.error(f"{DEFAULT_ICON} Error in pre-shutdown callback: {e}")
 
         # Delete room before notifying the parent, since the parent will
         # SIGKILL us immediately after receiving the call-ended event.
@@ -506,7 +461,7 @@ def create_end_call(
 
         # Send end call event before cleaning tasks and closing connection
         await publish_call_ended(contact, channel)
-        LOGGER.debug("End call event sent")
+        LOGGER.debug(f"{DEFAULT_ICON} End call event sent")
 
         # Get all running tasks except current task
         tasks: Iterable[asyncio.Task] = [
@@ -514,7 +469,7 @@ def create_end_call(
         ]
 
         if tasks:
-            LOGGER.debug(f"Cancelling {len(tasks)} running tasks...")
+            LOGGER.debug(f"{DEFAULT_ICON} Cancelling {len(tasks)} running tasks...")
             # Cancel all tasks
             for task in tasks:
                 task.cancel()
@@ -522,13 +477,13 @@ def create_end_call(
             # Wait for tasks to be cancelled gracefully
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
-                LOGGER.debug("All tasks cancelled successfully")
+                LOGGER.debug(f"{DEFAULT_ICON} All tasks cancelled successfully")
             except asyncio.CancelledError:
                 pass
             except Exception as e:  # noqa: BLE001
-                LOGGER.error(f"Error during task cancellation: {e}")
+                LOGGER.error(f"{DEFAULT_ICON} Error during task cancellation: {e}")
 
-        LOGGER.info("Graceful shutdown completed")
+        LOGGER.info(f"{ICONS['lifecycle']} Graceful shutdown completed")
 
     return end_call
 
@@ -562,7 +517,9 @@ def setup_inactivity_timeout(
             await asyncio.sleep(10)
             current_time = loop.time()
             if current_time - state["last_activity"] > timeout:
-                LOGGER.info("Inactivity timeout reached, shutting down agent...")
+                LOGGER.info(
+                    f"{ICONS['lifecycle']} Inactivity timeout reached, shutting down agent...",
+                )
                 await end_call()
                 break
 
@@ -632,7 +589,7 @@ def configure_from_cli(
     room name and the agent worker registration name.
     """
     room_name = ""
-    LOGGER.debug(f"sys.argv {sys.argv}")
+    LOGGER.debug(f"{DEFAULT_ICON} sys.argv {sys.argv}")
 
     # max index used = 6 + len(extra_env)
     required_len = 6 + len(extra_env)
@@ -655,10 +612,12 @@ def configure_from_cli(
                 try:
                     loaded = json.loads(value)
                 except json.JSONDecodeError:
-                    LOGGER.error(f"{env_name} payload is not valid JSON")
+                    LOGGER.error(f"{DEFAULT_ICON} {env_name} payload is not valid JSON")
                     sys.exit(1)
                 if not loaded:
-                    LOGGER.error(f"{env_name} payload is invalid (empty)")
+                    LOGGER.error(
+                        f"{DEFAULT_ICON} {env_name} payload is invalid (empty)",
+                    )
                     sys.exit(1)
 
             # Map known extra args to SESSION_DETAILS fields
@@ -679,7 +638,7 @@ def configure_from_cli(
         # keep only script name and the command ("dev" / "connect" / "download-files")
         sys.argv = sys.argv[:2]
     elif len(sys.argv) > 1 and sys.argv[1] != "download-files":
-        LOGGER.error("Not enough arguments provided")
+        LOGGER.error(f"{DEFAULT_ICON} Not enough arguments provided")
         sys.exit(1)
 
     return room_name
@@ -700,11 +659,11 @@ async def delete_livekit_room(room_name: str) -> None:
         api = LiveKitAPI()
         try:
             await api.room.delete_room(DeleteRoomRequest(room=room_name))
-            LOGGER.debug(f"Deleted LiveKit room '{room_name}'")
+            LOGGER.debug(f"{DEFAULT_ICON} Deleted LiveKit room '{room_name}'")
         finally:
             await api.aclose()
     except Exception as e:
-        LOGGER.error(f"Failed to delete LiveKit room '{room_name}': {e}")
+        LOGGER.error(f"{DEFAULT_ICON} Failed to delete LiveKit room '{room_name}': {e}")
 
 
 # -------- User screen share capture -------- #

@@ -5,6 +5,7 @@ import aiohttp
 import os
 
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 
@@ -40,7 +41,9 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
     if not from_number:
         return {"success": False}
 
-    LOGGER.info(f"Sending SMS from {from_number} to {to_number}: {content}")
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Sending SMS from {from_number} to {to_number}: {content}",
+    )
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{SETTINGS.conversation.COMMS_URL}/phone/send-text",
@@ -54,7 +57,7 @@ async def send_sms_message_via_number(to_number: str, content: str) -> str:
             try:
                 response.raise_for_status()
             except Exception as e:
-                LOGGER.error(f"{e}")
+                LOGGER.error(f"{ICONS['comms_outbound']} {e}")
                 return {"success": False}
             return await response.json()
 
@@ -92,7 +95,7 @@ async def send_unify_message(
         f" with attachment '{attachment['filename']}'" if attachment else ""
     )
     LOGGER.info(
-        f"Sending unify message to contact_id={contact_id}{attachment_info}: {content}",
+        f"{ICONS['comms_outbound']} Sending unify message to contact_id={contact_id}{attachment_info}: {content}",
     )
 
     event_data = {"content": content, "role": "assistant", "contact_id": contact_id}
@@ -111,13 +114,15 @@ async def send_unify_message(
             thread="unify_message_outbound",
         )
         message_id = future.result()
-        LOGGER.debug(f"Unify message published with ID: {message_id}")
+        LOGGER.debug(
+            f"{ICONS['comms_outbound']} Unify message published with ID: {message_id}",
+        )
         if message_id:
             return {"success": True}
         else:
             return {"success": False}
     except Exception as e:
-        LOGGER.error(f"Error sending unify message: {e}")
+        LOGGER.error(f"{ICONS['comms_outbound']} Error sending unify message: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -146,7 +151,9 @@ async def upload_unify_attachment(
 
     comms_url = SETTINGS.conversation.COMMS_URL
 
-    LOGGER.debug(f"Uploading unify attachment: {filename} ({len(file_content)} bytes)")
+    LOGGER.debug(
+        f"{ICONS['comms_outbound']} Uploading unify attachment: {filename} ({len(file_content)} bytes)",
+    )
 
     # Create form data for multipart upload
     form_data = aiohttp.FormData()
@@ -167,10 +174,12 @@ async def upload_unify_attachment(
             try:
                 response.raise_for_status()
                 result = await response.json()
-                LOGGER.debug(f"Uploaded attachment: {result}")
+                LOGGER.debug(f"{ICONS['comms_outbound']} Uploaded attachment: {result}")
                 return result
             except Exception as e:
-                LOGGER.debug(f"Failed to upload unify attachment: {e}")
+                LOGGER.debug(
+                    f"{ICONS['comms_outbound']} Failed to upload unify attachment: {e}",
+                )
                 return {"success": False, "error": str(e)}
 
 
@@ -213,7 +222,7 @@ async def send_email_via_address(
     if bcc:
         recipients_summary += f", bcc={bcc}"
     LOGGER.info(
-        f"Sending email from {from_email} ({recipients_summary}): {subject}{attachment_info}",
+        f"{ICONS['comms_outbound']} Sending email from {from_email} ({recipients_summary}): {subject}{attachment_info}",
     )
 
     payload = {
@@ -254,7 +263,9 @@ async def start_call(to_number: str) -> str:
         str: The response
     """
     from_number = SESSION_DETAILS.assistant.number
-    LOGGER.info(f"Sending call from {from_number} to {to_number}")
+    LOGGER.info(
+        f"{ICONS['comms_outbound']} Sending call from {from_number} to {to_number}",
+    )
     if not from_number:
         return {"success": False}
 
@@ -288,7 +299,7 @@ async def add_email_attachments(
     if not attachments:
         return
 
-    LOGGER.debug("Saving email attachments...")
+    LOGGER.debug(f"{ICONS['comms_outbound']} Saving email attachments...")
     async with aiohttp.ClientSession() as session:
         for att in attachments:
             try:
@@ -318,10 +329,12 @@ async def add_email_attachments(
                 )
 
                 LOGGER.debug(
-                    f"Downloaded attachment {safe_filename} (size={len(data)} bytes) — placeholder file written",
+                    f"{ICONS['comms_outbound']} Downloaded attachment {safe_filename} (size={len(data)} bytes) — placeholder file written",
                 )
             except Exception as e:
-                LOGGER.error(f"Failed to fetch/write attachment '{att}': {e}")
+                LOGGER.error(
+                    f"{ICONS['comms_outbound']} Failed to fetch/write attachment '{att}': {e}",
+                )
 
 
 async def _get_signed_url_from_gs_url(
@@ -369,7 +382,7 @@ async def add_unify_message_attachments(
     if not attachments:
         return
 
-    LOGGER.debug("Saving unify message attachments...")
+    LOGGER.debug(f"{ICONS['comms_outbound']} Saving unify message attachments...")
     async with aiohttp.ClientSession() as session:
         for att in attachments:
             try:
@@ -387,7 +400,9 @@ async def add_unify_message_attachments(
                     try:
                         url = await _get_signed_url_from_gs_url(session, gs_url)
                     except Exception as e:
-                        LOGGER.error(f"Failed to get signed URL for {gs_url}: {e}")
+                        LOGGER.error(
+                            f"{ICONS['comms_outbound']} Failed to get signed URL for {gs_url}: {e}",
+                        )
                         url = None
 
                 # Download from the URL
@@ -410,7 +425,9 @@ async def add_unify_message_attachments(
                 )
 
                 LOGGER.debug(
-                    f"Downloaded unify attachment {safe_filename} (size={len(data)} bytes)",
+                    f"{ICONS['comms_outbound']} Downloaded unify attachment {safe_filename} (size={len(data)} bytes)",
                 )
             except Exception as e:
-                LOGGER.error(f"Failed to fetch/write unify attachment '{att}': {e}")
+                LOGGER.error(
+                    f"{ICONS['comms_outbound']} Failed to fetch/write unify attachment '{att}': {e}",
+                )

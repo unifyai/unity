@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
@@ -82,7 +83,7 @@ class EventHandler:
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     log_str = "Ping received - keeping conversation manager alive"
-    LOGGER.debug(log_str)
+    LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
     cm._session_logger.debug("ping", log_str)
 
 
@@ -466,11 +467,11 @@ async def _(
             {"recording_url": event.recording_url},
         )
         LOGGER.debug(
-            f"[RecordingReady] Stored recording_url on exchange "
+            f"{DEFAULT_ICON} [RecordingReady] Stored recording_url on exchange "
             f"{exchange_id} for {name}",
         )
     else:
-        LOGGER.debug(f"[RecordingReady] No exchange_id found for {name}")
+        LOGGER.debug(f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}")
 
 
 @EventHandler.register(

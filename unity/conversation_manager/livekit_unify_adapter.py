@@ -24,6 +24,7 @@ from livekit.agents.types import (
 from unity.common.llm_client import new_llm_client
 from unity.conversation_manager.tracing import monotonic_ms, now_utc_iso, trace_kv
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 
 class UnifyLLM(llm.LLM):
@@ -192,7 +193,8 @@ class UnifyLLMStream(llm.LLMStream):
             generate_kwargs["temperature"] = self._temperature
 
         LOGGER.info(
-            trace_kv(
+            f"{DEFAULT_ICON} "
+            + trace_kv(
                 "FAST_BRAIN_REQUEST_START",
                 request_id=self._request_id,
                 model=self._model,
@@ -222,7 +224,8 @@ class UnifyLLMStream(llm.LLMStream):
                     self._event_ch.send_nowait(chat_chunk)
         finally:
             LOGGER.info(
-                trace_kv(
+                f"{DEFAULT_ICON} "
+                + trace_kv(
                     "FAST_BRAIN_REQUEST_END",
                     request_id=self._request_id,
                     chunk_count=chunk_count,

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common._async_tool.messages import forward_handle_call
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
@@ -86,7 +87,9 @@ class _SimulatedTaskScheduleHandle(SimulatedHandleMixin, SteerableToolHandle):
                     pass
                 self._clar_requested = True
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -120,7 +123,7 @@ class _SimulatedTaskScheduleHandle(SimulatedHandleMixin, SteerableToolHandle):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -149,7 +152,9 @@ class _SimulatedTaskScheduleHandle(SimulatedHandleMixin, SteerableToolHandle):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 

@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from unity.common.llm_client import new_llm_client
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 
 class ProactiveDecision(BaseModel):
@@ -62,7 +63,7 @@ class ProactiveSpeech:
             )
             return ProactiveDecision.model_validate_json(response)
         except Exception as e:
-            LOGGER.error(f"Error in ProactiveSpeech decision: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error in ProactiveSpeech decision: {e}")
             import traceback
 
             traceback.print_exc()

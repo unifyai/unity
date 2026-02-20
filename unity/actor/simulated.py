@@ -9,6 +9,7 @@ from typing import Any, Optional, Type
 from pydantic import BaseModel
 from unity.manager_registry import ManagerRegistry
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS, DEFAULT_ICON
 from unity.common.simulated import (
     SimulatedLineage,
     SimulatedLog,
@@ -252,7 +253,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                         rem = self.get_remaining_duration_seconds()
                         if rem is not None:
                             self._emit_status(
-                                f"⏳ Duration remaining: {max(0.0, rem):.1f}s",
+                                f"{ICONS['pending']} Duration remaining: {max(0.0, rem):.1f}s",
                             )
                         # Sleep in small chunks to be responsive to done-event (~20s total)
                         for _ in range(200):
@@ -302,7 +303,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             try:
                 if self._steps is not None:
                     remaining = max(0, int(self._steps) - int(self._steps_taken))
-                    self._emit_status(f"🪜 Steps remaining: {remaining}")
+                    self._emit_status(f"{DEFAULT_ICON} Steps remaining: {remaining}")
             except Exception:
                 pass
 
@@ -358,7 +359,9 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         msg = f"Stopped '{self._request}' for reason: {reason}"
         try:
             suffix = f" – reason: {reason}" if reason else ""
-            LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
+            LOGGER.info(
+                f"{ICONS['stop_requested']} [{self._log_label}] Stop requested{suffix}",
+            )
         except Exception:
             pass
         self._open_completion_gate()
@@ -530,7 +533,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         """Emit a status line to the central logger so it reaches the broadcast port."""
         try:
             LOGGER.info(
-                f"[{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
+                f"{DEFAULT_ICON} [{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
             )
         except Exception:
             pass

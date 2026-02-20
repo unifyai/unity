@@ -25,6 +25,7 @@ load_dotenv()
 import asyncio
 
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.conversation_manager import assistant_jobs
@@ -52,7 +53,8 @@ def _signal_handler(signum, frame):
     global _signal_shutdown
 
     LOGGER.info(
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        f"{ICONS['lifecycle']} "
+        + datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         + " - [MAIN.PY] Received signal "
         + str(signum)
         + ", shutting down gracefully...",
@@ -215,7 +217,9 @@ async def run_conversation_manager(
 
     # Clean up dangling call processes
     if cleanup_call_processes:
-        LOGGER.info("Checking for dangling call processes from previous runs...")
+        LOGGER.info(
+            f"{ICONS['process_cleanup']} Checking for dangling call processes from previous runs...",
+        )
         cleanup_dangling_call_processes()
 
     # Create event broker and stop event
@@ -263,12 +267,14 @@ async def run_conversation_manager(
             if _container_start_ms:
                 _spinup_s = (time.time() * 1000 - int(_container_start_ms)) / 1000.0
                 container_spinup.record(_spinup_s)
-                LOGGER.info(f"[metrics] Container spin-up: {_spinup_s:.2f}s")
+                LOGGER.info(
+                    f"{ICONS['metrics']} [metrics] Container spin-up: {_spinup_s:.2f}s",
+                )
 
         comms_manager = CommsManager(event_broker=event_broker)
         asyncio.create_task(comms_manager.start())
 
-    LOGGER.info("ConversationManager is running...")
+    LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is running...")
     return cm
 
 
@@ -294,17 +300,17 @@ async def main(project_name: str = "Assistants"):
         stop_event=_stop,
     )
 
-    LOGGER.info("Server is Running...")
+    LOGGER.info(f"{ICONS['lifecycle']} Server is Running...")
     await _stop.wait()
 
-    LOGGER.info("Cleaning up conversation manager...")
+    LOGGER.info(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
-    LOGGER.info("Cleanup finished")
+    LOGGER.info(f"{ICONS['lifecycle']} Cleanup finished")
 
     # Shut down the metrics exporter (flushes remaining data internally).
     shutdown_metrics()
 
-    LOGGER.info("Shutdown finished")
+    LOGGER.info(f"{ICONS['lifecycle']} Shutdown finished")
 
     # Exit with special code 42 if:
     # - Shutdown was triggered by external signal (i.e. not inactivity timeout)
