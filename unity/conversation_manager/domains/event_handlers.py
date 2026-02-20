@@ -82,9 +82,7 @@ class EventHandler:
 
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
-    log_str = "Ping received - keeping conversation manager alive"
-    LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
-    cm._session_logger.debug("ping", log_str)
+    pass
 
 
 @EventHandler.register(PhoneCallAnswered)
