@@ -123,10 +123,14 @@ class ProductionSettings(BaseSettings):
     UNITY_OTEL_LOG_DIR: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Terminal Logging
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_TERMINAL_LOG: bool = True
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
     # ─────────────────────────────────────────────────────────────────────────
-    ASYNCIO_DEBUG: bool = False
-    ASYNCIO_DEBUG_VERBOSE: bool = False
+    UNITY_ASYNCIO_DEBUG: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure
@@ -184,8 +188,8 @@ class ProductionSettings(BaseSettings):
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator(
-        "ASYNCIO_DEBUG",
-        "ASYNCIO_DEBUG_VERBOSE",
+        "UNITY_TERMINAL_LOG",
+        "UNITY_ASYNCIO_DEBUG",
         "DEMO_MODE",
         "EVENTBUS_PUBLISHING_ENABLED",
         "EVENTBUS_PUBSUB_STREAMING",

@@ -1,6 +1,4 @@
 import asyncio
-import logging
-
 from typing import Optional
 import contextlib
 
@@ -46,21 +44,6 @@ from unity.conversation_manager.types.screenshot import (
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 from unity.conversation_manager.tracing import content_trace_id
-
-logger = logging.getLogger(__name__)
-
-# Set logging level and add handler if not already configured
-log_level = SETTINGS.conversation.LOG_LEVEL.upper()
-logger.setLevel(getattr(logging, log_level, logging.INFO))
-
-# Ensure we have a console handler to actually display logs
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(message)s")
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
 
 MAX_CONV_MANAGER_MSGS = 50
 
