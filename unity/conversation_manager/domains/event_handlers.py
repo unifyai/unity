@@ -327,14 +327,10 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     await cm.schedule_proactive_speech()
 
     if role == "user":
-        # Link any pending user screenshot to this message by stamping it
-        # with the local_message_id, then pass the same id to the assistant
-        # screenshot capture so both can be matched back deterministically.
+        # Link any pending screenshot to this message by stamping it
+        # with the local_message_id.  Screenshot capture (both user and
+        # assistant) is handled by the fast brain and forwarded via IPC.
         cm._claim_pending_user_screenshot(message_id)
-        if cm.assistant_screen_share_active:
-            asyncio.create_task(
-                cm.capture_assistant_screenshot(event.content, message_id),
-            )
 
         await cm.interject_or_run(event.content)
 

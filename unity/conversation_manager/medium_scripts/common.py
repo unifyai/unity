@@ -551,6 +551,103 @@ class UserScreenCaptureManager:
         self._stream = None
 
 
+# -------- Screenshot history for fast brain visual context -------- #
+
+
+class ScreenshotHistory:
+    """Per-source screenshot history for the fast brain LLM.
+
+    Tracks captured screenshots and builds a visual context message with the
+    latest screenshot from each source (user / assistant) as an inline image
+    and all older entries as filepath-only text references.
+    """
+
+    def __init__(self):
+        self._entries: list[tuple["ScreenshotEntry", str]] = []
+
+    def add(self, entry: "ScreenshotEntry", filepath: str) -> None:
+        self._entries.append((entry, filepath))
+
+    def build_visual_context_content(self) -> list:
+        """Build a content list for a visual context chat message.
+
+        Returns ``list[str | ImageContent]``: for each source the most recent
+        entry gets a ``str`` label **plus** an ``ImageContent`` block; all
+        older entries from that source get only a ``str`` filepath label.
+        """
+        from livekit.agents.llm import ImageContent
+
+        if not self._entries:
+            return []
+
+        latest_idx_by_source: dict[str, int] = {}
+        for i, (entry, _) in enumerate(self._entries):
+            latest_idx_by_source[entry.source] = i
+
+        source_labels = {
+            "assistant": "Assistant's Screen",
+            "user": "User's Screen",
+        }
+
+        parts: list = []
+        for i, (entry, filepath) in enumerate(self._entries):
+            label = source_labels.get(entry.source, "Screenshot")
+            text = (
+                f"[{label} at {entry.timestamp.strftime('%H:%M:%S')} "
+                f"-- {filepath}] "
+                f'User said: "{entry.utterance}"'
+            )
+            parts.append(text)
+            if i == latest_idx_by_source.get(entry.source):
+                parts.append(
+                    ImageContent(
+                        image=f"data:image/jpeg;base64,{entry.b64}",
+                    ),
+                )
+
+        return parts
+
+
+async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | None":
+    """Capture the assistant's desktop via HTTP POST.
+
+    Returns a ``ScreenshotEntry`` on success, ``None`` on failure or if no
+    desktop URL is configured.
+    """
+    import aiohttp
+
+    from datetime import datetime, timezone
+    from unity.session_details import SESSION_DETAILS
+    from unity.conversation_manager.types.screenshot import ScreenshotEntry
+
+    desktop_url = SESSION_DETAILS.assistant.desktop_url or "http://localhost:3000"
+    auth_key = SESSION_DETAILS.unify_key
+    try:
+        headers = {"authorization": f"Bearer {auth_key}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{desktop_url}/screenshot",
+                json={},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status >= 400:
+                    print(f"[AssistantScreenshot] capture failed: HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+                b64 = data.get("screenshot")
+                if b64:
+                    return ScreenshotEntry(
+                        b64=b64,
+                        utterance=utterance,
+                        timestamp=datetime.now(timezone.utc),
+                        source="assistant",
+                    )
+    except Exception as e:
+        print(f"[AssistantScreenshot] capture error: {e}")
+    return None
+
+
 # -------- Event rendering for boss-on-call mode -------- #
 
 

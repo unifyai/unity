@@ -38,6 +38,10 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
+from unity.conversation_manager.types.screenshot import (
+    generate_screenshot_path,
+    write_screenshot_to_disk,
+)
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
 from unity.conversation_manager.tracing import content_trace_id
@@ -61,20 +65,16 @@ MAX_CONV_MANAGER_MSGS = 50
 
 
 def _save_screenshot(entry: ScreenshotEntry) -> str:
-    """Save a screenshot to disk and return its relative path."""
-    import base64
-    from pathlib import Path
+    """Save a screenshot to disk and return its relative path.
 
-    subfolder = "Assistant" if entry.source == "assistant" else "User"
-    directory = Path("Screenshots") / subfolder
-    stem = entry.timestamp.strftime("%Y-%m-%dT%H-%M-%S.%f")
-    path = directory / f"{stem}.jpg"
-    suffix = 1
-    while path.exists():
-        path = directory / f"{stem}_{suffix}.jpg"
-        suffix += 1
-    path.write_bytes(base64.b64decode(entry.b64))
-    return str(path)
+    If the entry already carries a filepath (set by the fast brain), the file
+    is already on disk — just return the path without writing again.
+    """
+    if entry.filepath:
+        return entry.filepath
+    path = generate_screenshot_path(entry)
+    write_screenshot_to_disk(entry, path)
+    return path
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -147,7 +147,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
-        self.call_manager.on_user_screenshot = self._buffer_user_screenshot
+        self.call_manager.on_screenshot = self._buffer_screenshot
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -337,8 +337,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     local_message_id=local_message_id,
                 )
 
-    def _buffer_user_screenshot(self, event_json: str) -> None:
-        """Buffer a user screen share screenshot received from the fast brain via IPC."""
+    def _buffer_screenshot(self, event_json: str) -> None:
+        """Buffer a screenshot received from the fast brain via IPC.
+
+        Accepts both user and assistant screenshots, distinguished by the
+        ``source`` field in the JSON payload.  When a ``filepath`` is included,
+        the file has already been written to disk by the fast brain.
+        """
         import json as _json
         from datetime import datetime, timezone
 
@@ -346,23 +351,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
             data = _json.loads(event_json)
             b64 = data.get("b64", "")
             utterance = data.get("utterance", "")
+            source = data.get("source", "user")
+            filepath = data.get("filepath")
             ts_str = data.get("timestamp")
             ts = (
                 datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
             )
             if b64:
                 self._screenshot_buffer.append(
-                    ScreenshotEntry(b64, utterance, ts, "user"),
+                    ScreenshotEntry(b64, utterance, ts, source, filepath=filepath),
                 )
                 self._session_logger.debug(
                     "screenshot_capture",
-                    f"Buffered user screenshot #{len(self._screenshot_buffer)} "
+                    f"Buffered {source} screenshot #{len(self._screenshot_buffer)} "
                     f"for utterance: {utterance[:60]}...",
                 )
         except Exception as e:
             self._session_logger.warning(
                 "screenshot_capture",
-                f"Error buffering user screenshot: {e}",
+                f"Error buffering screenshot: {e}",
             )
 
     def get_recent_voice_transcript(
