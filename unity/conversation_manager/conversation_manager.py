@@ -57,7 +57,7 @@ logger.setLevel(getattr(logging, log_level, logging.INFO))
 if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(levelname)s: %(message)s")
+    formatter = logging.Formatter("%(message)s")
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
