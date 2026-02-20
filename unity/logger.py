@@ -353,10 +353,10 @@ def get_otel_log_dir() -> Optional[Path]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Logging Setup for Verbose Asyncio Debug Mode
+# Console (Terminal) Logging
 # ─────────────────────────────────────────────────────────────────────────────
 
-if SETTINGS.ASYNCIO_DEBUG_VERBOSE:
+if SETTINGS.UNITY_TERMINAL_LOG:
     import sys
 
     _handler = logging.StreamHandler(sys.stdout)
@@ -365,13 +365,13 @@ if SETTINGS.ASYNCIO_DEBUG_VERBOSE:
     _root = logging.getLogger()
 
     _already_configured = any(
-        isinstance(h, logging.StreamHandler) and getattr(h, "_asyncio_debug", False)
+        isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)
         for h in _root.handlers
     )
 
     if not _already_configured:
         _root.setLevel(logging.INFO)
-        _handler._asyncio_debug = True  # type: ignore[attr-defined]
+        _handler._unity_terminal = True  # type: ignore[attr-defined]
         _root.addHandler(_handler)
 
 # ─────────────────────────────────────────────────────────────────────────────
