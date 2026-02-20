@@ -79,6 +79,9 @@ class LivekitCallManager:
         # Callback for screenshots (user or assistant) received via IPC.
         # Set by the ConversationManager to route screenshots to its buffer.
         self.on_screenshot: Callable[[str], None] | None = None
+        # Callback when the fast brain starts generating a reply.
+        # Used to suppress proactive speech during generation+TTS.
+        self.on_fast_brain_generating: Callable[[], None] | None = None
         # Track the active call's channel type so the disconnect fallback
         # can publish the correct call-ended event.
         self._call_channel: str | None = None
@@ -111,6 +114,11 @@ class LivekitCallManager:
             async def _on_ipc_event(channel: str, event_json: str) -> None:
                 if channel == "app:comms:screenshot" and self.on_screenshot is not None:
                     self.on_screenshot(event_json)
+                elif (
+                    channel == "app:comms:fast_brain_generating"
+                    and self.on_fast_brain_generating is not None
+                ):
+                    self.on_fast_brain_generating()
                 else:
                     await self._event_broker.publish(channel, event_json)
 

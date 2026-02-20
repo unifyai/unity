@@ -226,6 +226,9 @@ async def entrypoint(ctx: JobContext) -> None:
             user_is_speaking=user_is_speaking,
             queued_speech_count=len(_queued_speech),
         )
+        asyncio.create_task(
+            event_broker.publish("app:comms:fast_brain_generating", "{}"),
+        )
         maybe_result = session.generate_reply(
             allow_interruptions=allow_interruptions,
         )

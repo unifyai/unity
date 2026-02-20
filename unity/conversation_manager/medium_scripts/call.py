@@ -302,6 +302,9 @@ async def entrypoint(ctx: agents.JobContext):
             user_is_speaking=user_is_speaking,
             last_chat_role=last_role,
         )
+        asyncio.create_task(
+            event_broker.publish("app:comms:fast_brain_generating", "{}"),
+        )
         maybe_result = session.generate_reply(
             allow_interruptions=allow_interruptions,
         )
