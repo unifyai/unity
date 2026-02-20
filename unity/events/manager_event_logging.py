@@ -12,7 +12,7 @@ from ..events.types.manager_method import ManagerMethodPayload
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.hierarchical_logger import build_hierarchy_label
 
-from ..common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+from ..common._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 
 __all__ = [
     "new_call_id",
@@ -169,6 +169,7 @@ def wrap_handle_with_logging(
     method_name: str,
     *,
     display_label: str | None = None,
+    suffix: str | None = None,
 ) -> SteerableToolHandle:
     """
     Return a proxy that logs every callable on the inner handle generically (pre-call action,
@@ -208,6 +209,11 @@ def wrap_handle_with_logging(
                         payload["hierarchy"] = list(h)
             except Exception:
                 pass
+            # Propagate the caller-supplied suffix so all proxy events
+            # use the same suffix as the incoming ManagerMethod event,
+            # even if the inner handle lacks _log_label (edge case).
+            if suffix and "suffix" not in payload and "hierarchy_label" not in payload:
+                payload["suffix"] = suffix
             await publish_manager_method_event(
                 call_id,
                 manager_name,
@@ -341,25 +347,39 @@ def log_manager_call(
                 payload_value = ""
 
             call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                manager_name,
-                method_name,
-                phase="incoming",
-                display_label=display_label,
-                **{payload_key: payload_value},
-            )
 
-            # Inject call_id only when the wrapped method declares it (for clarification events, etc.)
-            if _accepts_call_id:
-                kwargs[call_id_kw] = call_id
-            handle = await func(self, *args, **kwargs)
+            # Generate a single suffix and pass it to publish (for the
+            # incoming event) *and* to _PENDING_LOOP_SUFFIX so the inner
+            # LoopConfig picks up the same value.  This guarantees that
+            # the incoming ManagerMethod event, all proxy events, and all
+            # ToolLoop events share the same hierarchy_label suffix.
+            suffix = token_hex(2)
+            suffix_token = _PENDING_LOOP_SUFFIX.set(suffix)
+            try:
+                await publish_manager_method_event(
+                    call_id,
+                    manager_name,
+                    method_name,
+                    phase="incoming",
+                    display_label=display_label,
+                    suffix=suffix,
+                    **{payload_key: payload_value},
+                )
+
+                # Inject call_id only when the wrapped method declares it
+                if _accepts_call_id:
+                    kwargs[call_id_kw] = call_id
+                handle = await func(self, *args, **kwargs)
+            finally:
+                _PENDING_LOOP_SUFFIX.reset(suffix_token)
+
             return wrap_handle_with_logging(
                 handle,
                 call_id,
                 manager_name,
                 method_name,
                 display_label=display_label,
+                suffix=suffix,
             )
 
         return _wrapper
@@ -419,18 +439,24 @@ def log_manager_result(
             leaf = f"{manager_name}.{method_name}"
             hierarchy = [*parent_lineage, leaf]
 
+            # Generate a single suffix and derive hierarchy_label once.
+            # Both incoming and outgoing events reuse these so the
+            # suffix is stable across the entire operation lifecycle.
+            suffix = token_hex(2)
+            hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+
             # ── 1. Publish incoming BEFORE modifying the lineage ──────────
-            # publish_manager_method_event reads TOOL_LOOP_LINEAGE and appends
-            # the leaf automatically.  If we set the lineage first, the leaf
-            # would be appended twice.  By publishing while the ContextVar is
-            # still at *parent_lineage*, the helper produces the correct
-            # hierarchy naturally.
+            # We pass explicit hierarchy + hierarchy_label so
+            # publish_manager_method_event does not independently generate
+            # them (which would produce a different random suffix).
             await publish_manager_method_event(
                 call_id,
                 manager_name,
                 method_name,
                 phase="incoming",
                 display_label=display_label,
+                hierarchy=hierarchy,
+                hierarchy_label=hierarchy_label,
                 **{payload_key: payload_value},
             )
 
@@ -440,14 +466,10 @@ def log_manager_result(
             try:
                 result = await func(self, *args, **kwargs)
 
-                # ── 3. Publish outgoing with EXPLICIT hierarchy ───────────
-                # Inner tool loops (start_async_tool_loop) modify
-                # TOOL_LOOP_LINEAGE and do not restore it.  Letting
-                # publish_manager_method_event derive the hierarchy from the
-                # ContextVar would produce a wrong/deep hierarchy.  Passing
-                # it explicitly mirrors what wrap_handle_with_logging does
-                # for handle-based managers (it reads _log_hierarchy from
-                # the handle, which was captured at loop start time).
+                # ── 3. Publish outgoing with the SAME hierarchy_label ─────
+                # Inner tool loops may have polluted TOOL_LOOP_LINEAGE.
+                # Passing explicit hierarchy + hierarchy_label avoids
+                # both pollution and suffix divergence.
                 await publish_manager_method_event(
                     call_id,
                     manager_name,
@@ -456,6 +478,7 @@ def log_manager_result(
                     display_label=display_label,
                     answer=_coerce_text_value(result),
                     hierarchy=hierarchy,
+                    hierarchy_label=hierarchy_label,
                 )
                 return result
 
@@ -473,6 +496,7 @@ def log_manager_result(
                     error_type=type(exc).__name__,
                     traceback=_tb.format_exc()[:2000],
                     hierarchy=hierarchy,
+                    hierarchy_label=hierarchy_label,
                 )
                 raise
 
