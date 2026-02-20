@@ -7,6 +7,7 @@ from typing import List
 from urllib.parse import urlparse
 
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 
 
 def _get_local_root() -> str:
@@ -76,26 +77,30 @@ class SyncConfig:
         assistant_id = SESSION_DETAILS.assistant.id
 
         if not desktop_url:
-            LOGGER.debug("[FileSync] No desktop_url configured, sync disabled")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] No desktop_url configured, sync disabled",
+            )
             return cls(enabled=False)
 
         ssh_host = cls._extract_host(desktop_url)
         if not ssh_host:
             LOGGER.error(
-                f"[FileSync] Could not extract host from desktop_url: {desktop_url}",
+                f"{ICONS['file_sync']} [FileSync] Could not extract host from desktop_url: {desktop_url}",
             )
             return cls(enabled=False)
 
         ssh_user = SESSION_DETAILS.assistant.name
         if not ssh_user:
-            LOGGER.error("[FileSync] No assistant name configured for SSH user")
+            LOGGER.error(
+                f"{ICONS['file_sync']} [FileSync] No assistant name configured for SSH user",
+            )
             return cls(enabled=False)
 
         # Temp file for SSH key (secure permissions set on write)
         ssh_key_path = f"/tmp/.unity_vm_key_{assistant_id}"
 
         LOGGER.debug(
-            f"[FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
+            f"{ICONS['file_sync']} [FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
             f"local=~/Unity/Local, remote=/Unity/Local",
         )
 

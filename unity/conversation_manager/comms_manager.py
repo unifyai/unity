@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from google.cloud import pubsub_v1
 
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
@@ -203,7 +204,7 @@ def _get_or_create_unknown_contact(
             return new_contact
 
         except Exception as e:
-            LOGGER.error(f"Error in _get_or_create_unknown_contact: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error in _get_or_create_unknown_contact: {e}")
             return None
 
 
@@ -252,7 +253,7 @@ class CommsManager:
             thread = data["thread"]
             event = data["event"]
             LOGGER.debug(
-                f"Received message from {thread}: {message.data.decode('utf-8')}",
+                f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
             )
             if thread in ["startup", "assistant_update"]:
                 message.ack()
@@ -373,7 +374,7 @@ class CommsManager:
                     # Check blacklist before processing
                     if _is_blacklisted(medium_for_blacklist, contact_detail):
                         LOGGER.debug(
-                            f"Ignoring blacklisted email from: {contact_detail}",
+                            f"{DEFAULT_ICON} Ignoring blacklisted email from: {contact_detail}",
                         )
                         message.ack()
                         return
@@ -394,7 +395,7 @@ class CommsManager:
 
                     if contact is None:
                         LOGGER.error(
-                            f"Failed to resolve contact for email from: {contact_detail}",
+                            f"{DEFAULT_ICON} Failed to resolve contact for email from: {contact_detail}",
                         )
                         message.ack()
                         return
@@ -455,7 +456,9 @@ class CommsManager:
                                 self.loop,
                             )
                     except Exception as e:
-                        LOGGER.error(f"Failed scheduling attachment download: {e}")
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
+                        )
 
                 elif thread == "unify_message":
                     # contact_id is required - no default to prevent silent privilege escalation
@@ -464,7 +467,7 @@ class CommsManager:
                     target_contact_id = event.get("contact_id")
                     if target_contact_id is None:
                         LOGGER.error(
-                            "Error: contact_id is required for unify_message, "
+                            f"{DEFAULT_ICON} Error: contact_id is required for unify_message, "
                             "skipping message",
                         )
                         message.ack()
@@ -475,7 +478,7 @@ class CommsManager:
                     )
                     if contact is None:
                         LOGGER.error(
-                            f"Error: contact_id {target_contact_id} not found in "
+                            f"{DEFAULT_ICON} Error: contact_id {target_contact_id} not found in "
                             f"contacts list, skipping message",
                         )
                         message.ack()
@@ -501,7 +504,9 @@ class CommsManager:
                                 self.loop,
                             )
                     except Exception as e:
-                        LOGGER.error(f"Failed scheduling attachment download: {e}")
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
+                        )
 
                 else:
                     # SMS message (thread == "msg")
@@ -510,7 +515,9 @@ class CommsManager:
 
                     # Check blacklist before processing
                     if _is_blacklisted(medium_for_blacklist, contact_detail):
-                        LOGGER.debug(f"Ignoring blacklisted SMS from: {contact_detail}")
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted SMS from: {contact_detail}",
+                        )
                         message.ack()
                         return
 
@@ -530,7 +537,7 @@ class CommsManager:
 
                     if contact is None:
                         LOGGER.error(
-                            f"Failed to resolve contact for SMS from: {contact_detail}",
+                            f"{DEFAULT_ICON} Failed to resolve contact for SMS from: {contact_detail}",
                         )
                         message.ack()
                         return
@@ -581,14 +588,16 @@ class CommsManager:
                             )
                             published += 1
                         except Exception as inner_e:
-                            LOGGER.debug(f"Skipping malformed pre-hire item: {inner_e}")
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Skipping malformed pre-hire item: {inner_e}",
+                            )
 
                     LOGGER.info(
-                        f"Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
+                        f"{DEFAULT_ICON} Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
                     )
                     message.ack()
                 except Exception as e:
-                    LOGGER.error(f"Error processing pre-hire logs: {e}")
+                    LOGGER.error(f"{DEFAULT_ICON} Error processing pre-hire logs: {e}")
                     message.nack()
             elif thread == "recording_ready":
                 recording_event = RecordingReady(
@@ -624,7 +633,9 @@ class CommsManager:
 
                         # Check blacklist before processing
                         if _is_blacklisted(Medium.PHONE_CALL, number):
-                            LOGGER.debug(f"Ignoring blacklisted call from: {number}")
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Ignoring blacklisted call from: {number}",
+                            )
                             message.ack()
                             return
 
@@ -644,7 +655,7 @@ class CommsManager:
 
                         if contact is None:
                             LOGGER.error(
-                                f"Failed to resolve contact for call from: {number}",
+                                f"{DEFAULT_ICON} Failed to resolve contact for call from: {number}",
                             )
                             message.ack()
                             return
@@ -702,18 +713,20 @@ class CommsManager:
                     message.ack()
                     future.result()  # Wait for publish to complete
                 except json.JSONDecodeError:
-                    LOGGER.error(f"Invalid message format for {thread} event")
+                    LOGGER.error(
+                        f"{DEFAULT_ICON} Invalid message format for {thread} event",
+                    )
                     message.ack()
                 except Exception as e:
-                    LOGGER.error(f"Error processing {thread} event: {e}")
+                    LOGGER.error(f"{DEFAULT_ICON} Error processing {thread} event: {e}")
                     import traceback
 
                     traceback.print_exc()
                     message.ack()
             else:
-                LOGGER.error(f"Unknown event type: {thread}")
+                LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
         except Exception as e:
-            LOGGER.error(f"Error processing message: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             message.ack()
 
     def subscribe_to_topic(self, subscription_id: str):
@@ -730,7 +743,9 @@ class CommsManager:
                 subscription_id,
             )
 
-            LOGGER.info(f"Starting subscription to {subscription_path}")
+            LOGGER.info(
+                f"{ICONS['subscription']} Starting subscription to {subscription_path}",
+            )
 
             streaming_pull_future = subscriber.subscribe(
                 subscription_path,
@@ -741,7 +756,9 @@ class CommsManager:
             self.subscribers[subscription_id] = streaming_pull_future
 
         except Exception as e:
-            LOGGER.error(f"Error setting up subscription {subscription_id}: {e}")
+            LOGGER.error(
+                f"{ICONS['subscription']} Error setting up subscription {subscription_id}: {e}",
+            )
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
@@ -759,14 +776,16 @@ class CommsManager:
             while True:
                 await asyncio.sleep(1)
         except KeyboardInterrupt:
-            LOGGER.info("Shutting down...")
+            LOGGER.info(f"{ICONS['lifecycle']} Shutting down...")
             # Cleanup subscriptions
             for future in self.subscribers.values():
                 future.cancel()
 
     async def send_pings(self):
         """Send periodic pings to keep the event manager alive while waiting for startup."""
-        LOGGER.info("Starting ping mechanism for idle container...")
+        LOGGER.info(
+            f"{ICONS['subscription']} Starting ping mechanism for idle container...",
+        )
         while True:
             try:
                 # Send ping to event manager (direct await since we're in async context)
@@ -780,11 +799,13 @@ class CommsManager:
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
                 if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
-                    LOGGER.info("Startup received, stopping ping mechanism")
+                    LOGGER.info(
+                        f"{ICONS['subscription']} Startup received, stopping ping mechanism",
+                    )
                     break
 
             except Exception as e:
-                LOGGER.error(f"Error in ping mechanism: {e}")
+                LOGGER.error(f"{ICONS['subscription']} Error in ping mechanism: {e}")
                 await asyncio.sleep(30)  # Continue trying
 
 

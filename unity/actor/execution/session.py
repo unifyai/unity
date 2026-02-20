@@ -27,6 +27,7 @@ from typing import (
 )
 
 from unity.function_manager.primitives import ComputerPrimitives
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 from .capture import _stdout_parts, capture_sandbox_output
 from .types import TextPart
@@ -435,7 +436,7 @@ class PythonExecutionSession:
         except Exception as e:
             try:
                 logger.warning(
-                    f"PythonExecutionSession.close() failed: {e}",
+                    f"{DEFAULT_ICON} PythonExecutionSession.close() failed: {e}",
                     exc_info=True,
                 )
             except Exception:

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from unity.session_details import SESSION_DETAILS
 
 LOGGER = logging.getLogger("unity")
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -77,7 +78,7 @@ async def start_async(
     global _conversation_manager
 
     if _conversation_manager is not None:
-        LOGGER.info("ConversationManager is already running")
+        LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is already running")
         return _conversation_manager
 
     # Import here to avoid circular imports
@@ -104,7 +105,9 @@ async def stop_async(reason: str = "manual_stop") -> None:
     if _conversation_manager is None:
         return
 
-    LOGGER.info(f"Stopping ConversationManager (reason: {reason})...")
+    LOGGER.info(
+        f"{ICONS['lifecycle']} Stopping ConversationManager (reason: {reason})...",
+    )
 
     try:
         # Signal shutdown
@@ -113,10 +116,10 @@ async def stop_async(reason: str = "manual_stop") -> None:
         # Clean up
         await _conversation_manager.cleanup()
 
-        LOGGER.info("ConversationManager stopped")
+        LOGGER.info(f"{ICONS['lifecycle']} ConversationManager stopped")
         _shutdown_reason = reason
     except Exception as e:
-        LOGGER.error(f"Error stopping ConversationManager: {e}")
+        LOGGER.error(f"{ICONS['lifecycle']} Error stopping ConversationManager: {e}")
         _shutdown_reason = f"stop_error: {e}"
     finally:
         _conversation_manager = None

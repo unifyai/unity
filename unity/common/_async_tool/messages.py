@@ -8,6 +8,7 @@ import unillm
 from typing import Callable, Optional, Any
 from .utils import maybe_await
 from ...logger import LOGGER
+from ...common.hierarchical_logger import DEFAULT_ICON
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
 from ..context_dump import make_messages_safe_for_context_dump
@@ -282,7 +283,7 @@ async def generate_with_preprocess(
         patched = preprocess_msgs(msgs_copy) or msgs_copy
     except Exception as exc:  # resilience – don't fail the loop
         LOGGER.error(
-            f"preprocess_msgs raised {exc!r}; using original messages.",
+            f"{DEFAULT_ICON} preprocess_msgs raised {exc!r}; using original messages.",
         )
         patched = msgs_copy
 

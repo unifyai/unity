@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import unity
 
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.session_details import SESSION_DETAILS
 from unity.conversation_manager.metrics import (
@@ -101,7 +102,9 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     )
 
     if not bus_events:
-        LOGGER.info("[Hydration] No Comms events found, skipping hydration")
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [Hydration] No Comms events found, skipping hydration",
+        )
         return
 
     # Bus events come in descending order (most recent first), reverse for chronological
@@ -327,7 +330,7 @@ async def hydrate_global_thread(cm: "ConversationManager") -> None:
     cm.contact_index.prepend_entries(hydrated_entries)
 
     LOGGER.info(
-        f"[Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
+        f"{ICONS['managers_worker']} [Hydration] Restored {restored} messages from {len(bus_events)} Comms events",
     )
 
 
@@ -337,10 +340,12 @@ async def publish_bus_events(event):
         bus_event = event.to_bus_event()
         bus_event.payload.pop("api_key", None)
         bus_event.payload.pop("email_id", None)
-        LOGGER.debug(f"Publishing bus event {event_name}")
+        LOGGER.debug(f"{DEFAULT_ICON} Publishing bus event {event_name}")
         await EVENT_BUS.publish(bus_event)
     except Exception as e:
-        LOGGER.error(f"[ManagersWorker] Error publishing bus event: {e}")
+        LOGGER.error(
+            f"{ICONS['managers_worker']} [ManagersWorker] Error publishing bus event: {e}",
+        )
 
 
 # ACTOR
@@ -354,7 +359,7 @@ async def actor_watch_result(
         result = await handle.result()
     except Exception as e:
         result = f"Error getting actor result: {e}"
-        LOGGER.error(f"[ManagersWorker] {result}")
+        LOGGER.error(f"{ICONS['managers_worker']} [ManagersWorker] {result}")
     await event_broker.publish(
         "app:actor:result",
         ActorResult(
@@ -473,7 +478,7 @@ async def log_message(
 ) -> None:
     """Log a message via TranscriptManager."""
     event_name = event.__class__.__name__
-    LOGGER.debug(f"publishing transcript {event_name}")
+    LOGGER.debug(f"{DEFAULT_ICON} publishing transcript {event_name}")
     event_name = event_name.lower()
     if "unify" in event_name or "prehire" in event_name:
         medium = Medium.UNIFY_MEET if "meet" in event_name else Medium.UNIFY_MESSAGE
@@ -512,7 +517,7 @@ async def log_message(
             # Log error but use the provided contact_id anyway since the event
             # already contains the full contact dict from the source
             LOGGER.info(
-                f"Warning: contact_id {evt_contact_id} not in contact_index, "
+                f"{DEFAULT_ICON} Warning: contact_id {evt_contact_id} not in contact_index, "
                 f"using contact from event",
             )
             contact_id = evt_contact_id
@@ -575,7 +580,9 @@ async def log_message(
         global _pre_hire_exchange_id
         try:
             nonlocal exchange_id
-            LOGGER.debug(f"[ManagersWorker] Logging message: {event.to_dict()}")
+            LOGGER.debug(
+                f"{ICONS['managers_worker']} [ManagersWorker] Logging message: {event.to_dict()}",
+            )
 
             # Extract attachments from event if present (now always list[dict])
             attachments = getattr(event, "attachments", [])
@@ -623,7 +630,7 @@ async def log_message(
                 if isinstance(event, PreHireMessage):
                     _pre_hire_exchange_id = exchange_id
                     LOGGER.info(
-                        f"[ManagersWorker] Cached pre-hire exchange_id: {exchange_id}",
+                        f"{ICONS['managers_worker']} [ManagersWorker] Cached pre-hire exchange_id: {exchange_id}",
                     )
             else:
                 msg_data = {
@@ -649,12 +656,14 @@ async def log_message(
                 cm._local_to_global_message_ids[local_message_id] = tm_message_id
 
             LOGGER.info(
-                f"[ManagersWorker] Logged message: {medium}"
+                f"{ICONS['managers_worker']} [ManagersWorker] Logged message: {medium}"
                 f" from {sender_id} to {receiver_ids}",
             )
             return exchange_id
         except Exception as e:
-            LOGGER.error(f"[ManagersWorker] Error logging message: {e}")
+            LOGGER.error(
+                f"{ICONS['managers_worker']} [ManagersWorker] Error logging message: {e}",
+            )
 
     exchange_id = await asyncio.to_thread(_publish_transcript)
 
@@ -666,7 +675,9 @@ async def log_message(
             exchange_id=exchange_id,
         ).to_json(),
     )
-    LOGGER.debug(f"[ManagersWorker] Published exchange_id {exchange_id}")
+    LOGGER.debug(
+        f"{ICONS['managers_worker']} [ManagersWorker] Published exchange_id {exchange_id}",
+    )
 
 
 # Contact updates
@@ -694,7 +705,9 @@ async def update_session_contacts(
     - Updated dynamically via set_boss_details during the demo
     """
     if cm.contact_manager is None:
-        LOGGER.info("[ManagersWorker] Cannot update contacts: contact_manager is None")
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Cannot update contacts: contact_manager is None",
+        )
         return
 
     def _get_name_parts(name: str) -> tuple[str, str]:
@@ -720,10 +733,12 @@ async def update_session_contacts(
                 surname=surname,
             )
             LOGGER.info(
-                f"[ManagersWorker] Updated contact {contact_id}: {first_name} {surname}",
+                f"{ICONS['managers_worker']} [ManagersWorker] Updated contact {contact_id}: {first_name} {surname}",
             )
         except Exception as e:
-            LOGGER.error(f"[ManagersWorker] Failed to update contact {contact_id}: {e}")
+            LOGGER.error(
+                f"{ICONS['managers_worker']} [ManagersWorker] Failed to update contact {contact_id}: {e}",
+            )
 
     # Always update assistant contact (contact_id=0)
     assistant_first_name, assistant_last_name = _get_name_parts(assistant_name)
@@ -740,7 +755,7 @@ async def update_session_contacts(
     # - Update demoer contact (contact_id=2) with user_* fields (initially created in _init_managers)
     if SETTINGS.DEMO_MODE:
         LOGGER.info(
-            "[ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
+            f"{ICONS['managers_worker']} [ManagersWorker] Demo mode: skipping boss contact (contact_id=1), "
             "updating demoer contact (contact_id=2)",
         )
         user_first_name, user_last_name = _get_name_parts(user_name)
@@ -804,7 +819,9 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
     # Wait for initialization to complete
     await wait_for_initialization(cm)
 
-    LOGGER.info("[ManagersWorker] Operations listener started, processing queue...")
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Operations listener started, processing queue...",
+    )
 
     # Process operations as they come in
     while True:
@@ -822,7 +839,9 @@ async def listen_to_operations(cm: "ConversationManager") -> None:
         try:
             await async_func(*args, **kwargs)
         except Exception as e:
-            LOGGER.error(f"[ManagersWorker] Error executing {func_name}: {e}")
+            LOGGER.error(
+                f"{ICONS['managers_worker']} [ManagersWorker] Error executing {func_name}: {e}",
+            )
         finally:
             _operations_queue.task_done()
 
@@ -851,7 +870,7 @@ def _init_managers(
     start_time = perf_counter()
 
     # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
-    LOGGER.info("[ManagersWorker] Initializing unity...")
+    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
     if not SESSION_DETAILS.assistant_record:
         # When default_assistant is provided, unity.init() uses it directly
@@ -879,24 +898,30 @@ def _init_managers(
             },
         )
     _unity_init_dur = perf_counter() - local_start_time
-    LOGGER.info(f"[ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds")
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Unity initialized in {_unity_init_dur:.2f} seconds",
+    )
     per_manager_init.record(_unity_init_dur, {"manager": "unity"})
 
     # Get API key from SESSION_DETAILS (set by ConversationManager on startup)
     api_key = SESSION_DETAILS.unify_key or None
 
     # 1. Configure EventBus
-    LOGGER.info("[ManagersWorker] Configuring EventBus...")
+    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Configuring EventBus...")
     local_start_time = perf_counter()
     if api_key:
         EVENT_BUS._get_logger().session.headers["Authorization"] = f"Bearer {api_key}"
     EVENT_BUS.set_window("Comms", 100)
     _eventbus_dur = perf_counter() - local_start_time
-    LOGGER.info(f"[ManagersWorker] EventBus configured in {_eventbus_dur:.2f} seconds")
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] EventBus configured in {_eventbus_dur:.2f} seconds",
+    )
     per_manager_init.record(_eventbus_dur, {"manager": "event_bus"})
 
     # 2. Initialize ContactManager (respects SETTINGS.contact.IMPL)
-    LOGGER.info("[ManagersWorker] Initializing ContactManager...")
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Initializing ContactManager...",
+    )
     local_start_time = perf_counter()
     cm.contact_manager = ManagerRegistry.get_contact_manager(
         description="production deployment",
@@ -938,11 +963,11 @@ def _init_managers(
                 if prospect and prospect.has_any_details():
                     apply_prospect_to_boss_contact(cm.contact_manager, prospect)
                     LOGGER.info(
-                        f"[ManagersWorker] Applied prospect details from demo_id={SETTINGS.DEMO_ID}",
+                        f"{ICONS['managers_worker']} [ManagersWorker] Applied prospect details from demo_id={SETTINGS.DEMO_ID}",
                     )
             except Exception as e:
                 LOGGER.error(
-                    f"[ManagersWorker] Failed to fetch/apply demo prospect details: {e}",
+                    f"{ICONS['managers_worker']} [ManagersWorker] Failed to fetch/apply demo prospect details: {e}",
                 )
 
         # Create demoer contact (contact_id=2) with the user's details
@@ -970,19 +995,23 @@ def _init_managers(
                 is_system=True,
             )
             LOGGER.info(
-                f"[ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}",
+                f"{ICONS['managers_worker']} [ManagersWorker] Created demoer contact (id=2): {demoer_first} {demoer_last}",
             )
         except Exception as e:
-            LOGGER.error(f"[ManagersWorker] Failed to create demoer contact: {e}")
+            LOGGER.error(
+                f"{ICONS['managers_worker']} [ManagersWorker] Failed to create demoer contact: {e}",
+            )
     _contact_dur = perf_counter() - local_start_time
     LOGGER.info(
-        f"[ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
+        f"{ICONS['managers_worker']} [ManagersWorker] ContactManager ({type(cm.contact_manager).__name__}) initialized in "
         f"{_contact_dur:.2f} seconds",
     )
     per_manager_init.record(_contact_dur, {"manager": "contact_manager"})
 
     # 3. Initialize TranscriptManager (respects SETTINGS.transcript.IMPL)
-    LOGGER.info("[ManagersWorker] Initializing TranscriptManager...")
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Initializing TranscriptManager...",
+    )
     local_start_time = perf_counter()
     cm.transcript_manager = ManagerRegistry.get_transcript_manager(
         description="production deployment",
@@ -990,7 +1019,7 @@ def _init_managers(
     )
     _transcript_dur = perf_counter() - local_start_time
     LOGGER.info(
-        f"[ManagersWorker] TranscriptManager ({type(cm.transcript_manager).__name__}) initialized in "
+        f"{ICONS['managers_worker']} [ManagersWorker] TranscriptManager ({type(cm.transcript_manager).__name__}) initialized in "
         f"{_transcript_dur:.2f} seconds",
     )
     per_manager_init.record(_transcript_dur, {"manager": "transcript_manager"})
@@ -1006,7 +1035,9 @@ def _init_managers(
     if SETTINGS.memory.ENABLED:
         from unity.memory_manager.memory_manager import MemoryManager
 
-        LOGGER.info("[ManagersWorker] Initializing MemoryManager...")
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Initializing MemoryManager...",
+        )
         local_start_time = perf_counter()
         mem_cfg = MemoryManager.MemoryConfig(
             contacts=SETTINGS.memory.CONTACTS,
@@ -1024,16 +1055,18 @@ def _init_managers(
         )
         _memory_dur = perf_counter() - local_start_time
         LOGGER.info(
-            f"[ManagersWorker] MemoryManager initialized in {_memory_dur:.2f} seconds",
+            f"{ICONS['managers_worker']} [ManagersWorker] MemoryManager initialized in {_memory_dur:.2f} seconds",
         )
         per_manager_init.record(_memory_dur, {"manager": "memory_manager"})
     else:
         LOGGER.info(
-            "[ManagersWorker] MemoryManager disabled (SETTINGS.memory.ENABLED=False)",
+            f"{ICONS['managers_worker']} [ManagersWorker] MemoryManager disabled (SETTINGS.memory.ENABLED=False)",
         )
 
     # 6. Initialize ConversationManagerHandle (respects SETTINGS.conversation.IMPL)
-    LOGGER.info("[ManagersWorker] Initializing ConversationManagerHandle...")
+    LOGGER.info(
+        f"{ICONS['managers_worker']} [ManagersWorker] Initializing ConversationManagerHandle...",
+    )
     local_start_time = perf_counter()
     # ConversationManagerHandle has different constructor args for real vs simulated
     if SETTINGS.conversation.IMPL == "simulated":
@@ -1056,13 +1089,13 @@ def _init_managers(
         )
     _cmhandle_dur = perf_counter() - local_start_time
     LOGGER.info(
-        f"[ManagersWorker] ConversationManagerHandle ({type(cm._conversation_manager_handle).__name__}) initialized in "
+        f"{ICONS['managers_worker']} [ManagersWorker] ConversationManagerHandle ({type(cm._conversation_manager_handle).__name__}) initialized in "
         f"{_cmhandle_dur:.2f} seconds",
     )
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
     # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
-    LOGGER.info("[ManagersWorker] Initializing Actor...")
+    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
         if actor is not None:
@@ -1088,17 +1121,19 @@ def _init_managers(
         _actor_dur = perf_counter() - local_start_time
         actor_cls = type(cm.actor).__name__
         LOGGER.info(
-            f"[ManagersWorker] Actor ({actor_cls}) initialized in "
+            f"{ICONS['managers_worker']} [ManagersWorker] Actor ({actor_cls}) initialized in "
             f"{_actor_dur:.2f} seconds",
         )
         per_manager_init.record(_actor_dur, {"manager": "actor"})
     except Exception as e:
-        LOGGER.error(f"[ManagersWorker] Error initializing Actor: {e}")
+        LOGGER.error(
+            f"{ICONS['managers_worker']} [ManagersWorker] Error initializing Actor: {e}",
+        )
 
     # U2: Total manager init duration
     _total_dur = perf_counter() - start_time
     LOGGER.info(
-        f"[ManagersWorker] All managers initialized in {_total_dur:.2f} seconds",
+        f"{ICONS['managers_worker']} [ManagersWorker] All managers initialized in {_total_dur:.2f} seconds",
     )
     manager_init_total.record(_total_dur)
 
@@ -1115,7 +1150,9 @@ async def _start_file_sync() -> None:
 
     # Only sync when a desktop_url is configured
     if not SESSION_DETAILS.assistant.desktop_url:
-        LOGGER.debug("[ManagersWorker] No desktop_url configured, skipping file sync")
+        LOGGER.debug(
+            f"{ICONS['managers_worker']} [ManagersWorker] No desktop_url configured, skipping file sync",
+        )
         return
 
     try:
@@ -1127,24 +1164,34 @@ async def _start_file_sync() -> None:
 
         # Check if adapter supports sync (LocalFileSystemAdapter does)
         if not hasattr(adapter, "start_sync"):
-            LOGGER.debug("[ManagersWorker] Adapter does not support file sync")
+            LOGGER.debug(
+                f"{ICONS['managers_worker']} [ManagersWorker] Adapter does not support file sync",
+            )
             return
 
         if adapter._enable_sync:
-            LOGGER.debug("[ManagersWorker] Starting file sync with managed VM...")
+            LOGGER.debug(
+                f"{ICONS['managers_worker']} [ManagersWorker] Starting file sync with managed VM...",
+            )
             success = await adapter.start_sync()
             if success:
-                LOGGER.debug("[ManagersWorker] File sync started successfully")
+                LOGGER.debug(
+                    f"{ICONS['managers_worker']} [ManagersWorker] File sync started successfully",
+                )
             else:
                 LOGGER.debug(
-                    "[ManagersWorker] File sync not enabled or failed to start",
+                    f"{ICONS['managers_worker']} [ManagersWorker] File sync not enabled or failed to start",
                 )
         else:
-            LOGGER.debug("[ManagersWorker] File sync disabled by configuration")
+            LOGGER.debug(
+                f"{ICONS['managers_worker']} [ManagersWorker] File sync disabled by configuration",
+            )
 
     except Exception as e:
         # File sync failure should not block manager initialization
-        LOGGER.error(f"[ManagersWorker] Failed to start file sync: {e}")
+        LOGGER.error(
+            f"{ICONS['managers_worker']} [ManagersWorker] Failed to start file sync: {e}",
+        )
         import traceback
 
         traceback.print_exc()
@@ -1165,12 +1212,14 @@ async def init_conv_manager(
             of creating one via ManagerRegistry. Useful for testing with specific
             Actor implementations (e.g., SimulatedActor).
     """
-    LOGGER.info("[ManagersWorker] Processing startup")
+    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Processing startup")
 
     async with _init_lock:
         start_time = perf_counter()
         if cm.initialized:
-            LOGGER.info("[ManagersWorker] Already initialized, skipping")
+            LOGGER.info(
+                f"{ICONS['managers_worker']} [ManagersWorker] Already initialized, skipping",
+            )
             return
 
         try:
@@ -1203,11 +1252,13 @@ async def init_conv_manager(
 
             _init_dur = perf_counter() - start_time
             LOGGER.info(
-                f"[ManagersWorker] Initialization complete in {_init_dur:.2f} seconds",
+                f"{ICONS['managers_worker']} [ManagersWorker] Initialization complete in {_init_dur:.2f} seconds",
             )
 
         except Exception as e:
-            LOGGER.error(f"[ManagersWorker] Error during initialization: {e}")
+            LOGGER.error(
+                f"{ICONS['managers_worker']} [ManagersWorker] Error during initialization: {e}",
+            )
             raise
 
     # Hydrate the global thread from persisted EventBus events.
@@ -1217,14 +1268,18 @@ async def init_conv_manager(
     # whatever messages arrive from this point forward.
     try:
         local_start_time = perf_counter()
-        LOGGER.info("[ManagersWorker] Hydrating global thread...")
+        LOGGER.info(
+            f"{ICONS['managers_worker']} [ManagersWorker] Hydrating global thread...",
+        )
         await hydrate_global_thread(cm)
         LOGGER.info(
-            "[ManagersWorker] Global thread hydrated in "
+            f"{ICONS['managers_worker']} [ManagersWorker] Global thread hydrated in "
             f"{perf_counter() - local_start_time:.2f} seconds",
         )
     except Exception as e:
-        LOGGER.error(f"[ManagersWorker] Global thread hydration failed: {e}")
+        LOGGER.error(
+            f"{ICONS['managers_worker']} [ManagersWorker] Global thread hydration failed: {e}",
+        )
         import traceback
 
         traceback.print_exc()

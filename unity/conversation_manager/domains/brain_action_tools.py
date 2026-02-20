@@ -22,6 +22,7 @@ from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
@@ -1013,7 +1014,9 @@ class ConversationManagerBrainActionTools:
             )
 
         to_number = contact.get("phone_number")
-        LOGGER.debug(f"[make_call] context: {context}, to_number: {to_number}")
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
+        )
         # Store initial guidance so CallManager can publish it to the fast brain
         # after the subprocess spawns (before the recipient picks up).
         if context:

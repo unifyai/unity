@@ -30,6 +30,7 @@ from ..common.simulated import (
     SimulatedHandleMixin,
 )
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -83,7 +84,9 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -115,7 +118,7 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -145,7 +148,9 @@ class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 

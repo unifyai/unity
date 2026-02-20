@@ -36,6 +36,7 @@ from unity.conversation_manager.tracing import (
 )
 from unity.session_details import SESSION_DETAILS
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
@@ -241,7 +242,7 @@ async def entrypoint(ctx: agents.JobContext):
         demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
-    LOGGER.debug(system_prompt)
+    LOGGER.debug(f"{DEFAULT_ICON} {system_prompt}")
 
     session = AgentSession(
         llm=llm_model,

@@ -45,6 +45,7 @@ from unity.conversation_manager.tracing import (
     trace_kv,
 )
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 
 _log = logging.getLogger("unity")
 
@@ -166,9 +167,11 @@ class CallEventSocketServer:
             self._socket_path,
             self._forward_channels,
         )
-        LOGGER.info(f"[CallEventSocketServer] Listening on {self._socket_path}")
+        LOGGER.info(
+            f"{ICONS['ipc']} [CallEventSocketServer] Listening on {self._socket_path}",
+        )
         LOGGER.debug(
-            f"[CallEventSocketServer] Forwarding channels: {self._forward_channels}",
+            f"{ICONS['ipc']} [CallEventSocketServer] Forwarding channels: {self._forward_channels}",
         )
         return self._socket_path
 
@@ -196,7 +199,9 @@ class CallEventSocketServer:
                     timeout=5.0,
                 )
             except (asyncio.TimeoutError, Exception) as e:
-                LOGGER.debug(f"[CallEventSocketServer] I/O shutdown issue: {e}")
+                LOGGER.debug(
+                    f"{ICONS['ipc']} [CallEventSocketServer] I/O shutdown issue: {e}",
+                )
 
             # Stop the I/O loop from here (after the future resolved or
             # timed out) so the loop doesn't close before the future
@@ -220,7 +225,7 @@ class CallEventSocketServer:
                 pass
             self._socket_path = None
 
-        LOGGER.info("[CallEventSocketServer] Stopped")
+        LOGGER.info(f"{ICONS['ipc']} [CallEventSocketServer] Stopped")
 
     async def set_forward_channels(self, channels: list[str]) -> None:
         """Update the forwarded channel patterns, restarting the subscription."""
@@ -244,7 +249,7 @@ class CallEventSocketServer:
             self._forward_channels,
         )
         LOGGER.debug(
-            f"[CallEventSocketServer] Forward channels updated: {self._forward_channels}",
+            f"{ICONS['ipc']} [CallEventSocketServer] Forward channels updated: {self._forward_channels}",
         )
 
     # ------------------------------------------------------------------
@@ -259,7 +264,7 @@ class CallEventSocketServer:
             self._io_ready.set()
             self._io_loop.run_forever()
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketServer] I/O loop error: {e}")
+            LOGGER.error(f"{ICONS['ipc']} [CallEventSocketServer] I/O loop error: {e}")
         finally:
             if self._io_loop and not self._io_loop.is_closed():
                 self._io_loop.close()
@@ -276,14 +281,14 @@ class CallEventSocketServer:
                     timeout=0.5,
                 )
                 _log.info("[CallEventSocketServer] Client connected")
-                LOGGER.debug("[CallEventSocketServer] Client connected")
+                LOGGER.debug(f"{ICONS['ipc']} [CallEventSocketServer] Client connected")
 
                 self._connected_clients.append(client_socket)
 
                 # Flush any messages buffered before a client connected
                 if self._pending_messages:
                     LOGGER.debug(
-                        f"[CallEventSocketServer] Flushing "
+                        f"{ICONS['ipc']} [CallEventSocketServer] Flushing "
                         f"{len(self._pending_messages)} buffered message(s)",
                     )
                     for channel, event_json in self._pending_messages:
@@ -304,17 +309,19 @@ class CallEventSocketServer:
                                 msg.encode("utf-8"),
                             )
                             LOGGER.debug(
-                                trace_kv(
-                                    "IPC_SERVER_FLUSH_BUFFERED",
-                                    channel=channel,
-                                    message_id=message_id,
-                                    ts_utc=now_utc_iso(),
-                                    monotonic_ms=monotonic_ms(),
-                                ),
+                                f"{ICONS['ipc']} {
+                                    trace_kv(
+                                        'IPC_SERVER_FLUSH_BUFFERED',
+                                        channel=channel,
+                                        message_id=message_id,
+                                        ts_utc=now_utc_iso(),
+                                        monotonic_ms=monotonic_ms(),
+                                    )
+                                }",
                             )
                         except Exception as e:
                             LOGGER.debug(
-                                f"[CallEventSocketServer] Failed to flush "
+                                f"{ICONS['ipc']} [CallEventSocketServer] Failed to flush "
                                 f"buffered message: {e}",
                             )
                     self._pending_messages.clear()
@@ -328,7 +335,9 @@ class CallEventSocketServer:
                 break
             except Exception as e:
                 if self._running:
-                    LOGGER.error(f"[CallEventSocketServer] Accept error: {e}")
+                    LOGGER.error(
+                        f"{ICONS['ipc']} [CallEventSocketServer] Accept error: {e}",
+                    )
                 break
 
     async def _handle_client(self, client_socket: socket.socket) -> None:
@@ -359,7 +368,9 @@ class CallEventSocketServer:
                     break
 
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketServer] Client handler error: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketServer] Client handler error: {e}",
+            )
         finally:
             if client_socket in self._connected_clients:
                 self._connected_clients.remove(client_socket)
@@ -368,7 +379,7 @@ class CallEventSocketServer:
                 client_socket.close()
             except Exception:
                 pass
-            LOGGER.debug("[CallEventSocketServer] Client disconnected")
+            LOGGER.debug(f"{ICONS['ipc']} [CallEventSocketServer] Client disconnected")
             if (
                 no_clients_left
                 and self.on_client_disconnected is not None
@@ -382,7 +393,7 @@ class CallEventSocketServer:
                     )
                 except Exception as e:
                     LOGGER.error(
-                        f"[CallEventSocketServer] on_client_disconnected "
+                        f"{ICONS['ipc']} [CallEventSocketServer] on_client_disconnected "
                         f"dispatch error: {e}",
                     )
 
@@ -415,14 +426,16 @@ class CallEventSocketServer:
                 len(self._pending_messages),
             )
             LOGGER.debug(
-                trace_kv(
-                    "IPC_SERVER_BUFFER",
-                    channel=channel,
-                    message_id=message_id,
-                    buffered_count=len(self._pending_messages),
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
+                f"{ICONS['ipc']} {
+                    trace_kv(
+                        'IPC_SERVER_BUFFER',
+                        channel=channel,
+                        message_id=message_id,
+                        buffered_count=len(self._pending_messages),
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    )
+                }",
             )
             return
 
@@ -434,7 +447,9 @@ class CallEventSocketServer:
                     "[CallEventSocketServer] sock_sendall failed " "(client kept): %s",
                     e,
                 )
-                LOGGER.debug(f"[CallEventSocketServer] Failed to send to client: {e}")
+                LOGGER.debug(
+                    f"{ICONS['ipc']} [CallEventSocketServer] Failed to send to client: {e}",
+                )
 
         if self._connected_clients:
             _log.debug(
@@ -445,14 +460,16 @@ class CallEventSocketServer:
                 len(self._connected_clients),
             )
             LOGGER.debug(
-                trace_kv(
-                    "IPC_SERVER_FORWARD",
-                    channel=channel,
-                    message_id=message_id,
-                    client_count=len(self._connected_clients),
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
+                f"{ICONS['ipc']} {
+                    trace_kv(
+                        'IPC_SERVER_FORWARD',
+                        channel=channel,
+                        message_id=message_id,
+                        client_count=len(self._connected_clients),
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    )
+                }",
             )
 
     async def _shutdown_io(self) -> None:
@@ -499,19 +516,21 @@ class CallEventSocketServer:
 
             if not channel or not event_json:
                 LOGGER.debug(
-                    f"[CallEventSocketServer] Invalid message format: {message[:100]}",
+                    f"{ICONS['ipc']} [CallEventSocketServer] Invalid message format: {message[:100]}",
                 )
                 return
 
             message_id = payload_trace_id("ipc", channel, event_json)
             LOGGER.debug(
-                trace_kv(
-                    "IPC_SERVER_INBOUND",
-                    channel=channel,
-                    message_id=message_id,
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
+                f"{ICONS['ipc']} {
+                    trace_kv(
+                        'IPC_SERVER_INBOUND',
+                        channel=channel,
+                        message_id=message_id,
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    )
+                }",
             )
 
             if self._on_event:
@@ -520,9 +539,13 @@ class CallEventSocketServer:
                 await self._event_broker.publish(channel, event_json)
 
         except json.JSONDecodeError as e:
-            LOGGER.error(f"[CallEventSocketServer] JSON decode error: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketServer] JSON decode error: {e}",
+            )
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketServer] Error processing message: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketServer] Error processing message: {e}",
+            )
 
     async def queue_for_clients(self, channel: str, event_json: str) -> None:
         """Directly queue a message for delivery to connected (or future) clients.
@@ -547,7 +570,7 @@ class CallEventSocketServer:
                     self._forward_channels,
                 )
                 LOGGER.debug(
-                    f"[CallEventSocketServer] Subscribed to forward channels: "
+                    f"{ICONS['ipc']} [CallEventSocketServer] Subscribed to forward channels: "
                     f"{self._forward_channels}",
                 )
 
@@ -587,7 +610,7 @@ class CallEventSocketServer:
                                 e,
                             )
                             LOGGER.debug(
-                                f"[CallEventSocketServer] Forward loop error: {e}",
+                                f"{ICONS['ipc']} [CallEventSocketServer] Forward loop error: {e}",
                             )
 
         except asyncio.CancelledError:
@@ -598,7 +621,9 @@ class CallEventSocketServer:
                 "[CallEventSocketServer] Forward subscription error: %s",
                 e,
             )
-            LOGGER.error(f"[CallEventSocketServer] Forward subscription error: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketServer] Forward subscription error: {e}",
+            )
 
 
 class CallEventSocketClient:
@@ -653,11 +678,15 @@ class CallEventSocketClient:
             await loop.sock_connect(self._socket, self._socket_path)
 
             self._connected = True
-            LOGGER.debug(f"[CallEventSocketClient] Connected to {self._socket_path}")
+            LOGGER.debug(
+                f"{ICONS['ipc']} [CallEventSocketClient] Connected to {self._socket_path}",
+            )
             return True
 
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketClient] Connection failed: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketClient] Connection failed: {e}",
+            )
             if self._socket:
                 self._socket.close()
                 self._socket = None
@@ -686,7 +715,7 @@ class CallEventSocketClient:
         self._on_event = on_event
         self._running = True
         self._receive_task = asyncio.create_task(self._receive_loop())
-        LOGGER.debug("[CallEventSocketClient] Receive loop started")
+        LOGGER.debug(f"{ICONS['ipc']} [CallEventSocketClient] Receive loop started")
         return True
 
     async def _receive_loop(self) -> None:
@@ -700,7 +729,7 @@ class CallEventSocketClient:
         timeout_count = 0
 
         LOGGER.debug(
-            f"[CallEventSocketClient] _receive_loop ENTERED "
+            f"{ICONS['ipc']} [CallEventSocketClient] _receive_loop ENTERED "
             f"loop_id={id(loop)} socket_fd={self._socket.fileno() if self._socket else 'None'} "
             f"connected={self._connected} running={self._running}",
         )
@@ -712,20 +741,22 @@ class CallEventSocketClient:
                 if not self._connected:
                     if reconnect_attempts >= max_reconnect_attempts:
                         LOGGER.error(
-                            f"[CallEventSocketClient] Max reconnect attempts "
+                            f"{ICONS['ipc']} [CallEventSocketClient] Max reconnect attempts "
                             f"({max_reconnect_attempts}) reached, stopping",
                         )
                         break
                     reconnect_attempts += 1
                     LOGGER.debug(
-                        f"[CallEventSocketClient] Attempting reconnect "
+                        f"{ICONS['ipc']} [CallEventSocketClient] Attempting reconnect "
                         f"({reconnect_attempts}/{max_reconnect_attempts})...",
                     )
                     await asyncio.sleep(0.5)
                     if not await self.connect():
                         continue
                     buffer = b""
-                    LOGGER.debug("[CallEventSocketClient] Reconnected successfully")
+                    LOGGER.debug(
+                        f"{ICONS['ipc']} [CallEventSocketClient] Reconnected successfully",
+                    )
                     reconnect_attempts = 0
 
                 try:
@@ -734,13 +765,15 @@ class CallEventSocketClient:
                         timeout=1.0,
                     )
                     if not chunk:
-                        LOGGER.debug("[CallEventSocketClient] Server disconnected")
+                        LOGGER.debug(
+                            f"{ICONS['ipc']} [CallEventSocketClient] Server disconnected",
+                        )
                         self._connected = False
                         continue
 
                     recv_count += 1
                     LOGGER.debug(
-                        f"[CallEventSocketClient] sock_recv: "
+                        f"{ICONS['ipc']} [CallEventSocketClient] sock_recv: "
                         f"bytes={len(chunk)} iteration={iteration} "
                         f"total_recv={recv_count}",
                     )
@@ -756,7 +789,7 @@ class CallEventSocketClient:
                     timeout_count += 1
                     if timeout_count % 30 == 1:
                         LOGGER.debug(
-                            f"[CallEventSocketClient] heartbeat: "
+                            f"{ICONS['ipc']} [CallEventSocketClient] heartbeat: "
                             f"iteration={iteration} timeouts={timeout_count} "
                             f"recv={recv_count} connected={self._connected} "
                             f"running={self._running} "
@@ -768,7 +801,7 @@ class CallEventSocketClient:
                 except Exception as e:
                     if self._running:
                         LOGGER.error(
-                            f"[CallEventSocketClient] Receive error: {e} "
+                            f"{ICONS['ipc']} [CallEventSocketClient] Receive error: {e} "
                             f"iteration={iteration}",
                         )
                         self._connected = False
@@ -781,11 +814,13 @@ class CallEventSocketClient:
                     continue
 
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketClient] Receive loop error: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketClient] Receive loop error: {e}",
+            )
         finally:
             self._running = False
             LOGGER.debug(
-                f"[CallEventSocketClient] Receive loop stopped "
+                f"{ICONS['ipc']} [CallEventSocketClient] Receive loop stopped "
                 f"iterations={iteration} recv={recv_count} "
                 f"timeouts={timeout_count}",
             )
@@ -799,28 +834,34 @@ class CallEventSocketClient:
 
             if not channel or not event_json:
                 LOGGER.debug(
-                    f"[CallEventSocketClient] Invalid message format: {message[:100]}",
+                    f"{ICONS['ipc']} [CallEventSocketClient] Invalid message format: {message[:100]}",
                 )
                 return
 
             message_id = payload_trace_id("ipc", channel, event_json)
             LOGGER.debug(
-                trace_kv(
-                    "IPC_CLIENT_INBOUND",
-                    channel=channel,
-                    message_id=message_id,
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
+                f"{ICONS['ipc']} {
+                    trace_kv(
+                        'IPC_CLIENT_INBOUND',
+                        channel=channel,
+                        message_id=message_id,
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    )
+                }",
             )
 
             if self._on_event:
                 await self._on_event(channel, event_json)
 
         except json.JSONDecodeError as e:
-            LOGGER.error(f"[CallEventSocketClient] JSON decode error: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketClient] JSON decode error: {e}",
+            )
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketClient] Error processing message: {e}")
+            LOGGER.error(
+                f"{ICONS['ipc']} [CallEventSocketClient] Error processing message: {e}",
+            )
 
     async def send_event(self, channel: str, event_json: str) -> bool:
         """
@@ -862,19 +903,21 @@ class CallEventSocketClient:
             loop = asyncio.get_event_loop()
             await loop.sock_sendall(self._socket, message.encode("utf-8"))
             LOGGER.debug(
-                trace_kv(
-                    "IPC_CLIENT_OUTBOUND",
-                    channel=channel,
-                    message_id=message_id,
-                    retry=retry,
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
+                f"{ICONS['ipc']} {
+                    trace_kv(
+                        'IPC_CLIENT_OUTBOUND',
+                        channel=channel,
+                        message_id=message_id,
+                        retry=retry,
+                        ts_utc=now_utc_iso(),
+                        monotonic_ms=monotonic_ms(),
+                    )
+                }",
             )
             return True
 
         except Exception as e:
-            LOGGER.error(f"[CallEventSocketClient] Send failed: {e}")
+            LOGGER.error(f"{ICONS['ipc']} [CallEventSocketClient] Send failed: {e}")
             self._connected = False
             if self._socket:
                 self._socket.close()
@@ -882,7 +925,9 @@ class CallEventSocketClient:
 
             # Try to reconnect and retry once
             if retry:
-                LOGGER.debug("[CallEventSocketClient] Attempting reconnect...")
+                LOGGER.debug(
+                    f"{ICONS['ipc']} [CallEventSocketClient] Attempting reconnect...",
+                )
                 if await self.connect():
                     # Restart receive loop if it was running
                     if self._on_event and (
@@ -890,7 +935,9 @@ class CallEventSocketClient:
                     ):
                         self._running = True
                         self._receive_task = asyncio.create_task(self._receive_loop())
-                        LOGGER.debug("[CallEventSocketClient] Receive loop restarted")
+                        LOGGER.debug(
+                            f"{ICONS['ipc']} [CallEventSocketClient] Receive loop restarted",
+                        )
                     return await self._send_event_impl(channel, event_json, retry=False)
 
             return False

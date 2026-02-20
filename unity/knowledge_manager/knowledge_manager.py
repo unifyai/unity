@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 import json
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.common.tool_outcome import ToolOutcome
 from unity.common.token_utils import count_tokens_per_utf_byte
 from unity.common import token_utils as _tok
@@ -359,7 +360,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ]
             return seeded
         except Exception as e:
-            LOGGER.error(f"Error in _maybe_build_show_all_seed: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error in _maybe_build_show_all_seed: {e}")
             return None
 
     # Helpers #

@@ -1,6 +1,7 @@
 import requests
 
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.settings import SETTINGS
 
 # admin headers and URLs
@@ -34,7 +35,7 @@ def dispatch_livekit_agent(
     """
     if not unity_comms_url:
         LOGGER.debug(
-            "[dispatch_livekit_agent] Skipping: UNITY_COMMS_URL not configured. "
+            f"{DEFAULT_ICON} [dispatch_livekit_agent] Skipping: UNITY_COMMS_URL not configured. "
             "Set this to enable LiveKit agent dispatch.",
         )
         return False
@@ -53,15 +54,18 @@ def dispatch_livekit_agent(
             timeout=1,
         )
         if response.status_code != 200:
-            LOGGER.error(f"Failed to dispatch LiveKit agent. {response.text}")
+            LOGGER.error(
+                f"{DEFAULT_ICON} Failed to dispatch LiveKit agent. {response.text}",
+            )
             return False
         else:
-            LOGGER.info("LiveKit agent dispatched")
+            LOGGER.info(f"{DEFAULT_ICON} LiveKit agent dispatched")
     except requests.exceptions.Timeout:
-        # Timeout is expected - the dispatch endpoint may be slow
-        LOGGER.info("LiveKit agent dispatched (timeout)")
+        LOGGER.info(f"{DEFAULT_ICON} LiveKit agent dispatched (timeout)")
     except requests.exceptions.RequestException as e:
         # Connection errors, DNS failures, etc. - don't crash, just log
-        LOGGER.error(f"[dispatch_livekit_agent] Request failed (non-fatal): {e}")
+        LOGGER.error(
+            f"{DEFAULT_ICON} [dispatch_livekit_agent] Request failed (non-fatal): {e}",
+        )
         return False
     return True

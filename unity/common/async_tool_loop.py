@@ -15,6 +15,7 @@ from typing import (
     TYPE_CHECKING,
 )
 from ..logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 from ._async_tool.messages import forward_handle_call
@@ -408,7 +409,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         broader conversation that led to this question.
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
+        LOGGER.info(f"{ICONS['clarification']} [{_label}] Ask requested: {question}")
 
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, _parent_chat_context)
@@ -671,7 +672,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         **kwargs,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
+        LOGGER.debug(
+            f"{ICONS['interjection']} [{_label}] Interject requested: {message}",
+        )
         # Record user-visible immediately
         self._append_user_visible_user(message, _parent_chat_context_cont)
 
@@ -741,7 +744,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     @functools.wraps(SteerableToolHandle.pause, updated=())
     async def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"⏸️ [{_label}] Pause requested")
+        LOGGER.info(f"{ICONS['pause']} [{_label}] Pause requested")
 
         # Immediately toggle pause_event for base (non-steerable) tools.
         # Steerable handles (h is not None) are intentionally skipped here;
@@ -782,7 +785,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     @functools.wraps(SteerableToolHandle.resume, updated=())
     async def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"▶️ [{_label}] Resume requested")
+        LOGGER.info(f"{ICONS['resume']} [{_label}] Resume requested")
         # Immediately toggle pause_event for base (non-steerable) tools.
         # Steerable handles are resumed via the mirror path below (see the
         # symmetric comment in pause() for the full rationale). Direct
