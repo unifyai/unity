@@ -34,12 +34,7 @@ except ImportError:
 from unity.conversation_manager.utils import dispatch_livekit_agent
 from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
-from unity.conversation_manager.tracing import (
-    content_trace_id,
-    monotonic_ms,
-    now_utc_iso,
-    trace_kv,
-)
+from unity.conversation_manager.tracing import content_trace_id
 from unity.session_details import SESSION_DETAILS
 
 # Shared helpers
@@ -61,6 +56,7 @@ from unity.conversation_manager.medium_scripts.common import (
     render_event_for_fast_brain,
     render_participant_comms,
     publish_meet_interaction_from_track,
+    FastBrainLogger,
 )
 from unity.conversation_manager.types.screenshot import (
     ScreenshotEntry,
@@ -70,6 +66,8 @@ from unity.conversation_manager.types.screenshot import (
 
 logger = logging.getLogger("gpt-realtime-agent")
 logger.setLevel(logging.INFO)
+
+_log = FastBrainLogger(mode="sts")
 
 
 class Assistant(Agent):
@@ -96,7 +94,7 @@ class Assistant(Agent):
         Note: User utterance publishing is handled by _on_chat_item_added
         to keep all transcript logging in one place alongside assistant utterances.
         """
-        print(f"[on_user_turn_completed] {new_message.text_content}")
+        _log.user_speech(new_message.text_content or "")
 
     async def llm_node(
         self,
@@ -104,31 +102,35 @@ class Assistant(Agent):
         tools: list[FunctionTool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
-        print("waiting for call to be received...")
+        _log.info("Waiting for call to be received…")
         while not self.call_received:
             await asyncio.sleep(0.1)
-        print("call received")
+        _log.call_status("call_received")
 
-        print("running llm node...")
+        _log.llm_thinking(reason="llm_node_start")
         async for chunk in super().llm_node(chat_ctx, tools, model_settings):
             yield chunk
 
 
 async def entrypoint(ctx: JobContext) -> None:
-    print("Connecting to room...")
+    event_broker.set_logger(_log)
+
+    _log.session_start("Connecting to room…")
     await ctx.connect()
-    print("Connected to room")
+    _log.session_start("Connected to room")
 
     # User screen share and webcam capture (subscribe to LiveKit room tracks automatically)
     screen_capture = UserTrackCaptureManager(
         ctx.room,
         track_source="screenshare",
         on_track_change=publish_meet_interaction_from_track,
+        fb_logger=_log,
     )
     webcam_capture = UserTrackCaptureManager(
         ctx.room,
         track_source="camera",
         on_track_change=publish_meet_interaction_from_track,
+        fb_logger=_log,
     )
 
     # Flag for call_answered that may arrive during initialization
@@ -146,10 +148,9 @@ async def entrypoint(ctx: JobContext) -> None:
     outbound = SESSION_DETAILS.voice_call.outbound
     channel = SESSION_DETAILS.voice_call.channel
     assistant_bio = SESSION_DETAILS.assistant.about
-    print("voice_provider", voice_provider)
-    print("voice_id", voice_id)
-    print("outbound", outbound)
-    print("channel", channel)
+    _log.config(
+        f"voice_provider={voice_provider} voice_id={voice_id} outbound={outbound} channel={channel}",
+    )
 
     # Contact/boss payloads from SESSION_DETAILS
     contact = json.loads(SESSION_DETAILS.voice_call.contact_json or "{}")
@@ -184,29 +185,14 @@ async def entrypoint(ctx: JobContext) -> None:
     generation_seq = 0
     user_state_seq = 0
 
-    def log_fast_brain_trace(event: str, **fields) -> None:
-        print(
-            trace_kv(
-                "FAST_BRAIN_STS",
-                event=event,
-                ts_utc=now_utc_iso(),
-                monotonic_ms=monotonic_ms(),
-                **fields,
-            ),
-            flush=True,
-        )
-
     def _log_reply_task(task: asyncio.Task) -> None:
         try:
             task.result()
-            log_fast_brain_trace("generate_reply_task_completed")
+            _log.llm_completed()
         except asyncio.CancelledError:
-            log_fast_brain_trace("generate_reply_task_cancelled")
+            _log.llm_cancelled()
         except Exception as exc:  # noqa: BLE001
-            log_fast_brain_trace(
-                "generate_reply_task_error",
-                error=str(exc),
-            )
+            _log.llm_error(str(exc))
 
     def trigger_generate_reply(
         reason: str,
@@ -218,13 +204,11 @@ async def entrypoint(ctx: JobContext) -> None:
         nonlocal generation_seq
         generation_seq += 1
         generation_id = f"gen-{generation_seq:06d}"
-        log_fast_brain_trace(
-            "generate_reply_trigger",
-            generation_id=generation_id,
+        _log.llm_thinking(
             reason=reason,
+            generation_id=generation_id,
             source_id=source_id,
-            user_is_speaking=user_is_speaking,
-            queued_speech_count=len(_queued_speech),
+            queued_speech=len(_queued_speech),
         )
         asyncio.create_task(
             event_broker.publish("app:comms:fast_brain_generating", "{}"),
@@ -256,12 +240,7 @@ async def entrypoint(ctx: JobContext) -> None:
         user_state_seq += 1
         state_id = f"usrstate-{user_state_seq:06d}"
         user_is_speaking = ev.new_state == "speaking"
-        log_fast_brain_trace(
-            "user_state_changed",
-            state_id=state_id,
-            new_state=ev.new_state,
-            user_is_speaking=user_is_speaking,
-        )
+        _log.user_state(ev.new_state, state_id=state_id)
         touch_activity()
 
     @session.on("agent_state_changed")
@@ -327,7 +306,7 @@ async def entrypoint(ctx: JobContext) -> None:
         _publish_screenshot(entry, filepath)
 
     async def _capture_and_handle_assistant_screenshot(utterance: str) -> None:
-        entry = await capture_assistant_screenshot(utterance)
+        entry = await capture_assistant_screenshot(utterance, fb_logger=_log)
         if entry:
             _handle_screenshot(entry)
 
@@ -341,14 +320,14 @@ async def entrypoint(ctx: JobContext) -> None:
         say_meta = match_say_meta(_last_say_meta, text) if role == "assistant" else None
         if say_meta:
             _last_say_meta = None
-        log_fast_brain_trace(
-            "conversation_item_added",
-            role=role,
-            utterance_id=utterance_id,
-            text_preview=text[:120],
-            speech_source=(say_meta or {}).get("source", "generate_reply"),
-            guidance_id=(say_meta or {}).get("guidance_id", ""),
-        )
+        if role == "user":
+            _log.user_speech(text)
+        else:
+            _log.assistant_speech(
+                text,
+                source=(say_meta or {}).get("source", "generate_reply"),
+                guidance_id=(say_meta or {}).get("guidance_id", ""),
+            )
         if role == "user":
             event = user_utterance_event(contact, content=text)
             from datetime import datetime, timezone
@@ -383,7 +362,6 @@ async def entrypoint(ctx: JobContext) -> None:
         asyncio.create_task(
             event_broker.publish(f"app:comms:{channel}_utterance", event.to_json()),
         )
-        print(role, text)
         touch_activity()
 
     rio = RoomInputOptions()
@@ -409,8 +387,8 @@ async def entrypoint(ctx: JobContext) -> None:
         contact_rolling_summary=contact.get("rolling_summary", ""),
         demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
-    print("PRINTING SYSTEM PROMPT")
-    print(system)
+    _log.config(f"System prompt ({len(system)} chars)")
+    print(system)  # full prompt to stdout for debugging
 
     agent = Assistant(
         contact=contact,
@@ -431,8 +409,7 @@ async def entrypoint(ctx: JobContext) -> None:
     def on_status(data: dict) -> None:
         """Handle status events (call_answered, stop)."""
         event_type = data.get("type", "")
-        print(f"[Status] {event_type}")
-        log_fast_brain_trace("status", event_type=event_type)
+        _log.call_status(event_type)
         touch_activity()
 
         if event_type == "call_answered":
@@ -450,13 +427,7 @@ async def entrypoint(ctx: JobContext) -> None:
         source: str = "",
         guidance_source: str = "",
     ) -> None:
-        log_fast_brain_trace(
-            "guidance_applied",
-            guidance_id=guidance_id,
-            source=source,
-            guidance_source=guidance_source,
-            content_preview=content[:120],
-        )
+        _log.guidance_applied(guidance_id, source=guidance_source or source)
 
         if should_speak and response_text:
             _queued_speech.append(
@@ -513,12 +484,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
         asyncio.create_task(update_ctx())
 
-        log_fast_brain_trace(
-            "session_say",
-            guidance_id=guidance_id,
-            guidance_source=guidance_source,
-            text_preview=text[:120],
-        )
+        _log.guidance_say(guidance_id, text, guidance_source=guidance_source)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
 
     def on_guidance(data: dict) -> None:
@@ -537,20 +503,11 @@ async def entrypoint(ctx: JobContext) -> None:
         should_speak = payload.get("should_speak", False)
         guidance_source = payload.get("source", "")
         guidance_id = content_trace_id("guid", content)
-        print(
-            (
-                f"[Guidance] speak={should_speak} source={guidance_source} {content[:50]}..."
-                if len(content) > 50
-                else f"[Guidance] speak={should_speak} source={guidance_source} {content}"
-            ),
-        )
-        log_fast_brain_trace(
-            "guidance_received",
+        _log.guidance_received(
+            guidance_source,
+            should_speak,
+            content,
             guidance_id=guidance_id,
-            guidance_source=guidance_source,
-            session_ready=session_ready,
-            user_is_speaking=user_is_speaking,
-            content_preview=content[:120],
         )
         touch_activity()
 
@@ -565,11 +522,7 @@ async def entrypoint(ctx: JobContext) -> None:
                         guidance_source,
                     ),
                 )
-                log_fast_brain_trace(
-                    "guidance_buffered",
-                    guidance_id=guidance_id,
-                    buffered_count=len(pending_guidance),
-                )
+                _log.guidance_buffered(guidance_id, len(pending_guidance))
             else:
                 apply_guidance(
                     content,
@@ -612,7 +565,7 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         if not text:
             return
-        print(f"[ParticipantComms] {text[:80]}")
+        _log.participant_comms(text)
         touch_activity()
         _sts_inject_and_reply(text, reason="participant_comms")
 
@@ -628,7 +581,7 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             if not text:
                 return
-            print(f"[BossEvent] {text[:80]}")
+            _log.boss_event(text)
             touch_activity()
             _sts_inject_and_reply(f"[notification] {text}", reason="boss_event")
 
@@ -638,10 +591,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Handle call_answered that arrived during initialization
     if call_answered_flag.is_set():
-        print("[Status] call_answered arrived during init - applying now")
+        _log.call_status("call_answered (arrived during init)")
         agent.set_call_received()
 
-    logger.info("starting AgentSession")
+    _log.session_start("Starting AgentSession")
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
 
     # Get realtime session (only available after session.start())
@@ -681,15 +634,17 @@ async def entrypoint(ctx: JobContext) -> None:
     # Unlike call.py, the Realtime API bypasses llm_node, so we must wait here.
     # Note: await on an already-set Event returns immediately.
     if outbound:
-        print("Outbound call: waiting for call_answered before speaking...")
+        _log.info("Outbound call: waiting for call_answered before speaking…")
         await call_answered_flag.wait()
-        print("Outbound call: call answered, proceeding to speak")
+        _log.call_status("call_answered (outbound)")
 
     # Mark session ready and process any buffered guidance BEFORE first utterance.
     # After this, the on_guidance callback will apply guidance immediately.
     session_ready = True
     if pending_guidance:
-        print(f"[Guidance] Applying {len(pending_guidance)} buffered message(s)")
+        _log.session_ready(
+            f"Applying {len(pending_guidance)} buffered guidance message(s)",
+        )
         for (
             content,
             response_text,
@@ -728,14 +683,14 @@ if __name__ == "__main__":
     )
 
     if should_dispatch_livekit_agent():
-        print(f"Dispatching LiveKit agent {room_name}")
+        _log.dispatch(f"Dispatching LiveKit agent {room_name}")
         dispatch_livekit_agent(
             room_name,
             record=True,
             assistant_id=SESSION_DETAILS.assistant.id,
             user_id=SESSION_DETAILS.user.id,
         )
-        print(f"LiveKit agent {room_name} dispatched")
+        _log.dispatch(f"LiveKit agent {room_name} dispatched")
 
     # Run the agent using the standard CLI - this is the natural way to run LiveKit agents.
     # The process will be terminated via SIGTERM when cleanup_call_proc() is called.
