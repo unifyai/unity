@@ -563,9 +563,50 @@ def _contact_name(contact: dict) -> str:
     )
 
 
-def render_event_for_fast_brain(event_json: str) -> str | None:
-    """Render a CM event as a concise human-readable string for the fast brain.
+def _event_contact_id(event: Event) -> int | None:
+    """Extract the contact_id from a comms event, or None if not present."""
+    contact = getattr(event, "contact", None)
+    if isinstance(contact, dict):
+        return contact.get("contact_id")
+    return None
 
+
+def render_participant_comms(event_json: str, participant_ids: set[int]) -> str | None:
+    """Render a comms event as a tagged message if the sender is a call participant.
+
+    Returns a string like ``[SMS from Marcus] Hey, running late`` for
+    participant comms, or None if the event is not from a participant or
+    is not a comms event worth surfacing.
+    """
+    try:
+        event = Event.from_json(event_json)
+    except Exception:
+        return None
+
+    cid = _event_contact_id(event)
+    if cid is None or cid not in participant_ids:
+        return None
+
+    name = _contact_name(event.contact)
+
+    if isinstance(event, SMSReceived):
+        return f"[SMS from {name}] {event.content}"
+    if isinstance(event, EmailReceived):
+        subj = event.subject or "(no subject)"
+        body_preview = (event.body or "")[:200].strip()
+        return f"[Email from {name}] {subj}" + (
+            f" — {body_preview}" if body_preview else ""
+        )
+    if isinstance(event, UnifyMessageReceived):
+        return f"[Message from {name}] {event.content}"
+
+    return None
+
+
+def render_event_for_fast_brain(event_json: str) -> str | None:
+    """Render a CM event as a ``[notification]``-style string for the fast brain.
+
+    Used for boss-on-call mode where the fast brain sees all system events.
     Returns None for events that should be silently ignored (e.g. own
     utterances, call guidance which is handled by a dedicated callback, or
     events with no user-meaningful content).

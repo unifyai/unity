@@ -44,14 +44,15 @@ class CallConfig:
     voice_mode: str
 
 
-_BOSS_FORWARD_CHANNELS = [
+_BASE_FORWARD_CHANNELS = [
     "app:call:*",
     "app:comms:*",
+]
+_BOSS_EXTRA_CHANNELS = [
     "app:actor:*",
     "app:managers:output",
     "app:logging:message_logged",
 ]
-_DEFAULT_FORWARD_CHANNELS = ["app:call:*"]
 
 
 class LivekitCallManager:
@@ -130,11 +131,14 @@ class LivekitCallManager:
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
-        # Widen event channels when the boss is on the call so the fast brain
-        # gets direct visibility into all system events.
+        # All calls get comms events; boss calls additionally get actor/manager events.
         if self._socket_server:
             is_boss = contact.get("contact_id") == 1
-            channels = _BOSS_FORWARD_CHANNELS if is_boss else _DEFAULT_FORWARD_CHANNELS
+            channels = (
+                _BASE_FORWARD_CHANNELS + _BOSS_EXTRA_CHANNELS
+                if is_boss
+                else list(_BASE_FORWARD_CHANNELS)
+            )
             await self._socket_server.set_forward_channels(channels)
 
         # Set socket path in environment for subprocess
@@ -208,10 +212,14 @@ class LivekitCallManager:
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
-        # Widen event channels when the boss is on the meet.
+        # All calls get comms events; boss calls additionally get actor/manager events.
         if self._socket_server:
             is_boss = contact.get("contact_id") == 1
-            channels = _BOSS_FORWARD_CHANNELS if is_boss else _DEFAULT_FORWARD_CHANNELS
+            channels = (
+                _BASE_FORWARD_CHANNELS + _BOSS_EXTRA_CHANNELS
+                if is_boss
+                else list(_BASE_FORWARD_CHANNELS)
+            )
             await self._socket_server.set_forward_channels(channels)
 
         # Set socket path in environment for subprocess

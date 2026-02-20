@@ -57,6 +57,7 @@ from unity.conversation_manager.medium_scripts.common import (
     start_event_broker_receive,
     UserScreenCaptureManager,
     render_event_for_fast_brain,
+    render_participant_comms,
 )
 
 logger = logging.getLogger("gpt-realtime-agent")
@@ -493,12 +494,42 @@ async def entrypoint(ctx: JobContext) -> None:
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
 
-    # When the boss is on the call, register pattern callbacks to inject all
-    # system events into the chat context as [notification] messages.
-    # rt_ref is populated after session.start(); handlers gate on session_ready.
+    # --- Tier 1: Comms from call participants (all calls) ---
     is_boss_user = contact.get("contact_id") == 1
     rt_ref: list = []  # mutable container so the closure captures the live value
+    participant_ids: set[int] = set()
+    if contact.get("contact_id") is not None:
+        participant_ids.add(contact["contact_id"])
 
+    def _sts_inject_and_reply(msg: str, reason: str) -> None:
+        """Inject a system message into the STS chat context and trigger a reply."""
+        if not session_ready or not rt_ref:
+            return
+        current_rt = rt_ref[0]
+        chat_ctx = current_rt.chat_ctx
+        chat_ctx.add_message(role="system", content=[msg])
+
+        async def _update():
+            await current_rt.update_chat_ctx(chat_ctx)
+
+        asyncio.create_task(_update())
+        trigger_generate_reply(reason=reason, source_id="system_event")
+
+    def on_participant_comms(data: dict) -> None:
+        raw = data.get("event") if "event" in data else json.dumps(data)
+        text = render_participant_comms(
+            raw if isinstance(raw, str) else json.dumps(raw),
+            participant_ids,
+        )
+        if not text:
+            return
+        print(f"[ParticipantComms] {text[:80]}")
+        touch_activity()
+        _sts_inject_and_reply(text, reason="participant_comms")
+
+    event_broker.register_callback("app:comms:*", on_participant_comms)
+
+    # --- Tier 2: All other system events (boss calls only) ---
     if is_boss_user:
 
         def on_system_event(data: dict) -> None:
@@ -510,25 +541,8 @@ async def entrypoint(ctx: JobContext) -> None:
                 return
             print(f"[BossEvent] {text[:80]}")
             touch_activity()
-            if not session_ready or not rt_ref:
-                return
-            current_rt = rt_ref[0]
-            chat_ctx = current_rt.chat_ctx
-            chat_ctx.add_message(
-                role="system",
-                content=[f"[notification] {text}"],
-            )
+            _sts_inject_and_reply(f"[notification] {text}", reason="boss_event")
 
-            async def _update():
-                await current_rt.update_chat_ctx(chat_ctx)
-
-            asyncio.create_task(_update())
-            trigger_generate_reply(
-                reason="boss_event",
-                source_id="system_event",
-            )
-
-        event_broker.register_callback("app:comms:*", on_system_event)
         event_broker.register_callback("app:actor:*", on_system_event)
         event_broker.register_callback("app:managers:output", on_system_event)
         event_broker.register_callback("app:logging:message_logged", on_system_event)
