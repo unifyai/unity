@@ -20,10 +20,12 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
+
+LOGGER = logging.getLogger("unity")
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
