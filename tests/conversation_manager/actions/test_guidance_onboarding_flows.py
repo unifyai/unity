@@ -517,3 +517,155 @@ async def test_screen_share_teaching_references_screenshot_paths(initialized_cm)
         f"Got: {query}"
     )
     assert_efficient(result2, 3)
+
+
+# ---------------------------------------------------------------------------
+#  7. Act query must include the specific screenshot filepath
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_act_query_includes_screenshot_filepath(initialized_cm):
+    """The act query must include the exact screenshot filepath.
+
+    The CodeActActor has no other way to locate screenshot files — the CM
+    must pass the filepaths explicitly in the freeform act query text.
+    This test verifies the specific filepath (not just "screenshot") appears
+    in the query so the Actor can load the image from disk.
+    """
+    cm = initialized_cm
+    cm.cm.user_screen_share_active = True
+
+    filepath = "Screenshots/User/crm-contact-list.jpg"
+
+    cm.cm._screenshot_buffer.append(
+        _make_screenshot(
+            utterance="This is the contact list page",
+            filepath=filepath,
+        ),
+    )
+    result = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "This is the CRM contact list. Remember this: when a client "
+                "calls, you pull up their record here and check the Notes column "
+                "before transferring them."
+            ),
+        ),
+    )
+
+    assert_act_triggered(
+        result,
+        ActorHandleStarted,
+        "Visual instruction should trigger act",
+        cm=cm,
+    )
+    query = _get_act_query(result)
+    assert filepath in query, (
+        f"Expected the exact screenshot filepath '{filepath}' in the act "
+        f"query so the CodeActActor can locate the image. Got: {query}"
+    )
+    assert_efficient(result, 3)
+
+
+# ---------------------------------------------------------------------------
+#  8. Cross-turn voice demo → act query includes ALL historic filepaths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_cross_turn_voice_demo_act_includes_all_screenshot_filepaths(
+    initialized_cm,
+):
+    """Multi-turn voice screen share demo: act query must include ALL filepaths.
+
+    Uses ``InboundUnifyMeetUtterance`` (the production event type for voice
+    meetings) so that ``_claim_pending_user_screenshot`` stamps each
+    screenshot onto its corresponding message. In subsequent turns, earlier
+    filepaths appear as ``[Screenshots: ...]`` annotations on rendered
+    messages — the LLM must scan back and include them all in the act query.
+
+    This is the real production scenario: a multi-turn guided demo over a
+    Unify Meet screen share, where the CM needs to pass ALL accumulated
+    visual context to the Actor.
+    """
+    from unity.conversation_manager.events import (
+        UnifyMeetReceived,
+        UnifyMeetStarted,
+        UnifyMeetEnded,
+        InboundUnifyMeetUtterance,
+    )
+
+    cm = initialized_cm
+
+    # Set up Unify Meet session
+    await cm.step(UnifyMeetReceived(contact=BOSS), run_llm=False)
+    await cm.step(UnifyMeetStarted(contact=BOSS), run_llm=False)
+    cm.cm.user_screen_share_active = True
+
+    filepath_1 = "Screenshots/User/payroll-dashboard.jpg"
+    filepath_2 = "Screenshots/User/payroll-employee-detail.jpg"
+
+    # Turn 1: First screenshot + context-setting utterance — no act expected.
+    # _claim_pending_user_screenshot stamps this screenshot onto the message.
+    # After this turn, the message renders with [Screenshots: filepath_1].
+    cm.cm._screenshot_buffer.append(
+        _make_screenshot(
+            utterance="This is the payroll dashboard",
+            filepath=filepath_1,
+        ),
+    )
+    result1 = await cm.step_until_wait(
+        InboundUnifyMeetUtterance(
+            contact=BOSS,
+            content=(
+                "Okay so this is the payroll dashboard — there are a couple "
+                "of things I need to show you here..."
+            ),
+        ),
+    )
+    _assert_no_act_triggered(result1, "First demo step should not trigger act")
+
+    # Turn 2: Second screenshot + completion signal — act should fire.
+    # The LLM now sees: turn 1 message with [Screenshots: filepath_1] in
+    # the conversation text, plus the current turn's screenshot (filepath_2)
+    # in the multimodal content. The act query must include BOTH filepaths.
+    cm.cm._screenshot_buffer.append(
+        _make_screenshot(
+            utterance="And this is the employee detail page",
+            filepath=filepath_2,
+        ),
+    )
+    result2 = await cm.step_until_wait(
+        InboundUnifyMeetUtterance(
+            contact=BOSS,
+            content=(
+                "And this is the employee detail view. To process a pay "
+                "adjustment, you select the employee here and click Adjust. "
+                "Make sure you remember both of these screens."
+            ),
+        ),
+    )
+
+    assert_act_triggered(
+        result2,
+        ActorHandleStarted,
+        "Completed multi-turn visual demo should trigger act",
+        cm=cm,
+    )
+    query = _get_act_query(result2)
+    assert filepath_1 in query, (
+        f"Expected the FIRST screenshot filepath '{filepath_1}' from the "
+        f"earlier turn in the act query — the CodeActActor needs all visual "
+        f"context, not just the most recent screenshot. Got: {query}"
+    )
+    assert filepath_2 in query, (
+        f"Expected the SECOND screenshot filepath '{filepath_2}' in the act "
+        f"query. Got: {query}"
+    )
+
+    # Cleanup meet session
+    await cm.step(UnifyMeetEnded(contact=BOSS), run_llm=False)
