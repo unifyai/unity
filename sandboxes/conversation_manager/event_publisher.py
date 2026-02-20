@@ -88,6 +88,13 @@ class EventPublisher:
         contact = get_simulated_user_contact()
         await self.publish_event(PhoneCallEnded(contact=contact))
 
+    async def publish_meet_interaction_event(
+        self,
+        event_cls: type[Event],
+        reason: str,
+    ) -> None:
+        await self.publish_event(event_cls(reason=reason))
+
     # ── Live voice ────────────────────────────────────────────────────────
 
     async def start_live_call(self) -> "list[str]":
