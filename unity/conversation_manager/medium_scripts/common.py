@@ -7,7 +7,10 @@ import fnmatch
 import json
 import logging
 import sys
-from typing import Awaitable, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Optional
+
+if TYPE_CHECKING:
+    from unity.conversation_manager.types.screenshot import ScreenshotEntry
 
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
@@ -700,6 +703,29 @@ def _resolve_agent_service_url() -> str:
     return "http://localhost:3000"
 
 
+def _ensure_jpeg(b64: str) -> str:
+    """Convert a base64-encoded image to JPEG if it isn't already.
+
+    The agent-service screenshot endpoint returns PNG (Playwright default),
+    but all downstream consumers tag images as ``image/jpeg``.  Converting
+    here keeps every ``ScreenshotEntry.b64`` consistently JPEG, matching
+    the format produced by ``UserTrackCaptureManager.capture_screenshot``.
+    """
+    import base64 as b64mod
+    import io
+
+    raw = b64mod.b64decode(b64)
+    if raw[:2] == b"\xff\xd8":
+        return b64
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(raw))
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=85)
+    return b64mod.b64encode(buf.getvalue()).decode("ascii")
+
+
 async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | None":
     """Capture the assistant's desktop via HTTP POST.
 
@@ -729,6 +755,7 @@ async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | Non
                 data = await resp.json()
                 b64 = data.get("screenshot")
                 if b64:
+                    b64 = _ensure_jpeg(b64)
                     return ScreenshotEntry(
                         b64=b64,
                         utterance=utterance,
