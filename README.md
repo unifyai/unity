@@ -142,7 +142,7 @@ Each manager owns a specific domain. The Actor plans and calls the appropriate m
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
 - Node.js 22+ (for agent-service)
-- Redis (for local development)
+
 
 ### Installation
 
@@ -390,7 +390,6 @@ docker run -p 8000:8000 -p 6080:6080 unity
 ```
 
 The container includes:
-- Redis server
 - Virtual desktop (X11/VNC)
 - PipeWire audio
 - Agent service (Node.js)

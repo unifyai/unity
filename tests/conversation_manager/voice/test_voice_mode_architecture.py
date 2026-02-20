@@ -50,7 +50,7 @@ class TestVoiceCallFlowIntegration:
     Integration tests for voice call flows.
 
     These tests validate the event flow for both TTS and Realtime modes
-    using the in-memory event broker (no Redis required).
+    using the in-memory event broker.
     """
 
     @pytest.fixture

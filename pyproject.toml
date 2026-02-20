@@ -31,7 +31,7 @@ dependencies = [
     "pydantic-core>=2.0.0",
     "pygments>=2.19.2",
     "python-dotenv>=1.0.0",
-    "redis>=7.0.0",
+
     "requests>=2.31.0",
     "textual>=0.40.0",
     "textual-dev>=1.2.0",

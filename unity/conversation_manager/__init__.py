@@ -3,7 +3,7 @@ ConversationManager service management.
 
 Provides in-process async operation of ConversationManager:
 - Call `start_async()` to run ConversationManager in the current process
-- Uses in-memory event broker (no Redis required)
+- Uses in-memory event broker
 - Direct access to ConversationManager instance
 - Simple testing with direct monkey-patching
 
@@ -53,7 +53,7 @@ async def start_async(
     Start ConversationManager in-process (async entry point).
 
     Runs the ConversationManager in the same process using asyncio,
-    with in-memory event passing (no Redis required).
+    with in-memory event passing.
 
     Args:
         project_name: Project name for logging

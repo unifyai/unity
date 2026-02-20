@@ -4,7 +4,7 @@ tests/conversation_manager/test_utils.py
 
 Unit tests for ConversationManager utility functions and helpers.
 
-These are pure unit tests that don't require Redis, LLM calls, or async infrastructure.
+These are pure unit tests that don't require LLM calls or async infrastructure.
 They test the building blocks used by the conversation manager.
 """
 
