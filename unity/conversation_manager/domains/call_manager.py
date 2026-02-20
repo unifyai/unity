@@ -15,7 +15,6 @@ from unity.conversation_manager.domains.ipc_socket import (
 )
 from unity.conversation_manager.tracing import content_trace_id, trace_kv
 from unity.helpers import (
-    cleanup_dangling_call_processes,
     run_script,
     terminate_process,
 )
@@ -295,12 +294,8 @@ class LivekitCallManager:
                 event.to_json(),
             )
 
-    async def cleanup_call_proc(self, *, timeout: float = 5.0) -> None:
-        """
-        Stop any running voice agent subprocess and socket server.
-
-        Sends SIGTERM for graceful shutdown, then SIGKILL if needed.
-        """
+    async def cleanup_call_proc(self) -> None:
+        """Stop any running voice agent subprocess and socket server."""
         # Grab the proc ref and null it out FIRST.  stop() below awaits
         # _handle_client's finally block, which fires the disconnect
         # callback -- that callback is a no-op when _call_proc is None.
@@ -332,9 +327,6 @@ class LivekitCallManager:
             )
             return
 
-        print(f"[LivekitCallManager] Terminating voice agent process {proc.pid}...")
-        if sys.platform.startswith("win"):
-            await asyncio.to_thread(terminate_process, proc, timeout)
-        else:
-            await asyncio.to_thread(cleanup_dangling_call_processes)
-        print("[LivekitCallManager] Voice agent process terminated")
+        print(f"[LivekitCallManager] Killing voice agent process {proc.pid}...")
+        await asyncio.to_thread(terminate_process, proc, 0)
+        print("[LivekitCallManager] Voice agent process killed")
