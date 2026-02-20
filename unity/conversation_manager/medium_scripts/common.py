@@ -7,6 +7,7 @@ import fnmatch
 import json
 import logging
 import sys
+from secrets import token_hex
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Optional
 
 if TYPE_CHECKING:
@@ -40,14 +41,221 @@ from unity.conversation_manager.domains.ipc_socket import (
     stop_socket_client,
 )
 from unity.conversation_manager.tracing import (
-    monotonic_ms,
-    now_utc_iso,
     payload_trace_id,
-    trace_kv,
 )
 from unity.session_details import SESSION_DETAILS
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FastBrainLogger — mirrors the async tool loop's LoopLogger format so all
+# terminal output uses a consistent  ``{emoji} [{label}] {message}``  style.
+#
+# The fast brain runs in a subprocess without access to the parent's LOGGER,
+# so we print() directly to stdout (which the parent inherits).
+# ─────────────────────────────────────────────────────────────────────────────
+
+FB_ICONS = {
+    # LLM generation
+    "llm_thinking": "🔄",
+    "llm_completed": "✅",
+    "llm_cancelled": "⏹️",
+    "llm_error": "❌",
+    # User / assistant speech
+    "user_speech": "🧑‍💻",
+    "user_state": "🎤",
+    "assistant_speech": "🔊",
+    # Guidance pipeline
+    "guidance_received": "📨",
+    "guidance_applied": "🎙️",
+    "guidance_buffered": "⏳",
+    "guidance_say": "🗣️",
+    # Call / session lifecycle
+    "call_status": "📞",
+    "session_start": "🚀",
+    "session_end": "🏁",
+    "session_ready": "⚡",
+    # Inbound comms & boss events
+    "participant_comms": "📱",
+    "boss_event": "📣",
+    # IPC / socket
+    "ipc_inbound": "⬇️",
+    "ipc_outbound": "⬆️",
+    "ipc_error": "❌",
+    # Screenshots / media
+    "screenshot": "📸",
+    # Misc
+    "config": "📋",
+    "dispatch": "🚀",
+    "info": "ℹ️",
+    "warning": "⚠️",
+    "error": "❌",
+    "shutdown": "🏁",
+}
+
+
+class FastBrainLogger:
+    """Lightweight logger that prints in the same format as the async tool loop.
+
+    Format:  ``{emoji} [{label}] {message}``
+
+    Where *label* is ``FastBrain({suffix})`` (or ``FastBrain.STS({suffix})``
+    for speech-to-speech mode), matching the ``LoopConfig`` label convention.
+    """
+
+    def __init__(self, mode: str = "tts") -> None:
+        suffix = token_hex(2)
+        tag = "FastBrain" if mode == "tts" else "FastBrain.STS"
+        self._label = f"{tag}({suffix})"
+
+    @property
+    def label(self) -> str:
+        return self._label
+
+    def _emit(self, icon: str, msg: str) -> None:
+        print(f"{icon} [{self._label}] {msg}", flush=True)
+
+    # ── typed helpers ────────────────────────────────────────────────────
+
+    def llm_thinking(self, reason: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(FB_ICONS["llm_thinking"], f"LLM thinking… reason={reason}{extra}")
+
+    def llm_completed(self, generation_id: str = "", **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(
+            FB_ICONS["llm_completed"],
+            f"Generation completed{_id(generation_id)}{extra}",
+        )
+
+    def llm_cancelled(self, generation_id: str = "", **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(
+            FB_ICONS["llm_cancelled"],
+            f"Generation cancelled{_id(generation_id)}{extra}",
+        )
+
+    def llm_error(self, error: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(FB_ICONS["llm_error"], f"Generation error: {error}{extra}")
+
+    def user_speech(self, text: str) -> None:
+        self._emit(FB_ICONS["user_speech"], _trunc(text))
+
+    def user_state(self, new_state: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(FB_ICONS["user_state"], f"User state: {new_state}{extra}")
+
+    def assistant_speech(self, text: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(FB_ICONS["assistant_speech"], f"{_trunc(text)}{extra}")
+
+    def guidance_received(
+        self,
+        source: str,
+        should_speak: bool,
+        content: str,
+        **kv: object,
+    ) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(
+            FB_ICONS["guidance_received"],
+            f"Guidance from {source}: speak={should_speak} {_trunc(content)}{extra}",
+        )
+
+    def guidance_applied(
+        self,
+        guidance_id: str,
+        source: str = "",
+        **kv: object,
+    ) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(
+            FB_ICONS["guidance_applied"],
+            f"Applied guidance {guidance_id} source={source}{extra}",
+        )
+
+    def guidance_buffered(self, guidance_id: str, count: int) -> None:
+        self._emit(
+            FB_ICONS["guidance_buffered"],
+            f"Buffered guidance {guidance_id} (total={count})",
+        )
+
+    def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(
+            FB_ICONS["guidance_say"],
+            f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
+        )
+
+    def call_status(self, event_type: str) -> None:
+        self._emit(FB_ICONS["call_status"], event_type)
+
+    def session_start(self, msg: str = "Session starting") -> None:
+        self._emit(FB_ICONS["session_start"], msg)
+
+    def session_end(self, msg: str = "Session ended") -> None:
+        self._emit(FB_ICONS["session_end"], msg)
+
+    def session_ready(self, msg: str = "Session ready") -> None:
+        self._emit(FB_ICONS["session_ready"], msg)
+
+    def participant_comms(self, text: str) -> None:
+        self._emit(FB_ICONS["participant_comms"], _trunc(text))
+
+    def boss_event(self, text: str) -> None:
+        self._emit(FB_ICONS["boss_event"], _trunc(text))
+
+    def ipc_inbound(self, channel: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(FB_ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
+
+    def ipc_outbound(self, channel: str, **kv: object) -> None:
+        extra = _kv_suffix(kv)
+        self._emit(FB_ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
+
+    def ipc_error(self, msg: str) -> None:
+        self._emit(FB_ICONS["ipc_error"], msg)
+
+    def screenshot(self, msg: str) -> None:
+        self._emit(FB_ICONS["screenshot"], msg)
+
+    def config(self, msg: str) -> None:
+        self._emit(FB_ICONS["config"], msg)
+
+    def dispatch(self, msg: str) -> None:
+        self._emit(FB_ICONS["dispatch"], msg)
+
+    def info(self, msg: str) -> None:
+        self._emit(FB_ICONS["info"], msg)
+
+    def warning(self, msg: str) -> None:
+        self._emit(FB_ICONS["warning"], msg)
+
+    def error(self, msg: str) -> None:
+        self._emit(FB_ICONS["error"], msg)
+
+    def shutdown(self, msg: str) -> None:
+        self._emit(FB_ICONS["shutdown"], msg)
+
+
+def _kv_suffix(kv: dict[str, object]) -> str:
+    """Render extra key=value pairs as a compact suffix string."""
+    if not kv:
+        return ""
+    parts = [f" {k}={v}" for k, v in kv.items() if v is not None and v != ""]
+    return "".join(parts)
+
+
+def _id(val: str) -> str:
+    return f" {val}" if val else ""
+
+
+def _trunc(text: str, limit: int = 120) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
 
 
 class SocketAwareEventBroker:
@@ -61,12 +269,16 @@ class SocketAwareEventBroker:
     Otherwise, falls back to in-memory broker for outbound events.
     """
 
-    def __init__(self):
+    def __init__(self, fb_logger: FastBrainLogger | None = None):
         self._socket_client = get_socket_client()
         self._fallback_broker = get_event_broker()
         self._receive_started = False
         self._callbacks: dict[str, Callable[[dict], None]] = {}
         self._pattern_callbacks: list[tuple[str, Callable[[dict], None]]] = []
+        self._log = fb_logger
+
+    def set_logger(self, fb_logger: FastBrainLogger) -> None:
+        self._log = fb_logger
 
     def register_callback(self, channel: str, handler: Callable[[dict], None]) -> None:
         """
@@ -91,7 +303,8 @@ class SocketAwareEventBroker:
             return True
 
         if not self._socket_client:
-            print("[SocketAwareEventBroker] No socket client, receive disabled")
+            if self._log:
+                self._log.info("No socket client, IPC receive disabled")
             return False
 
         async def on_event(channel: str, event_json: str) -> None:
@@ -101,38 +314,37 @@ class SocketAwareEventBroker:
             has_pattern = any(
                 fnmatch.fnmatch(channel, pat) for pat, _ in self._pattern_callbacks
             )
-            print(
-                trace_kv(
-                    "SOCKET_BROKER_INBOUND",
-                    channel=channel,
+            if self._log:
+                self._log.ipc_inbound(
+                    channel,
                     message_id=message_id,
                     has_callback=has_exact or has_pattern,
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
-                flush=True,
-            )
+                )
             try:
                 data = json.loads(event_json)
             except Exception as e:
-                print(f"[SocketAwareEventBroker] JSON parse error: {e}")
+                if self._log:
+                    self._log.ipc_error(f"JSON parse error: {e}")
                 return
             if has_exact:
                 try:
                     self._callbacks[channel](data)
                 except Exception as e:
-                    print(f"[SocketAwareEventBroker] Callback error: {e}")
+                    if self._log:
+                        self._log.ipc_error(f"Callback error on {channel}: {e}")
             for pat, handler in self._pattern_callbacks:
                 if fnmatch.fnmatch(channel, pat):
                     try:
                         handler(data)
                     except Exception as e:
-                        print(f"[SocketAwareEventBroker] Pattern callback error: {e}")
+                        if self._log:
+                            self._log.ipc_error(f"Pattern callback error on {pat}: {e}")
 
         success = await start_socket_receive_loop(on_event)
         if success:
             self._receive_started = True
-            print("[SocketAwareEventBroker] Now receiving events from parent")
+            if self._log:
+                self._log.info("IPC receive loop started")
         return success
 
     async def stop(self) -> None:
@@ -142,39 +354,18 @@ class SocketAwareEventBroker:
 
     async def publish(self, channel: str, message: str) -> int:
         """Publish an event, using socket if available."""
-        message_id = payload_trace_id("ipc", channel, message)
         if self._socket_client:
             success = await send_event_to_parent(channel, message)
             if success:
-                print(
-                    trace_kv(
-                        "SOCKET_BROKER_OUTBOUND",
-                        channel=channel,
-                        message_id=message_id,
-                        via_socket=True,
-                        ts_utc=now_utc_iso(),
-                        monotonic_ms=monotonic_ms(),
-                    ),
-                    flush=True,
-                )
+                if self._log:
+                    self._log.ipc_outbound(channel, via="socket")
                 return 1
             else:
-                print(
-                    f"[SocketAwareEventBroker] Socket send failed, using fallback: {channel}",
-                )
+                if self._log:
+                    self._log.warning(f"Socket send failed, using fallback: {channel}")
 
-        # Fall back to in-memory broker (won't work cross-process but useful for testing)
-        print(
-            trace_kv(
-                "SOCKET_BROKER_OUTBOUND",
-                channel=channel,
-                message_id=message_id,
-                via_socket=False,
-                ts_utc=now_utc_iso(),
-                monotonic_ms=monotonic_ms(),
-            ),
-            flush=True,
-        )
+        if self._log:
+            self._log.ipc_outbound(channel, via="fallback")
         return await self._fallback_broker.publish(channel, message)
 
 
@@ -489,6 +680,7 @@ class UserTrackCaptureManager:
         *,
         track_source: str = "screenshare",
         on_track_change: Callable[[str, bool], Awaitable[None]] | None = None,
+        fb_logger: FastBrainLogger | None = None,
     ) -> None:
         from livekit import rtc
 
@@ -496,6 +688,7 @@ class UserTrackCaptureManager:
         self._capture_task: asyncio.Task | None = None
         self._stream = None
         self._on_track_change = on_track_change
+        self._log = fb_logger
 
         source_map = {
             "screenshare": rtc.TrackSource.SOURCE_SCREENSHARE,
@@ -519,9 +712,10 @@ class UserTrackCaptureManager:
             track.kind == rtc.TrackKind.KIND_VIDEO
             and publication.source == self._rtc_source
         ):
-            print(
-                f"[UserTrackCapture:{self._label}] Track subscribed, starting capture",
-            )
+            if self._log:
+                self._log.screenshot(
+                    f"{self._label} track subscribed, starting capture",
+                )
             stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
             self._stream = stream
             self._capture_task = asyncio.create_task(self._capture_loop(stream))
@@ -530,9 +724,10 @@ class UserTrackCaptureManager:
 
     def _handle_track_unsubscribed(self, publication) -> None:
         if publication.source == self._rtc_source:
-            print(
-                f"[UserTrackCapture:{self._label}] Track unsubscribed, stopping capture",
-            )
+            if self._log:
+                self._log.screenshot(
+                    f"{self._label} track unsubscribed, stopping capture",
+                )
             self._latest_frame_data = None
             if self._capture_task and not self._capture_task.done():
                 self._capture_task.cancel()
@@ -565,7 +760,8 @@ class UserTrackCaptureManager:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"[UserScreenCapture] Frame capture error: {e}")
+            if self._log:
+                self._log.error(f"Frame capture error ({self._label}): {e}")
         finally:
             try:
                 await stream.aclose()
@@ -726,7 +922,10 @@ def _ensure_jpeg(b64: str) -> str:
     return b64mod.b64encode(buf.getvalue()).decode("ascii")
 
 
-async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | None":
+async def capture_assistant_screenshot(
+    utterance: str,
+    fb_logger: FastBrainLogger | None = None,
+) -> "ScreenshotEntry | None":
     """Capture the assistant's desktop via HTTP POST.
 
     Returns a ``ScreenshotEntry`` on success, ``None`` on failure or if no
@@ -750,7 +949,10 @@ async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | Non
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status >= 400:
-                    print(f"[AssistantScreenshot] capture failed: HTTP {resp.status}")
+                    if fb_logger:
+                        fb_logger.screenshot(
+                            f"Assistant screenshot failed: HTTP {resp.status}",
+                        )
                     return None
                 data = await resp.json()
                 b64 = data.get("screenshot")
@@ -763,7 +965,8 @@ async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | Non
                         source="assistant",
                     )
     except Exception as e:
-        print(f"[AssistantScreenshot] capture error: {e}")
+        if fb_logger:
+            fb_logger.screenshot(f"Assistant screenshot error: {e}")
     return None
 
 

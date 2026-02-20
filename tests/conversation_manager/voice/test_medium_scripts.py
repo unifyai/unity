@@ -1100,6 +1100,9 @@ class TestFastBrainGuidanceFlow:
             def __init__(self):
                 self.callbacks = {}
 
+            def set_logger(self, fb_logger):
+                pass
+
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
 
@@ -1285,6 +1288,9 @@ class TestFastBrainGuidanceFlow:
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
 
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
@@ -1558,6 +1564,9 @@ class TestFastBrainGuidanceFlow:
             def __init__(self):
                 self.callbacks = {}
 
+            def set_logger(self, fb_logger):
+                pass
+
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
 
@@ -1741,6 +1750,9 @@ class TestFastBrainGuidanceFlow:
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
 
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
