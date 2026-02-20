@@ -34,8 +34,10 @@ def _build_boss_details_block(
     return "\n".join(lines)
 
 
-def _build_voice_output_block() -> str:
+def _build_voice_output_block(*, is_boss_on_call: bool = False) -> str:
     """Build the voice call output format guidance block."""
+    if is_boss_on_call:
+        return """If I am on a voice call with my boss, the Voice Agent receives all system events directly. I do not need to relay information — the Voice Agent handles it autonomously."""
     return """If I am on a voice call with a contact, I relay information to the Voice Agent by calling the `guide_voice_agent` tool **in parallel** with my action tool. I can call multiple tools per turn — for example, `guide_voice_agent(content="...")` alongside `wait()`. Guidance is NOT a field in my text output."""
 
 
@@ -51,7 +53,10 @@ My role during voice calls is:
 3. Notifications: Alerting the Voice Agent about important updates from other communication channels
 4. Progress relay: Keeping the caller informed about what I am doing on their behalf
 
-Call transcriptions will appear as another communication thread, with the Voice Agent's responses shown as if they were mine.
+Call transcriptions will appear as another communication thread, with the Voice Agent's responses shown as if they were mine."""
+
+    if not is_boss_on_call:
+        base += """
 
 **Progress relay on live calls is critical.** The caller cannot see my actions — they only hear what the Voice Agent says. When an action is running, I get woken up for each progress notification. Each progress event is a chance to relay meaningful status to the caller by calling `guide_voice_agent` alongside my action tool. I should relay progress when:
 - The progress event contains a meaningful description of what is happening (e.g., "Searching the web for nearby restaurants")
@@ -74,31 +79,9 @@ I should NOT relay progress when:
 
 3. **BLOCK** — Nothing to relay. Just call my action tool without `guide_voice_agent`.
 
-The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction."""
+The Voice Agent independently handles conversational style. I provide data, status, and progress — not conversational direction.
 
-    if is_boss_on_call:
-        base += """
-
-**Boss-on-call: Voice Agent has direct event visibility.**
-Because my boss is on this call, the Voice Agent receives ALL non-comms system events (action progress, action results, etc.) directly as `[notification]` messages. It sees them as they arrive, in real time.
-
-This fundamentally changes when I should call `guide_voice_agent`:
-
-I should ONLY call `guide_voice_agent` when:
-- I believe the Voice Agent will not handle a notification well on its own (e.g., the event requires domain knowledge, relationship context, or nuance not obvious from the raw content)
-- I have additional context that enriches the raw event — for example, knowing the backstory of who sent an email and why it matters
-- The notification is ambiguous and I can add clarity — e.g., "if you haven't explained this already, also mention that this vendor has been unreliable lately"
-
-I should NOT call `guide_voice_agent` when:
-- The guidance would simply restate what the raw event already contains — the Voice Agent can read that directly
-- The guidance would relay basic progress updates the Voice Agent already has
-- The guidance would duplicate what the Voice Agent has already told the caller
-
-When I do send guidance in this mode, I should frame it as supplementary:
-- "If you haven't mentioned this already: the sender is the client we've been negotiating with."
-- "Additional context: this is the third time this vendor has rescheduled."
-
-The bar for sending guidance is higher — I am adding value beyond the raw event, not relaying it."""
+**Note:** `guide_voice_agent` is only available when there is information the Voice Agent cannot see on its own (e.g. action progress, results, or messages from contacts not on the call). When every event that woke me is already visible to the Voice Agent, the tool is withheld — there is nothing to relay."""
 
     return base
 
@@ -200,7 +183,7 @@ def build_system_prompt(
         phone_number=phone_number,
         email_address=email_address,
     )
-    voice_output_block = _build_voice_output_block()
+    voice_output_block = _build_voice_output_block(is_boss_on_call=is_boss_on_call)
     voice_calls_guide = _build_voice_calls_guide(is_boss_on_call=is_boss_on_call)
     phone_guidelines = _build_phone_guidelines(phone_number)
     phone_scenarios = _build_phone_scenarios(phone_number)
@@ -492,16 +475,20 @@ This is a hard constraint, not a suggestion. Even if my boss asks me to contact 
     )
 
     # Multilingual communication
+    guidance_language_note = ""
+    if is_voice_call and not is_boss_on_call:
+        guidance_language_note = """
+
+**``guide_voice_agent`` matches the call's language.** The ``content`` passed to ``guide_voice_agent`` should be written in whichever language the assistant is currently speaking on the call. This lets the fast brain (Voice Agent) relay it reflexively without needing to translate. If no call is active or the language is unclear, default to English."""
+
     parts.add(
-        """Multilingual communication
+        f"""Multilingual communication
 --------------------------
 When contacts communicate in a non-English language, I match their language in my replies to them. Language preference is per-contact — if Alice writes in Spanish and Bob writes in French, I reply to each in their respective language.
 
 **Internal operations always use English.** Regardless of what language contacts or my boss use:
 - All ``act`` queries — ``act`` is an internal interface to the Actor, not a user-facing message. The query must always be English.
-
-**``guide_voice_agent`` matches the call's language.** The ``content`` passed to ``guide_voice_agent`` should be written in whichever language the assistant is currently speaking on the call. This lets the fast brain (Voice Agent) relay it reflexively without needing to translate. If no call is active or the language is unclear, default to English.
-
+{guidance_language_note}
 **Outbound messages match the recipient's language**, not the sender's. If my boss writes in Spanish asking me to message Bob (who communicates in English), the message to Bob should be in English. If relaying content from one language to another, translate/paraphrase naturally.""",
     )
 
