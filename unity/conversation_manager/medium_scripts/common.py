@@ -25,6 +25,10 @@ from unity.conversation_manager.events import (
     ActorSessionResponse,
     NotificationInjectedEvent,
     CallGuidance,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
 )
 from unity.conversation_manager.domains.ipc_socket import (
     get_socket_client,
@@ -476,12 +480,19 @@ class UserTrackCaptureManager:
         await screen_mgr.close()
     """
 
-    def __init__(self, room, *, track_source: str = "screenshare") -> None:
+    def __init__(
+        self,
+        room,
+        *,
+        track_source: str = "screenshare",
+        on_track_change: Callable[[str, bool], Awaitable[None]] | None = None,
+    ) -> None:
         from livekit import rtc
 
         self._latest_frame_data: tuple[bytes, int, int] | None = None
         self._capture_task: asyncio.Task | None = None
         self._stream = None
+        self._on_track_change = on_track_change
 
         source_map = {
             "screenshare": rtc.TrackSource.SOURCE_SCREENSHARE,
@@ -511,6 +522,8 @@ class UserTrackCaptureManager:
             stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
             self._stream = stream
             self._capture_task = asyncio.create_task(self._capture_loop(stream))
+            if self._on_track_change is not None:
+                asyncio.create_task(self._on_track_change(self._label, True))
 
     def _handle_track_unsubscribed(self, publication) -> None:
         if publication.source == self._rtc_source:
@@ -522,6 +535,8 @@ class UserTrackCaptureManager:
                 self._capture_task.cancel()
                 self._capture_task = None
             self._stream = None
+            if self._on_track_change is not None:
+                asyncio.create_task(self._on_track_change(self._label, False))
 
     async def _capture_loop(self, stream) -> None:
         """Continuously capture frames, rate-limited to 1 per second."""
@@ -590,6 +605,27 @@ class UserTrackCaptureManager:
 
 # Backward-compatible alias used by call.py / sts_call.py imports.
 UserScreenCaptureManager = UserTrackCaptureManager
+
+
+_TRACK_TO_EVENT: dict[tuple[str, bool], type[Event]] = {
+    ("screenshare", True): UserScreenShareStarted,
+    ("screenshare", False): UserScreenShareStopped,
+    ("camera", True): UserWebcamStarted,
+    ("camera", False): UserWebcamStopped,
+}
+
+
+async def publish_meet_interaction_from_track(source: str, active: bool) -> None:
+    """Publish a meet interaction event when a LiveKit video track changes.
+
+    Called by ``UserTrackCaptureManager`` via the ``on_track_change`` callback
+    so that the CM receives the same events it would get from a real frontend.
+    """
+    event_cls = _TRACK_TO_EVENT.get((source, active))
+    if event_cls is None:
+        return
+    event = event_cls(reason="LiveKit track auto-detected")
+    await event_broker.publish(event_cls.topic, event.to_json())
 
 
 # -------- Screenshot history for fast brain visual context -------- #
