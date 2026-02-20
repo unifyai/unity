@@ -838,26 +838,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if structured is not None:
             thoughts = getattr(structured, "thoughts", "")
 
-        # Handle call_guidance for voice modes.
-        # The slow brain decides BLOCK (omit call_guidance), NOTIFY (default),
-        # or SPEAK (should_speak=True + response_text) directly — no separate
-        # articulator LLM call.
+        # Handle guide_voice_agent tool calls for voice modes.
+        # The slow brain decides BLOCK (omit the tool), NOTIFY (default),
+        # or SPEAK (should_speak=True + response_text) by calling
+        # guide_voice_agent in parallel with its action tool.
         if self.mode.is_voice:
             call_guidance = ""
             should_speak = False
             response_text = ""
             for tool_exec in result.tools:
-                args = tool_exec.args or {}
-                call_guidance = args.get("call_guidance", "")
-                if call_guidance:
-                    should_speak = args.get(
-                        "call_guidance_should_speak",
-                        False,
-                    )
-                    response_text = args.get(
-                        "call_guidance_response_text",
-                        "",
-                    )
+                if tool_exec.name == "guide_voice_agent":
+                    args = tool_exec.args or {}
+                    call_guidance = args.get("content", "")
+                    should_speak = args.get("should_speak", False)
+                    response_text = args.get("response_text", "")
                     break
 
             if call_guidance:
