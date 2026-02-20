@@ -211,6 +211,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._pending_llm_request_meta: list[dict[str, str]] = []
         self._current_event_trace: dict[str, str] | None = None
         self._event_trace_seq: int = 0
+        self._has_non_forwarded_event: bool = False
         self._llm_request_seq: int = 0
         self._llm_run_seq: int = 0
 
@@ -812,6 +813,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_action_steering_tools(),
             **action_tools.build_completed_action_tools(),
         }
+
+        # Strip guide_voice_agent when the fast brain already sees all
+        # events that triggered this turn (no guidance value to add).
+        if "guide_voice_agent" in tools:
+            is_boss_on_call = (self.get_active_contact() or {}).get("contact_id") == 1
+            if is_boss_on_call or not self._has_non_forwarded_event:
+                tools.pop("guide_voice_agent")
+        self._has_non_forwarded_event = False
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
