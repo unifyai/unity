@@ -51,7 +51,7 @@ class EventHandler:
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         event_key = _event_type_to_log_key(event.__class__)
-        if hasattr(cm, "_session_logger"):
+        if hasattr(cm, "_session_logger") and not event.__class__.content_logged:
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 event_key,
@@ -649,6 +649,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             message_content = event.content
             notif_content = f"SMS Received from {sender_name}"
             role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "sms_received",
+                f"({event_trace.get('event_id', '-')}) "
+                f"SMS from {sender_name}: {event.content}",
+            )
         case EmailSent():
             # Email handling is special: push to ALL contacts involved
             email_to = event.to or []
@@ -675,6 +681,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             return  # Early return - email handling is complete
 
         case EmailReceived():
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "email_received",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Email from {sender_name}\n"
+                f"Subject: {event.subject}\n\n"
+                f"{event.body}",
+            )
             # Email handling is special: push to ALL contacts involved
             email_to = event.to or []
             email_cc = event.cc or []
@@ -711,6 +725,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             attachments = event.attachments
             notif_content = f"Unify message from {sender_name}"
             role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "unify_message_received",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Message from {sender_name}: {event.content}",
+            )
 
     # Non-email messages: push to single contact only
     if contact_id is not None:

@@ -45,6 +45,7 @@ class Event:
 
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
+    content_logged: ClassVar[bool] = False
     topic: ClassVar[str | None] = None
 
     def to_json(self):
@@ -226,6 +227,7 @@ class RecordingReady(Event):
 @dataclass
 class SMSReceived(Event):
     topic: ClassVar[str | None] = "app:comms:msg_message"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     content: str
@@ -241,6 +243,7 @@ class UnifyMessageReceived(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_message_message"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     content: str
@@ -308,6 +311,7 @@ class EmailReceived(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:email_message"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     subject: str
