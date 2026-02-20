@@ -75,6 +75,19 @@ Relevant flags:
 
 During a call, any non-command text is treated as an utterance.
 
+#### Meet interaction events (Unify Meet session simulation)
+
+These simulate frontend events from a Unify Meet session. All are freely triggerable at any time (no active call required). An optional `[reason]` string is passed through to logs for debugging.
+
+- `assistant_screen_share_start [reason]` — User enables viewing the assistant's desktop
+- `assistant_screen_share_stop [reason]` — User disables viewing the assistant's desktop
+- `user_screen_share_start [reason]` — User starts sharing their screen with the assistant
+- `user_screen_share_stop [reason]` — User stops sharing their screen
+- `user_webcam_start [reason]` — User enables their webcam
+- `user_webcam_stop [reason]` — User disables their webcam
+- `user_remote_control_start [reason]` — User takes remote control of the assistant's desktop
+- `user_remote_control_stop [reason]` — User releases remote control
+
 ### Steering (only while active)
 Steering is available whenever **either**:
 - an Actor handle exists (full steering), **or**
