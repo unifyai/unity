@@ -338,10 +338,13 @@ async def test_visual_demo_then_you_try_produces_persist_session(initialized_cm)
     The LLM may engage with the screen share demonstration at any point
     during the teaching phase — an early persist=True session that absorbs
     ongoing teaching is a valid strategy. What matters is that by the time
-    the user says "now you try", there is a persist=True action running
-    (either started during the demo or on the "now you try" message), and
-    the interactive task details are conveyed to it (via the original
-    query or via interject).
+    the user says "now you try":
+
+    1. The task details have been conveyed to an action (via act query or
+       interject).
+    2. That action uses persist=True — the task is a multi-step UI
+       walkthrough on a live screen share, so a persist=False action
+       could complete before the user's next instruction arrives.
     """
     cm = initialized_cm
     cm.cm.user_screen_share_active = True
@@ -409,15 +412,21 @@ async def test_visual_demo_then_you_try_produces_persist_session(initialized_cm)
     )
 
     # The key assertion: by phase 3 the interactive task must be conveyed
-    # to an action — either a new act (persist=True or False) or via
-    # interject into an existing session. Multiple strategies are valid:
+    # to a persist=True action. The task is a multi-step UI walkthrough on
+    # a live screen share — the user is watching and will give corrections
+    # or further instructions, so a persist=False action could close before
+    # the next incremental step arrives.
+    #
+    # Multiple strategies for getting here are valid:
     #
     #  (a) Single persist session from the demo absorbs the "now you try"
-    #      via interject.
-    #  (b) Demo persist session is stopped, new act for the concrete task.
-    #  (c) No act during demo, single act on "now you try".
+    #      via interject — persist session already running.
+    #  (b) Demo persist session is stopped, new act(persist=True) for the
+    #      interactive execution.
+    #  (c) No act during demo, single act(persist=True) on "now you try".
     #
-    # What matters is that the task details reach an action.
+    # What matters: (1) task details reach an action, and (2) that action
+    # is persist=True so the session stays alive for ongoing interaction.
     act_events_3 = filter_events_by_type(result3.output_events, ActorHandleStarted)
     if act_events_3:
         query_lower = act_events_3[0].query.lower()
@@ -431,6 +440,20 @@ async def test_visual_demo_then_you_try_produces_persist_session(initialized_cm)
             f"interactive task to the existing session. "
             f"Tool calls: {cm.all_tool_calls}"
         )
+
+    # The action handling the interactive execution must be persist=True.
+    actions = cm.cm.in_flight_actions
+    assert actions, (
+        "Expected at least one in-flight action after 'now you try'. "
+        f"Tool calls: {cm.all_tool_calls}"
+    )
+    last_action = list(actions.values())[-1]
+    assert last_action.get("persist") is True, (
+        f"The interactive screen-share execution must use persist=True — "
+        f"a persist=False action could complete before the user's next "
+        f"instruction arrives. Got persist={last_action.get('persist')}. "
+        f"Tool calls: {cm.all_tool_calls}"
+    )
     assert_efficient(result3, 3)
 
 
