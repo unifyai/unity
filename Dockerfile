@@ -80,6 +80,13 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
+# Logging: quiet terminal, verbose file traces
+ENV UNIFY_TERMINAL_LOG=false
+ENV UNILLM_TERMINAL_LOG=false
+ENV UNITY_LOG_DIR=/var/log/unity
+ENV UNIFY_LOG_DIR=/var/log/unify
+ENV UNILLM_LOG_DIR=/var/log/unillm
+
 # Expose the ports that the applications use
 # 8000: conversation manager, 6379: Redis, 3000: agent-service (Magnitude)
 EXPOSE 8000 6379 3000

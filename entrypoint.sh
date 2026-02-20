@@ -49,6 +49,9 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGTERM SIGINT
 
+# Create log directories for file-based traces
+mkdir -p /var/log/unity /var/log/unify /var/log/unillm
+
 echo "Starting Redis server and services..."
 
 # Clear any existing Redis data to avoid format compatibility issues
