@@ -482,9 +482,17 @@ app.listen(port, () => {
 });
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
-  const sessionId = req.body.sessionId;
+  let sessionId = req.body.sessionId;
   if (!sessionId) {
-    return res.status(400).json({ error: 'bad_request', message: 'sessionId is required.' });
+    // Fall back to the single active session when no sessionId is provided.
+    // This supports callers (e.g. ConversationManager screenshot capture) that
+    // don't have access to the MagnitudeBackend session management.
+    if (activeSessions.size === 1) {
+      sessionId = activeSessions.keys().next().value;
+      req.body.sessionId = sessionId;
+    } else {
+      return res.status(400).json({ error: 'bad_request', message: 'sessionId is required (multiple sessions active).' });
+    }
   }
   const session = activeSessions.get(sessionId);
   if (!session) {
