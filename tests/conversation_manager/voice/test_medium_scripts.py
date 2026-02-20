@@ -376,7 +376,7 @@ class TestSTSPerTurnUsageLogging:
             "UNILLM_LOG_DIR",
             str(tmp_path),
         )
-        monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
+        monkeypatch.setattr(unillm_logger, "_TERMINAL_LOG_ENABLED", True)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
 
@@ -469,7 +469,7 @@ class TestSTSPerTurnUsageLogging:
             "UNILLM_LOG_DIR",
             str(tmp_path),
         )
-        monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
+        monkeypatch.setattr(unillm_logger, "_TERMINAL_LOG_ENABLED", True)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
 
