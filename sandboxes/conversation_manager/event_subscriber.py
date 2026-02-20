@@ -19,6 +19,8 @@ from unity.conversation_manager.events import (
     ActorHandleStarted,
     ActorNotification,
     ActorResult,
+    AssistantScreenShareStarted,
+    AssistantScreenShareStopped,
     CallGuidance,
     DirectMessageEvent,
     EmailReceived,
@@ -42,6 +44,12 @@ from unity.conversation_manager.events import (
     UnifyMessageReceived,
     UnifyMessageSent,
     UnknownContactCreated,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
     VoiceInterrupt,
 )
 
@@ -80,6 +88,18 @@ def _contact_label(contact: object, *, fallback: str) -> str:
     except Exception:
         pass
     return fallback
+
+
+_MEET_INTERACTION_DISPLAY: dict[type, str] = {
+    AssistantScreenShareStarted: "The user enabled assistant screen sharing \u2014 they can now see your desktop.",
+    AssistantScreenShareStopped: "The user disabled assistant screen sharing \u2014 they can no longer see your desktop.",
+    UserScreenShareStarted: "The user started sharing their screen with you.",
+    UserScreenShareStopped: "The user stopped sharing their screen.",
+    UserWebcamStarted: "The user enabled their webcam \u2014 you can now see them.",
+    UserWebcamStopped: "The user disabled their webcam.",
+    UserRemoteControlStarted: "The user took remote control of your desktop \u2014 they now have mouse and keyboard control.",
+    UserRemoteControlStopped: "The user released remote control of your desktop \u2014 you may resume computer actions.",
+}
 
 
 def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[str]:
@@ -134,10 +154,13 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
     if isinstance(event, UnifyMeetEnded):
         return "📞 Live voice call ended."
     if isinstance(event, CallGuidance):
-        # In production this is consumed by the Voice Agent. In the sandbox, when
-        # we are in a simulated call, treat it like the assistant's spoken reply.
+        # In a simulated call (no real voice agent), treat guidance as the
+        # assistant's spoken reply. In live voice mode the real voice agent
+        # speaks the guidance, so show it as observability info instead.
         try:
-            if bool(getattr(sandbox_state, "in_call", False)):
+            in_call = bool(getattr(sandbox_state, "in_call", False))
+            live_voice = bool(getattr(sandbox_state, "live_voice_active", False))
+            if in_call and not live_voice:
                 return f"[Phone → User] {event.content}"
         except Exception:
             pass
@@ -164,6 +187,14 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return f"[Actor] clarification requested: {event.query}"
     if isinstance(event, Error):
         return f"[Error] {event.message}"
+
+    meet_desc = _MEET_INTERACTION_DISPLAY.get(type(event))
+    if meet_desc is not None:
+        reason = str(getattr(event, "reason", "") or "").strip()
+        if reason:
+            return f"[Meet] {meet_desc} (reason: {reason})"
+        return f"[Meet] {meet_desc}"
+
     return None
 
 
@@ -221,6 +252,7 @@ async def subscribe_to_responses(
         try:
             async with cm.event_broker.pubsub() as pubsub:
                 await pubsub.psubscribe("app:comms:*", "app:actor:*")
+                await pubsub.subscribe("app:call:call_guidance")
                 backoff = 0.5  # reset after successful subscription
 
                 # Register (once) for ManagerMethod events on the in-process EventBus.
@@ -472,6 +504,18 @@ async def subscribe_to_responses(
                                         ).strip()
                                         if message:
                                             m = f"Error: {message}"
+                                    # Meet interaction events
+                                    else:
+                                        meet_name = _MEET_INTERACTION_DISPLAY.get(
+                                            type(event),
+                                        )
+                                        if meet_name is not None:
+                                            reason = str(
+                                                getattr(event, "reason", "") or "",
+                                            ).strip()
+                                            m = event.__class__.__name__
+                                            if reason:
+                                                m = f"{m}: {reason}"
                                 except Exception:
                                     pass
                                 log_aggregator.handle_structured_event(

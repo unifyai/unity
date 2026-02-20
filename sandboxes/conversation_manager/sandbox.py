@@ -799,7 +799,8 @@ async def _main_async() -> None:
                 sandbox_state=state,
                 display_callback=_display,
                 include_call_guidance=bool(args.debug)
-                or bool(getattr(args, "voice", False)),
+                or bool(getattr(args, "voice", False))
+                or bool(getattr(args, "live_voice", False)),
                 voice_enabled=bool(getattr(args, "voice", False)),
                 stop_event=stop_sub,
                 trace_display=trace_display,
