@@ -104,8 +104,8 @@ All logs are organized under `logs/` with seven main subdirectories:
 | `logs/ci/` | **Downloaded CI artifacts** | `<run_id>/<artifact>/` | `download_ci_logs.sh` |
 | `logs/pytest/` | Test output (stdout/stderr) | One `.txt` per test | Test-only |
 | `logs/unity/` | Unity LOGGER output (async tool loop, managers) | `unity.log` per session | `UNITY_LOG` + `UNITY_LOG_DIR` |
-| `logs/unillm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG` + `UNILLM_LOG_DIR` |
-| `logs/unify/` | Unify SDK HTTP traces | JSON files per request | `UNIFY_LOG` + `UNIFY_LOG_DIR` |
+| `logs/unillm/` | Raw LLM request/response traces | `.txt` files per request | `UNILLM_LOG_DIR` (+ `UNILLM_TERMINAL_LOG` for console) |
+| `logs/unify/` | Unify SDK HTTP traces | JSON files per request | `UNIFY_LOG_DIR` (+ `UNIFY_TERMINAL_LOG` for console) |
 | `logs/orchestra/` | Orchestra API traces | Per-request JSON with OpenTelemetry spans | `ORCHESTRA_LOG_DIR` |
 | `logs/all/` | **Cross-repo OTEL traces** | `{trace_id}.jsonl` per test | `*_OTEL` + `*_OTEL_LOG_DIR` |
 
@@ -220,8 +220,8 @@ logs/unify/
 The `trace_id` suffix (last 8 chars) enables correlation with pytest `[TRACE] TRACE_ID=...` output and Orchestra traces.
 
 **Environment variables:**
-- `UNIFY_LOG=true` (default) - Enable logging (console + file if directory set)
-- `UNIFY_LOG_DIR=/path/to/logs` - Directory for file logging
+- `UNIFY_TERMINAL_LOG=true` (default) - Enable terminal (console) output
+- `UNIFY_LOG_DIR=/path/to/logs` - Directory for file-based traces (independent of terminal)
 
 ---
 
@@ -244,8 +244,8 @@ logs/unillm/
 If an LLM call hangs or crashes, the `_pending.txt` file remains as evidence.
 
 **Environment variables:**
-- `UNILLM_LOG=true` (default) - Enable logging (console + file if directory set)
-- `UNILLM_LOG_DIR=/path/to/logs` - Directory for file logging
+- `UNILLM_TERMINAL_LOG=true` (default) - Enable terminal (console) output
+- `UNILLM_LOG_DIR=/path/to/logs` - Directory for file-based traces (independent of terminal)
 
 ---
 

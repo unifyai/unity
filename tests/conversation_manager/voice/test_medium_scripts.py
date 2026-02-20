@@ -370,7 +370,7 @@ class TestSTSPerTurnUsageLogging:
         from unillm import logger as unillm_logger
 
         monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
-        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
+        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_TERMINAL_LOG", True)
         monkeypatch.setattr(
             unillm_settings.SETTINGS,
             "UNILLM_LOG_DIR",
@@ -463,7 +463,7 @@ class TestSTSPerTurnUsageLogging:
         from unillm import logger as unillm_logger
 
         monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
-        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
+        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_TERMINAL_LOG", True)
         monkeypatch.setattr(
             unillm_settings.SETTINGS,
             "UNILLM_LOG_DIR",
