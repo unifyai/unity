@@ -329,6 +329,8 @@ if _TEXTUAL_AVAILABLE:
                             yield Button("Compose Email", id="btn_email")
                             yield Button("Start Call", id="btn_call_start")
                             yield Button("End Call", id="btn_call_end")
+                            yield Button("Share Screen", id="btn_screen_share_start")
+                            yield Button("Stop Sharing", id="btn_screen_share_stop")
                             yield Button("Toggle Trace Panel", id="btn_toggle_trace")
                             yield Button("Quit", id="btn_quit")
                         with Vertical(id="right_tabs"):
@@ -945,6 +947,20 @@ if _TEXTUAL_AVAILABLE:
                     except Exception:
                         pass
                     await app.route_command("end_call")  # type: ignore[attr-defined]
+                    return
+                if event.button.id == "btn_screen_share_start":
+                    try:
+                        app.post_message(AppendLine("[ui] Share Screen pressed"))  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    await app.route_command("assistant_screen_share_start")  # type: ignore[attr-defined]
+                    return
+                if event.button.id == "btn_screen_share_stop":
+                    try:
+                        app.post_message(AppendLine("[ui] Stop Sharing pressed"))  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    await app.route_command("assistant_screen_share_stop")  # type: ignore[attr-defined]
                     return
                 if event.button.id == "btn_mic":
                     # Toggle mic recording: first click starts, second click stops.
@@ -1861,7 +1877,7 @@ if _TEXTUAL_AVAILABLE:
                     f"⚠️ Failed to save text version: {exc}",
                 ]
 
-            return [
+            result_lines = [
                 "💾 State saved:",
                 f"   JSON: {json_path}",
                 f"   Text: {text_path}",
@@ -1874,6 +1890,33 @@ if _TEXTUAL_AVAILABLE:
                     f"{snapshot.summary['total_event_trees']} trees"
                 ),
             ]
+
+            import os
+
+            _launch_cwd = os.environ.get("UNITY_SANDBOX_LAUNCH_CWD", "").strip()
+            _voice_root = Path(_launch_cwd).resolve() if _launch_cwd else repo_root
+            voice_log = _voice_root / ".logs_voice_agent.txt"
+            if voice_log.exists():
+                try:
+                    from sandboxes.conversation_manager.call_transcript import (
+                        build_timeline,
+                        format_timeline,
+                        parse_voice_log,
+                    )
+
+                    voice_data = parse_voice_log(voice_log)
+                    if voice_data.utterances:
+                        timeline = build_timeline(voice_data)
+                        transcript_path = json_path.with_name(
+                            json_path.stem + "_transcript.txt",
+                        )
+                        with open(transcript_path, "w") as f:
+                            f.write(format_timeline(timeline, verbose=True))
+                        result_lines.append(f"   Transcript: {transcript_path}")
+                except Exception as exc:
+                    result_lines.append(f"   ⚠️ Transcript failed: {exc}")
+
+            return result_lines
 
         async def _record_and_transcribe_best_effort(self) -> str:
             """
