@@ -148,6 +148,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
         self.call_manager.on_screenshot = self._buffer_screenshot
+        self.call_manager.on_fast_brain_generating = self._on_fast_brain_generating
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -201,6 +202,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
+        self._fast_brain_active: bool = False
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -1121,6 +1123,18 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     PROACTIVE_DEBOUNCE_SECONDS = 5
 
+    def _on_fast_brain_generating(self) -> None:
+        """Called via IPC when the fast brain starts generating a reply.
+
+        Sets ``_fast_brain_active`` so the proactive speech loop knows the
+        user is about to hear (or is already hearing) the assistant speak.
+        The flag is cleared when the corresponding ``OutboundUtterance``
+        arrives, and ``schedule_proactive_speech`` restarts the cycle from
+        the correct baseline.
+        """
+        self._fast_brain_active = True
+        asyncio.ensure_future(self.schedule_proactive_speech())
+
     async def schedule_proactive_speech(self):
         """Cancel any pending proactive speech and start a fresh cycle.
 
@@ -1164,6 +1178,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 f"Waiting {self.PROACTIVE_DEBOUNCE_SECONDS}s debounce",
             )
             await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
+
+            if self._fast_brain_active:
+                self._session_logger.debug(
+                    "proactive_speech",
+                    "Fast brain is active — deferring to next cycle",
+                )
+                return
 
             # Gather context for the decision.
             conversation_turns, _ = self.get_recent_voice_transcript()
