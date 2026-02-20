@@ -956,13 +956,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     "event_id": event_id,
                     "event_name": event_name,
                 }
-                self._session_logger.debug(
-                    "event_trace",
-                    (
-                        f"Processing event_id={event_id} "
-                        f"event={event_name} channel={channel or '-'}"
-                    ),
-                )
+                if event.__class__.loggable:
+                    self._session_logger.debug(
+                        "event_trace",
+                        (
+                            f"Processing event_id={event_id} "
+                            f"event={event_name} channel={channel or '-'}"
+                        ),
+                    )
                 try:
                     await EventHandler.handle_event(
                         event,
