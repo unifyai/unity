@@ -964,9 +964,9 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     Unlike ``ActorResponse``, notifications arrive while the actor is still
     working.  Progress is recorded in the action's history.
 
-    In voice mode, the notification is forwarded directly to the articulator
-    for an immediate voice-UX decision, bypassing the slow-brain's
-    call_guidance gate.
+    The slow brain is woken to decide whether to relay progress via
+    ``call_guidance``.  On boss-on-call, the fast brain also receives the
+    raw event directly via channel forwarding.
     """
     if event.handle_id in cm.in_flight_actions:
         from unity.common.prompt_helpers import now as prompt_now
@@ -979,9 +979,6 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
             },
         )
     await cm.request_llm_run()
-
-    if cm.mode.is_voice and event.response:
-        asyncio.create_task(cm._articulate_and_publish_notification(event.response))
 
 
 @EventHandler.register(SyncContacts)

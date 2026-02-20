@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from collections import deque
 
 from typing import Optional
 import contextlib
@@ -18,7 +17,6 @@ from unity.conversation_manager.domains.call_manager import (
 from unity.conversation_manager.domains.contact_index import (
     ContactIndex,
     CommsMessage,
-    GuidanceMessage,
     Message,
 )
 from unity.conversation_manager.domains.brain import build_brain_spec
@@ -42,12 +40,6 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-from unity.conversation_manager.domains.guidance_articulator import (
-    GuidanceArticulator,
-    GuidanceDecision,
-    ConversationMessage,
-)
-from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.conversation_manager.tracing import content_trace_id
 
 logger = logging.getLogger(__name__)
@@ -204,9 +196,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # at call/meet end so the async RecordingReady handler can resolve
         # the exchange without a database filter query.
         self._recording_exchange_ids: dict[str, int] = {}
-
-        # recently-published guidance content for redundancy detection
-        self._recent_guidance: deque[str] = deque(maxlen=5)
 
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
@@ -541,235 +530,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
-    def _build_voice_agent_prompt(self) -> str:
-        """Build the fast brain prompt from CM state for the guidance articulator."""
-        from unity.settings import SETTINGS
-
-        contact = self.get_active_contact() or {}
-        boss = self.contact_index.get_contact(contact_id=1) or {}
-        is_boss_user = contact.get("contact_id") == 1
-
-        return build_voice_agent_prompt(
-            bio=self.assistant_about,
-            assistant_name=self.assistant_name or None,
-            boss_first_name=boss.get("first_name", ""),
-            boss_surname=boss.get("surname", ""),
-            boss_email_address=boss.get("email_address", ""),
-            boss_phone_number=boss.get("phone_number", ""),
-            boss_bio=boss.get("bio") or None,
-            contact_first_name=contact.get("first_name", ""),
-            contact_surname=contact.get("surname", ""),
-            contact_phone_number=contact.get("phone_number", ""),
-            contact_email=contact.get("email_address", ""),
-            contact_bio=contact.get("bio") or None,
-            is_boss_user=is_boss_user,
-            contact_rolling_summary=contact.get("rolling_summary", ""),
-            demo_mode=SETTINGS.DEMO_MODE,
-        ).flatten()
-
-    async def _articulate_and_publish_notification(
-        self,
-        notification_text: str,
-    ) -> None:
-        """Forward an actor notification directly to the articulator for voice-UX decision.
-
-        Bypasses the slow-brain's call_guidance gate. The articulator is the sole
-        decision-maker on whether the user hears this notification.
-        """
-        from datetime import datetime, timezone
-
-        guidance_id = content_trace_id("guid", notification_text)
-        self._session_logger.info(
-            "call_guidance",
-            f"Direct notification to articulator guidance_id={guidance_id}",
-        )
-
-        decision = await self._articulate_guidance(
-            notification_text,
-            datetime.now(timezone.utc),
-            guidance_id=guidance_id,
-        )
-
-        if decision.send_guidance:
-            contact = self.get_active_contact()
-            event = CallGuidance(
-                contact=contact or {},
-                content=notification_text,
-                response_text=decision.response_text,
-                should_speak=decision.should_speak,
-                source="actor_notification",
-            )
-            self._session_logger.info(
-                "call_guidance",
-                (
-                    f"Publishing notification guidance guidance_id={guidance_id} "
-                    f"speak={decision.should_speak}"
-                ),
-            )
-            event_json = event.to_json()
-            await self.event_broker.publish(
-                "app:call:call_guidance",
-                event_json,
-            )
-            await self.event_broker.publish(
-                "app:comms:assistant_call_guidance",
-                event_json,
-            )
-            self._recent_guidance.append(notification_text)
-        else:
-            self._session_logger.info(
-                "guidance_blocked",
-                f"Blocked notification guidance_id={guidance_id}: {notification_text[:50]}...",
-            )
-
-    async def _articulate_guidance(
-        self,
-        guidance_content: str,
-        slow_brain_start_time: "datetime",
-        *,
-        trace_run_id: str = "",
-        guidance_id: str = "",
-    ) -> GuidanceDecision:
-        """
-        Decide what to do with slow brain guidance: block, silently notify, or speak.
-
-        The slow brain takes 10-20 seconds to think. During this time, the user may
-        change topics, the fast brain may respond, etc. This method uses a fast LLM
-        articulator to determine relevance and, when appropriate, generate the exact
-        speech text the fast brain should utter.
-
-        Args:
-            guidance_content: The guidance text from the slow brain.
-            slow_brain_start_time: When the slow brain started thinking.
-
-        Returns:
-            GuidanceDecision with send_guidance, should_speak, and response_text.
-        """
-        from datetime import datetime, timezone
-
-        # Default decision: send guidance without speech (notify-only, fail-open)
-        default_decision = GuidanceDecision(
-            thoughts="No filtering needed.",
-            send_guidance=True,
-            can_speak_without_fabricating=True,
-            should_speak=False,
-            response_text="",
-        )
-
-        try:
-            # Get the current voice conversation
-            contact = self.get_active_contact()
-            if not contact:
-                return default_decision
-
-            contact_id = contact.get("contact_id")
-            conv_state = self.contact_index.get_conversation_state(contact_id)
-            if not conv_state:
-                return default_decision
-
-            # Get the voice thread
-            voice_medium = (
-                Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-            )
-            voice_thread = self.contact_index.get_messages_for_contact(
-                contact_id,
-                voice_medium,
-            )
-
-            if not voice_thread:
-                return default_decision
-
-            # Convert to ConversationMessage format with is_new flag
-            conversation_messages = []
-            for msg in voice_thread:
-                # GuidanceMessage is internal orchestration — not a real
-                # utterance. Its content is already in RECENTLY SENT GUIDANCE.
-                # Including it here would duplicate entries and, because it
-                # lacks a `role` attribute, the fallback would mislabel it.
-                if isinstance(msg, GuidanceMessage):
-                    continue
-
-                content = (msg.content or "").strip()
-
-                # Skip system messages (e.g., "<Call Started>")
-                if content.startswith("<") and content.endswith(">"):
-                    continue
-
-                role = getattr(msg, "role", "assistant")
-
-                # Check if this message arrived AFTER slow brain started
-                msg_time = getattr(msg, "timestamp", None)
-                is_new = False
-                if msg_time is not None:
-                    if msg_time.tzinfo is None:
-                        msg_time = msg_time.replace(tzinfo=timezone.utc)
-                    is_new = msg_time > slow_brain_start_time
-
-                conversation_messages.append(
-                    ConversationMessage(
-                        role=role,
-                        content=content,
-                        timestamp=msg_time or datetime.now(timezone.utc),
-                        is_new=is_new,
-                    ),
-                )
-
-            has_new_messages = any(m.is_new for m in conversation_messages)
-            has_new_user_turn = any(
-                m.is_new and (m.role or "").lower() == "user"
-                for m in conversation_messages
-            )
-            has_recent_guidance = len(self._recent_guidance) > 0
-
-            # Early return: skip the LLM when there is nothing to check against.
-            # Two dimensions can trigger the articulator:
-            #   1. Topic staleness — a new user turn may have changed the topic.
-            #   2. Redundancy — a previous slow-brain run already published
-            #      equivalent guidance (queue-of-2 overlap).
-            # If neither applies, go straight to the articulator for speech
-            # generation (but skip the relevance check since it's guaranteed fresh).
-            needs_relevance_check = (
-                has_new_messages and has_new_user_turn
-            ) or has_recent_guidance
-
-            # Build the full fast brain prompt for persona matching
-            voice_agent_prompt = self._build_voice_agent_prompt()
-            boss_on_call = contact.get("contact_id") == 1
-
-            articulator = GuidanceArticulator()
-            decision = await articulator.articulate_guidance(
-                guidance_content,
-                conversation_messages,
-                voice_agent_prompt=voice_agent_prompt,
-                recent_guidance=(
-                    list(self._recent_guidance) if needs_relevance_check else None
-                ),
-                boss_on_call=boss_on_call,
-            )
-
-            self._session_logger.debug(
-                "guidance_articulator",
-                (
-                    f"Decision run_id={trace_run_id or '-'} "
-                    f"guidance_id={guidance_id or '-'} "
-                    f"send={decision.send_guidance}, "
-                    f"speak={decision.should_speak}, "
-                    f"thoughts={decision.thoughts[:100]}..."
-                ),
-            )
-
-            return decision
-
-        except Exception as e:
-            self._session_logger.error(
-                "guidance_articulator",
-                (
-                    f"Error in guidance articulator run_id={trace_run_id or '-'} "
-                    f"guidance_id={guidance_id or '-'}, defaulting to notify-only: {e}"
-                ),
-            )
-            return default_decision
-
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
@@ -1063,71 +823,53 @@ class ConversationManager(metaclass=SingletonABCMeta):
             thoughts = getattr(structured, "thoughts", "")
 
         # Handle call_guidance for voice modes.
-        # Extracted from tool call arguments (e.g. wait(call_guidance="...")).
-        # Skip for ActorNotification-origin runs — those are handled by the
-        # direct articulator path in the event handler.
-        is_notification_origin = origin_event_name == "ActorNotification"
-        if self.mode.is_voice and not is_notification_origin:
+        # The slow brain decides BLOCK (omit call_guidance), NOTIFY (default),
+        # or SPEAK (should_speak=True + response_text) directly — no separate
+        # articulator LLM call.
+        if self.mode.is_voice:
             call_guidance = ""
+            should_speak = False
+            response_text = ""
             for tool_exec in result.tools:
-                call_guidance = (tool_exec.args or {}).get("call_guidance", "")
+                args = tool_exec.args or {}
+                call_guidance = args.get("call_guidance", "")
                 if call_guidance:
+                    should_speak = args.get(
+                        "call_guidance_should_speak",
+                        False,
+                    )
+                    response_text = args.get(
+                        "call_guidance_response_text",
+                        "",
+                    )
                     break
 
             if call_guidance:
                 guidance_id = content_trace_id("guid", call_guidance)
-                self._session_logger.debug(
+                contact = self.get_active_contact()
+                event = CallGuidance(
+                    contact=contact,
+                    content=call_guidance,
+                    response_text=response_text,
+                    should_speak=should_speak,
+                    source="slow_brain",
+                )
+                self._session_logger.info(
                     "call_guidance",
                     (
-                        f"Evaluating guidance_id={guidance_id} run_id={run_id} "
-                        f"chars={len(call_guidance)}"
+                        f"Publishing guidance guidance_id={guidance_id} "
+                        f"run_id={run_id} speak={should_speak}"
                     ),
                 )
-                decision = await self._articulate_guidance(
-                    call_guidance,
-                    slow_brain_start_time,
-                    trace_run_id=run_id,
-                    guidance_id=guidance_id,
+                event_json = event.to_json()
+                await self.event_broker.publish(
+                    "app:call:call_guidance",
+                    event_json,
                 )
-
-                if decision.send_guidance:
-                    contact = self.get_active_contact()
-                    event = CallGuidance(
-                        contact=contact,
-                        content=call_guidance,
-                        response_text=decision.response_text,
-                        should_speak=decision.should_speak,
-                        source="slow_brain",
-                    )
-                    self._session_logger.info(
-                        "call_guidance",
-                        (
-                            f"Publishing guidance guidance_id={guidance_id} "
-                            f"run_id={run_id} contact_id={contact.get('contact_id') if contact else 'unknown'}"
-                        ),
-                    )
-                    event_json = event.to_json()
-                    subscribers = await self.event_broker.publish(
-                        "app:call:call_guidance",
-                        event_json,
-                    )
-                    self._session_logger.debug(
-                        "call_guidance",
-                        f"Published to app:call:call_guidance subscribers={subscribers} guidance_id={guidance_id}",
-                    )
-                    await self.event_broker.publish(
-                        "app:comms:assistant_call_guidance",
-                        event_json,
-                    )
-                    self._recent_guidance.append(call_guidance)
-                else:
-                    self._session_logger.info(
-                        "guidance_blocked",
-                        (
-                            f"Blocked guidance guidance_id={guidance_id} "
-                            f"run_id={run_id}: {call_guidance[:50]}..."
-                        ),
-                    )
+                await self.event_broker.publish(
+                    "app:comms:assistant_call_guidance",
+                    event_json,
+                )
 
         # Log LLM response
         self._session_logger.log_llm_response(

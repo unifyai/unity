@@ -242,14 +242,10 @@ class TestActorNotificationHandler:
         mock_cm.request_llm_run.assert_called()
 
     @pytest.mark.asyncio
-    async def test_notification_forwards_to_articulator_in_voice_mode(self, mock_cm):
-        """In voice mode, ActorNotification forwards directly to the articulator.
-
-        The direct path bypasses the slow-brain's call_guidance gate. The
-        articulator is the sole voice-UX gatekeeper for actor notifications.
-        """
+    async def test_notification_wakes_slow_brain_in_voice_mode(self, mock_cm):
+        """In voice mode, ActorNotification wakes the slow brain (no separate
+        articulator path — the slow brain decides whether to send guidance)."""
         mock_cm.mode = Mode.CALL
-        mock_cm._articulate_and_publish_notification = AsyncMock()
         mock_cm.in_flight_actions = {
             1: {"query": "Check something", "handle_actions": []},
         }
@@ -257,20 +253,20 @@ class TestActorNotificationHandler:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm._articulate_and_publish_notification.assert_called_once_with(
-            "Searching the web now.",
-        )
+        mock_cm.request_llm_run.assert_called()
 
     @pytest.mark.asyncio
-    async def test_notification_does_not_forward_in_text_mode(self, mock_cm):
-        """In text mode, ActorNotification does NOT call the direct articulator path."""
+    async def test_notification_wakes_slow_brain_in_text_mode(self, mock_cm):
+        """In text mode, ActorNotification also wakes the slow brain."""
         mock_cm.mode = Mode.TEXT
-        mock_cm._articulate_and_publish_notification = AsyncMock()
+        mock_cm.in_flight_actions = {
+            1: {"query": "Check something", "handle_actions": []},
+        }
         event = ActorNotification(handle_id=1, response="Searching the web now.")
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm._articulate_and_publish_notification.assert_not_called()
+        mock_cm.request_llm_run.assert_called()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
