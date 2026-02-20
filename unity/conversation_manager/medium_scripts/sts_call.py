@@ -36,6 +36,7 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.conversation_manager.tracing import content_trace_id
 from unity.session_details import SESSION_DETAILS
+from unity.logger import LOGGER
 
 # Shared helpers
 import unillm
@@ -388,7 +389,7 @@ async def entrypoint(ctx: JobContext) -> None:
         demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
     _log.config(f"System prompt ({len(system)} chars)")
-    print(system)  # full prompt to stdout for debugging
+    LOGGER.debug(system)
 
     agent = Assistant(
         contact=contact,

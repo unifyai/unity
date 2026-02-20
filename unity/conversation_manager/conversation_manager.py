@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 import contextlib
 
+from unity.logger import LOGGER
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
@@ -993,9 +994,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                print(
-                    log_str,
-                )  # need console logging of inactivity to detect idle containers
+                LOGGER.info(log_str)
                 self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
@@ -1113,11 +1112,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 return
 
             if adapter.sync_started:
-                print("[ConversationManager] Stopping file sync...")
+                LOGGER.debug("[ConversationManager] Stopping file sync...")
                 await adapter.stop_sync()
-                print("[ConversationManager] File sync stopped")
+                LOGGER.debug("[ConversationManager] File sync stopped")
         except Exception as e:
-            print(f"[ConversationManager] Failed to stop file sync: {e}")
+            LOGGER.error(f"[ConversationManager] Failed to stop file sync: {e}")
 
     # Proactive speech related methods
 

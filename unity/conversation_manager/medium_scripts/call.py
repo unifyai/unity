@@ -35,6 +35,7 @@ from unity.conversation_manager.tracing import (
     now_utc_iso,
 )
 from unity.session_details import SESSION_DETAILS
+from unity.logger import LOGGER
 
 # Shared helpers
 from unity.conversation_manager.medium_scripts.common import (
@@ -227,7 +228,7 @@ async def entrypoint(ctx: agents.JobContext):
         demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
     _log.config(f"System prompt ({len(system_prompt)} chars)")
-    print(system_prompt)  # full prompt to stdout for debugging
+    LOGGER.debug(system_prompt)
 
     session = AgentSession(
         llm=llm_model,

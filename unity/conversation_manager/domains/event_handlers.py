@@ -3,6 +3,7 @@ import traceback
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.logger import LOGGER
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
@@ -77,7 +78,7 @@ class EventHandler:
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
     log_str = "Ping received - keeping conversation manager alive"
-    print(log_str)
+    LOGGER.debug(log_str)
     cm._session_logger.debug("ping", log_str)
 
 
@@ -460,12 +461,12 @@ async def _(
             exchange_id,
             {"recording_url": event.recording_url},
         )
-        print(
+        LOGGER.debug(
             f"[RecordingReady] Stored recording_url on exchange "
             f"{exchange_id} for {name}",
         )
     else:
-        print(f"[RecordingReady] No exchange_id found for {name}")
+        LOGGER.debug(f"[RecordingReady] No exchange_id found for {name}")
 
 
 @EventHandler.register(
