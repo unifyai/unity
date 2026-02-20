@@ -60,6 +60,11 @@ class LivekitCallManager:
         # Callback for user screen share screenshots received via IPC.
         # Set by the ConversationManager to route screenshots to its buffer.
         self.on_user_screenshot: Callable[[str], None] | None = None
+        # Track the active call's channel type so the disconnect fallback
+        # can publish the correct call-ended event.
+        self._call_channel: str | None = None
+        # Contact for the active call, used by the disconnect fallback.
+        self._disconnect_contact: dict | None = None
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -97,6 +102,9 @@ class LivekitCallManager:
                 self._event_broker,
                 on_event=_on_ipc_event,
             )
+            self._socket_server.on_client_disconnected = (
+                self._on_ipc_client_disconnected
+            )
 
         if self._socket_server.socket_path is None:
             socket_path = await self._socket_server.start()
@@ -107,6 +115,7 @@ class LivekitCallManager:
     async def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         # Track whether this is an outbound call
         self.is_outbound = outbound
+        self._call_channel = "phone"
 
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
@@ -138,6 +147,7 @@ class LivekitCallManager:
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
+        self._disconnect_contact = contact
 
         # Deliver initial guidance to the fast brain (if any was stored by
         # make_call).  We bypass the event-broker pub/sub roundtrip and push
@@ -179,6 +189,7 @@ class LivekitCallManager:
     ):
         # Unify Meet is always inbound (user initiates)
         self.is_outbound = False
+        self._call_channel = "unify"
 
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
@@ -229,6 +240,41 @@ class LivekitCallManager:
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
+        self._disconnect_contact = contact
+
+    # -- IPC disconnect fallback (safety net for lost call-ended events) --
+    async def _on_ipc_client_disconnected(self) -> None:
+        """Called by the socket server when the last IPC client disconnects.
+
+        If ``cleanup_call_proc`` hasn't already run (meaning the call-ended
+        event was lost), wait a short grace period then publish a synthetic
+        call-ended event so the normal event-handler path runs the cleanup.
+        """
+        if self._call_proc is None:
+            return  # already cleaned up
+
+        await asyncio.sleep(1)
+
+        if self._call_proc is None:
+            return  # cleaned up during grace period
+
+        contact = self._disconnect_contact or {}
+        channel = self._call_channel or "phone"
+        event = (
+            PhoneCallEnded(contact=contact)
+            if channel == "phone"
+            else UnifyMeetEnded(contact=contact)
+        )
+        print(
+            f"[LivekitCallManager] IPC client disconnected without cleanup, "
+            f"publishing fallback {event.__class__.__name__}",
+            flush=True,
+        )
+        if self._event_broker:
+            await self._event_broker.publish(
+                f"app:comms:{channel}_call_ended",
+                event.to_json(),
+            )
 
     async def cleanup_call_proc(self, *, timeout: float = 5.0) -> None:
         """
@@ -236,11 +282,19 @@ class LivekitCallManager:
 
         Sends SIGTERM for graceful shutdown, then SIGKILL if needed.
         """
+        # Grab the proc ref and null it out FIRST.  stop() below awaits
+        # _handle_client's finally block, which fires the disconnect
+        # callback -- that callback is a no-op when _call_proc is None.
+        proc = self._call_proc
+        self._call_proc = None
+
         # Reset outbound tracking
         self.is_outbound = False
         self.initial_call_guidance = ""
+        self._call_channel = None
+        self._disconnect_contact = None
 
-        # Stop socket server first
+        # Stop socket server
         if self._socket_server:
             await self._socket_server.stop()
             self._socket_server = None
@@ -249,8 +303,6 @@ class LivekitCallManager:
         if CM_EVENT_SOCKET_ENV in os.environ:
             del os.environ[CM_EVENT_SOCKET_ENV]
 
-        proc = self._call_proc
-        self._call_proc = None
         if proc is None:
             return
 
