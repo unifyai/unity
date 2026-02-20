@@ -6,7 +6,6 @@ import asyncio
 import fnmatch
 import json
 import logging
-import os
 import sys
 from typing import Awaitable, Callable, Iterable, Optional
 
@@ -656,14 +655,12 @@ async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | Non
 
     base_url = _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
-    session_id = os.environ.get("AGENT_SERVICE_SESSION_ID", "")
-    payload = {"sessionId": session_id} if session_id else {}
     try:
         headers = {"authorization": f"Bearer {auth_key}"}
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{base_url}/screenshot",
-                json=payload,
+                json={},
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
