@@ -1174,6 +1174,19 @@ async def _(
                 guidance_event.to_json(),
             )
 
+    # Eagerly initialize the MagnitudeBackend when screen sharing starts so
+    # the agent-service has an active session for fast brain screenshot capture.
+    if isinstance(event, AssistantScreenShareStarted):
+        try:
+            from unity.function_manager.primitives.runtime import ComputerPrimitives
+            from unity.manager_registry import ManagerRegistry
+
+            cp = ManagerRegistry.get_instance(ComputerPrimitives)
+            if cp is not None:
+                _ = cp.backend
+        except Exception:
+            pass
+
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.
     if isinstance(event, (UserRemoteControlStarted, UserRemoteControlStopped)):
