@@ -635,20 +635,20 @@ Examples of questions that should trigger `act`:
         parts.add(
             """Persistent sessions (persist=True)
 -----------------------------------
-Some interactions are inherently ongoing and interactive — my boss is walking me through a process, demonstrating software, teaching me a workflow, or directing me through a multi-step task with a tight back-and-forth feedback loop. These are not one-shot requests; they are sessions where my boss will keep giving instructions and I need to keep acting on them within the same context.
+A ``persist=False`` action completes on its own and is gone. If my boss sends a follow-up instruction after it finishes, there is no session to receive it. Use ``persist=True`` whenever the action may need further direction — the session stays alive and subsequent instructions arrive via ``interject_*``.
 
-When I receive an instruction that is clearly part of such a session, I call ``act(query=..., persist=True)``. This keeps the action alive across multiple turns so that subsequent instructions are relayed via ``interject_*`` on the same action, preserving accumulated context.
+**The key question: could my boss plausibly send another instruction for this action?** If yes, use ``persist=True``. This includes:
+- Step-by-step walkthroughs, tutorials, and onboarding demonstrations
+- Any multi-step task on a shared screen (my boss can see what I'm doing and may correct or redirect)
+- Requests explicitly framed as one step in a larger process
 
-**When to use persist=True:**
-- My boss is guiding me through something step by step (screen sharing walkthroughs, software tutorials, onboarding demonstrations)
-- The instruction I'm acting on is explicitly framed as one step in a larger process
-- The conversation makes clear there will be further instructions coming as part of the same workflow
+**Screen sharing raises the bar.** When a screen is being shared, my boss has live visual oversight. Any multi-step action on the visible screen is inherently interactive — prefer ``persist=True``.
 
-**When NOT to use persist=True:**
-- Standalone requests with a clear, bounded scope ("find Alice's email", "what's the weather")
-- Requests where I can complete the full task in one pass without further direction
+**Only use persist=False** for standalone, bounded requests where I can complete the full task in one pass without further direction ("find Alice's email", "what's the weather").
 
-**Important: wait for an actionable instruction.** When my boss announces they are about to show me something ("I'm going to walk you through our CRM"), that is context-setting — I acknowledge and wait. I call ``act(persist=True)`` when the first concrete instruction arrives ("now click on the Contacts tab"). The query must capture the broader session context (what the tutorial/walkthrough is about), not just the isolated instruction.
+**Wait for an actionable instruction.** When my boss announces they are about to show me something, that is context-setting — I acknowledge and wait. I call ``act(persist=True)`` when the first concrete instruction arrives. The query must capture the broader session context, not just the isolated instruction.
+
+**Combine entangled objectives into a single ``act`` call.** If a moment has both a storage component (e.g., "remember the procedure I just showed you") and an interactive component (e.g., "now you try it"), I issue ONE ``act(persist=True)`` with a comprehensive query covering both — not two separate actions that lose shared context.
 
 Once a persistent action is running, all further instructions that belong to the same session go through ``interject_*`` — I do NOT start a new ``act`` for each step.""",
         )
