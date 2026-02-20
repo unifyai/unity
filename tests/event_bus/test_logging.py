@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 import pytest
 
 from tests.helpers import _handle_project, capture_events
@@ -6,10 +7,13 @@ from unity.events.event_bus import EVENT_BUS
 from unity.events.manager_event_logging import (
     wrap_handle_with_logging,
     new_call_id,
+    log_manager_call,
     log_manager_result,
 )
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
+
+_SUFFIX_RE = re.compile(r"\(([0-9a-f]{4})\)$")
 
 
 class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
@@ -748,3 +752,146 @@ async def test_result_incoming_hierarchy_not_doubled():
     assert incoming
     hierarchy = incoming[0].payload.get("hierarchy", [])
     assert hierarchy == ["StubManager.process"], f"Hierarchy doubled: {hierarchy}"
+
+
+def _extract_suffix(hierarchy_label: str) -> str | None:
+    """Extract the trailing 4-hex-char suffix from a hierarchy_label like 'Foo.bar(c8f5)'."""
+    m = _SUFFIX_RE.search(hierarchy_label)
+    return m.group(1) if m else None
+
+
+# ============================================================================
+#  Suffix consistency tests
+# ============================================================================
+# The hierarchy_label suffix (4-char hex, e.g. "(c8f5)") must be identical
+# across ALL events for the same operation: incoming, outgoing, proxy actions,
+# and ToolLoop events.  Before the fix, the incoming event generated its own
+# random suffix independently of the loop's suffix.
+
+
+class _HandleForSuffixTest(SteerableToolHandle):
+    """Minimal handle for suffix consistency tests via log_manager_call."""
+
+    def __init__(self) -> None:
+        self._done = False
+
+    async def ask(self, question: str, *, _parent_chat_context_cont=None):
+        return self
+
+    async def interject(self, message: str, *, _parent_chat_context_cont=None):
+        pass
+
+    async def stop(self, reason=None):
+        self._done = True
+
+    async def pause(self):
+        pass
+
+    async def resume(self):
+        pass
+
+    def done(self):
+        return self._done
+
+    async def result(self):
+        self._done = True
+        return "suffix-test-done"
+
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        pass
+
+
+class _SuffixCallManager:
+    """Stub manager that uses log_manager_call and returns a handle."""
+
+    @log_manager_call(
+        "SuffixCallMgr",
+        "run",
+        payload_key="request",
+        display_label="Running Suffix Test",
+    )
+    async def run(self, request: str, **kwargs) -> _HandleForSuffixTest:
+        return _HandleForSuffixTest()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_suffix_consistent_across_incoming_outgoing():
+    """log_manager_call: the hierarchy_label suffix on the incoming event must
+    match the suffix on subsequent proxy events (outgoing, action, etc.)."""
+    mgr = _SuffixCallManager()
+
+    async with capture_events("ManagerMethod") as events:
+        handle = await mgr.run("suffix-check")
+        await handle.result()
+
+    EVENT_BUS.join_published()
+
+    mgr_events = [
+        e
+        for e in events
+        if e.payload.get("manager") == "SuffixCallMgr"
+        and e.payload.get("method") == "run"
+    ]
+    assert len(mgr_events) >= 2, f"Expected >= 2 events, got {len(mgr_events)}"
+
+    incoming = [e for e in mgr_events if e.payload.get("phase") == "incoming"]
+    assert incoming, "No incoming event found"
+    incoming_suffix = _extract_suffix(incoming[0].payload.get("hierarchy_label", ""))
+    assert (
+        incoming_suffix
+    ), f"Could not extract suffix from incoming: {incoming[0].payload.get('hierarchy_label')}"
+
+    non_incoming = [e for e in mgr_events if e.payload.get("phase") != "incoming"]
+    assert non_incoming, "No non-incoming events found"
+
+    for evt in non_incoming:
+        evt_suffix = _extract_suffix(evt.payload.get("hierarchy_label", ""))
+        assert evt_suffix == incoming_suffix, (
+            f"Suffix mismatch: incoming=({incoming_suffix}), "
+            f"phase={evt.payload.get('phase')}/action={evt.payload.get('action')} "
+            f"has ({evt_suffix})"
+        )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_result_suffix_consistent_across_incoming_outgoing():
+    """log_manager_result: the hierarchy_label suffix on the incoming event must
+    match the suffix on the outgoing event."""
+    mgr = _StubManager()
+
+    async with capture_events("ManagerMethod") as events:
+        await mgr.process("suffix-result-check")
+
+    EVENT_BUS.join_published()
+
+    stub_events = [
+        e
+        for e in events
+        if e.payload.get("manager") == "StubManager"
+        and e.payload.get("method") == "process"
+    ]
+    assert len(stub_events) >= 2
+
+    incoming = [e for e in stub_events if e.payload.get("phase") == "incoming"]
+    outgoing = [e for e in stub_events if e.payload.get("phase") == "outgoing"]
+    assert incoming and outgoing
+
+    incoming_suffix = _extract_suffix(incoming[0].payload.get("hierarchy_label", ""))
+    outgoing_suffix = _extract_suffix(outgoing[0].payload.get("hierarchy_label", ""))
+    assert (
+        incoming_suffix
+    ), f"No suffix on incoming: {incoming[0].payload.get('hierarchy_label')}"
+    assert (
+        outgoing_suffix
+    ), f"No suffix on outgoing: {outgoing[0].payload.get('hierarchy_label')}"
+    assert (
+        incoming_suffix == outgoing_suffix
+    ), f"Suffix mismatch: incoming=({incoming_suffix}), outgoing=({outgoing_suffix})"
