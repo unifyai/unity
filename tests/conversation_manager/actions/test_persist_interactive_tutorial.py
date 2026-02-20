@@ -26,7 +26,9 @@ from tests.helpers import _handle_project
 from tests.conversation_manager.cm_helpers import (
     assert_act_triggered,
     assert_efficient,
+    assert_steering_called,
     filter_events_by_type,
+    has_steering_tool_call,
 )
 from tests.conversation_manager.conftest import BOSS
 from unity.conversation_manager.events import (
@@ -63,6 +65,13 @@ def _get_act_query(result) -> str:
     actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
     assert actor_events, "No ActorHandleStarted event found"
     return actor_events[0].query
+
+
+def _get_handle_id(result) -> int:
+    """Extract the handle_id from the ActorHandleStarted event."""
+    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
+    assert actor_events, "No ActorHandleStarted event found"
+    return actor_events[0].handle_id
 
 
 @pytest.mark.asyncio
@@ -220,3 +229,79 @@ async def test_refund_demo_persist_on_first_instruction(initialized_cm):
         f"not just 'click Orders tab'. Got: {query}"
     )
     assert_efficient(result2, 3)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_persistent_session_stopped_when_tutorial_ends(initialized_cm):
+    """CM stops a persistent session when the tutorial is clearly over.
+
+    Phase 1: Context-setting — no act.
+    Phase 2: First instruction — act(persist=True).
+    Phase 3: Simulate the actor completing its turn (awaiting_input).
+    Phase 4: User signals the tutorial is done — the CM should call
+    stop_* on the persistent action rather than leaving it alive.
+    """
+    from unity.common.prompt_helpers import now as prompt_now
+
+    cm = initialized_cm
+    cm.cm.user_screen_share_active = True
+
+    # Phase 1: Context-setting — no act
+    result1 = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content=(
+                "I'm going to show you how to process returns in our system. "
+                "Let me share my screen."
+            ),
+        ),
+    )
+    _assert_no_act_triggered(result1, "Context-setting should not trigger act")
+
+    # Phase 2: First instruction — act(persist=True)
+    result2 = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content="Click on the Returns tab at the top of the page.",
+        ),
+    )
+    assert_act_triggered(
+        result2,
+        ActorHandleStarted,
+        "First instruction should trigger act",
+        cm=cm,
+    )
+    _assert_persist_true(cm, "Tutorial instruction should use persist=True")
+    handle_id = _get_handle_id(result2)
+
+    # Phase 3: Simulate the actor completing its turn (awaiting_input).
+    # This mirrors what ActorSessionResponse event handler does.
+    cm.cm.in_flight_actions[handle_id]["handle_actions"].append(
+        {
+            "action_name": "response",
+            "query": "Done — I clicked on the Returns tab. The returns dashboard is now showing.",
+            "status": "awaiting_input",
+            "timestamp": prompt_now(),
+        },
+    )
+
+    # Phase 4: User signals tutorial is done — CM should stop the session
+    result3 = await cm.step_until_wait(
+        UnifyMessageReceived(
+            contact=BOSS,
+            content="Great, that's everything. You've got the hang of it now.",
+        ),
+    )
+
+    assert_steering_called(
+        cm,
+        "stop_",
+        "CM should call stop_* when the tutorial is clearly over",
+        result=result3,
+    )
+    assert not has_steering_tool_call(cm, "interject_"), (
+        f"CM should stop the session, not interject into it. "
+        f"Tool calls: {cm.all_tool_calls}"
+    )
+    assert_efficient(result3, 3)
