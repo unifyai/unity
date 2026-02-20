@@ -495,12 +495,11 @@ class TestCallSubprocessLifecycle:
         call_manager._call_proc = mock_proc
 
         with patch(
-            "unity.conversation_manager.domains.call_manager.cleanup_dangling_call_processes",
-        ) as mock_cleanup:
-            await call_manager.cleanup_call_proc(timeout=0.1)
+            "unity.conversation_manager.domains.call_manager.terminate_process",
+        ) as mock_terminate:
+            await call_manager.cleanup_call_proc()
 
-            # Should call cleanup_dangling_call_processes on Unix
-            mock_cleanup.assert_called_once()
+            mock_terminate.assert_called_once_with(mock_proc, 0)
 
     @pytest.mark.asyncio
     async def test_cleanup_call_proc_clears_process_reference(self, call_manager):
@@ -1261,11 +1260,10 @@ class TestCallErrorHandling:
         manager._call_proc = mock_proc
 
         with patch(
-            "unity.conversation_manager.domains.call_manager.cleanup_dangling_call_processes",
-        ) as mock_cleanup:
-            # Should not hang - timeout should be respected
+            "unity.conversation_manager.domains.call_manager.terminate_process",
+        ) as mock_terminate:
             await asyncio.wait_for(
-                manager.cleanup_call_proc(timeout=0.1),
+                manager.cleanup_call_proc(),
                 timeout=1.0,
             )
 
@@ -1296,12 +1294,11 @@ class TestConversationManagerInactivityCleanup:
         cm.call_manager._call_proc = mock_proc
 
         with patch(
-            "unity.conversation_manager.domains.call_manager.cleanup_dangling_call_processes",
-        ) as mock_cleanup:
-            await cm.call_manager.cleanup_call_proc(timeout=0.1)
+            "unity.conversation_manager.domains.call_manager.terminate_process",
+        ) as mock_terminate:
+            await cm.call_manager.cleanup_call_proc()
 
-            # Should call cleanup_dangling_call_processes
-            mock_cleanup.assert_called_once()
+            mock_terminate.assert_called_once_with(mock_proc, 0)
 
 
 # =============================================================================

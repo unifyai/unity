@@ -20,6 +20,9 @@ Architecture:
                       │                           │
                       ▼                           ▼
               InMemoryEventBroker          local event broker
+
+    The server runs all socket I/O in a dedicated thread with its own event
+    loop, so reads/writes are never blocked by work on the main loop.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ import logging
 import os
 import socket
 import tempfile
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Awaitable
 from uuid import uuid4
@@ -46,7 +50,6 @@ _log = logging.getLogger("unity")
 if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
-# Environment variable name for socket path
 CM_EVENT_SOCKET_ENV = "CM_EVENT_SOCKET"
 
 
@@ -54,18 +57,16 @@ class CallEventSocketServer:
     """
     Unix domain socket server for bidirectional event communication with voice agents.
 
-    The server:
-    1. Accepts connections from child processes
-    2. Receives events from children and publishes to the parent's event broker
-    3. Subscribes to specified channels and forwards events to connected clients
+    All socket I/O (accept, recv, send) runs in a **dedicated daemon thread**
+    with its own asyncio event loop.  This guarantees that reads from child
+    processes are never delayed by work on the main ConversationManager loop
+    (HTTP requests, LLM inference, etc.).
 
-    Usage (in CallManager):
-        server = CallEventSocketServer(event_broker, forward_channels=["app:call:*"])
-        socket_path = await server.start()
-        os.environ[CM_EVENT_SOCKET_ENV] = socket_path
-        # spawn subprocess...
-        # when done:
-        await server.stop()
+    Cross-thread dispatch:
+      - child → parent:  message received in I/O thread, dispatched to main
+                          loop via ``run_coroutine_threadsafe``.
+      - parent → child:  forward subscription runs in main loop, dispatches
+                          ``sock_sendall`` to the I/O loop.
     """
 
     def __init__(
@@ -74,17 +75,6 @@ class CallEventSocketServer:
         on_event: Callable[[str, str], Awaitable[None]] | None = None,
         forward_channels: list[str] | None = None,
     ):
-        """
-        Initialize the socket server.
-
-        Args:
-            event_broker: The event broker to publish received events to.
-            on_event: Optional callback called with (channel, event_json) for each event.
-                     If not provided, events are published directly to event_broker.
-            forward_channels: List of channel patterns to forward to connected clients.
-                            Supports glob patterns (e.g., "app:call:*").
-                            Default: ["app:call:*"] for call guidance and status.
-        """
         self._event_broker = event_broker
         self._on_event = on_event
         self._forward_channels = (
@@ -92,20 +82,25 @@ class CallEventSocketServer:
         )
         self._socket_path: str | None = None
         self._server_socket: socket.socket | None = None
-        self._accept_task: asyncio.Task | None = None
-        self._forward_task: asyncio.Task | None = None
+
+        # Dedicated I/O thread and its event loop
+        self._io_thread: threading.Thread | None = None
+        self._io_loop: asyncio.AbstractEventLoop | None = None
+        self._io_ready = threading.Event()
+
+        # Main event loop (captured in start())
+        self._main_loop: asyncio.AbstractEventLoop | None = None
+
+        # Managed exclusively from the I/O loop (no locks needed)
         self._client_tasks: list[asyncio.Task] = []
         self._connected_clients: list[socket.socket] = []
-        self._clients_lock = asyncio.Lock()
-        self._running = False
-        # Buffer for messages that arrive before any client connects.
-        # Flushed to the first client that connects.
         self._pending_messages: list[tuple[str, str]] = []
-        # Signalled once the forward subscription is active, so callers of
-        # start() can be sure published events will reach the server.
+
+        # Forward subscription (runs in main loop)
+        self._forward_task: asyncio.Task | None = None
         self._forward_ready = asyncio.Event()
-        # Optional callback invoked when the last client disconnects.
-        # Signature: async def callback() -> None
+
+        self._running = False
         self.on_client_disconnected: Callable[[], Awaitable[None]] | None = None
 
     @property
@@ -113,14 +108,116 @@ class CallEventSocketServer:
         """Return the socket path, or None if not started."""
         return self._socket_path
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def start(self) -> str:
+        """Create the socket, start the I/O thread and forward subscription.
+
+        Returns the socket path (to be passed to subprocess via env var).
+        """
+        if self._running:
+            return self._socket_path
+
+        self._main_loop = asyncio.get_running_loop()
+
+        # Create socket in temp directory with unique name
+        socket_dir = Path(tempfile.gettempdir())
+        self._socket_path = str(socket_dir / f"cm_events_{uuid4().hex[:12]}.sock")
+
+        try:
+            os.unlink(self._socket_path)
+        except FileNotFoundError:
+            pass
+
+        self._server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server_socket.bind(self._socket_path)
+        self._server_socket.listen(5)
+        self._server_socket.setblocking(False)
+
+        self._running = True
+
+        # Start the dedicated I/O thread
+        self._io_ready.clear()
+        self._io_thread = threading.Thread(
+            target=self._run_io_loop,
+            daemon=True,
+            name="ipc-socket-server",
+        )
+        self._io_thread.start()
+        self._io_ready.wait()
+
+        # Schedule the accept loop inside the I/O thread
+        asyncio.run_coroutine_threadsafe(
+            self._accept_connections(),
+            self._io_loop,
+        )
+
+        # Start forwarding broker events to clients (runs in main loop)
+        self._forward_ready.clear()
+        if self._forward_channels:
+            self._forward_task = asyncio.create_task(self._forward_events_to_clients())
+            await self._forward_ready.wait()
+
+        _log.info(
+            "[CallEventSocketServer] Listening on %s, forward_channels=%s",
+            self._socket_path,
+            self._forward_channels,
+        )
+        print(f"[CallEventSocketServer] Listening on {self._socket_path}")
+        print(f"[CallEventSocketServer] Forwarding channels: {self._forward_channels}")
+        return self._socket_path
+
+    async def stop(self) -> None:
+        """Stop the server, I/O thread, and clean up resources."""
+        self._running = False
+
+        # 1. Cancel the forward subscription (main loop)
+        if self._forward_task and not self._forward_task.done():
+            self._forward_task.cancel()
+            try:
+                await self._forward_task
+            except asyncio.CancelledError:
+                pass
+
+        # 2. Shut down the I/O thread
+        if self._io_loop and self._io_loop.is_running():
+            shutdown_future = asyncio.run_coroutine_threadsafe(
+                self._shutdown_io(),
+                self._io_loop,
+            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.wrap_future(shutdown_future),
+                    timeout=5.0,
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                print(f"[CallEventSocketServer] I/O shutdown issue: {e}")
+                self._io_loop.call_soon_threadsafe(self._io_loop.stop)
+
+        if self._io_thread and self._io_thread.is_alive():
+            self._io_thread.join(timeout=5)
+        self._io_thread = None
+        self._io_loop = None
+
+        # 3. Remove socket file
+        if self._socket_path:
+            try:
+                os.unlink(self._socket_path)
+            except FileNotFoundError:
+                pass
+            self._socket_path = None
+
+        print("[CallEventSocketServer] Stopped")
+
     async def set_forward_channels(self, channels: list[str]) -> None:
-        """Update the forwarded channel patterns, restarting the subscription if running."""
+        """Update the forwarded channel patterns, restarting the subscription."""
         if channels == self._forward_channels:
             return
         self._forward_channels = channels
         if not self._running:
             return
-        # Restart the forward subscription with the new patterns.
         if self._forward_task and not self._forward_task.done():
             self._forward_task.cancel()
             try:
@@ -139,109 +236,27 @@ class CallEventSocketServer:
             f"[CallEventSocketServer] Forward channels updated: {self._forward_channels}",
         )
 
-    async def start(self) -> str:
-        """
-        Create and bind the Unix domain socket, start accepting connections.
+    # ------------------------------------------------------------------
+    # I/O thread
+    # ------------------------------------------------------------------
 
-        Returns:
-            The socket path (to be passed to subprocess via environment variable).
-        """
-        if self._running:
-            return self._socket_path
-
-        # Create socket in temp directory with unique name
-        socket_dir = Path(tempfile.gettempdir())
-        self._socket_path = str(socket_dir / f"cm_events_{uuid4().hex[:12]}.sock")
-
-        # Remove stale socket file if exists
+    def _run_io_loop(self) -> None:
+        """Thread target: create and run the dedicated event loop."""
         try:
-            os.unlink(self._socket_path)
-        except FileNotFoundError:
-            pass
-
-        # Create and bind socket
-        self._server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._server_socket.bind(self._socket_path)
-        self._server_socket.listen(5)
-        self._server_socket.setblocking(False)
-
-        self._running = True
-        self._forward_ready.clear()
-        self._accept_task = asyncio.create_task(self._accept_connections())
-
-        # Start forwarding events to clients and wait for subscription to be
-        # active so that events published immediately after start() are not lost.
-        if self._forward_channels:
-            self._forward_task = asyncio.create_task(self._forward_events_to_clients())
-            await self._forward_ready.wait()
-
-        _log.info(
-            "[CallEventSocketServer] Listening on %s, forward_channels=%s",
-            self._socket_path,
-            self._forward_channels,
-        )
-        print(f"[CallEventSocketServer] Listening on {self._socket_path}")
-        print(f"[CallEventSocketServer] Forwarding channels: {self._forward_channels}")
-        return self._socket_path
-
-    async def stop(self) -> None:
-        """Stop the server and clean up resources."""
-        self._running = False
-
-        # Cancel accept task
-        if self._accept_task and not self._accept_task.done():
-            self._accept_task.cancel()
-            try:
-                await self._accept_task
-            except asyncio.CancelledError:
-                pass
-
-        # Cancel forward task
-        if self._forward_task and not self._forward_task.done():
-            self._forward_task.cancel()
-            try:
-                await self._forward_task
-            except asyncio.CancelledError:
-                pass
-
-        # Cancel all client tasks
-        for task in self._client_tasks:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-        self._client_tasks.clear()
-
-        # Close all connected clients and discard buffered messages
-        async with self._clients_lock:
-            for client in self._connected_clients:
-                try:
-                    client.close()
-                except Exception:
-                    pass
-            self._connected_clients.clear()
-            self._pending_messages.clear()
-
-        # Close socket
-        if self._server_socket:
-            self._server_socket.close()
-            self._server_socket = None
-
-        # Remove socket file
-        if self._socket_path:
-            try:
-                os.unlink(self._socket_path)
-            except FileNotFoundError:
-                pass
-            self._socket_path = None
-
-        print("[CallEventSocketServer] Stopped")
+            self._io_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._io_loop)
+            self._io_ready.set()
+            self._io_loop.run_forever()
+        except Exception as e:
+            print(f"[CallEventSocketServer] I/O loop error: {e}")
+        finally:
+            if self._io_loop and not self._io_loop.is_closed():
+                self._io_loop.close()
+            self._io_ready.set()
 
     async def _accept_connections(self) -> None:
-        """Accept incoming connections from child processes."""
-        loop = asyncio.get_event_loop()
+        """Runs in I/O loop. Accepts incoming client connections."""
+        loop = asyncio.get_running_loop()
 
         while self._running:
             try:
@@ -252,53 +267,50 @@ class CallEventSocketServer:
                 _log.info("[CallEventSocketServer] Client connected")
                 print("[CallEventSocketServer] Client connected")
 
-                async with self._clients_lock:
-                    self._connected_clients.append(client_socket)
+                self._connected_clients.append(client_socket)
 
-                    # Flush any messages that arrived before the client connected
-                    if self._pending_messages:
-                        print(
-                            f"[CallEventSocketServer] Flushing "
-                            f"{len(self._pending_messages)} buffered message(s)",
+                # Flush any messages buffered before a client connected
+                if self._pending_messages:
+                    print(
+                        f"[CallEventSocketServer] Flushing "
+                        f"{len(self._pending_messages)} buffered message(s)",
+                    )
+                    for channel, event_json in self._pending_messages:
+                        message_id = payload_trace_id(
+                            "ipc",
+                            str(channel),
+                            str(event_json),
                         )
-                        for channel, event_json in self._pending_messages:
-                            message_id = payload_trace_id(
-                                "ipc",
-                                str(channel),
-                                str(event_json),
+                        try:
+                            msg = (
+                                json.dumps(
+                                    {"channel": channel, "event": event_json},
+                                )
+                                + "\n"
                             )
-                            try:
-                                msg = (
-                                    json.dumps(
-                                        {"channel": channel, "event": event_json},
-                                    )
-                                    + "\n"
-                                )
-                                loop = asyncio.get_event_loop()
-                                await loop.sock_sendall(
-                                    client_socket,
-                                    msg.encode("utf-8"),
-                                )
-                                print(
-                                    trace_kv(
-                                        "IPC_SERVER_FLUSH_BUFFERED",
-                                        channel=channel,
-                                        message_id=message_id,
-                                        ts_utc=now_utc_iso(),
-                                        monotonic_ms=monotonic_ms(),
-                                    ),
-                                    flush=True,
-                                )
-                            except Exception as e:
-                                print(
-                                    f"[CallEventSocketServer] Failed to flush "
-                                    f"buffered message: {e}",
-                                )
-                        self._pending_messages.clear()
+                            await loop.sock_sendall(
+                                client_socket,
+                                msg.encode("utf-8"),
+                            )
+                            print(
+                                trace_kv(
+                                    "IPC_SERVER_FLUSH_BUFFERED",
+                                    channel=channel,
+                                    message_id=message_id,
+                                    ts_utc=now_utc_iso(),
+                                    monotonic_ms=monotonic_ms(),
+                                ),
+                                flush=True,
+                            )
+                        except Exception as e:
+                            print(
+                                f"[CallEventSocketServer] Failed to flush "
+                                f"buffered message: {e}",
+                            )
+                    self._pending_messages.clear()
 
                 task = asyncio.create_task(self._handle_client(client_socket))
                 self._client_tasks.append(task)
-                # Clean up completed tasks
                 self._client_tasks = [t for t in self._client_tasks if not t.done()]
             except asyncio.TimeoutError:
                 continue
@@ -310,8 +322,8 @@ class CallEventSocketServer:
                 break
 
     async def _handle_client(self, client_socket: socket.socket) -> None:
-        """Handle a connected client, reading and processing events."""
-        loop = asyncio.get_event_loop()
+        """Runs in I/O loop. Reads messages from a connected client."""
+        loop = asyncio.get_running_loop()
         buffer = b""
 
         try:
@@ -322,16 +334,14 @@ class CallEventSocketServer:
                         timeout=1.0,
                     )
                     if not chunk:
-                        # Client disconnected
                         break
 
                     buffer += chunk
 
-                    # Process complete messages (newline-delimited JSON)
                     while b"\n" in buffer:
                         line, buffer = buffer.split(b"\n", 1)
                         if line:
-                            await self._process_message(line.decode("utf-8"))
+                            self._dispatch_to_main_loop(line.decode("utf-8"))
 
                 except asyncio.TimeoutError:
                     continue
@@ -341,26 +351,135 @@ class CallEventSocketServer:
         except Exception as e:
             print(f"[CallEventSocketServer] Client handler error: {e}")
         finally:
-            # Remove from connected clients list
-            async with self._clients_lock:
-                if client_socket in self._connected_clients:
-                    self._connected_clients.remove(client_socket)
-                no_clients_left = len(self._connected_clients) == 0
+            if client_socket in self._connected_clients:
+                self._connected_clients.remove(client_socket)
+            no_clients_left = len(self._connected_clients) == 0
             try:
                 client_socket.close()
             except Exception:
                 pass
             print("[CallEventSocketServer] Client disconnected")
-            if no_clients_left and self.on_client_disconnected is not None:
+            if (
+                no_clients_left
+                and self.on_client_disconnected is not None
+                and self._main_loop
+                and self._main_loop.is_running()
+            ):
                 try:
-                    await self.on_client_disconnected()
+                    asyncio.run_coroutine_threadsafe(
+                        self.on_client_disconnected(),
+                        self._main_loop,
+                    )
                 except Exception as e:
                     print(
-                        f"[CallEventSocketServer] on_client_disconnected error: {e}",
+                        f"[CallEventSocketServer] on_client_disconnected "
+                        f"dispatch error: {e}",
                     )
 
+    def _dispatch_to_main_loop(self, message: str) -> None:
+        """Schedule message processing on the main event loop (thread-safe)."""
+        if self._main_loop and self._main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._process_message(message),
+                self._main_loop,
+            )
+
+    async def _send_to_all_clients(self, channel: str, event_json: str) -> None:
+        """Runs in I/O loop. Sends an event to all connected clients.
+
+        If no clients are connected, the message is buffered.
+        """
+        message_id = payload_trace_id("ipc", str(channel), str(event_json))
+        message = json.dumps({"channel": channel, "event": event_json}) + "\n"
+        message_bytes = message.encode("utf-8")
+
+        loop = asyncio.get_running_loop()
+
+        if not self._connected_clients:
+            self._pending_messages.append((channel, event_json))
+            _log.debug(
+                "[CallEventSocketServer] Buffered (no clients): channel=%s "
+                "message_id=%s buffered_count=%d",
+                channel,
+                message_id,
+                len(self._pending_messages),
+            )
+            print(
+                trace_kv(
+                    "IPC_SERVER_BUFFER",
+                    channel=channel,
+                    message_id=message_id,
+                    buffered_count=len(self._pending_messages),
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
+            return
+
+        for client in self._connected_clients:
+            try:
+                await loop.sock_sendall(client, message_bytes)
+            except Exception as e:
+                _log.warning(
+                    "[CallEventSocketServer] sock_sendall failed " "(client kept): %s",
+                    e,
+                )
+                print(f"[CallEventSocketServer] Failed to send to client: {e}")
+
+        if self._connected_clients:
+            _log.debug(
+                "[CallEventSocketServer] Sent: channel=%s message_id=%s "
+                "client_count=%d",
+                channel,
+                message_id,
+                len(self._connected_clients),
+            )
+            print(
+                trace_kv(
+                    "IPC_SERVER_FORWARD",
+                    channel=channel,
+                    message_id=message_id,
+                    client_count=len(self._connected_clients),
+                    ts_utc=now_utc_iso(),
+                    monotonic_ms=monotonic_ms(),
+                ),
+                flush=True,
+            )
+
+    async def _shutdown_io(self) -> None:
+        """Runs in I/O loop. Cleanly shuts down all I/O resources."""
+        # Close client sockets (interrupts any pending sock_recv)
+        for client in list(self._connected_clients):
+            try:
+                client.close()
+            except Exception:
+                pass
+
+        # Cancel and await all client tasks so finally blocks run
+        for task in self._client_tasks:
+            if not task.done():
+                task.cancel()
+        if self._client_tasks:
+            await asyncio.gather(*self._client_tasks, return_exceptions=True)
+        self._client_tasks.clear()
+        self._connected_clients.clear()
+        self._pending_messages.clear()
+
+        # Close server socket
+        if self._server_socket:
+            self._server_socket.close()
+            self._server_socket = None
+
+        # Stop the I/O event loop (takes effect after this coroutine returns)
+        self._io_loop.call_soon(self._io_loop.stop)
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
     async def _process_message(self, message: str) -> None:
-        """Process a received message and publish to event broker."""
+        """Runs in main loop. Processes a message received from a client."""
         try:
             data = json.loads(message)
             channel = data.get("channel", "")
@@ -397,19 +516,17 @@ class CallEventSocketServer:
     async def queue_for_clients(self, channel: str, event_json: str) -> None:
         """Directly queue a message for delivery to connected (or future) clients.
 
-        Unlike publishing via the event broker (which requires the forward
-        subscription loop to be active), this injects the message straight
-        into the socket send path.  If clients are already connected the
-        message is sent immediately; otherwise it is buffered and flushed
-        when the first client connects.
-
-        Use this when the message must be delivered reliably regardless of
-        whether the forwarding subscription has been established yet.
+        Called from the main loop; dispatches the send to the I/O loop.
         """
-        await self._send_to_all_clients(channel, event_json)
+        if self._io_loop and self._io_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                self._send_to_all_clients(channel, event_json),
+                self._io_loop,
+            )
+            await asyncio.wrap_future(future)
 
     async def _forward_events_to_clients(self) -> None:
-        """Subscribe to forward channels and send matching events to connected clients."""
+        """Runs in main loop. Subscribes to broker and forwards to clients."""
         try:
             async with self._event_broker.pubsub() as pubsub:
                 await pubsub.psubscribe(*self._forward_channels)
@@ -443,7 +560,12 @@ class CallEventSocketServer:
                                 len(self._connected_clients),
                                 len(data),
                             )
-                            await self._send_to_all_clients(channel, data)
+                            # Dispatch the send to the I/O loop (fire-and-forget)
+                            if self._io_loop and self._io_loop.is_running():
+                                asyncio.run_coroutine_threadsafe(
+                                    self._send_to_all_clients(channel, data),
+                                    self._io_loop,
+                                )
 
                     except asyncio.CancelledError:
                         break
@@ -453,7 +575,9 @@ class CallEventSocketServer:
                                 "[CallEventSocketServer] Forward loop error: %s",
                                 e,
                             )
-                            print(f"[CallEventSocketServer] Forward loop error: {e}")
+                            print(
+                                f"[CallEventSocketServer] Forward loop error: {e}",
+                            )
 
         except asyncio.CancelledError:
             self._forward_ready.set()
@@ -464,87 +588,6 @@ class CallEventSocketServer:
                 e,
             )
             print(f"[CallEventSocketServer] Forward subscription error: {e}")
-
-    async def _send_to_all_clients(self, channel: str, event_json: str) -> None:
-        """Send an event to all connected clients.
-
-        If no clients are connected, the message is buffered and will be
-        flushed when the first client connects.
-        """
-        message_id = payload_trace_id("ipc", str(channel), str(event_json))
-        message = (
-            json.dumps(
-                {
-                    "channel": channel,
-                    "event": event_json,
-                },
-            )
-            + "\n"
-        )
-        message_bytes = message.encode("utf-8")
-
-        loop = asyncio.get_event_loop()
-
-        async with self._clients_lock:
-            if not self._connected_clients:
-                self._pending_messages.append((channel, event_json))
-                _log.debug(
-                    "[CallEventSocketServer] Buffered (no clients): channel=%s "
-                    "message_id=%s buffered_count=%d",
-                    channel,
-                    message_id,
-                    len(self._pending_messages),
-                )
-                print(
-                    trace_kv(
-                        "IPC_SERVER_BUFFER",
-                        channel=channel,
-                        message_id=message_id,
-                        buffered_count=len(self._pending_messages),
-                        ts_utc=now_utc_iso(),
-                        monotonic_ms=monotonic_ms(),
-                    ),
-                    flush=True,
-                )
-                return
-
-            for client in self._connected_clients:
-                try:
-                    await loop.sock_sendall(client, message_bytes)
-                except Exception as e:
-                    # Log but do NOT remove or close the client.
-                    # _handle_client() is the sole owner of the socket
-                    # lifecycle -- it may still have unread inbound data
-                    # (e.g. unify_call_ended) in the kernel receive buffer.
-                    # It will discover the broken connection naturally via
-                    # EOF or error on its next sock_recv and clean up in
-                    # its own finally block.
-                    _log.warning(
-                        "[CallEventSocketServer] sock_sendall failed "
-                        "(client kept): %s",
-                        e,
-                    )
-                    print(f"[CallEventSocketServer] Failed to send to client: {e}")
-
-        if self._connected_clients:
-            _log.debug(
-                "[CallEventSocketServer] Sent: channel=%s message_id=%s "
-                "client_count=%d",
-                channel,
-                message_id,
-                len(self._connected_clients),
-            )
-            print(
-                trace_kv(
-                    "IPC_SERVER_FORWARD",
-                    channel=channel,
-                    message_id=message_id,
-                    client_count=len(self._connected_clients),
-                    ts_utc=now_utc_iso(),
-                    monotonic_ms=monotonic_ms(),
-                ),
-                flush=True,
-            )
 
 
 class CallEventSocketClient:
