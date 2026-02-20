@@ -80,8 +80,8 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
-# Logging: quiet terminal, verbose file traces
-ENV UNITY_TERMINAL_LOG=false
+# Logging: Unity emoji logs to terminal, unify/unillm quiet (file traces only)
+ENV UNITY_TERMINAL_LOG=true
 ENV UNIFY_TERMINAL_LOG=false
 ENV UNILLM_TERMINAL_LOG=false
 ENV UNITY_LOG_DIR=/var/log/unity
