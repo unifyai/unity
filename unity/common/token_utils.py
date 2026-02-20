@@ -11,6 +11,7 @@ import math
 import json
 from typing import Optional, Any, Dict, List, Tuple
 
+from unity.logger import LOGGER
 from unity.settings import SETTINGS
 from unity.common.grouping_helpers import iter_unique_values_via_groups
 
@@ -34,7 +35,7 @@ def _warn_once() -> None:
     global _WARNED_ON_FALLBACK
     if not _WARNED_ON_FALLBACK:
         try:
-            print(
+            LOGGER.warning(
                 "⚠️  tiktoken not available – using a conservative char→token heuristic. "
                 "Install `tiktoken` for precise accounting.",
             )
