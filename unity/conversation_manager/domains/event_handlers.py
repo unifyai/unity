@@ -51,7 +51,11 @@ class EventHandler:
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         event_key = _event_type_to_log_key(event.__class__)
-        if hasattr(cm, "_session_logger") and not event.__class__.content_logged:
+        if (
+            hasattr(cm, "_session_logger")
+            and not event.__class__.content_logged
+            and event.__class__.loggable
+        ):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 event_key,
