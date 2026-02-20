@@ -1,5 +1,4 @@
 import inspect
-import os
 import subprocess
 import time
 from abc import ABC, abstractmethod
@@ -636,10 +635,6 @@ class MagnitudeBackend(ComputerBackend):
 
             if not self._session_id:
                 raise RuntimeError("Failed to get sessionId from /start endpoint")
-
-            # Export for subprocess inheritance (ConversationManager fast brain
-            # uses this when capturing assistant desktop screenshots).
-            os.environ["AGENT_SERVICE_SESSION_ID"] = self._session_id
 
             logger.info(f"✅ Session created: {self._session_id}")
             self._check_service_ready()
