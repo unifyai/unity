@@ -363,6 +363,8 @@ class ConversationManagerBrainActionTools:
         content: str,
         phone_number: str | None = None,
         call_guidance: str = "",
+        call_guidance_should_speak: bool = False,
+        call_guidance_response_text: str = "",
     ) -> dict[str, Any]:
         """
         Send an SMS message to an existing contact.
@@ -387,9 +389,15 @@ class ConversationManagerBrainActionTools:
             phone_number: The recipient's phone number.  Required when the
                 contact does not yet have a phone number on file; omit when
                 the contact already has one.
-            call_guidance: Guidance for the Voice Agent on a live call. Use
-                to relay progress, data, or notifications to the caller.
+            call_guidance: Content to relay to the Voice Agent on a live call.
                 Ignored when no voice call is active.
+            call_guidance_should_speak: When True, ``call_guidance_response_text``
+                is spoken aloud via TTS, bypassing the fast brain's LLM.
+                When False (default), the guidance is injected as silent
+                context and the fast brain decides whether to speak.
+            call_guidance_response_text: Exact text to speak aloud when
+                ``call_guidance_should_speak`` is True. Must be concise
+                (1-2 sentences), natural, and in the Voice Agent's persona.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
@@ -1051,6 +1059,8 @@ class ConversationManagerBrainActionTools:
         persist: bool = False,
         include_conversation_context: bool = True,
         call_guidance: str = "",
+        call_guidance_should_speak: bool = False,
+        call_guidance_response_text: str = "",
     ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
@@ -1470,6 +1480,8 @@ class ConversationManagerBrainActionTools:
         self,
         delay: int | None = None,
         call_guidance: str = "",
+        call_guidance_should_speak: bool = False,
+        call_guidance_response_text: str = "",
     ) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
@@ -1494,13 +1506,26 @@ class ConversationManagerBrainActionTools:
             that many seconds — useful for probing a long-running action or
             revisiting a situation after a reasonable interval.
         call_guidance : str
-            Guidance for the Voice Agent on a live call. Use this to relay data,
-            progress, or notifications to the caller via the Voice Agent. Write in
-            the language currently spoken on the call so the Voice Agent can relay
-            it directly. Examples: "I found 9 backend engineer openings at OpenAI",
-            "Still looking through the results", "The meeting is confirmed for 3pm."
-            Leave empty when there is nothing meaningful to relay that the caller
-            doesn't already know. Ignored when no voice call is active.
+            Content to relay to the Voice Agent on a live call. Write in
+            the language currently spoken on the call. Examples:
+            ``"I found 9 backend engineer openings at OpenAI"``,
+            ``"The meeting is confirmed for 3pm."``
+            Leave empty when there is nothing meaningful to relay.
+            Ignored when no voice call is active.
+        call_guidance_should_speak : bool
+            When True, ``call_guidance_response_text`` is spoken aloud via
+            TTS, bypassing the fast brain's LLM. Use for concrete data
+            answers, completion confirmations, or notifications the user
+            should hear immediately. When False (default), the guidance is
+            injected as silent context and the fast brain decides whether
+            and how to speak.
+        call_guidance_response_text : str
+            Exact text to speak aloud when ``call_guidance_should_speak``
+            is True. Must be concise (1-2 sentences), natural, and in the
+            Voice Agent's persona (first person, conversational). Examples:
+            ``"Your flight's at 6am out of Terminal 2, gate B14."``,
+            ``"Done — I've sent the email to Sarah."``.
+            Leave empty when ``call_guidance_should_speak`` is False.
         """
         return {"status": "waiting", "delay": delay}
 
