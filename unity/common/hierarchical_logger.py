@@ -55,19 +55,19 @@ CM_ICONS = {
     "session_start": "🚀",
     "session_end": "🏁",
     "startup": "⚡",
-    # LLM brain
-    "llm_thinking": "🧠",
-    "llm_response": "💡",
+    # LLM brain (aligned with async tool loop)
+    "llm_thinking": "🔄",
+    "llm_response": "🤖",
     # State management
     "state_update": "📋",
-    "notification_injected": "📨",
+    "notification_injected": "🔔",
     "notification_unpinned": "🗑️",
-    "direct_message": "💭",
+    "direct_message": "💬",
     # Actor integration
     "actor_request": "🎯",
     "actor_response": "📥",
-    "actor_result": "🏆",
-    "actor_clarification": "❔",
+    "actor_result": "✅",
+    "actor_clarification": "❓",
     # Generic
     "event": "📣",
     "ping": "💓",
