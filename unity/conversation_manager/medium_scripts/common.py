@@ -44,6 +44,7 @@ from unity.conversation_manager.tracing import (
     payload_trace_id,
 )
 from unity.session_details import SESSION_DETAILS
+from unity.logger import LOGGER
 
 logger = logging.getLogger(__name__)
 
@@ -432,14 +433,14 @@ def create_end_call(
     """
 
     async def end_call() -> None:
-        print("Initiating graceful shutdown...")
+        LOGGER.info("Initiating graceful shutdown...")
 
         # Run pre-shutdown callback (e.g., usage logging) before cleanup
         if pre_shutdown_callback is not None:
             try:
                 pre_shutdown_callback()
             except Exception as e:  # noqa: BLE001
-                print(f"Error in pre-shutdown callback: {e}")
+                LOGGER.error(f"Error in pre-shutdown callback: {e}")
 
         # Delete room before notifying the parent, since the parent will
         # SIGKILL us immediately after receiving the call-ended event.
@@ -448,7 +449,7 @@ def create_end_call(
 
         # Send end call event before cleaning tasks and closing connection
         await publish_call_ended(contact, channel)
-        print("End call event sent")
+        LOGGER.debug("End call event sent")
 
         # Get all running tasks except current task
         tasks: Iterable[asyncio.Task] = [
@@ -456,7 +457,7 @@ def create_end_call(
         ]
 
         if tasks:
-            print(f"Cancelling {len(tasks)} running tasks...")
+            LOGGER.debug(f"Cancelling {len(tasks)} running tasks...")
             # Cancel all tasks
             for task in tasks:
                 task.cancel()
@@ -464,13 +465,13 @@ def create_end_call(
             # Wait for tasks to be cancelled gracefully
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
-                print("All tasks cancelled successfully")
+                LOGGER.debug("All tasks cancelled successfully")
             except asyncio.CancelledError:
                 pass
             except Exception as e:  # noqa: BLE001
-                print(f"Error during task cancellation: {e}")
+                LOGGER.error(f"Error during task cancellation: {e}")
 
-        print("Graceful shutdown completed")
+        LOGGER.info("Graceful shutdown completed")
 
     return end_call
 
@@ -504,7 +505,7 @@ def setup_inactivity_timeout(
             await asyncio.sleep(10)
             current_time = loop.time()
             if current_time - state["last_activity"] > timeout:
-                print("Inactivity timeout reached, shutting down agent...")
+                LOGGER.info("Inactivity timeout reached, shutting down agent...")
                 await end_call()
                 break
 
@@ -574,7 +575,7 @@ def configure_from_cli(
     room name and the agent worker registration name.
     """
     room_name = ""
-    print("sys.argv", sys.argv)
+    LOGGER.debug(f"sys.argv {sys.argv}")
 
     # max index used = 6 + len(extra_env)
     required_len = 6 + len(extra_env)
@@ -597,10 +598,10 @@ def configure_from_cli(
                 try:
                     loaded = json.loads(value)
                 except json.JSONDecodeError:
-                    print(f"{env_name} payload is not valid JSON")
+                    LOGGER.error(f"{env_name} payload is not valid JSON")
                     sys.exit(1)
                 if not loaded:
-                    print(f"{env_name} payload is invalid (empty)")
+                    LOGGER.error(f"{env_name} payload is invalid (empty)")
                     sys.exit(1)
 
             # Map known extra args to SESSION_DETAILS fields
@@ -621,7 +622,7 @@ def configure_from_cli(
         # keep only script name and the command ("dev" / "connect" / "download-files")
         sys.argv = sys.argv[:2]
     elif len(sys.argv) > 1 and sys.argv[1] != "download-files":
-        print("Not enough arguments provided")
+        LOGGER.error("Not enough arguments provided")
         sys.exit(1)
 
     return room_name
@@ -642,11 +643,11 @@ async def delete_livekit_room(room_name: str) -> None:
         api = LiveKitAPI()
         try:
             await api.room.delete_room(DeleteRoomRequest(room=room_name))
-            print(f"Deleted LiveKit room '{room_name}'")
+            LOGGER.debug(f"Deleted LiveKit room '{room_name}'")
         finally:
             await api.aclose()
     except Exception as e:
-        print(f"Failed to delete LiveKit room '{room_name}': {e}")
+        LOGGER.error(f"Failed to delete LiveKit room '{room_name}': {e}")
 
 
 # -------- User screen share capture -------- #

@@ -12,6 +12,7 @@ import traceback
 import requests
 import unify
 
+from unity.logger import LOGGER
 from unity.conversation_manager.metrics import (
     running_job_count as _m_running_jobs,
     session_duration as _m_session_dur,
@@ -35,7 +36,9 @@ def _ensure_project_exists(api_key: str) -> None:
         unify.create_project("AssistantJobs", api_key=api_key)
         _project_verified = True
     except Exception as e:
-        print(f"[assistant_jobs] Could not verify/create AssistantJobs project: {e}")
+        LOGGER.error(
+            f"[assistant_jobs] Could not verify/create AssistantJobs project: {e}",
+        )
 
 
 def _is_managed_vm() -> bool:
@@ -79,13 +82,13 @@ def _resolve_vm_liveview(assistant_id: str, vm_type: str) -> str | None:
     comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
     admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
     if not comms_url or not admin_key:
-        print("[Liveview] Skipping: COMMS_URL or admin key not configured")
+        LOGGER.debug("[Liveview] Skipping: COMMS_URL or admin key not configured")
         return None
 
     max_retries = 5
     for attempt in range(max_retries):
-        print(
-            f"\n\n[Liveview] Attempt {attempt + 1} to get {vm_type} VM status "
+        LOGGER.debug(
+            f"[Liveview] Attempt {attempt + 1} to get {vm_type} VM status "
             f"for assistant {assistant_id}",
         )
         try:
@@ -102,26 +105,28 @@ def _resolve_vm_liveview(assistant_id: str, vm_type: str) -> str | None:
                 desktop_url = data.get("desktop_url")
                 status = data.get("status", "UNKNOWN")
 
-                print(f"[Liveview] VM Status: {status}, Ready: {vm_ready}")
+                LOGGER.debug(f"[Liveview] VM Status: {status}, Ready: {vm_ready}")
 
                 if vm_ready and desktop_url:
-                    print(f"[Liveview] ✅ {vm_type.capitalize()} VM is ready!")
-                    print(f"[Liveview] URL: {desktop_url}/desktop/custom.html")
+                    LOGGER.info(f"[Liveview] ✅ {vm_type.capitalize()} VM is ready!")
+                    LOGGER.info(f"[Liveview] URL: {desktop_url}/desktop/custom.html")
                     return f"{desktop_url}/desktop/custom.html"
 
                 # Calculate wait time from vm_ready_at timestamp (no max clamp)
                 wait_time = _calc_wait_from_ready_at(vm_ready_at)
                 if wait_time > 60:
                     mins, secs = divmod(wait_time, 60)
-                    print(f"[Liveview] Waiting {mins}m {secs}s...")
+                    LOGGER.debug(f"[Liveview] Waiting {mins}m {secs}s...")
                 else:
-                    print(f"[Liveview] Waiting {wait_time}s...")
+                    LOGGER.debug(f"[Liveview] Waiting {wait_time}s...")
                 time.sleep(wait_time)
             else:
-                print(f"[Liveview] Request failed: {resp.status_code} {resp.text}")
+                LOGGER.error(
+                    f"[Liveview] Request failed: {resp.status_code} {resp.text}",
+                )
                 time.sleep(10)
         except Exception as e:
-            print(f"[Liveview] Error: {e}")
+            LOGGER.error(f"[Liveview] Error: {e}")
             time.sleep(10)
 
     return None
@@ -137,9 +142,9 @@ def _record_running_job_count(api_key: str) -> None:
             api_key=api_key,
         )
         _m_running_jobs.set(len(logs))
-        print(f"[assistant_jobs] Running job count: {len(logs)}")
+        LOGGER.debug(f"[assistant_jobs] Running job count: {len(logs)}")
     except Exception as exc:
-        print(f"[assistant_jobs] Failed to record running job count: {exc}")
+        LOGGER.error(f"[assistant_jobs] Failed to record running job count: {exc}")
 
 
 def log_job_startup(job_name: str, user_id: str, assistant_id: str):
@@ -150,7 +155,9 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     """
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
-        print("[assistant_jobs] Skipping log_job_startup: no shared API key available")
+        LOGGER.debug(
+            "[assistant_jobs] Skipping log_job_startup: no shared API key available",
+        )
         return
 
     _ensure_project_exists(api_key)
@@ -158,7 +165,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     # Update the existing record (created by adapter) with job_name and liveview_url
     existing_logs = []
     try:
-        print(
+        LOGGER.debug(
             f"[assistant_jobs] Getting existing logs for user_id={user_id}, assistant_id={assistant_id}",
         )
         existing_logs = unify.get_logs(
@@ -171,12 +178,12 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
             ),
             api_key=api_key,
         )
-        print(f"[assistant_jobs] Found {len(existing_logs)} running records")
+        LOGGER.debug(f"[assistant_jobs] Found {len(existing_logs)} running records")
 
         if existing_logs:
             log = existing_logs[0]
             log.update_entries(job_name=job_name)
-            print(f"[assistant_jobs] Updated record with job_name={job_name}")
+            LOGGER.info(f"[assistant_jobs] Updated record with job_name={job_name}")
 
             # X1: record running job count right after the record is updated
             _record_running_job_count(api_key)
@@ -187,13 +194,13 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
         else:
             # No record found - adapter's mark_job_running() must have failed
             # Log warning but don't fail; liveview just won't be tracked
-            print(
+            LOGGER.error(
                 f"[assistant_jobs] WARNING: No running record found for "
                 f"user_id={user_id}, assistant_id={assistant_id}. "
                 f"Adapter may have failed to create the record.",
             )
     except Exception as e:
-        print(f"[assistant_jobs] Error updating job record: {e}")
+        LOGGER.error(f"[assistant_jobs] Error updating job record: {e}")
         traceback.print_exc()
 
     # Resolve liveview URL and attach it to the record (this can take a while).
@@ -207,11 +214,11 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
                 # User's own desktop - no liveview URL to resolve
                 liveview_url = None
         except Exception as e:
-            print(f"[Liveview] Error resolving liveview URL: {e}")
+            LOGGER.error(f"[Liveview] Error resolving liveview URL: {e}")
             traceback.print_exc()
             liveview_url = None
         log.update_entries(liveview_url=liveview_url)
-        print(f"[assistant_jobs] Updated record with liveview_url={liveview_url}")
+        LOGGER.info(f"[assistant_jobs] Updated record with liveview_url={liveview_url}")
 
 
 def _stop_vm(assistant_id: str, vm_type: str) -> None:
@@ -228,7 +235,7 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
         comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
         if not comms_url or not admin_key:
-            print(
+            LOGGER.debug(
                 "[assistant_jobs] Skipping VM stop: "
                 "COMMS_URL or admin key not configured",
             )
@@ -241,19 +248,21 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
             timeout=60,
         )
         if response.ok:
-            print(
+            LOGGER.info(
                 f"[assistant_jobs] {vm_type.capitalize()} VM stopped for assistant "
                 f"{assistant_id}: {response.json()}",
             )
         else:
-            print(
+            LOGGER.error(
                 f"[assistant_jobs] Failed to stop {vm_type} VM: "
                 f"{response.status_code} {response.text}",
             )
     except requests.exceptions.Timeout:
-        print(f"[assistant_jobs] {vm_type.capitalize()} VM stop request timed out")
+        LOGGER.error(
+            f"[assistant_jobs] {vm_type.capitalize()} VM stop request timed out",
+        )
     except Exception as e:
-        print(f"[assistant_jobs] Error stopping {vm_type} VM: {e}")
+        LOGGER.error(f"[assistant_jobs] Error stopping {vm_type} VM: {e}")
         traceback.print_exc()
 
 
@@ -261,7 +270,9 @@ def mark_job_done(job_name: str):
     """Mark a job as done and record session-end metrics."""
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
-        print("[assistant_jobs] Skipping mark_job_done: no shared API key available")
+        LOGGER.debug(
+            "[assistant_jobs] Skipping mark_job_done: no shared API key available",
+        )
         return
 
     # mark job done in the logs
@@ -273,19 +284,19 @@ def mark_job_done(job_name: str):
             api_key=api_key,
         )[0]
         job_log.update_entries(running=False)
-        print("Job marked done", job_name)
+        LOGGER.info(f"Job marked done {job_name}")
 
         # X1: record running job count right after the record is updated
         _record_running_job_count(api_key)
     except Exception as e:
-        print(f"Error finding job: {e}")
+        LOGGER.error(f"Error finding job: {e}")
         traceback.print_exc()
 
     # U9: session duration (log_job_startup → mark_job_done)
     if _session_start_perf is not None:
         dur = time.perf_counter() - _session_start_perf
         _m_session_dur.record(dur)
-        print(f"[assistant_jobs] Session duration: {dur:.1f}s")
+        LOGGER.info(f"[assistant_jobs] Session duration: {dur:.1f}s")
 
     # Stop VM if applicable (managed VM, not user's own desktop)
     if _is_managed_vm():

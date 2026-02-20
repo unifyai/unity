@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from unity.logger import LOGGER
 from unity.session_details import SESSION_DETAILS
 
 if TYPE_CHECKING:
@@ -74,7 +75,7 @@ async def start_async(
     global _conversation_manager
 
     if _conversation_manager is not None:
-        print("ConversationManager is already running")
+        LOGGER.info("ConversationManager is already running")
         return _conversation_manager
 
     # Import here to avoid circular imports
@@ -101,7 +102,7 @@ async def stop_async(reason: str = "manual_stop") -> None:
     if _conversation_manager is None:
         return
 
-    print(f"Stopping ConversationManager (reason: {reason})...")
+    LOGGER.info(f"Stopping ConversationManager (reason: {reason})...")
 
     try:
         # Signal shutdown
@@ -110,10 +111,10 @@ async def stop_async(reason: str = "manual_stop") -> None:
         # Clean up
         await _conversation_manager.cleanup()
 
-        print("ConversationManager stopped")
+        LOGGER.info("ConversationManager stopped")
         _shutdown_reason = reason
     except Exception as e:
-        print(f"Error stopping ConversationManager: {e}")
+        LOGGER.error(f"Error stopping ConversationManager: {e}")
         _shutdown_reason = f"stop_error: {e}"
     finally:
         _conversation_manager = None

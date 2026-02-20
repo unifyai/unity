@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -14,6 +13,7 @@ from unity.conversation_manager.domains.ipc_socket import (
     CM_EVENT_SOCKET_ENV,
 )
 from unity.conversation_manager.tracing import content_trace_id, trace_kv
+from unity.logger import LOGGER
 from unity.helpers import (
     run_script,
     terminate_process,
@@ -104,7 +104,7 @@ class LivekitCallManager:
     async def _ensure_socket_server(self) -> str | None:
         """Start the socket server if not running, return socket path."""
         if self._event_broker is None:
-            print(
+            LOGGER.error(
                 "[LivekitCallManager] Warning: No event broker set, socket IPC disabled",
             )
             return None
@@ -157,7 +157,7 @@ class LivekitCallManager:
         # Set socket path in environment for subprocess
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
-            print(f"[LivekitCallManager] Socket server at {socket_path}")
+            LOGGER.debug(f"[LivekitCallManager] Socket server at {socket_path}")
 
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         # Both TTS and Realtime modes use the fast brain architecture and need
@@ -179,7 +179,7 @@ class LivekitCallManager:
         else:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
-        print(f"target_path: {target_path}, args: {args}")
+        LOGGER.debug(f"target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
         self._disconnect_contact = contact
 
@@ -204,13 +204,12 @@ class LivekitCallManager:
                 "app:comms:assistant_call_guidance",
                 guidance_event.to_json(),
             )
-            print(
+            LOGGER.debug(
                 trace_kv(
                     "CALL_MANAGER_INITIAL_GUIDANCE",
                     guidance_id=guidance_id,
                     content_preview=self.initial_call_guidance[:80],
                 ),
-                flush=True,
             )
             self.initial_call_guidance = ""
 
@@ -240,7 +239,7 @@ class LivekitCallManager:
         # Set socket path in environment for subprocess
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
-            print(f"[LivekitCallManager] Socket server at {socket_path}")
+            LOGGER.debug(f"[LivekitCallManager] Socket server at {socket_path}")
 
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         room_name = room_name or make_room_name(self.assistant_id, "meet")
@@ -264,7 +263,7 @@ class LivekitCallManager:
         else:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
-        print(f"target_path: {target_path}, args: {args}")
+        LOGGER.debug(f"target_path: {target_path}, args: {args}")
         self._call_proc = run_script(str(target_path), "dev", *args)
         self._disconnect_contact = contact
 
@@ -291,10 +290,9 @@ class LivekitCallManager:
             if channel == "phone"
             else UnifyMeetEnded(contact=contact)
         )
-        print(
+        LOGGER.info(
             f"[LivekitCallManager] IPC client disconnected without cleanup, "
             f"publishing fallback {event.__class__.__name__}",
-            flush=True,
         )
         if self._event_broker:
             await self._event_broker.publish(
@@ -330,11 +328,11 @@ class LivekitCallManager:
 
         # Check if process is still running
         if proc.poll() is not None:
-            print(
+            LOGGER.info(
                 f"[LivekitCallManager] Process already exited with code {proc.returncode}",
             )
             return
 
-        print(f"[LivekitCallManager] Killing voice agent process {proc.pid}...")
+        LOGGER.info(f"[LivekitCallManager] Killing voice agent process {proc.pid}...")
         await asyncio.to_thread(terminate_process, proc, 0)
-        print("[LivekitCallManager] Voice agent process killed")
+        LOGGER.info("[LivekitCallManager] Voice agent process killed")

@@ -1,5 +1,6 @@
 import requests
 
+from unity.logger import LOGGER
 from unity.settings import SETTINGS
 
 # admin headers and URLs
@@ -32,7 +33,7 @@ def dispatch_livekit_agent(
     Returns True if dispatch was attempted, False if skipped due to missing config.
     """
     if not unity_comms_url:
-        print(
+        LOGGER.debug(
             "[dispatch_livekit_agent] Skipping: UNITY_COMMS_URL not configured. "
             "Set this to enable LiveKit agent dispatch.",
         )
@@ -52,15 +53,15 @@ def dispatch_livekit_agent(
             timeout=1,
         )
         if response.status_code != 200:
-            print(f"Failed to dispatch LiveKit agent. {response.text}")
+            LOGGER.error(f"Failed to dispatch LiveKit agent. {response.text}")
             return False
         else:
-            print("LiveKit agent dispatched")
+            LOGGER.info("LiveKit agent dispatched")
     except requests.exceptions.Timeout:
         # Timeout is expected - the dispatch endpoint may be slow
-        print("LiveKit agent dispatched (timeout)")
+        LOGGER.info("LiveKit agent dispatched (timeout)")
     except requests.exceptions.RequestException as e:
         # Connection errors, DNS failures, etc. - don't crash, just log
-        print(f"[dispatch_livekit_agent] Request failed (non-fatal): {e}")
+        LOGGER.error(f"[dispatch_livekit_agent] Request failed (non-fatal): {e}")
         return False
     return True
