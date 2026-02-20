@@ -214,7 +214,7 @@ class TestSlowBrainDecisionBoundaries:
         5. CallManager.start_call() publishes stored guidance as CallGuidance
         6. Fast brain receives guidance via on_guidance / pending_guidance buffer
         7. PhoneCallStarted arrives → mode set to CALL
-        8. Ongoing call_guidance flows via tool parameters (e.g. wait(call_guidance="..."))
+        8. Ongoing guidance flows via the guide_voice_agent tool (called in parallel)
         """
         cm = initialized_cm.cm
 
@@ -256,20 +256,18 @@ class TestSlowBrainDecisionBoundaries:
             cm.call_manager.is_outbound = False
             cm.mode = Mode.TEXT
 
-    async def test_call_guidance_delivered_via_tool_parameter(
+    async def test_call_guidance_delivered_via_standalone_tool(
         self,
         initialized_cm,
         boss_contact,
     ):
         """
-        call_guidance is delivered via the wait() tool parameter, not the response
-        content field. This avoids a known issue where the LLM plans to provide
-        guidance (visible in its thinking block) but produces empty content when
-        tool_choice is "required".
+        Guidance is delivered via the standalone guide_voice_agent tool, not as
+        a parameter on wait/send_sms/act, and not via the response content field.
 
-        Verify: wait() accepts a call_guidance parameter, and the response model
-        for voice modes does NOT have a call_guidance field (it's been moved to
-        the tool layer).
+        Verify: guide_voice_agent exists as a standalone method with the expected
+        signature, wait() does NOT have call_guidance params, and the response
+        model for voice modes does NOT have a call_guidance field.
         """
         import inspect
         from unity.conversation_manager.domains.brain import build_response_models
@@ -278,32 +276,42 @@ class TestSlowBrainDecisionBoundaries:
         )
         from unity.conversation_manager.types import Mode
 
-        # The wait() tool should accept a call_guidance parameter
+        # guide_voice_agent should exist as a standalone method
+        guide_sig = inspect.signature(
+            ConversationManagerBrainActionTools.guide_voice_agent,
+        )
+        assert (
+            "content" in guide_sig.parameters
+        ), "guide_voice_agent() must accept a content parameter"
+        assert (
+            "should_speak" in guide_sig.parameters
+        ), "guide_voice_agent() must accept a should_speak parameter"
+        assert (
+            "response_text" in guide_sig.parameters
+        ), "guide_voice_agent() must accept a response_text parameter"
+
+        # wait() should NOT have call_guidance params (moved to standalone tool)
         wait_sig = inspect.signature(ConversationManagerBrainActionTools.wait)
-        assert (
-            "call_guidance" in wait_sig.parameters
-        ), "wait() must accept a call_guidance parameter for voice guidance delivery"
-        param = wait_sig.parameters["call_guidance"]
-        assert (
-            param.default == ""
-        ), "call_guidance should default to empty string (optional)"
+        assert "call_guidance" not in wait_sig.parameters, (
+            "call_guidance should NOT be a parameter on wait() — "
+            "it is now a standalone guide_voice_agent tool"
+        )
 
         # The response model for voice modes should NOT contain call_guidance
-        # (it's been moved to tool parameters for reliable delivery)
         models = build_response_models()
         voice_model = models[Mode.CALL]
         schema = voice_model.model_json_schema()
         props = schema.get("properties", {})
         assert "call_guidance" not in props, (
             "call_guidance should NOT be in the response model — "
-            "it is delivered via tool parameters (e.g. wait(call_guidance='...'))"
+            "it is delivered via the standalone guide_voice_agent tool"
         )
 
 
 @pytest.mark.asyncio
 class TestSlowBrainAppropriateGuidance:
     """
-    Tests that call_guidance IS used correctly for its intended purposes:
+    Tests that guide_voice_agent IS used correctly for its intended purposes:
     data provision, data requests, and notifications.
 
     These are "positive" tests showing what the slow brain SHOULD do,
@@ -619,30 +627,32 @@ def _get_guidance_messages(cm, contact_id: int) -> list:
 class TestInFlightActionOrchestration:
     """
     Tests that the slow brain correctly orchestrates long-running actions
-    during voice calls, relaying results to the fast brain via call_guidance.
+    during voice calls, relaying results to the fast brain via guide_voice_agent.
 
     This validates the full deterministic event-driven coordination loop:
 
         User utterance
             → slow brain calls `act` (starts action)
             → action completes (ActorResult arrives)
-            → slow brain produces `call_guidance` with the result
+            → slow brain calls `guide_voice_agent` with the result
             → fast brain receives guidance and shares info naturally
 
     All steps are trigger-based via CMStepDriver — no sleeps or timing.
     The real slow brain LLM runs at each step.
     """
 
+    @pytest.mark.eval
     async def test_act_result_relayed_via_call_guidance(self, initialized_cm):
         """
-        Full coordination flow: user requests task → act → result → call_guidance.
+        Full coordination flow: user requests task → act → result → guidance.
 
         Phase 1: Enter voice call mode
         Phase 2: User asks for research → slow brain calls `act`
-        Phase 3: Action completes → slow brain produces `call_guidance` with result
+        Phase 3: Action completes → slow brain calls `guide_voice_agent` with result
         Phase 4: Verify fast brain can use the guidance to answer directly
 
-        All steps are deterministic — events are stepped explicitly, not awaited.
+        NOTE: With boss-on-call, the slow brain may correctly decide NOT to send
+        guidance (the fast brain has direct event visibility). This is eval-dependent.
         """
         cm = initialized_cm
         boss = BOSS
@@ -720,7 +730,7 @@ class TestInFlightActionOrchestration:
             term in all_guidance_text
             for term in ["henderson", "contract", "budget", "85,000", "document"]
         ), (
-            f"call_guidance should contain Henderson project findings!\n"
+            f"guide_voice_agent should contain Henderson project findings!\n"
             f"All guidance texts: {[getattr(g, 'content', '') for g in all_guidance]}\n"
             f"Tool calls across phases: {cm.all_tool_calls}\n"
             f"Guidance before request: {len(guidance_before_request)}\n"
@@ -728,7 +738,7 @@ class TestInFlightActionOrchestration:
             f"Guidance after result: {len(guidance_after_result)}\n"
             f"\n"
             f"The slow brain should relay action results to the fast brain\n"
-            f"via call_guidance so the user gets the information."
+            f"via guide_voice_agent so the user gets the information."
         )
 
         # ─── Phase 4: Verify fast brain can use the guidance ──────────────
@@ -815,23 +825,23 @@ class TestInFlightActionOrchestration:
 
 
 # =============================================================================
-# Test: call_guidance SPEAK mode — should_speak + response_text pipeline
+# Test: guide_voice_agent SPEAK mode — should_speak + response_text pipeline
 # =============================================================================
 
 
 @pytest.mark.asyncio
 class TestCallGuidanceSpeakMode:
-    """Verify the slow brain's call_guidance_should_speak and
-    call_guidance_response_text parameters propagate correctly through
-    the CallGuidance event to the fast brain."""
+    """Verify that guide_voice_agent's should_speak and response_text
+    parameters propagate correctly through the CallGuidance event to the
+    fast brain."""
 
     async def test_should_speak_params_carried_through_to_event(
         self,
         initialized_cm,
     ):
-        """When the slow brain sets call_guidance_should_speak=True and
-        call_guidance_response_text, the published CallGuidance event
-        must carry both fields so the fast brain can speak via TTS."""
+        """When the slow brain calls guide_voice_agent with should_speak=True
+        and response_text, the published CallGuidance event must carry both
+        fields so the fast brain can speak via TTS."""
         import json
 
         cm = initialized_cm.cm
@@ -854,7 +864,7 @@ class TestCallGuidanceSpeakMode:
 
         try:
             # Simulate a user question that should trigger the slow brain
-            # to produce call_guidance with the result
+            # to produce guidance with the result
             result = await initialized_cm.step_until_wait(
                 InboundPhoneUtterance(
                     contact=boss,
@@ -863,19 +873,21 @@ class TestCallGuidanceSpeakMode:
                 max_steps=5,
             )
 
-            # Check that the tool params exist on the wait tool
+            # Check that guide_voice_agent exists with the expected params
             import inspect
             from unity.conversation_manager.domains.brain_action_tools import (
                 ConversationManagerBrainActionTools,
             )
 
-            wait_sig = inspect.signature(ConversationManagerBrainActionTools.wait)
+            guide_sig = inspect.signature(
+                ConversationManagerBrainActionTools.guide_voice_agent,
+            )
             assert (
-                "call_guidance_should_speak" in wait_sig.parameters
-            ), "wait() must accept call_guidance_should_speak"
+                "should_speak" in guide_sig.parameters
+            ), "guide_voice_agent() must accept should_speak"
             assert (
-                "call_guidance_response_text" in wait_sig.parameters
-            ), "wait() must accept call_guidance_response_text"
+                "response_text" in guide_sig.parameters
+            ), "guide_voice_agent() must accept response_text"
 
             # Verify published guidance events carry the fields (even if
             # the LLM didn't use them this turn, the schema must support them)

@@ -35,9 +35,10 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
     )
 
     # Voice mode uses the same response model as text mode.
-    # call_guidance is now delivered via tool parameters (e.g. wait(call_guidance="..."))
-    # rather than the response content, because the model reliably populates tool
-    # arguments but intermittently skips the content field when tool_choice is required.
+    # Guidance is delivered via the standalone guide_voice_agent tool (called in
+    # parallel with the action tool) rather than the response content, because
+    # the model reliably populates tool arguments but intermittently skips the
+    # content field when tool_choice is required.
     return {
         Mode.CALL: TextResponse,
         Mode.MEET: TextResponse,
