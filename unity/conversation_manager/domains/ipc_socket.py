@@ -194,7 +194,15 @@ class CallEventSocketServer:
                 )
             except (asyncio.TimeoutError, Exception) as e:
                 print(f"[CallEventSocketServer] I/O shutdown issue: {e}")
-                self._io_loop.call_soon_threadsafe(self._io_loop.stop)
+
+            # Stop the I/O loop from here (after the future resolved or
+            # timed out) so the loop doesn't close before the future
+            # completion callback fires.
+            try:
+                if self._io_loop and not self._io_loop.is_closed():
+                    self._io_loop.call_soon_threadsafe(self._io_loop.stop)
+            except RuntimeError:
+                pass
 
         if self._io_thread and self._io_thread.is_alive():
             self._io_thread.join(timeout=5)
@@ -448,7 +456,14 @@ class CallEventSocketServer:
             )
 
     async def _shutdown_io(self) -> None:
-        """Runs in I/O loop. Cleanly shuts down all I/O resources."""
+        """Runs in I/O loop. Cleanly shuts down all I/O resources.
+
+        Does NOT stop the I/O loop itself — the caller (``stop()``) handles
+        that after the future returned by ``run_coroutine_threadsafe`` resolves.
+        Stopping the loop here would prevent the future from resolving (the
+        ``call_soon(loop.stop)`` fires before the task-completion callback),
+        causing the main-loop ``wait_for`` to time out.
+        """
         # Close client sockets (interrupts any pending sock_recv)
         for client in list(self._connected_clients):
             try:
@@ -470,9 +485,6 @@ class CallEventSocketServer:
         if self._server_socket:
             self._server_socket.close()
             self._server_socket = None
-
-        # Stop the I/O event loop (takes effect after this coroutine returns)
-        self._io_loop.call_soon(self._io_loop.stop)
 
     # ------------------------------------------------------------------
     # Main loop
