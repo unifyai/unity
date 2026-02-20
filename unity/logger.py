@@ -362,17 +362,15 @@ if SETTINGS.UNITY_TERMINAL_LOG:
     _handler = logging.StreamHandler(sys.stdout)
     _handler.setFormatter(logging.Formatter("%(message)s"))
 
-    _root = logging.getLogger()
-
     _already_configured = any(
         isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)
-        for h in _root.handlers
+        for h in LOGGER.handlers
     )
 
     if not _already_configured:
-        _root.setLevel(logging.INFO)
+        LOGGER.setLevel(logging.DEBUG)
         _handler._unity_terminal = True  # type: ignore[attr-defined]
-        _root.addHandler(_handler)
+        LOGGER.addHandler(_handler)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration

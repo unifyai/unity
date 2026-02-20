@@ -14,7 +14,6 @@ class ConversationSettings(BaseSettings):
 
     Attributes:
         IMPL: Implementation type - "real" or "simulated".
-        LOG_LEVEL: Logging level for ConversationManager.
         COMMS_URL: URL for the communications service (reads from UNITY_COMMS_URL).
         JOB_NAME: Job name for the ConversationManager session.
         CONTACT_ID: Default contact ID for simulated ConversationManager.
@@ -28,7 +27,6 @@ class ConversationSettings(BaseSettings):
 
     FAST_BRAIN_MODEL: str = "gpt-5-mini@openai"
     IMPL: str = "real"
-    LOG_LEVEL: str = "INFO"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")
     JOB_NAME: str = ""
     CONTACT_ID: str = "1"
