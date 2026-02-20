@@ -812,3 +812,81 @@ class TestInFlightActionOrchestration:
             f"Response: {fast_response}\n"
             f"Expected mention of Henderson project findings from the notification."
         )
+
+
+# =============================================================================
+# Test: call_guidance SPEAK mode — should_speak + response_text pipeline
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestCallGuidanceSpeakMode:
+    """Verify the slow brain's call_guidance_should_speak and
+    call_guidance_response_text parameters propagate correctly through
+    the CallGuidance event to the fast brain."""
+
+    async def test_should_speak_params_carried_through_to_event(
+        self,
+        initialized_cm,
+    ):
+        """When the slow brain sets call_guidance_should_speak=True and
+        call_guidance_response_text, the published CallGuidance event
+        must carry both fields so the fast brain can speak via TTS."""
+        import json
+
+        cm = initialized_cm.cm
+        boss = BOSS
+
+        # Enter voice mode
+        await initialized_cm.step(PhoneCallStarted(contact=boss))
+        assert cm.mode == Mode.CALL
+
+        # Capture published guidance events
+        published: list[dict] = []
+        original_publish = cm.event_broker.publish
+
+        async def capture_publish(channel: str, message: str) -> int:
+            if channel == "app:call:call_guidance":
+                published.append(json.loads(message))
+            return await original_publish(channel, message)
+
+        cm.event_broker.publish = capture_publish
+
+        try:
+            # Simulate a user question that should trigger the slow brain
+            # to produce call_guidance with the result
+            result = await initialized_cm.step_until_wait(
+                InboundPhoneUtterance(
+                    contact=boss,
+                    content="What's the weather like in San Francisco today?",
+                ),
+                max_steps=5,
+            )
+
+            # Check that the tool params exist on the wait tool
+            import inspect
+            from unity.conversation_manager.domains.brain_action_tools import (
+                ConversationManagerBrainActionTools,
+            )
+
+            wait_sig = inspect.signature(ConversationManagerBrainActionTools.wait)
+            assert (
+                "call_guidance_should_speak" in wait_sig.parameters
+            ), "wait() must accept call_guidance_should_speak"
+            assert (
+                "call_guidance_response_text" in wait_sig.parameters
+            ), "wait() must accept call_guidance_response_text"
+
+            # Verify published guidance events carry the fields (even if
+            # the LLM didn't use them this turn, the schema must support them)
+            for event_data in published:
+                payload = event_data.get("payload", event_data)
+                assert (
+                    "should_speak" in payload
+                ), f"CallGuidance event missing should_speak field: {payload}"
+                assert (
+                    "response_text" in payload
+                ), f"CallGuidance event missing response_text field: {payload}"
+
+        finally:
+            cm.event_broker.publish = original_publish

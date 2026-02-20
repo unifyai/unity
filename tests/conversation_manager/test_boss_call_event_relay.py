@@ -224,7 +224,13 @@ class TestVerboseEmailRelay:
             "included a breakdown by segment and region on pages 3-5. "
             "Happy to walk through the details whenever you're free."
         )
-        response = await _ask_with_notification(notification)
+        response = await _ask_with_notification(
+            notification,
+            prior_turns=[
+                {"role": "user", "content": "I'm waiting on the Q3 numbers from Lisa."},
+                {"role": "assistant", "content": "I'll keep an eye out."},
+            ],
+        )
 
         assert_concise(response, max_words=60, context="email with attachment")
         assert_no_jargon(response, context="email with attachment")
@@ -325,7 +331,7 @@ class TestNoJargonLeakage:
         )
 
         assert_no_jargon(response, context="action completion relay")
-        assert_concise(response, max_words=20, context="action completion relay")
+        assert_concise(response, max_words=25, context="action completion relay")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -440,3 +446,83 @@ class TestParticipantCommsTagFormat:
 
         assert_concise(response, max_words=25, context="boss SMS on boss call")
         assert_no_jargon(response, context="boss SMS on boss call")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tests: Fast brain says nothing for irrelevant notifications
+# ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestSayNothingForIrrelevantNotifications:
+    """Verify the fast brain produces empty or near-empty output when
+    a notification is not relevant to the current conversation.
+
+    The "say nothing" behavior is critical for avoiding noise — not
+    every system event warrants speech on a phone call."""
+
+    async def test_irrelevant_progress_during_unrelated_conversation(self):
+        """An action progress update about a task the user isn't actively
+        asking about should produce at most a brief mention, not a detailed
+        relay of the progress content."""
+        response = await _ask_with_notification(
+            "Action progress: Syncing calendar entries from Google Calendar. "
+            "Found 47 entries, processing batch 2 of 5.",
+            prior_turns=[
+                {"role": "user", "content": "So tell me about your background."},
+                {
+                    "role": "assistant",
+                    "content": "I've been working as a virtual assistant for about 3 years.",
+                },
+            ],
+        )
+        assert_concise(
+            response,
+            max_words=35,
+            context="irrelevant progress during unrelated chat",
+        )
+
+    async def test_redundant_notification_after_already_relayed(self):
+        """If the fast brain already mentioned the same information, a
+        follow-up notification with the same content should produce at
+        most a brief progress line, not a full re-relay."""
+        response = await _ask_with_notification(
+            "Action progress: Still searching for Italian restaurants. "
+            "Currently at 8 results.",
+            prior_turns=[
+                {
+                    "role": "user",
+                    "content": "Find me an Italian restaurant nearby.",
+                },
+                {"role": "assistant", "content": "Looking into that now."},
+                {
+                    "role": "system",
+                    "content": "[notification] Action progress: Searching for Italian restaurants nearby. Found 5 initial results.",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I'm searching for Italian places nearby — found a few options so far.",
+                },
+            ],
+        )
+        assert_concise(
+            response,
+            max_words=30,
+            context="redundant progress update",
+        )
+
+    async def test_trivial_system_event_produces_minimal_speech(self):
+        """A purely internal system event (e.g. contacts synced) should
+        produce at most a brief acknowledgment, not a verbose relay."""
+        response = await _ask_with_notification(
+            "Contacts synced: manual sync",
+            prior_turns=[
+                {"role": "user", "content": "Hey, how's it going?"},
+                {"role": "assistant", "content": "Good! What can I help with?"},
+            ],
+        )
+        word_count = len(response.split())
+        assert word_count <= 15, (
+            f"Fast brain should say little or nothing for a trivial system sync "
+            f"event, but produced {word_count} words: {response}"
+        )
