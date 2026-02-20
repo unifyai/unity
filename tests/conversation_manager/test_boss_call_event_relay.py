@@ -326,3 +326,117 @@ class TestNoJargonLeakage:
 
         assert_no_jargon(response, context="action completion relay")
         assert_concise(response, max_words=20, context="action completion relay")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Tests: Participant comms with [SMS from Name] tags
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _build_contact_call_prompt(**overrides) -> str:
+    """Build a fast brain prompt for a call with a non-boss contact."""
+    defaults = {
+        "bio": "I am a virtual assistant working for a tech startup.",
+        "assistant_name": "Alex",
+        "boss_first_name": "Sarah",
+        "boss_surname": "Chen",
+        "boss_phone_number": "+15551234567",
+        "boss_email_address": "sarah@meridianlabs.com",
+        "boss_bio": "CEO of Meridian Labs, focused on AI products.",
+        "is_boss_user": False,
+        "contact_first_name": "Marcus",
+        "contact_surname": "Rivera",
+        "contact_phone_number": "+15559876543",
+        "contact_email": "marcus@clientcorp.com",
+        "contact_bio": "VP of Engineering at ClientCorp.",
+    }
+    defaults.update(overrides)
+    return build_voice_agent_prompt(**defaults).flatten()
+
+
+async def _ask_with_tagged_comms(
+    tagged_msg: str,
+    user_message: str | None = None,
+    prior_turns: list[dict] | None = None,
+    is_boss: bool = False,
+) -> str:
+    """Simulate a call where a tagged comms message arrives."""
+    prompt = _build_boss_prompt() if is_boss else _build_contact_call_prompt()
+    messages: list[dict] = [{"role": "system", "content": prompt}]
+    if prior_turns:
+        messages.extend(prior_turns)
+    messages.append({"role": "system", "content": tagged_msg})
+    if user_message:
+        messages.append({"role": "user", "content": user_message})
+    client = new_llm_client(model=FAST_BRAIN_MODEL, reasoning_effort="low")
+    return (await client.generate(messages=messages)).strip()
+
+
+@pytest.mark.asyncio
+class TestParticipantCommsTagFormat:
+    """Verify the fast brain handles [SMS from Name] / [Email from Name]
+    tagged messages concisely — on any call, not just boss calls."""
+
+    async def test_sms_from_caller_during_call(self):
+        """When the person on the call sends an SMS, the fast brain should
+        mention it naturally and concisely."""
+        tagged = "[SMS from Marcus Rivera] Just sent you the contract PDF via email, check when you get a chance."
+        response = await _ask_with_tagged_comms(
+            tagged,
+            prior_turns=[
+                {
+                    "role": "user",
+                    "content": "Hey, I'll send the contract over shortly.",
+                },
+                {"role": "assistant", "content": "Sounds good, I'll keep an eye out."},
+            ],
+        )
+
+        assert_concise(response, max_words=35, context="SMS from caller")
+        assert_no_jargon(response, context="SMS from caller")
+        assert_contains_any(
+            response,
+            ["contract", "email", "pdf", "sent"],
+            context="should acknowledge the SMS content",
+        )
+
+    async def test_email_from_caller_during_call(self):
+        """When the person on the call sends an email mid-conversation."""
+        tagged = "[Email from Marcus Rivera] Q3 Review Deck — Here's the deck we discussed, 15 slides covering revenue, pipeline, and headcount."
+        response = await _ask_with_tagged_comms(tagged)
+
+        assert_concise(response, max_words=35, context="email from caller")
+        assert_no_jargon(response, context="email from caller")
+        assert_contains_any(
+            response,
+            ["email", "deck", "q3", "slides"],
+            context="should mention the email topic",
+        )
+
+    async def test_tagged_comms_no_tag_leakage(self):
+        """The fast brain must never say 'SMS from' or mention the tag format."""
+        tagged = (
+            "[SMS from Marcus Rivera] Can you also book the conference room for 3pm?"
+        )
+        response = await _ask_with_tagged_comms(tagged)
+
+        assert_no_jargon(response, context="tag leakage check")
+        lower = response.lower()
+        assert "[sms" not in lower, f"Tag format leaked: {response}"
+        assert "[email" not in lower, f"Tag format leaked: {response}"
+        assert "[message" not in lower, f"Tag format leaked: {response}"
+
+    async def test_boss_call_tagged_comms_also_works(self):
+        """Tagged comms should work on boss calls too (superset behavior)."""
+        tagged = "[SMS from Sarah Chen] Grabbing coffee, back in 5."
+        response = await _ask_with_tagged_comms(
+            tagged,
+            is_boss=True,
+            prior_turns=[
+                {"role": "user", "content": "I need to step out for a sec."},
+                {"role": "assistant", "content": "No problem, take your time."},
+            ],
+        )
+
+        assert_concise(response, max_words=25, context="boss SMS on boss call")
+        assert_no_jargon(response, context="boss SMS on boss call")

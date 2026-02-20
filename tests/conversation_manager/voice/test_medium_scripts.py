@@ -2025,3 +2025,99 @@ class TestSayMetaTextMatching:
         meta = {"guidance_id": "guid-abc", "source": "slow_brain"}
         result = match_say_meta(meta, "Some text")
         assert result is not None
+
+
+# =============================================================================
+# Participant comms rendering
+# =============================================================================
+
+
+class TestParticipantCommsRendering:
+    """Unit tests for render_participant_comms — verifies tag format and
+    participant-match filtering for comms events on any call."""
+
+    def _make_event_json(self, event):
+        return event.to_json()
+
+    def test_sms_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 5, "first_name": "Marcus", "surname": "Rivera"},
+            content="Running late, be there in 10.",
+        )
+        result = render_participant_comms(event.to_json(), {5})
+        assert result is not None
+        assert result.startswith("[SMS from Marcus Rivera]")
+        assert "Running late" in result
+
+    def test_email_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import EmailReceived
+
+        event = EmailReceived(
+            contact={"contact_id": 3, "first_name": "Sarah", "surname": "Chen"},
+            subject="Updated agenda",
+            body="See attached for the revised agenda.",
+        )
+        result = render_participant_comms(event.to_json(), {3})
+        assert result is not None
+        assert result.startswith("[Email from Sarah Chen]")
+        assert "Updated agenda" in result
+
+    def test_unify_message_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import UnifyMessageReceived
+
+        event = UnifyMessageReceived(
+            contact={"contact_id": 7, "first_name": "Priya", "surname": "Sharma"},
+            content="Check the shared doc.",
+        )
+        result = render_participant_comms(event.to_json(), {7})
+        assert result is not None
+        assert result.startswith("[Message from Priya Sharma]")
+        assert "shared doc" in result
+
+    def test_sms_from_non_participant_returns_none(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 99, "first_name": "Stranger", "surname": "Person"},
+            content="Hello?",
+        )
+        result = render_participant_comms(event.to_json(), {5, 3})
+        assert result is None
+
+    def test_non_comms_event_returns_none(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import ActorNotification
+
+        event = ActorNotification(handle_id=1, response="Searching...")
+        result = render_participant_comms(event.to_json(), {1, 5})
+        assert result is None
+
+    def test_multiple_participants_matched(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 3, "first_name": "Sarah", "surname": "Chen"},
+            content="On my way.",
+        )
+        result = render_participant_comms(event.to_json(), {1, 3, 5})
+        assert result is not None
+        assert "[SMS from Sarah Chen]" in result

@@ -50,6 +50,7 @@ from unity.conversation_manager.medium_scripts.common import (
     start_event_broker_receive,
     UserScreenCaptureManager,
     render_event_for_fast_brain,
+    render_participant_comms,
 )
 
 # Globals initialized lazily or via prewarm to avoid duplicate heavy init
@@ -549,9 +550,36 @@ async def entrypoint(ctx: agents.JobContext):
     event_broker.register_callback("app:call:status", on_status)
     event_broker.register_callback("app:call:call_guidance", on_guidance)
 
-    # When the boss is on the call, register pattern callbacks to inject all
-    # system events into the chat context as [notification] messages.
+    # --- Tier 1: Comms from call participants (all calls) ---
+    # Build the set of contact_ids on this call.
     is_boss_user = contact.get("contact_id") == 1
+    participant_ids: set[int] = set()
+    if contact.get("contact_id") is not None:
+        participant_ids.add(contact["contact_id"])
+
+    def _inject_and_reply(msg: str, reason: str) -> None:
+        """Inject a system message into chat context and trigger a reply."""
+        assistant._chat_ctx.add_message(role="system", content=[msg])
+        session._chat_ctx.add_message(role="system", content=[msg])
+        trigger_generate_reply(reason=reason, source_id="system_event")
+
+    def on_participant_comms(data: dict) -> None:
+        raw = data.get("event") if "event" in data else json.dumps(data)
+        text = render_participant_comms(
+            raw if isinstance(raw, str) else json.dumps(raw),
+            participant_ids,
+        )
+        if not text:
+            return
+        print(f"[ParticipantComms] {text[:80]}")
+        touch_activity()
+        if not session_ready:
+            return
+        _inject_and_reply(text, reason="participant_comms")
+
+    event_broker.register_callback("app:comms:*", on_participant_comms)
+
+    # --- Tier 2: All other system events (boss calls only) ---
     if is_boss_user:
 
         def on_system_event(data: dict) -> None:
@@ -565,21 +593,8 @@ async def entrypoint(ctx: agents.JobContext):
             touch_activity()
             if not session_ready:
                 return
-            notification_msg = f"[notification] {text}"
-            assistant._chat_ctx.add_message(
-                role="system",
-                content=[notification_msg],
-            )
-            session._chat_ctx.add_message(
-                role="system",
-                content=[notification_msg],
-            )
-            trigger_generate_reply(
-                reason="boss_event",
-                source_id="system_event",
-            )
+            _inject_and_reply(f"[notification] {text}", reason="boss_event")
 
-        event_broker.register_callback("app:comms:*", on_system_event)
         event_broker.register_callback("app:actor:*", on_system_event)
         event_broker.register_callback("app:managers:output", on_system_event)
         event_broker.register_callback("app:logging:message_logged", on_system_event)
