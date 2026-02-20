@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import json
-import logging
 import sys
 from secrets import token_hex
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, Optional
@@ -46,15 +45,9 @@ from unity.conversation_manager.tracing import (
 from unity.session_details import SESSION_DETAILS
 from unity.logger import LOGGER
 
-logger = logging.getLogger(__name__)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # FastBrainLogger — mirrors the async tool loop's LoopLogger format so all
 # terminal output uses a consistent  ``{emoji} [{label}] {message}``  style.
-#
-# The fast brain runs in a subprocess without access to the parent's LOGGER,
-# so we print() directly to stdout (which the parent inherits).
 # ─────────────────────────────────────────────────────────────────────────────
 
 FB_ICONS = {
@@ -97,11 +90,10 @@ FB_ICONS = {
 
 
 class FastBrainLogger:
-    """Lightweight logger that prints in the same format as the async tool loop.
+    """Lightweight logger using the same ``{emoji} [{label}] {message}`` format
+    as the async tool loop's ``LoopLogger``.
 
-    Format:  ``{emoji} [{label}] {message}``
-
-    Where *label* is ``FastBrain({suffix})`` (or ``FastBrain.STS({suffix})``
+    *label* is ``FastBrain({suffix})`` (or ``FastBrain.STS({suffix})``
     for speech-to-speech mode), matching the ``LoopConfig`` label convention.
     """
 
@@ -115,7 +107,7 @@ class FastBrainLogger:
         return self._label
 
     def _emit(self, icon: str, msg: str) -> None:
-        print(f"{icon} [{self._label}] {msg}", flush=True)
+        LOGGER.info(f"{icon} [{self._label}] {msg}")
 
     # ── typed helpers ────────────────────────────────────────────────────
 
