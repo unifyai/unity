@@ -4,9 +4,13 @@ import { strict as assert } from "node:assert";
  * Specification tests for the isAgentReady Express middleware.
  *
  * The middleware guards all agent-service endpoints. These tests verify
- * the contract, including the single-session fallback added to support
+ * the contract, including the desktop-session fallback that supports
  * callers (ConversationManager screenshot capture) that don't have
  * access to the MagnitudeBackend session management.
+ *
+ * Desktop mode is singleton (one physical display, one session). When
+ * no sessionId is provided, the middleware resolves to the desktop
+ * session. Web-mode callers must always provide an explicit sessionId.
  *
  * To ensure the tests regress when the production middleware changes,
  * we extract the middleware logic from a fresh require of the source
@@ -35,6 +39,11 @@ interface FakeRes {
   json(data: any): void;
 }
 
+interface SessionInfo {
+  mode: "web" | "desktop";
+  lastAccessed: Date;
+}
+
 function fakeRes(): FakeRes {
   const res: FakeRes = {
     _status: 200,
@@ -49,16 +58,18 @@ function fakeRes(): FakeRes {
  * Build an isAgentReady function that mirrors the production middleware.
  */
 function buildMiddleware(
-  activeSessions: Map<string, { lastAccessed: Date }>,
+  activeSessions: Map<string, SessionInfo>,
 ) {
   return function isAgentReady(req: FakeReq, res: FakeRes): { passed: boolean } {
     let sessionId = req.body.sessionId;
     if (!sessionId) {
-      if (activeSessions.size === 1) {
-        sessionId = activeSessions.keys().next().value;
+      const desktopEntry = [...activeSessions.entries()]
+        .find(([, s]) => s.mode === "desktop");
+      if (desktopEntry) {
+        sessionId = desktopEntry[0];
         req.body.sessionId = sessionId;
       } else {
-        res.status(400).json({ error: "bad_request", message: "sessionId is required (multiple sessions active)." });
+        res.status(400).json({ error: "no_desktop_session", message: "No active desktop session. Call /start with mode=desktop first." });
         return { passed: false };
       }
     }
@@ -73,11 +84,11 @@ function buildMiddleware(
 }
 
 // -------------------------------------------------------------------
-// Fixed behaviour tests (current production middleware)
+// Desktop-session fallback tests
 // -------------------------------------------------------------------
 
 run("rejects when no sessionId and no active sessions", () => {
-  const sessions = new Map<string, { lastAccessed: Date }>();
+  const sessions = new Map<string, SessionInfo>();
   const mw = buildMiddleware(sessions);
   const req: FakeReq = { body: {} };
   const res = fakeRes();
@@ -85,13 +96,13 @@ run("rejects when no sessionId and no active sessions", () => {
 
   assert.strictEqual(result.passed, false);
   assert.strictEqual(res._status, 400);
-  assert.ok(res._json.message.includes("sessionId is required"));
+  assert.strictEqual(res._json.error, "no_desktop_session");
 });
 
-run("rejects when no sessionId and multiple active sessions", () => {
-  const sessions = new Map<string, { lastAccessed: Date }>();
-  sessions.set("session-a", { lastAccessed: new Date() });
-  sessions.set("session-b", { lastAccessed: new Date() });
+run("rejects when no sessionId and only web sessions exist", () => {
+  const sessions = new Map<string, SessionInfo>();
+  sessions.set("web-a", { mode: "web", lastAccessed: new Date() });
+  sessions.set("web-b", { mode: "web", lastAccessed: new Date() });
   const mw = buildMiddleware(sessions);
   const req: FakeReq = { body: {} };
   const res = fakeRes();
@@ -99,24 +110,43 @@ run("rejects when no sessionId and multiple active sessions", () => {
 
   assert.strictEqual(result.passed, false);
   assert.strictEqual(res._status, 400);
+  assert.strictEqual(res._json.error, "no_desktop_session");
 });
 
-run("falls back to single active session when no sessionId provided", () => {
-  const sessions = new Map<string, { lastAccessed: Date }>();
-  sessions.set("only-session", { lastAccessed: new Date() });
+run("falls back to desktop session when no sessionId provided", () => {
+  const sessions = new Map<string, SessionInfo>();
+  sessions.set("desktop-1", { mode: "desktop", lastAccessed: new Date() });
   const mw = buildMiddleware(sessions);
   const req: FakeReq = { body: {} };
   const res = fakeRes();
   const result = mw(req, res);
 
   assert.strictEqual(result.passed, true);
-  assert.strictEqual(req.body.sessionId, "only-session");
+  assert.strictEqual(req.body.sessionId, "desktop-1");
 });
 
+run("falls back to desktop session even when web sessions also exist", () => {
+  const sessions = new Map<string, SessionInfo>();
+  sessions.set("web-1", { mode: "web", lastAccessed: new Date() });
+  sessions.set("desktop-1", { mode: "desktop", lastAccessed: new Date() });
+  sessions.set("web-2", { mode: "web", lastAccessed: new Date() });
+  const mw = buildMiddleware(sessions);
+  const req: FakeReq = { body: {} };
+  const res = fakeRes();
+  const result = mw(req, res);
+
+  assert.strictEqual(result.passed, true);
+  assert.strictEqual(req.body.sessionId, "desktop-1");
+});
+
+// -------------------------------------------------------------------
+// Explicit sessionId tests
+// -------------------------------------------------------------------
+
 run("passes with explicit valid sessionId", () => {
-  const sessions = new Map<string, { lastAccessed: Date }>();
-  sessions.set("my-session", { lastAccessed: new Date() });
-  sessions.set("other-session", { lastAccessed: new Date() });
+  const sessions = new Map<string, SessionInfo>();
+  sessions.set("my-session", { mode: "web", lastAccessed: new Date() });
+  sessions.set("other-session", { mode: "web", lastAccessed: new Date() });
   const mw = buildMiddleware(sessions);
   const req: FakeReq = { body: { sessionId: "my-session" } };
   const res = fakeRes();
@@ -126,8 +156,8 @@ run("passes with explicit valid sessionId", () => {
 });
 
 run("returns 404 for non-existent sessionId", () => {
-  const sessions = new Map<string, { lastAccessed: Date }>();
-  sessions.set("real-session", { lastAccessed: new Date() });
+  const sessions = new Map<string, SessionInfo>();
+  sessions.set("real-session", { mode: "desktop", lastAccessed: new Date() });
   const mw = buildMiddleware(sessions);
   const req: FakeReq = { body: { sessionId: "ghost-session" } };
   const res = fakeRes();
@@ -140,8 +170,8 @@ run("returns 404 for non-existent sessionId", () => {
 
 run("updates lastAccessed on successful lookup", () => {
   const old = new Date(2020, 0, 1);
-  const sessions = new Map<string, { lastAccessed: Date }>();
-  sessions.set("sess", { lastAccessed: old });
+  const sessions = new Map<string, SessionInfo>();
+  sessions.set("sess", { mode: "desktop", lastAccessed: old });
   const mw = buildMiddleware(sessions);
   const req: FakeReq = { body: { sessionId: "sess" } };
   const res = fakeRes();

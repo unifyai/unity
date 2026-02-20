@@ -484,14 +484,15 @@ app.listen(port, () => {
 const isAgentReady = (req: Request, res: Response, next: Function) => {
   let sessionId = req.body.sessionId;
   if (!sessionId) {
-    // Fall back to the single active session when no sessionId is provided.
-    // This supports callers (e.g. ConversationManager screenshot capture) that
-    // don't have access to the MagnitudeBackend session management.
-    if (activeSessions.size === 1) {
-      sessionId = activeSessions.keys().next().value;
+    // Desktop mode is singleton (one physical display, one session).
+    // Callers that omit sessionId are targeting the desktop.
+    const desktopEntry = [...activeSessions.entries()]
+      .find(([, s]) => s.mode === "desktop");
+    if (desktopEntry) {
+      sessionId = desktopEntry[0];
       req.body.sessionId = sessionId;
     } else {
-      return res.status(400).json({ error: 'bad_request', message: 'sessionId is required (multiple sessions active).' });
+      return res.status(400).json({ error: 'no_desktop_session', message: 'No active desktop session. Call /start with mode=desktop first.' });
     }
   }
   const session = activeSessions.get(sessionId);
@@ -591,6 +592,20 @@ app.post('/start', async (req: Request, res: Response) => {
       message:
         'Mode is required and must be either "desktop" or "web".',
     });
+  }
+
+  // Desktop mode is singleton -- one physical display, one session.
+  // Close any existing desktop session before creating a new one.
+  if (mode === "desktop") {
+    for (const [existingId, existing] of activeSessions.entries()) {
+      if (existing.mode === "desktop") {
+        console.log(`Replacing existing desktop session: ${existingId}`);
+        existing.agent.stop().catch(err =>
+          console.error(`Error stopping old desktop session: ${err}`)
+        );
+        activeSessions.delete(existingId);
+      }
+    }
   }
 
   const sessionId = randomUUID();
