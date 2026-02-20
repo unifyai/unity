@@ -54,7 +54,7 @@ def test_user_field_injected():
     test_user_name = "TestUserName"
 
     with patch(
-        "unity.common.log_utils._get_user_name",
+        "unity.common.log_utils._get_user_context",
         return_value=test_user_name,
     ):
         fm = FunctionManager()
@@ -81,7 +81,7 @@ def test_assistant_field_injected():
     test_assistant_name = "TestAssistantName"
 
     with patch(
-        "unity.common.log_utils._get_assistant_name",
+        "unity.common.log_utils._get_assistant_context",
         return_value=test_assistant_name,
     ):
         fm = FunctionManager()
@@ -183,7 +183,7 @@ def test_private_fields_excluded_from_list_functions():
     test_assistant_name = "HiddenAssistant"
 
     with patch(
-        "unity.common.log_utils._get_assistant_name",
+        "unity.common.log_utils._get_assistant_context",
         return_value=test_assistant_name,
     ):
         fm = FunctionManager()

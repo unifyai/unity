@@ -752,14 +752,14 @@ class TestCLIArgumentParsing:
             },
         )
 
-        # Simulate CLI args: script.py dev assistant_number VOICE_PROVIDER VOICE_ID OUTBOUND CHANNEL CONTACT BOSS ASSISTANT_BIO ASSISTANT_ID USER_ID
+        # argv[2] is the canonical room name from make_room_name() in call_manager
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "12345",
+                "unity_test_assistant_id_phone",
                 "elevenlabs",
                 "voice123",
                 "True",
@@ -772,7 +772,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        livekit_agent_name, room_name = common.configure_from_cli(
+        room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -782,20 +782,14 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        assert livekit_agent_name == "unity_12345"
-        assert room_name == "unity_12345"
+        assert room_name == "unity_test_assistant_id_phone"
         assert SESSION_DETAILS.voice.provider == "elevenlabs"
         assert SESSION_DETAILS.voice.id == "voice123"
         assert SESSION_DETAILS.voice_call.outbound is True
         assert SESSION_DETAILS.voice_call.channel == "phone"
 
-    def test_configure_from_cli_livekit_agent_name_with_room(self, monkeypatch):
-        """configure_from_cli handles livekit_agent_name:room_name format for UnifyMeet calls.
-
-        For UnifyMeet, the caller (LivekitCallManager.start_unify_meet) passes
-        "livekit_agent_name:room_name" where both are already prefixed with "unity_".
-        The function splits on ":" and returns the two parts.
-        """
+    def test_configure_from_cli_meet_room_name(self, monkeypatch):
+        """configure_from_cli returns the canonical room name for UnifyMeet calls."""
         from unity.conversation_manager.medium_scripts import common
         from unity.session_details import SESSION_DETAILS
 
@@ -804,15 +798,15 @@ class TestCLIArgumentParsing:
         contact_json = json.dumps({"contact_id": 1, "first_name": "Test"})
         boss_json = json.dumps({"contact_id": 1, "first_name": "Boss"})
 
-        # Simulate UnifyMeet call with colon-separated livekit_agent_name:room_name
-        # (This matches what LivekitCallManager.start_unify_meet passes)
+        # Simulate UnifyMeet call — argv[2] is the canonical room name
+        # (same as phone calls; agent_name = room_name for all mediums)
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "unity_assistant_web:unity_assistant_web",  # Already prefixed by caller
+                "unity_25_meet",
                 "cartesia",
                 "voice456",
                 "False",
@@ -825,7 +819,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        livekit_agent_name, room_name = common.configure_from_cli(
+        room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -835,10 +829,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        # Colon triggers the split: "unity_assistant_web:unity_assistant_web"
-        # becomes livekit_agent_name="unity_assistant_web", room_name="unity_assistant_web"
-        assert livekit_agent_name == "unity_assistant_web"
-        assert room_name == "unity_assistant_web"
+        assert room_name == "unity_25_meet"
 
     def test_configure_from_cli_defaults_none_voice_provider(self, monkeypatch):
         """configure_from_cli defaults 'None' voice provider to cartesia."""
@@ -1062,12 +1053,13 @@ class TestInactivityTimeout:
 class TestFastBrainGuidanceFlow:
     """Coverage for guidance delivery in the TTS fast brain path."""
 
-    async def test_notify_only_guidance_injected_without_triggering_speech(
+    async def test_notify_only_guidance_triggers_reply_but_not_speech(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=False injects into chat context but does
-        NOT trigger session.say() or generate_reply()."""
+        """Guidance with should_speak=False injects into chat context and
+        triggers generate_reply() (so the LLM can decide whether to respond)
+        but does NOT trigger session.say()."""
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
 
@@ -1233,13 +1225,14 @@ class TestFastBrainGuidanceFlow:
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
 
-        # Neither say() nor generate_reply() should have been triggered
+        # say() must NOT fire (the articulator decided not to speak), but
+        # generate_reply() SHOULD fire so the LLM gets a chance to react.
         assert (
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say()."
         assert (
-            session.generate_reply_calls == baseline_reply_calls
-        ), "Notify-only guidance must NOT trigger generate_reply()."
+            session.generate_reply_calls > baseline_reply_calls
+        ), "Notify-only guidance must trigger generate_reply()."
 
     async def test_should_speak_guidance_not_injected_into_chat_ctx(
         self,
@@ -1399,7 +1392,11 @@ class TestFastBrainGuidanceFlow:
         session = fake_session_holder["session"]
         assistant = session.current_agent
 
-        # Send should_speak=True guidance
+        # User is speaking — guidance will be queued but not spoken yet
+        state_cb = session._events["user_state_changed"]
+        state_cb(SimpleNamespace(new_state="speaking"))
+
+        # Send should_speak=True guidance while user is speaking
         guidance_cb = fake_broker.callbacks["app:call:call_guidance"]
         guidance_cb(
             {
@@ -1411,7 +1408,10 @@ class TestFastBrainGuidanceFlow:
             },
         )
 
-        # The notification must NOT be in chat_ctx — session.say() handles delivery
+        # The notification must NOT be in chat_ctx yet — it should be deferred
+        # until maybe_speak_queued() fires (when the agent is idle).
+        # If injected eagerly, the fast brain sees it during generate_reply
+        # and paraphrases it before session.say() plays — double delivery.
         session_texts = [
             item.text_content or ""
             for item in session._chat_ctx.items
@@ -1419,13 +1419,39 @@ class TestFastBrainGuidanceFlow:
         ]
         has_notification = any("No contact named Bob" in txt for txt in session_texts)
         assert not has_notification, (
-            f"should_speak=True guidance injected a [notification] into chat_ctx.\n"
-            f"This causes double-delivery: the fast brain paraphrases the "
-            f"notification in generate_reply, then session.say() speaks it again.\n"
+            f"should_speak=True guidance injected a [notification] into chat_ctx "
+            f"while speech is still queued (user speaking). The notification must "
+            f"be deferred until maybe_speak_queued() fires.\n"
             f"Chat context messages: {session_texts}"
         )
 
-        # The speech SHOULD be queued
+        # Speech should NOT have fired yet (user is speaking)
+        assert (
+            len(session.say_calls) == 0
+        ), "Queued speech must not fire while user is speaking."
+
+        # User stops, agent settles → maybe_speak_queued fires
+        state_cb(SimpleNamespace(new_state="listening"))
+        session.agent_state = "listening"
+        agent_state_cb = session._events["agent_state_changed"]
+        agent_state_cb(SimpleNamespace(new_state="listening"))
+
+        # NOW the notification should be in chat_ctx (injected at speech time)
+        session_texts_after = [
+            item.text_content or ""
+            for item in session._chat_ctx.items
+            if getattr(item, "type", None) == "message"
+        ]
+        has_notification_after = any(
+            "No contact named Bob" in txt for txt in session_texts_after
+        )
+        assert has_notification_after, (
+            "After session.say() fires, the notification should be in chat_ctx "
+            "so the fast brain's history shows the correct pattern: "
+            "notification → assistant response."
+        )
+
+        # The speech SHOULD have fired
         assert (
             len(session.say_calls) == 1
         ), "should_speak=True guidance must queue speech via session.say()."
@@ -1999,3 +2025,99 @@ class TestSayMetaTextMatching:
         meta = {"guidance_id": "guid-abc", "source": "slow_brain"}
         result = match_say_meta(meta, "Some text")
         assert result is not None
+
+
+# =============================================================================
+# Participant comms rendering
+# =============================================================================
+
+
+class TestParticipantCommsRendering:
+    """Unit tests for render_participant_comms — verifies tag format and
+    participant-match filtering for comms events on any call."""
+
+    def _make_event_json(self, event):
+        return event.to_json()
+
+    def test_sms_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 5, "first_name": "Marcus", "surname": "Rivera"},
+            content="Running late, be there in 10.",
+        )
+        result = render_participant_comms(event.to_json(), {5})
+        assert result is not None
+        assert result.startswith("[SMS from Marcus Rivera]")
+        assert "Running late" in result
+
+    def test_email_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import EmailReceived
+
+        event = EmailReceived(
+            contact={"contact_id": 3, "first_name": "Sarah", "surname": "Chen"},
+            subject="Updated agenda",
+            body="See attached for the revised agenda.",
+        )
+        result = render_participant_comms(event.to_json(), {3})
+        assert result is not None
+        assert result.startswith("[Email from Sarah Chen]")
+        assert "Updated agenda" in result
+
+    def test_unify_message_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import UnifyMessageReceived
+
+        event = UnifyMessageReceived(
+            contact={"contact_id": 7, "first_name": "Priya", "surname": "Sharma"},
+            content="Check the shared doc.",
+        )
+        result = render_participant_comms(event.to_json(), {7})
+        assert result is not None
+        assert result.startswith("[Message from Priya Sharma]")
+        assert "shared doc" in result
+
+    def test_sms_from_non_participant_returns_none(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 99, "first_name": "Stranger", "surname": "Person"},
+            content="Hello?",
+        )
+        result = render_participant_comms(event.to_json(), {5, 3})
+        assert result is None
+
+    def test_non_comms_event_returns_none(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import ActorNotification
+
+        event = ActorNotification(handle_id=1, response="Searching...")
+        result = render_participant_comms(event.to_json(), {1, 5})
+        assert result is None
+
+    def test_multiple_participants_matched(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 3, "first_name": "Sarah", "surname": "Chen"},
+            content="On my way.",
+        )
+        result = render_participant_comms(event.to_json(), {1, 3, 5})
+        assert result is not None
+        assert "[SMS from Sarah Chen]" in result

@@ -17,22 +17,22 @@ from unity.session_details import DEFAULT_USER_CONTEXT
 
 def test_derive_all_contexts_production_simple():
     """Production context should derive standard aggregation contexts."""
-    context = "JohnDoe/MyAssistant/Contacts"
+    context = "42/7/Contacts"
     result = _derive_all_contexts(context)
 
     assert result == [
-        "JohnDoe/All/Contacts",
+        "42/All/Contacts",
         "All/Contacts",
     ]
 
 
 def test_derive_all_contexts_production_nested_suffix():
     """Production context with nested suffix should work correctly."""
-    context = "JohnDoe/MyAssistant/Knowledge/Sales"
+    context = "42/7/Knowledge/Sales"
     result = _derive_all_contexts(context)
 
     assert result == [
-        "JohnDoe/All/Knowledge/Sales",
+        "42/All/Knowledge/Sales",
         "All/Knowledge/Sales",
     ]
 
@@ -40,7 +40,7 @@ def test_derive_all_contexts_production_nested_suffix():
 def test_derive_all_contexts_too_few_parts():
     """Contexts with fewer than 3 parts should return empty list."""
     assert _derive_all_contexts("Contacts") == []
-    assert _derive_all_contexts("JohnDoe/Contacts") == []
+    assert _derive_all_contexts("42/Contacts") == []
 
 
 # =============================================================================
@@ -82,12 +82,11 @@ def test_derive_all_contexts_test_nested_suffix():
 
 
 def test_derive_all_contexts_test_without_default_user():
-    """Test context without DefaultUser marker should return empty list."""
-    # This shouldn't happen with @_handle_project, but test the fallback
-    context = "tests/foo/SomeUser/Assistant/Contacts"
+    """Test context without default user ID marker should return empty list."""
+    context = "tests/foo/some-other-user/Assistant/Contacts"
     result = _derive_all_contexts(context)
 
-    # SomeUser is not the DEFAULT_USER_CONTEXT marker, so can't determine structure
+    # "some-other-user" is not the DEFAULT_USER_CONTEXT marker, so can't determine structure
     assert result == []
 
 
@@ -108,21 +107,18 @@ def test_derive_all_contexts_test_insufficient_parts_after_user():
 
 def test_production_context_structure():
     """Verify production context hierarchy structure."""
-    user = "JohnDoe"
-    assistant = "MyAssistant"
+    user_id = "42"
+    assistant_id = "7"
     manager_ctx = "Contacts"
 
-    # The full context path
-    full_ctx = f"{user}/{assistant}/{manager_ctx}"
+    full_ctx = f"{user_id}/{assistant_id}/{manager_ctx}"
 
-    # Derived aggregation contexts
     aggregation = _derive_all_contexts(full_ctx)
 
-    # Should have exactly 2 aggregation contexts
     assert len(aggregation) == 2
 
     # User-level: all assistants for this user
-    assert aggregation[0] == f"{user}/All/{manager_ctx}"
+    assert aggregation[0] == f"{user_id}/All/{manager_ctx}"
 
     # Global: all users
     assert aggregation[1] == f"All/{manager_ctx}"

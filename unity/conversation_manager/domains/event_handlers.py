@@ -137,7 +137,6 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
             await cm.call_manager.start_unify_meet(
                 contact,
                 boss,
-                e.livekit_agent_name,
                 e.room_name,
             )
             message_content = "<Recieving Call...>"
@@ -202,6 +201,21 @@ async def _(
     )
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
+
+    # Sync meet interaction state that may have been set before the call started.
+    # The fast brain starts with all flags as False and relies on guidance delivery,
+    # so any state that was already active needs to be pushed now.
+    if cm.assistant_screen_share_active and cm.call_manager._socket_server:
+        guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
+        guidance_event = CallGuidance(
+            contact=contact,
+            content=guidance_text,
+            source="meet_interaction",
+        )
+        await cm.call_manager._socket_server.queue_for_clients(
+            "app:call:call_guidance",
+            guidance_event.to_json(),
+        )
 
     # No LLM run here — call guidance is pre-computed via make_call(context=...).
     # The slow brain will be woken later by:
@@ -328,14 +342,10 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     await cm.schedule_proactive_speech()
 
     if role == "user":
-        # Link any pending user screenshot to this message by stamping it
-        # with the local_message_id, then pass the same id to the assistant
-        # screenshot capture so both can be matched back deterministically.
+        # Link any pending screenshot to this message by stamping it
+        # with the local_message_id.  Screenshot capture (both user and
+        # assistant) is handled by the fast brain and forwarded via IPC.
         cm._claim_pending_user_screenshot(message_id)
-        if cm.assistant_screen_share_active:
-            asyncio.create_task(
-                cm.capture_assistant_screenshot(event.content, message_id),
-            )
 
         await cm.interject_or_run(event.content)
 
@@ -965,9 +975,9 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     Unlike ``ActorResponse``, notifications arrive while the actor is still
     working.  Progress is recorded in the action's history.
 
-    In voice mode, the notification is forwarded directly to the articulator
-    for an immediate voice-UX decision, bypassing the slow-brain's
-    call_guidance gate.
+    The slow brain is woken to decide whether to relay progress via
+    ``call_guidance``.  On boss-on-call, the fast brain also receives the
+    raw event directly via channel forwarding.
     """
     if event.handle_id in cm.in_flight_actions:
         from unity.common.prompt_helpers import now as prompt_now
@@ -980,9 +990,6 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
             },
         )
     await cm.request_llm_run()
-
-    if cm.mode.is_voice and event.response:
-        asyncio.create_task(cm._articulate_and_publish_notification(event.response))
 
 
 @EventHandler.register(SyncContacts)
@@ -1048,6 +1055,8 @@ _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
     UserScreenShareStarted: "The user started sharing their screen with you.",
     UserScreenShareStopped: "The user stopped sharing their screen.",
+    UserWebcamStarted: "The user enabled their webcam — you can now see them.",
+    UserWebcamStopped: "The user disabled their webcam.",
     UserRemoteControlStarted: "The user took remote control of your desktop — they now have mouse and keyboard control.",
     UserRemoteControlStopped: "The user released remote control of your desktop — you may resume computer actions.",
 }
@@ -1073,6 +1082,13 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
         "details. Do NOT guess or fabricate what is on their screen."
     ),
     UserScreenShareStopped: ("The user stopped sharing their screen."),
+    UserWebcamStarted: (
+        "The user enabled their webcam. Visual context is being captured "
+        "in the background. If they reference their appearance or something "
+        "visible on camera, acknowledge naturally and wait for the processed "
+        "details. Do NOT guess or fabricate what you see."
+    ),
+    UserWebcamStopped: ("The user disabled their webcam."),
     UserRemoteControlStarted: (
         "The user now has remote control of your desktop. Do not perform "
         "any computer actions — wait for them to release control."
@@ -1088,6 +1104,8 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
     AssistantScreenShareStopped: ("assistant_screen_share_active", False),
     UserScreenShareStarted: ("user_screen_share_active", True),
     UserScreenShareStopped: ("user_screen_share_active", False),
+    UserWebcamStarted: ("user_webcam_active", True),
+    UserWebcamStopped: ("user_webcam_active", False),
     UserRemoteControlStarted: ("user_remote_control_active", True),
     UserRemoteControlStopped: ("user_remote_control_active", False),
 }
@@ -1099,6 +1117,8 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
         AssistantScreenShareStopped,
         UserScreenShareStarted,
         UserScreenShareStopped,
+        UserWebcamStarted,
+        UserWebcamStopped,
         UserRemoteControlStarted,
         UserRemoteControlStopped,
     ),
@@ -1109,6 +1129,8 @@ async def _(
         | AssistantScreenShareStopped
         | UserScreenShareStarted
         | UserScreenShareStopped
+        | UserWebcamStarted
+        | UserWebcamStopped
         | UserRemoteControlStarted
         | UserRemoteControlStopped
     ),
@@ -1151,6 +1173,19 @@ async def _(
                 "app:call:call_guidance",
                 guidance_event.to_json(),
             )
+
+    # Eagerly initialize the MagnitudeBackend when screen sharing starts so
+    # the agent-service has an active session for fast brain screenshot capture.
+    if isinstance(event, AssistantScreenShareStarted):
+        try:
+            from unity.function_manager.primitives.runtime import ComputerPrimitives
+            from unity.manager_registry import ManagerRegistry
+
+            cp = ManagerRegistry.get_instance(ComputerPrimitives)
+            if cp is not None:
+                _ = cp.backend
+        except Exception:
+            pass
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.

@@ -189,11 +189,10 @@ class TestBrainSpecStateMessage:
         assert "Assistant's Screen" in labels[0]
         assert "User's Screen" in labels[1]
 
-        # Header mentions both sources
+        # Header mentions multiple sources
         header_texts = [t for t in text_parts if "screen_share_snapshots" in t]
         assert len(header_texts) == 1
-        assert "your desktop" in header_texts[0]
-        assert "user's screen" in header_texts[0]
+        assert "multiple visual sources" in header_texts[0]
 
     def test_user_only_header(self):
         """When all screenshots are user-sourced, the header references the user's screen."""
@@ -209,6 +208,53 @@ class TestBrainSpecStateMessage:
         assert len(header_texts) == 1
         assert "user's screen" in header_texts[0]
         assert "your desktop" not in header_texts[0]
+
+    def test_webcam_only_header(self):
+        """When all frames are webcam-sourced, the header references the webcam."""
+        ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Can you see me?", ts, "webcam"),
+        ]
+        msg = _make_brain_spec(screenshots=screenshots).state_message()
+
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
+        header_texts = [t for t in text_parts if "screen_share_snapshots" in t]
+        assert len(header_texts) == 1
+        assert "webcam" in header_texts[0]
+
+    def test_webcam_screenshot_label(self):
+        """Webcam-sourced screenshots are labelled 'User's Webcam'."""
+        ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Can you see me?", ts, "webcam"),
+        ]
+        msg = _make_brain_spec(screenshots=screenshots).state_message()
+
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
+        labels = [t for t in text_parts if "Screenshot" in t and "User said" in t]
+        assert len(labels) == 1
+        assert "User's Webcam" in labels[0]
+
+    def test_three_sources_header(self):
+        """Three concurrent sources (assistant, user, webcam) produce a multi-source header."""
+        ts = datetime(2026, 2, 13, 12, 0, 0, tzinfo=timezone.utc)
+        screenshots = [
+            ScreenshotEntry(FAKE_B64, "Check my screen", ts, "assistant"),
+            ScreenshotEntry(FAKE_B64, "Here's my screen", ts, "user"),
+            ScreenshotEntry(FAKE_B64, "Can you see me?", ts, "webcam"),
+        ]
+        msg = _make_brain_spec(screenshots=screenshots).state_message()
+
+        text_parts = [p["text"] for p in msg["content"] if p.get("type") == "text"]
+        labels = [t for t in text_parts if "Screenshot" in t and "User said" in t]
+        assert len(labels) == 3
+        assert "Assistant's Screen" in labels[0]
+        assert "User's Screen" in labels[1]
+        assert "User's Webcam" in labels[2]
+
+        header_texts = [t for t in text_parts if "screen_share_snapshots" in t]
+        assert len(header_texts) == 1
+        assert "multiple visual sources" in header_texts[0]
 
 
 class TestScreenshotEntryLocalMessageId:

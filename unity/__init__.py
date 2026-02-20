@@ -175,8 +175,7 @@ def init(
         # No assistants returned or explicitly passed (offline)
         SESSION_DETAILS.assistant_record = default_assistant
 
-    # 2. Set the Unify context name using computed properties from SESSION_DETAILS
-    # Context is now UserName/AssistantName (e.g., "JohnDoe/MyAssistant")
+    # 2. Set the Unify context using user_id/assistant_id (e.g., "42/7")
     full_ctx = f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
 
     # Idempotent context setup: tolerate concurrent creation from parallel processes
@@ -219,8 +218,8 @@ def ensure_initialised(
 
     If both read and write contexts are already configured, this is a no-op.
     Otherwise, it calls :pyfunc:`init` to select an assistant and set a
-    consistent context (e.g. "{UserName}/{AssistantName}") before any manager
-    constructs its own sub-context (like "{UserName}/{AssistantName}/Contacts").
+    consistent context (e.g. "{user_id}/{assistant_id}") before any manager
+    constructs its own sub-context (like "{user_id}/{assistant_id}/Contacts").
     """
     try:
         ctxs = unify.get_active_context()

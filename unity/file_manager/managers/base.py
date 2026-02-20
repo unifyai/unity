@@ -9,6 +9,11 @@ from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from unity.common.state_managers import BaseStateManager
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from PIL import Image
+    from openpyxl.worksheet.worksheet import Worksheet
+
     from unity.file_manager.types.ingest import IngestPipelineResult
 
 
@@ -1723,6 +1728,58 @@ class BaseFileManager(BaseStateManager):
 
         - WRONG: Using sync for initial ingestion
           CORRECT: Use ingest_files for new files; sync is for updates only
+        """
+
+    # ------------------------------------------------------------------ #
+    # Rendering                                                           #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def render_excel_sheet(
+        self,
+        sheet: "Worksheet",
+        cell_range: str | None = None,
+        scale: float = 1.0,
+    ) -> "Image.Image":
+        """Render an Excel sheet range as a PIL Image.
+
+        Parameters
+        ----------
+        sheet : openpyxl Worksheet
+            The worksheet instance to render.
+        cell_range : str, optional
+            Range like ``"A1:J20"``. When omitted the full used range
+            (including charts and images) is rendered.
+        scale : float, default 1.0
+            Scale factor for the output image.
+
+        Returns
+        -------
+        PIL.Image.Image
+            The rendered sheet as an image.
+        """
+
+    @abstractmethod
+    def render_pdf(
+        self,
+        source: "str | Path",
+        page: int = 0,
+        dpi: int = 150,
+    ) -> "Image.Image":
+        """Render a PDF page as a PIL Image.
+
+        Parameters
+        ----------
+        source : str or Path
+            Path to the PDF file, or a ``pymupdf.Document`` object.
+        page : int, default 0
+            Zero-indexed page number to render.
+        dpi : int, default 150
+            Resolution for the output image.
+
+        Returns
+        -------
+        PIL.Image.Image
+            The rendered PDF page as an image.
         """
 
 

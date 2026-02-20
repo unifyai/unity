@@ -107,25 +107,22 @@ class TestCallEventSocketServer:
         await server.stop()
 
     @pytest.mark.asyncio
-    async def test_on_event_routes_user_screenshot_to_callback(
+    async def test_on_event_routes_screenshot_to_callback(
         self,
         mock_event_broker,
     ):
-        """on_event intercepts user_screen_screenshot and routes it to a
+        """on_event intercepts screenshot events and routes them to a
         dedicated callback, while forwarding other events to the broker."""
         import json
 
         screenshot_received = []
 
-        def on_user_screenshot(event_json):
+        def on_screenshot(event_json):
             screenshot_received.append(event_json)
 
         async def on_ipc_event(channel, event_json):
-            if (
-                channel == "app:comms:user_screen_screenshot"
-                and on_user_screenshot is not None
-            ):
-                on_user_screenshot(event_json)
+            if channel == "app:comms:screenshot" and on_screenshot is not None:
+                on_screenshot(event_json)
             else:
                 await mock_event_broker.publish(channel, event_json)
 
@@ -143,10 +140,12 @@ class TestCallEventSocketServer:
                 "b64": "iVBORw0KGgoAAAANSUhEUg==",
                 "utterance": "Look here",
                 "timestamp": "2026-02-15T12:00:00+00:00",
+                "source": "user",
+                "filepath": "Screenshots/User/2026-02-15T12-00-00.000000.jpg",
             },
         )
         await client.send_event(
-            "app:comms:user_screen_screenshot",
+            "app:comms:screenshot",
             screenshot_payload,
         )
         await _wait_for_condition(lambda: len(screenshot_received) >= 1)

@@ -113,6 +113,32 @@ class CallEventSocketServer:
         """Return the socket path, or None if not started."""
         return self._socket_path
 
+    async def set_forward_channels(self, channels: list[str]) -> None:
+        """Update the forwarded channel patterns, restarting the subscription if running."""
+        if channels == self._forward_channels:
+            return
+        self._forward_channels = channels
+        if not self._running:
+            return
+        # Restart the forward subscription with the new patterns.
+        if self._forward_task and not self._forward_task.done():
+            self._forward_task.cancel()
+            try:
+                await self._forward_task
+            except asyncio.CancelledError:
+                pass
+        self._forward_ready.clear()
+        if self._forward_channels:
+            self._forward_task = asyncio.create_task(self._forward_events_to_clients())
+            await self._forward_ready.wait()
+        _log.info(
+            "[CallEventSocketServer] Forward channels updated to %s",
+            self._forward_channels,
+        )
+        print(
+            f"[CallEventSocketServer] Forward channels updated: {self._forward_channels}",
+        )
+
     async def start(self) -> str:
         """
         Create and bind the Unix domain socket, start accepting connections.
