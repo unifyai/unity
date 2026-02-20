@@ -13,7 +13,7 @@ Tests the complete flow of voice calls including:
 
 ## Test Categories
 
-### Unit Tests (no Redis/LLM required)
+### Unit Tests (no LLM required)
 - CallManager configuration and state
 - Event serialization/deserialization
 - Thread lifecycle (mocked)

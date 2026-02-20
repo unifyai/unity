@@ -89,8 +89,8 @@ ENV UNIFY_LOG_DIR=/var/log/unify
 ENV UNILLM_LOG_DIR=/var/log/unillm
 
 # Expose the ports that the applications use
-# 8000: conversation manager, 6379: Redis, 3000: agent-service (Magnitude)
-EXPOSE 8000 6379 3000
+# 8000: conversation manager, 3000: agent-service (Magnitude)
+EXPOSE 8000 3000
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]

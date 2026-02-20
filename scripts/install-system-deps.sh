@@ -55,11 +55,6 @@ apt-get install -y --no-install-recommends \
     libpulse0
 
 # =============================================================================
-# REDIS (for caching)
-# =============================================================================
-apt-get install -y --no-install-recommends redis-server
-
-# =============================================================================
 # TMUX (for parallel test runner)
 # =============================================================================
 apt-get install -y --no-install-recommends tmux

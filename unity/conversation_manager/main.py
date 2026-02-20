@@ -104,7 +104,7 @@ def create_conversation_manager(
     in-process modes.
 
     Args:
-        event_broker: The event broker (Redis or in-memory)
+        event_broker: The event broker
         stop_event: Event to signal shutdown
         project_name: Project name for logging
 
