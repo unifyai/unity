@@ -1040,6 +1040,8 @@ _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
     UserScreenShareStarted: "The user started sharing their screen with you.",
     UserScreenShareStopped: "The user stopped sharing their screen.",
+    UserWebcamStarted: "The user enabled their webcam — you can now see them.",
+    UserWebcamStopped: "The user disabled their webcam.",
     UserRemoteControlStarted: "The user took remote control of your desktop — they now have mouse and keyboard control.",
     UserRemoteControlStopped: "The user released remote control of your desktop — you may resume computer actions.",
 }
@@ -1065,6 +1067,13 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
         "details. Do NOT guess or fabricate what is on their screen."
     ),
     UserScreenShareStopped: ("The user stopped sharing their screen."),
+    UserWebcamStarted: (
+        "The user enabled their webcam. Visual context is being captured "
+        "in the background. If they reference their appearance or something "
+        "visible on camera, acknowledge naturally and wait for the processed "
+        "details. Do NOT guess or fabricate what you see."
+    ),
+    UserWebcamStopped: ("The user disabled their webcam."),
     UserRemoteControlStarted: (
         "The user now has remote control of your desktop. Do not perform "
         "any computer actions — wait for them to release control."
@@ -1080,6 +1089,8 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
     AssistantScreenShareStopped: ("assistant_screen_share_active", False),
     UserScreenShareStarted: ("user_screen_share_active", True),
     UserScreenShareStopped: ("user_screen_share_active", False),
+    UserWebcamStarted: ("user_webcam_active", True),
+    UserWebcamStopped: ("user_webcam_active", False),
     UserRemoteControlStarted: ("user_remote_control_active", True),
     UserRemoteControlStopped: ("user_remote_control_active", False),
 }
@@ -1091,6 +1102,8 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
         AssistantScreenShareStopped,
         UserScreenShareStarted,
         UserScreenShareStopped,
+        UserWebcamStarted,
+        UserWebcamStopped,
         UserRemoteControlStarted,
         UserRemoteControlStopped,
     ),
@@ -1101,6 +1114,8 @@ async def _(
         | AssistantScreenShareStopped
         | UserScreenShareStarted
         | UserScreenShareStopped
+        | UserWebcamStarted
+        | UserWebcamStopped
         | UserRemoteControlStarted
         | UserRemoteControlStopped
     ),

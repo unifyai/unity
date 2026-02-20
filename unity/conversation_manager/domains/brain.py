@@ -88,19 +88,24 @@ class BrainSpec:
 
         # Build multimodal content: text state + screenshot blocks aligned with
         # the user utterances that triggered them.
-        has_assistant = any(s.source == "assistant" for s in self.screenshots)
-        has_user = any(s.source == "user" for s in self.screenshots)
-        if has_assistant and has_user:
+        sources = {s.source for s in self.screenshots}
+        if len(sources) > 1:
             header = (
-                "The following screenshots were captured during screen sharing, "
-                "from both your desktop and the user's screen, each paired with "
+                "The following screenshots were captured from multiple visual "
+                "sources (desktop, user screen, and/or webcam), each paired with "
                 "what the user said at that moment. They are in chronological order."
             )
-        elif has_user:
+        elif "user" in sources:
             header = (
                 "The following screenshots were captured from the user's screen "
                 "during screen sharing, each paired with what the user said "
                 "at that moment. They are in chronological order."
+            )
+        elif "webcam" in sources:
+            header = (
+                "The following frames were captured from the user's webcam, "
+                "each paired with what the user said at that moment. "
+                "They are in chronological order."
             )
         else:
             header = (
@@ -122,6 +127,7 @@ class BrainSpec:
         source_labels = {
             "assistant": "Assistant's Screen",
             "user": "User's Screen",
+            "webcam": "User's Webcam",
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")

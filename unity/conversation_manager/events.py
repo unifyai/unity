@@ -711,6 +711,27 @@ class UserScreenShareStopped(Event):
 
 
 @dataclass
+class UserWebcamStarted(Event):
+    """User enabled their webcam during a Unify Meet session.
+
+    The user's webcam feed is now being streamed to the assistant.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:user_webcam_started"
+
+    reason: str = ""
+
+
+@dataclass
+class UserWebcamStopped(Event):
+    """User disabled their webcam during a Unify Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:user_webcam_stopped"
+
+    reason: str = ""
+
+
+@dataclass
 class UserRemoteControlStarted(Event):
     """User took remote control of the assistant's desktop.
 

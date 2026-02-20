@@ -59,6 +59,8 @@ from unity.conversation_manager.events import (
     UserScreenShareStopped,
     UserRemoteControlStarted,
     UserRemoteControlStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
 )
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
@@ -1096,6 +1098,26 @@ class TestMeetInteractionEventHandlers:
         assert mock_cm.user_remote_control_active is False
 
     @pytest.mark.asyncio
+    async def test_user_webcam_started_sets_flag(self, mock_cm):
+        """UserWebcamStarted sets user_webcam_active to True."""
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted(reason="User enabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+
+    @pytest.mark.asyncio
+    async def test_user_webcam_stopped_clears_flag(self, mock_cm):
+        """UserWebcamStopped sets user_webcam_active to False."""
+        mock_cm.user_webcam_active = True
+
+        event = UserWebcamStopped(reason="User disabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is False
+
+    @pytest.mark.asyncio
     async def test_meet_interaction_pushes_notification(self, mock_cm):
         """All meet interaction events push a notification to the bar."""
         mock_cm.assistant_screen_share_active = False
@@ -1339,9 +1361,8 @@ class TestMeetInteractionEventHandlers:
         assert len(guidance_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_all_six_meet_events_have_fast_brain_guidance(self, mock_cm):
-        """Each of the six meet interaction events has corresponding fast brain
-        guidance text defined."""
+    async def test_all_meet_events_have_fast_brain_guidance(self, mock_cm):
+        """Each meet interaction event has corresponding fast brain guidance text."""
         from unity.conversation_manager.domains.event_handlers import (
             _MEET_FAST_BRAIN_GUIDANCE,
         )
@@ -1351,6 +1372,8 @@ class TestMeetInteractionEventHandlers:
             AssistantScreenShareStopped,
             UserScreenShareStarted,
             UserScreenShareStopped,
+            UserWebcamStarted,
+            UserWebcamStopped,
             UserRemoteControlStarted,
             UserRemoteControlStopped,
         ]
@@ -1421,17 +1444,33 @@ class TestMeetInteractionEventHandlers:
         assert "<assistant_screen_share" not in result
         assert "<user_screen_share" not in result
 
-    def test_render_meet_state_all_three_active(self):
-        """All three active produces three independent sections."""
+    def test_render_meet_state_user_webcam_only(self):
+        """Only user webcam active produces a single webcam section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            user_webcam_active=True,
+        )
+        assert "<user_webcam status='active'>" in result
+        assert "</user_webcam>" in result
+        assert "webcam" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_all_four_active(self):
+        """All four active produces four independent sections."""
         from unity.conversation_manager.domains.renderer import Renderer
 
         result = Renderer.render_meet_interaction_state(
             assistant_screen_share_active=True,
             user_screen_share_active=True,
+            user_webcam_active=True,
             user_remote_control_active=True,
         )
         assert "<assistant_screen_share status='active'>" in result
         assert "<user_screen_share status='active'>" in result
+        assert "<user_webcam status='active'>" in result
         assert "<user_remote_control status='active'>" in result
 
     def test_render_meet_state_appears_at_top_of_full_render(self):

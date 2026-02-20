@@ -180,9 +180,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             None  # SnapshotState with element tracking for incremental diff computation
         )
 
-        # meet interaction state (screen share / remote control)
+        # meet interaction state (screen share / webcam / remote control)
         self.assistant_screen_share_active: bool = False
         self.user_screen_share_active: bool = False
+        self.user_webcam_active: bool = False
         self.user_remote_control_active: bool = False
 
         # screenshot buffer for slow brain visual context
@@ -788,6 +789,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self.last_snapshot,
             assistant_screen_share_active=self.assistant_screen_share_active,
             user_screen_share_active=self.user_screen_share_active,
+            user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
         )
 
