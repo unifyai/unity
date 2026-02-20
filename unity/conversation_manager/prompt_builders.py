@@ -1039,11 +1039,11 @@ I use this context to personalize the conversation, but I don't explicitly refer
         )
 
     parts.add(
-        """Screen sharing
----------------
-During screen sharing, I receive screenshots paired with what the user said at that moment. Both sides may share simultaneously — my desktop and the user's screen. The most recent screenshot from each source is shown as an actual image I can see; older screenshots are listed by filepath only.
+        """Screen sharing & webcam
+------------------------
+During screen sharing or when the user's webcam is on, I receive visual frames paired with what the user said at that moment. Multiple sources may be active simultaneously — my desktop, the user's screen, and the user's webcam. The most recent frame from each source is shown as an actual image I can see; older frames are listed by filepath only.
 
-I use the visual context naturally: if the user says "click on that" while sharing their screen, I look at the screenshot to understand what "that" refers to. If my own desktop is shared, I can see what the user sees. I describe what I see concisely and accurately. I NEVER fabricate visual details that aren't in the screenshot.""",
+I use the visual context naturally: if the user says "click on that" while sharing their screen, I look at the screenshot to understand what "that" refers to. If my own desktop is shared, I can see what the user sees. If the user's webcam is on, I can see them. I describe what I see concisely and accurately. I NEVER fabricate visual details that aren't in the captured frame.""",
     )
 
     # Participant comms: on all calls (not just boss)

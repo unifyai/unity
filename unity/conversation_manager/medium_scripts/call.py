@@ -48,7 +48,7 @@ from unity.conversation_manager.medium_scripts.common import (
     configure_from_cli,
     should_dispatch_livekit_agent,
     start_event_broker_receive,
-    UserScreenCaptureManager,
+    UserTrackCaptureManager,
     ScreenshotHistory,
     capture_assistant_screenshot,
     render_event_for_fast_brain,
@@ -149,8 +149,9 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
     print("Connected to room")
 
-    # User screen share capture (subscribes to LiveKit room tracks automatically)
-    screen_capture = UserScreenCaptureManager(ctx.room)
+    # User screen share and webcam capture (subscribe to LiveKit room tracks automatically)
+    screen_capture = UserTrackCaptureManager(ctx.room, track_source="screenshare")
+    webcam_capture = UserTrackCaptureManager(ctx.room, track_source="camera")
 
     # Flag for call_answered that may arrive during initialization
     call_answered_flag = asyncio.Event()
@@ -429,6 +430,16 @@ async def entrypoint(ctx: agents.JobContext):
                         utterance=text,
                         timestamp=datetime.now(timezone.utc),
                         source="user",
+                    ),
+                )
+            webcam_b64 = webcam_capture.capture_screenshot()
+            if webcam_b64:
+                _handle_screenshot(
+                    ScreenshotEntry(
+                        b64=webcam_b64,
+                        utterance=text,
+                        timestamp=datetime.now(timezone.utc),
+                        source="webcam",
                     ),
                 )
             if assistant_screen_share_active:

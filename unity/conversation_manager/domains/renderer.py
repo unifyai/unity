@@ -457,6 +457,7 @@ class Renderer:
         max_completed_action_history_events: int = 5,
         assistant_screen_share_active: bool = False,
         user_screen_share_active: bool = False,
+        user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
     ) -> SnapshotState:
         """Render the full conversation state.
@@ -475,6 +476,7 @@ class Renderer:
         meet_render = self.render_meet_interaction_state(
             assistant_screen_share_active=assistant_screen_share_active,
             user_screen_share_active=user_screen_share_active,
+            user_webcam_active=user_webcam_active,
             user_remote_control_active=user_remote_control_active,
         )
 
@@ -527,6 +529,7 @@ class Renderer:
         *,
         assistant_screen_share_active: bool = False,
         user_screen_share_active: bool = False,
+        user_webcam_active: bool = False,
         user_remote_control_active: bool = False,
     ) -> str:
         """Render active meet interaction states as top-level sections.
@@ -555,6 +558,16 @@ class Renderer:
                 "their screen or ask for help with what they see, you have "
                 "visual context available.\n"
                 "</user_screen_share>",
+            )
+
+        if user_webcam_active:
+            parts.append(
+                "<user_webcam status='active'>\n"
+                "The user's webcam is currently on. You can see them via "
+                "captured frames paired with their speech. If they reference "
+                "their appearance or something visible on camera, you have "
+                "visual context available.\n"
+                "</user_webcam>",
             )
 
         if user_remote_control_active:

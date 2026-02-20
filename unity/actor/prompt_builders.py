@@ -189,6 +189,7 @@ def _build_filesystem_context() -> str:
         | `Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
         | `Screenshots/User/` | Auto-captured frames from the user's screen share. Read-only, cleared between sessions. |
         | `Screenshots/Assistant/` | Auto-captured frames from the assistant's desktop. Read-only, cleared between sessions. |
+        | `Screenshots/Webcam/` | Auto-captured frames from the user's webcam. Read-only, cleared between sessions. |
         | `.env` | Environment secrets managed by SecretManager. |
         | Everything else | Your own persistent workspace — organize however makes sense for the work. |
 

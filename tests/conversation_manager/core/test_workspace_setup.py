@@ -131,6 +131,14 @@ class TestSaveScreenshot:
         assert asst_path.startswith("Screenshots/Assistant/")
         assert user_path.startswith("Screenshots/User/")
 
+    def test_saves_webcam_to_correct_subfolder(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "Screenshots" / "Webcam").mkdir(parents=True)
+
+        webcam_path = _save_screenshot(self._make_entry(source="webcam"))
+
+        assert webcam_path.startswith("Screenshots/Webcam/")
+
     def test_timestamp_filename(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "Screenshots" / "Assistant").mkdir(parents=True)

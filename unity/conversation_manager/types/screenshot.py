@@ -7,19 +7,22 @@ from typing import NamedTuple
 
 
 class ScreenshotEntry(NamedTuple):
-    """A single screenshot captured during screen sharing, paired with context."""
+    """A single screenshot captured during screen sharing or webcam, paired with context."""
 
     b64: str
     utterance: str
     timestamp: datetime
-    source: str  # "assistant" (assistant's desktop) or "user" (user's screen share)
+    source: str  # "assistant" | "user" (screen share) | "webcam"
     local_message_id: int | None = None
     filepath: str | None = None
 
 
+_SOURCE_SUBFOLDER = {"assistant": "Assistant", "user": "User", "webcam": "Webcam"}
+
+
 def generate_screenshot_path(entry: ScreenshotEntry) -> str:
     """Compute a deterministic filepath for a screenshot (no I/O)."""
-    subfolder = "Assistant" if entry.source == "assistant" else "User"
+    subfolder = _SOURCE_SUBFOLDER.get(entry.source, entry.source.title())
     directory = Path("Screenshots") / subfolder
     stem = entry.timestamp.strftime("%Y-%m-%dT%H-%M-%S.%f")
     return str(directory / f"{stem}.jpg")

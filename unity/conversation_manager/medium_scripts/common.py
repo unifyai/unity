@@ -431,27 +431,41 @@ def should_dispatch_livekit_agent() -> bool:
 # -------- User screen share capture -------- #
 
 
-class UserScreenCaptureManager:
-    """Captures frames from a remote participant's screen share track in a LiveKit room.
+class UserTrackCaptureManager:
+    """Captures frames from a remote participant's video track in a LiveKit room.
 
     Registers track_subscribed/track_unsubscribed handlers on the room to
-    automatically start and stop frame capture when a screen share track
+    automatically start and stop frame capture when a matching video track
     appears or disappears. Stores the latest frame as raw RGBA bytes and
     converts to base64 JPEG on demand (lazy conversion to avoid per-frame cost).
 
+    The ``track_source`` parameter selects which LiveKit track source to
+    capture (e.g. ``SOURCE_SCREENSHARE`` for screen share, ``SOURCE_CAMERA``
+    for webcam).
+
     Usage::
 
-        capture_mgr = UserScreenCaptureManager(ctx.room)
+        screen_mgr = UserTrackCaptureManager(ctx.room)  # screen share (default)
+        webcam_mgr = UserTrackCaptureManager(ctx.room, track_source="camera")
         # ... later, on user utterance ...
-        b64 = capture_mgr.capture_screenshot()  # None if no active share
+        b64 = screen_mgr.capture_screenshot()  # None if no active share
         # ... on cleanup ...
-        await capture_mgr.close()
+        await screen_mgr.close()
     """
 
-    def __init__(self, room) -> None:
+    def __init__(self, room, *, track_source: str = "screenshare") -> None:
+        from livekit import rtc
+
         self._latest_frame_data: tuple[bytes, int, int] | None = None
         self._capture_task: asyncio.Task | None = None
         self._stream = None
+
+        source_map = {
+            "screenshare": rtc.TrackSource.SOURCE_SCREENSHARE,
+            "camera": rtc.TrackSource.SOURCE_CAMERA,
+        }
+        self._rtc_source = source_map[track_source]
+        self._label = track_source
 
         @room.on("track_subscribed")
         def _on_track_subscribed(track, publication, participant):
@@ -466,19 +480,19 @@ class UserScreenCaptureManager:
 
         if (
             track.kind == rtc.TrackKind.KIND_VIDEO
-            and publication.source == rtc.TrackSource.SOURCE_SCREENSHARE
+            and publication.source == self._rtc_source
         ):
-            print("[UserScreenCapture] Screen share track subscribed, starting capture")
+            print(
+                f"[UserTrackCapture:{self._label}] Track subscribed, starting capture",
+            )
             stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
             self._stream = stream
             self._capture_task = asyncio.create_task(self._capture_loop(stream))
 
     def _handle_track_unsubscribed(self, publication) -> None:
-        from livekit import rtc
-
-        if publication.source == rtc.TrackSource.SOURCE_SCREENSHARE:
+        if publication.source == self._rtc_source:
             print(
-                "[UserScreenCapture] Screen share track unsubscribed, stopping capture",
+                f"[UserTrackCapture:{self._label}] Track unsubscribed, stopping capture",
             )
             self._latest_frame_data = None
             if self._capture_task and not self._capture_task.done():
@@ -551,6 +565,10 @@ class UserScreenCaptureManager:
         self._stream = None
 
 
+# Backward-compatible alias used by call.py / sts_call.py imports.
+UserScreenCaptureManager = UserTrackCaptureManager
+
+
 # -------- Screenshot history for fast brain visual context -------- #
 
 
@@ -587,6 +605,7 @@ class ScreenshotHistory:
         source_labels = {
             "assistant": "Assistant's Screen",
             "user": "User's Screen",
+            "webcam": "User's Webcam",
         }
 
         parts: list = []
