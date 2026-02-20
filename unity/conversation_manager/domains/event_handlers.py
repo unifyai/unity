@@ -202,6 +202,21 @@ async def _(
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
 
+    # Sync meet interaction state that may have been set before the call started.
+    # The fast brain starts with all flags as False and relies on guidance delivery,
+    # so any state that was already active needs to be pushed now.
+    if cm.assistant_screen_share_active and cm.call_manager._socket_server:
+        guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
+        guidance_event = CallGuidance(
+            contact=contact,
+            content=guidance_text,
+            source="meet_interaction",
+        )
+        await cm.call_manager._socket_server.queue_for_clients(
+            "app:call:call_guidance",
+            guidance_event.to_json(),
+        )
+
     # No LLM run here — call guidance is pre-computed via make_call(context=...).
     # The slow brain will be woken later by:
     # - InboundPhoneUtterance (user says something)

@@ -266,16 +266,23 @@ class ConversationManager(metaclass=SingletonABCMeta):
         the slow brain can align visual context with spoken instructions.
         """
         import aiohttp
+        import os
         from datetime import datetime, timezone
 
-        desktop_url = SESSION_DETAILS.assistant.desktop_url or "http://localhost:3000"
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if desktop_url:
+            base_url = desktop_url.rstrip("/") + "/api"
+        else:
+            base_url = "http://localhost:3000"
+        session_id = os.environ.get("AGENT_SERVICE_SESSION_ID", "")
+        payload = {"sessionId": session_id} if session_id else {}
         try:
             auth_key = SESSION_DETAILS.unify_key
             headers = {"authorization": f"Bearer {auth_key}"}
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{desktop_url}/screenshot",
-                    json={},
+                    f"{base_url}/screenshot",
+                    json=payload,
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
