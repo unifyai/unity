@@ -1086,6 +1086,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1275,6 +1277,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1550,6 +1554,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1737,6 +1743,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
