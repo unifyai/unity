@@ -56,8 +56,15 @@ from unity.conversation_manager.medium_scripts.common import (
     should_dispatch_livekit_agent,
     start_event_broker_receive,
     UserScreenCaptureManager,
+    ScreenshotHistory,
+    capture_assistant_screenshot,
     render_event_for_fast_brain,
     render_participant_comms,
+)
+from unity.conversation_manager.types.screenshot import (
+    ScreenshotEntry,
+    generate_screenshot_path,
+    write_screenshot_to_disk,
 )
 
 logger = logging.getLogger("gpt-realtime-agent")
@@ -259,6 +266,58 @@ async def entrypoint(ctx: JobContext) -> None:
         if ev.new_state in ("listening", "idle"):
             maybe_speak_queued()
 
+    # -- Screenshot state --
+    screenshot_history = ScreenshotHistory()
+    assistant_screen_share_active = False
+
+    def _inject_visual_context_sts() -> None:
+        """Fire-and-forget: rebuild and push visual context to the Realtime API."""
+        if not rt_ref:
+            return
+        content = screenshot_history.build_visual_context_content()
+        if not content:
+            return
+        current_rt = rt_ref[0]
+        chat_ctx = current_rt.chat_ctx
+        chat_ctx.add_message(role="user", content=content)
+
+        async def _update():
+            await current_rt.update_chat_ctx(chat_ctx)
+
+        asyncio.create_task(_update())
+
+    def _publish_screenshot(entry: "ScreenshotEntry", filepath: str) -> None:
+        """Fire-and-forget: write to disk and publish to slow brain via IPC."""
+
+        async def _background():
+            await asyncio.to_thread(write_screenshot_to_disk, entry, filepath)
+            await event_broker.publish(
+                "app:comms:screenshot",
+                json.dumps(
+                    {
+                        "b64": entry.b64,
+                        "utterance": entry.utterance,
+                        "timestamp": entry.timestamp.isoformat(),
+                        "source": entry.source,
+                        "filepath": filepath,
+                    },
+                ),
+            )
+
+        asyncio.create_task(_background())
+
+    def _handle_screenshot(entry: "ScreenshotEntry") -> None:
+        """Process a captured screenshot: history, visual context, disk, IPC."""
+        filepath = generate_screenshot_path(entry)
+        screenshot_history.add(entry, filepath)
+        _inject_visual_context_sts()
+        _publish_screenshot(entry, filepath)
+
+    async def _capture_and_handle_assistant_screenshot(utterance: str) -> None:
+        entry = await capture_assistant_screenshot(utterance)
+        if entry:
+            _handle_screenshot(entry)
+
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
         """Publish both user and assistant utterances from a single location."""
@@ -279,22 +338,21 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         if role == "user":
             event = user_utterance_event(contact, content=text)
-            # Capture the user's screen if they are sharing it.
+            from datetime import datetime, timezone
+
             b64 = screen_capture.capture_screenshot()
             if b64:
-                from datetime import datetime, timezone
-
-                asyncio.create_task(
-                    event_broker.publish(
-                        "app:comms:user_screen_screenshot",
-                        json.dumps(
-                            {
-                                "b64": b64,
-                                "utterance": text,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        ),
+                _handle_screenshot(
+                    ScreenshotEntry(
+                        b64=b64,
+                        utterance=text,
+                        timestamp=datetime.now(timezone.utc),
+                        source="user",
                     ),
+                )
+            if assistant_screen_share_active:
+                asyncio.create_task(
+                    _capture_and_handle_assistant_screenshot(text),
                 )
         else:
             event = assistant_utterance_event(contact, content=text)
@@ -442,8 +500,16 @@ async def entrypoint(ctx: JobContext) -> None:
 
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
+        nonlocal assistant_screen_share_active
         payload = data.get("payload") or data
         content = payload.get("content", "")
+        # Track screen share state from meet interaction guidance.
+        if payload.get("source") == "meet_interaction":
+            low = content.lower()
+            if "screen sharing is now on" in low:
+                assistant_screen_share_active = True
+            elif "screen sharing is now off" in low:
+                assistant_screen_share_active = False
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
         guidance_source = payload.get("source", "")

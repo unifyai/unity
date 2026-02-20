@@ -77,9 +77,9 @@ class LivekitCallManager:
         # Initial guidance for outbound calls, set by make_call tool before the
         # call is placed, published to the fast brain after the subprocess spawns.
         self.initial_call_guidance: str = ""
-        # Callback for user screen share screenshots received via IPC.
+        # Callback for screenshots (user or assistant) received via IPC.
         # Set by the ConversationManager to route screenshots to its buffer.
-        self.on_user_screenshot: Callable[[str], None] | None = None
+        self.on_screenshot: Callable[[str], None] | None = None
 
     def set_config(self, config: CallConfig):
         self.assistant_id = config.assistant_id
@@ -105,11 +105,8 @@ class LivekitCallManager:
         if self._socket_server is None:
 
             async def _on_ipc_event(channel: str, event_json: str) -> None:
-                if (
-                    channel == "app:comms:user_screen_screenshot"
-                    and self.on_user_screenshot is not None
-                ):
-                    self.on_user_screenshot(event_json)
+                if channel == "app:comms:screenshot" and self.on_screenshot is not None:
+                    self.on_screenshot(event_json)
                 else:
                     await self._event_broker.publish(channel, event_json)
 
