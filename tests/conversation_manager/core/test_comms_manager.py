@@ -68,6 +68,8 @@ from unity.conversation_manager.events import (
     UserScreenShareStopped,
     UserRemoteControlStarted,
     UserRemoteControlStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
 )
 from unity.contact_manager.types.contact import UNASSIGNED
 
@@ -817,7 +819,6 @@ class TestUnifyMeetHandling:
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMeetReceived)
-            assert event.livekit_agent_name == "TestAgent"
             assert event.room_name == "room_123"
 
 
@@ -1021,6 +1022,16 @@ class TestMeetInteractionSystemEvents:
             "user_screen_share_stopped",
             UserScreenShareStopped,
             "User stopped sharing their screen",
+        ),
+        (
+            "user_webcam_started",
+            UserWebcamStarted,
+            "User enabled their webcam",
+        ),
+        (
+            "user_webcam_stopped",
+            UserWebcamStopped,
+            "User disabled their webcam",
         ),
         (
             "user_remote_control_started",

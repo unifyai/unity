@@ -314,7 +314,6 @@ async def start_session(
         await cm.call_manager.start_unify_meet(
             contact=contact,
             boss=boss,
-            livekit_agent_name=agent_name,
             room_name=room_name,
         )
     finally:

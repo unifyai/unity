@@ -46,13 +46,13 @@ def test_log_creates_all_contacts_entries():
 
 @_handle_project
 def test_user_field_injected():
-    """Logs should have _user field set to user name."""
+    """Logs should have _user field set to user context (ID)."""
     from unittest.mock import patch
 
     test_user_name = "TestUserName"
 
     with patch(
-        "unity.common.log_utils._get_user_name",
+        "unity.common.log_utils._get_user_context",
         return_value=test_user_name,
     ):
         cm = ContactManager()
@@ -70,13 +70,13 @@ def test_user_field_injected():
 
 @_handle_project
 def test_assistant_field_injected():
-    """Logs should have _assistant field set to assistant name."""
+    """Logs should have _assistant field set to assistant context (ID)."""
     from unittest.mock import patch
 
     test_assistant_name = "TestAssistantName"
 
     with patch(
-        "unity.common.log_utils._get_assistant_name",
+        "unity.common.log_utils._get_assistant_context",
         return_value=test_assistant_name,
     ):
         cm = ContactManager()

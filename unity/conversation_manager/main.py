@@ -210,6 +210,7 @@ async def run_conversation_manager(
         _shutil.rmtree(_screenshots)
     (_screenshots / "User").mkdir(parents=True, exist_ok=True)
     (_screenshots / "Assistant").mkdir(parents=True, exist_ok=True)
+    (_screenshots / "Webcam").mkdir(parents=True, exist_ok=True)
 
     # Clean up dangling call processes
     if cleanup_call_processes:

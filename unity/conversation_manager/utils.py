@@ -11,8 +11,7 @@ unity_comms_url = SETTINGS.conversation.COMMS_URL
 
 # dispatch LiveKit agent
 def dispatch_livekit_agent(
-    livekit_agent_name: str,
-    room_name: str = None,
+    room_name: str,
     *,
     record: bool = True,
     assistant_id: str = "",
@@ -20,6 +19,9 @@ def dispatch_livekit_agent(
 ):
     """
     Dispatch a LiveKit agent via the communication service.
+
+    The room_name (from make_room_name()) is used as both the LiveKit room
+    name and the agent worker registration name.
 
     This is a fire-and-forget operation - we dispatch and move on regardless of
     the result. The function is resilient to:
@@ -37,15 +39,11 @@ def dispatch_livekit_agent(
         return False
 
     try:
-        if not room_name:
-            room_name = livekit_agent_name
-        # Fire-and-forget: use requests.post directly (not unify.utils.http)
-        # to avoid retry logic. Timeout is expected; we dispatch and move on.
         response = requests.post(
             f"{unity_comms_url}/phone/dispatch-livekit-agent",
             headers=admin_headers,
             json={
-                "livekit_agent_name": livekit_agent_name,
+                "livekit_agent_name": room_name,
                 "room_name": room_name,
                 "record": record,
                 "assistant_id": assistant_id,

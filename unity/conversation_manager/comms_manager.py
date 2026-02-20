@@ -325,6 +325,12 @@ class CommsManager:
                     "user_screen_share_stopped": lambda r: UserScreenShareStopped(
                         reason=r or "User stopped sharing their screen.",
                     ),
+                    "user_webcam_started": lambda r: UserWebcamStarted(
+                        reason=r or "User enabled their webcam.",
+                    ),
+                    "user_webcam_stopped": lambda r: UserWebcamStopped(
+                        reason=r or "User disabled their webcam.",
+                    ),
                     "user_remote_control_started": lambda r: UserRemoteControlStarted(
                         reason=r or "User took remote control of assistant desktop.",
                     ),
@@ -605,7 +611,6 @@ class CommsManager:
                         # unify_meet is internal, no blacklist check needed
                         call_event = UnifyMeetReceived(
                             contact=next(c for c in contacts if c["contact_id"] == 1),
-                            livekit_agent_name=event.get("livekit_agent_name"),
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_meet_received"

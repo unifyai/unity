@@ -97,7 +97,7 @@ def _derive_test_context(item: pytest.Item) -> str:
             normalized = hashlib.md5(nodeid.encode("utf-8")).hexdigest()[:8]
         func_name = f"{func_name}/{normalized}"
 
-    # Mirror production-like hierarchy: .../<DefaultUser>/<Assistant>
+    # Mirror production hierarchy: .../{user_id}/{assistant_id}
     return f"{test_path}/{func_name}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
 
 

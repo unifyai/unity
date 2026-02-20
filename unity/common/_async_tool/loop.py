@@ -224,6 +224,7 @@ async def async_tool_loop_inner(
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
     prompt_caching: Optional["PromptCacheParam"] = None,
     time_awareness: bool = False,
+    extra_ask_tools: Optional[Dict[str, Callable]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -604,6 +605,7 @@ async def async_tool_loop_inner(
         logger=logger,
         time_ctx=time_ctx,
         time_ctx_msg=time_ctx_sys_msg,
+        extra_ask_tools=extra_ask_tools,
     )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)

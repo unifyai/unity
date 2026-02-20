@@ -296,7 +296,6 @@ class TestCallEventSerialization:
         """UnifyMeet events serialize correctly."""
         received = UnifyMeetReceived(
             contact=sample_contact,
-            livekit_agent_name="test_agent",
             room_name="test_room",
         )
         started = UnifyMeetStarted(contact=sample_contact)
@@ -444,15 +443,13 @@ class TestCallSubprocessLifecycle:
             await call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
-                livekit_agent_name="test_agent",
-                room_name="test_room",
+                room_name="unity_25_meet",
             )
 
             mock_run_script.assert_called_once()
             call_args = mock_run_script.call_args
             assert "call.py" in str(call_args[0][0])  # script path
-            # LiveKit agent name and room name should be combined in args
-            assert any("test_agent:test_room" in str(arg) for arg in call_args[0])
+            assert any("unity_25_meet" in str(arg) for arg in call_args[0])
 
     @pytest.mark.asyncio
     async def test_start_unify_meet_default_names(
@@ -461,7 +458,7 @@ class TestCallSubprocessLifecycle:
         sample_contact,
         boss_contact,
     ):
-        """start_unify_meet() generates default livekit_agent_name/room names from assistant_id."""
+        """start_unify_meet() generates default room name from assistant_id."""
         call_manager.assistant_id = "my_assistant"
 
         with patch(
@@ -473,13 +470,12 @@ class TestCallSubprocessLifecycle:
             await call_manager.start_unify_meet(
                 sample_contact,
                 boss_contact,
-                livekit_agent_name=None,
                 room_name=None,
             )
 
             call_args = mock_run_script.call_args
-            # Default names should use assistant_id
-            assert any("unity_my_assistant_web" in str(arg) for arg in call_args[0])
+            # Default names should use make_room_name(assistant_id, "meet")
+            assert any("unity_my_assistant_meet" in str(arg) for arg in call_args[0])
 
     @pytest.mark.asyncio
     async def test_cleanup_call_proc_no_process(self, call_manager):
@@ -758,7 +754,6 @@ class TestUnifyMeetEventHandlers:
         ) as mock_start:
             event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
             await initialized_cm.step(event)
@@ -1109,7 +1104,6 @@ class TestFullCallLifecycle:
         ) as mock_start:
             received_event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="test_agent",
                 room_name="test_room",
             )
             await initialized_cm.step(received_event)
@@ -1416,3 +1410,105 @@ class TestCallEventBrokerChannels:
             assert msg is not None
             data = json.loads(msg["data"])
             assert data["type"] == "call_answered"
+
+
+# =============================================================================
+# Test: Channel forwarding tiers — boss vs non-boss calls
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestChannelForwardingTiers:
+    """Verify the two-tier channel policy: all calls get comms channels,
+    boss calls additionally get actor/manager channels."""
+
+    @pytest_asyncio.fixture
+    async def call_manager_with_broker(self):
+        from unity.conversation_manager.event_broker import create_event_broker
+        from unity.conversation_manager.domains.call_manager import (
+            CallConfig,
+            LivekitCallManager,
+        )
+
+        config = CallConfig(
+            assistant_id="test",
+            user_id="test_user",
+            assistant_bio="Test assistant",
+            assistant_number="+15551234567",
+            voice_provider="cartesia",
+            voice_id="test_voice",
+            voice_mode="tts",
+        )
+        broker = create_event_broker()
+        mgr = LivekitCallManager(config, event_broker=broker)
+        yield mgr
+        await mgr.cleanup_call_proc()
+        await broker.aclose()
+
+    @pytest.fixture
+    def boss_contact(self):
+        return {"contact_id": 1, "first_name": "Boss", "surname": "User"}
+
+    @pytest.fixture
+    def non_boss_contact(self):
+        return {"contact_id": 5, "first_name": "Alice", "surname": "Smith"}
+
+    async def test_boss_call_gets_comms_and_actor_channels(
+        self,
+        call_manager_with_broker,
+        boss_contact,
+    ):
+        """Boss calls should forward app:comms:* AND app:actor:* channels."""
+        mgr = call_manager_with_broker
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run:
+            mock_run.return_value = MagicMock()
+            await mgr.start_call(boss_contact, boss_contact)
+
+        channels = mgr._socket_server._forward_channels
+        assert "app:comms:*" in channels, "Boss call must forward comms"
+        assert "app:actor:*" in channels, "Boss call must forward actor events"
+        assert "app:call:*" in channels, "Boss call must forward call events"
+
+    async def test_non_boss_call_gets_comms_but_not_actor_channels(
+        self,
+        call_manager_with_broker,
+        non_boss_contact,
+        boss_contact,
+    ):
+        """Non-boss calls should forward app:comms:* but NOT app:actor:*."""
+        mgr = call_manager_with_broker
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run:
+            mock_run.return_value = MagicMock()
+            await mgr.start_call(non_boss_contact, boss_contact)
+
+        channels = mgr._socket_server._forward_channels
+        assert "app:comms:*" in channels, "Non-boss call must forward comms"
+        assert (
+            "app:actor:*" not in channels
+        ), "Non-boss call must NOT forward actor events"
+        assert "app:call:*" in channels, "Non-boss call must forward call events"
+
+    async def test_unify_meet_boss_gets_full_channels(
+        self,
+        call_manager_with_broker,
+        boss_contact,
+    ):
+        """Boss Unify Meet should get the same full channels as a boss phone call."""
+        mgr = call_manager_with_broker
+        with patch(
+            "unity.conversation_manager.domains.call_manager.run_script",
+        ) as mock_run:
+            mock_run.return_value = MagicMock()
+            await mgr.start_unify_meet(
+                boss_contact,
+                boss_contact,
+                room_name="test_room",
+            )
+
+        channels = mgr._socket_server._forward_channels
+        assert "app:comms:*" in channels
+        assert "app:actor:*" in channels

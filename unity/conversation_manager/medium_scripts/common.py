@@ -3,17 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
+import os
 import sys
 from typing import Awaitable, Callable, Iterable, Optional
 
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
+    Event,
     PhoneCallStarted,
     PhoneCallEnded,
     UnifyMeetEnded,
     UnifyMeetStarted,
+    SMSReceived,
+    EmailReceived,
+    UnifyMessageReceived,
+    ActorNotification,
+    ActorResult,
+    ActorHandleStarted,
+    ActorSessionResponse,
+    NotificationInjectedEvent,
+    CallGuidance,
 )
 from unity.conversation_manager.domains.ipc_socket import (
     get_socket_client,
@@ -48,15 +60,19 @@ class SocketAwareEventBroker:
         self._fallback_broker = get_event_broker()
         self._receive_started = False
         self._callbacks: dict[str, Callable[[dict], None]] = {}
+        self._pattern_callbacks: list[tuple[str, Callable[[dict], None]]] = []
 
     def register_callback(self, channel: str, handler: Callable[[dict], None]) -> None:
         """
         Register a callback for events on a channel.
 
-        The handler is invoked immediately when an event arrives on the channel.
-        Handler receives the parsed JSON data (dict).
+        Supports glob patterns (e.g., ``app:comms:*``).  Exact-match
+        callbacks take precedence over patterns.
         """
-        self._callbacks[channel] = handler
+        if "*" in channel or "?" in channel or "[" in channel:
+            self._pattern_callbacks.append((channel, handler))
+        else:
+            self._callbacks[channel] = handler
 
     async def start_receiving(self) -> bool:
         """
@@ -75,23 +91,37 @@ class SocketAwareEventBroker:
         async def on_event(channel: str, event_json: str) -> None:
             """Invoke registered callback when event arrives."""
             message_id = payload_trace_id("ipc", channel, event_json)
+            has_exact = channel in self._callbacks
+            has_pattern = any(
+                fnmatch.fnmatch(channel, pat) for pat, _ in self._pattern_callbacks
+            )
             print(
                 trace_kv(
                     "SOCKET_BROKER_INBOUND",
                     channel=channel,
                     message_id=message_id,
-                    has_callback=channel in self._callbacks,
+                    has_callback=has_exact or has_pattern,
                     ts_utc=now_utc_iso(),
                     monotonic_ms=monotonic_ms(),
                 ),
                 flush=True,
             )
-            if channel in self._callbacks:
+            try:
+                data = json.loads(event_json)
+            except Exception as e:
+                print(f"[SocketAwareEventBroker] JSON parse error: {e}")
+                return
+            if has_exact:
                 try:
-                    data = json.loads(event_json)
                     self._callbacks[channel](data)
                 except Exception as e:
                     print(f"[SocketAwareEventBroker] Callback error: {e}")
+            for pat, handler in self._pattern_callbacks:
+                if fnmatch.fnmatch(channel, pat):
+                    try:
+                        handler(data)
+                    except Exception as e:
+                        print(f"[SocketAwareEventBroker] Pattern callback error: {e}")
 
         success = await start_socket_receive_loop(on_event)
         if success:
@@ -334,24 +364,17 @@ def configure_from_cli(
       argv[5] = OUTBOUND
       argv[6...] = extra_env[...]
 
-    Returns the computed livekit_agent_name ("unity_<assistant_number>").
+    Returns the canonical room name passed as argv[2] (produced by
+    make_room_name() in call_manager). This is used as both the LiveKit
+    room name and the agent worker registration name.
     """
-    assistant_number = ""
-    livekit_agent_name = ""
     room_name = ""
     print("sys.argv", sys.argv)
 
     # max index used = 6 + len(extra_env)
     required_len = 6 + len(extra_env)
     if len(sys.argv) > required_len:
-        assistant_number = sys.argv[2]
-        if ":" in assistant_number:
-            # UnifyMeet: caller passes "livekit_agent_name:room_name" with prefix already applied
-            livekit_agent_name, room_name = assistant_number.split(":")
-        else:
-            # Phone: caller passes raw assistant_number, we add the unity_ prefix
-            livekit_agent_name = f"unity_{assistant_number}"
-            room_name = livekit_agent_name
+        room_name = sys.argv[2]
 
         # Populate SESSION_DETAILS with voice config
         SESSION_DETAILS.voice.provider = (
@@ -396,7 +419,7 @@ def configure_from_cli(
         print("Not enough arguments provided")
         sys.exit(1)
 
-    return livekit_agent_name, room_name
+    return room_name
 
 
 def should_dispatch_livekit_agent() -> bool:
@@ -409,27 +432,41 @@ def should_dispatch_livekit_agent() -> bool:
 # -------- User screen share capture -------- #
 
 
-class UserScreenCaptureManager:
-    """Captures frames from a remote participant's screen share track in a LiveKit room.
+class UserTrackCaptureManager:
+    """Captures frames from a remote participant's video track in a LiveKit room.
 
     Registers track_subscribed/track_unsubscribed handlers on the room to
-    automatically start and stop frame capture when a screen share track
+    automatically start and stop frame capture when a matching video track
     appears or disappears. Stores the latest frame as raw RGBA bytes and
     converts to base64 JPEG on demand (lazy conversion to avoid per-frame cost).
 
+    The ``track_source`` parameter selects which LiveKit track source to
+    capture (e.g. ``SOURCE_SCREENSHARE`` for screen share, ``SOURCE_CAMERA``
+    for webcam).
+
     Usage::
 
-        capture_mgr = UserScreenCaptureManager(ctx.room)
+        screen_mgr = UserTrackCaptureManager(ctx.room)  # screen share (default)
+        webcam_mgr = UserTrackCaptureManager(ctx.room, track_source="camera")
         # ... later, on user utterance ...
-        b64 = capture_mgr.capture_screenshot()  # None if no active share
+        b64 = screen_mgr.capture_screenshot()  # None if no active share
         # ... on cleanup ...
-        await capture_mgr.close()
+        await screen_mgr.close()
     """
 
-    def __init__(self, room) -> None:
+    def __init__(self, room, *, track_source: str = "screenshare") -> None:
+        from livekit import rtc
+
         self._latest_frame_data: tuple[bytes, int, int] | None = None
         self._capture_task: asyncio.Task | None = None
         self._stream = None
+
+        source_map = {
+            "screenshare": rtc.TrackSource.SOURCE_SCREENSHARE,
+            "camera": rtc.TrackSource.SOURCE_CAMERA,
+        }
+        self._rtc_source = source_map[track_source]
+        self._label = track_source
 
         @room.on("track_subscribed")
         def _on_track_subscribed(track, publication, participant):
@@ -444,19 +481,19 @@ class UserScreenCaptureManager:
 
         if (
             track.kind == rtc.TrackKind.KIND_VIDEO
-            and publication.source == rtc.TrackSource.SOURCE_SCREENSHARE
+            and publication.source == self._rtc_source
         ):
-            print("[UserScreenCapture] Screen share track subscribed, starting capture")
+            print(
+                f"[UserTrackCapture:{self._label}] Track subscribed, starting capture",
+            )
             stream = rtc.VideoStream(track, format=rtc.VideoBufferType.RGBA)
             self._stream = stream
             self._capture_task = asyncio.create_task(self._capture_loop(stream))
 
     def _handle_track_unsubscribed(self, publication) -> None:
-        from livekit import rtc
-
-        if publication.source == rtc.TrackSource.SOURCE_SCREENSHARE:
+        if publication.source == self._rtc_source:
             print(
-                "[UserScreenCapture] Screen share track unsubscribed, stopping capture",
+                f"[UserTrackCapture:{self._label}] Track unsubscribed, stopping capture",
             )
             self._latest_frame_data = None
             if self._capture_task and not self._capture_task.done():
@@ -527,3 +564,215 @@ class UserScreenCaptureManager:
         self._capture_task = None
         self._latest_frame_data = None
         self._stream = None
+
+
+# Backward-compatible alias used by call.py / sts_call.py imports.
+UserScreenCaptureManager = UserTrackCaptureManager
+
+
+# -------- Screenshot history for fast brain visual context -------- #
+
+
+class ScreenshotHistory:
+    """Per-source screenshot history for the fast brain LLM.
+
+    Tracks captured screenshots and builds a visual context message with the
+    latest screenshot from each source (user / assistant) as an inline image
+    and all older entries as filepath-only text references.
+    """
+
+    def __init__(self):
+        self._entries: list[tuple["ScreenshotEntry", str]] = []
+
+    def add(self, entry: "ScreenshotEntry", filepath: str) -> None:
+        self._entries.append((entry, filepath))
+
+    def build_visual_context_content(self) -> list:
+        """Build a content list for a visual context chat message.
+
+        Returns ``list[str | ImageContent]``: for each source the most recent
+        entry gets a ``str`` label **plus** an ``ImageContent`` block; all
+        older entries from that source get only a ``str`` filepath label.
+        """
+        from livekit.agents.llm import ImageContent
+
+        if not self._entries:
+            return []
+
+        latest_idx_by_source: dict[str, int] = {}
+        for i, (entry, _) in enumerate(self._entries):
+            latest_idx_by_source[entry.source] = i
+
+        source_labels = {
+            "assistant": "Assistant's Screen",
+            "user": "User's Screen",
+            "webcam": "User's Webcam",
+        }
+
+        parts: list = []
+        for i, (entry, filepath) in enumerate(self._entries):
+            label = source_labels.get(entry.source, "Screenshot")
+            text = (
+                f"[{label} at {entry.timestamp.strftime('%H:%M:%S')} "
+                f"-- {filepath}] "
+                f'User said: "{entry.utterance}"'
+            )
+            parts.append(text)
+            if i == latest_idx_by_source.get(entry.source):
+                parts.append(
+                    ImageContent(
+                        image=f"data:image/jpeg;base64,{entry.b64}",
+                    ),
+                )
+
+        return parts
+
+
+def _resolve_agent_service_url() -> str:
+    """Resolve the agent-service base URL, matching ComputerPrimitives conventions.
+
+    Managed VMs expose the agent-service behind a reverse proxy at ``/api``,
+    while local dev hits the service directly on port 3000.
+    """
+    from unity.session_details import SESSION_DETAILS
+
+    desktop_url = SESSION_DETAILS.assistant.desktop_url
+    if desktop_url:
+        return desktop_url.rstrip("/") + "/api"
+    return "http://localhost:3000"
+
+
+async def capture_assistant_screenshot(utterance: str) -> "ScreenshotEntry | None":
+    """Capture the assistant's desktop via HTTP POST.
+
+    Returns a ``ScreenshotEntry`` on success, ``None`` on failure or if no
+    desktop URL is configured.
+    """
+    import aiohttp
+
+    from datetime import datetime, timezone
+    from unity.session_details import SESSION_DETAILS
+    from unity.conversation_manager.types.screenshot import ScreenshotEntry
+
+    base_url = _resolve_agent_service_url()
+    auth_key = SESSION_DETAILS.unify_key
+    session_id = os.environ.get("AGENT_SERVICE_SESSION_ID", "")
+    payload = {"sessionId": session_id} if session_id else {}
+    try:
+        headers = {"authorization": f"Bearer {auth_key}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base_url}/screenshot",
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status >= 400:
+                    print(f"[AssistantScreenshot] capture failed: HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+                b64 = data.get("screenshot")
+                if b64:
+                    return ScreenshotEntry(
+                        b64=b64,
+                        utterance=utterance,
+                        timestamp=datetime.now(timezone.utc),
+                        source="assistant",
+                    )
+    except Exception as e:
+        print(f"[AssistantScreenshot] capture error: {e}")
+    return None
+
+
+# -------- Event rendering for boss-on-call mode -------- #
+
+
+def _contact_name(contact: dict) -> str:
+    first = contact.get("first_name", "")
+    last = contact.get("surname", "")
+    name = f"{first} {last}".strip()
+    return (
+        name or contact.get("phone_number") or contact.get("email_address") or "Unknown"
+    )
+
+
+def _event_contact_id(event: Event) -> int | None:
+    """Extract the contact_id from a comms event, or None if not present."""
+    contact = getattr(event, "contact", None)
+    if isinstance(contact, dict):
+        return contact.get("contact_id")
+    return None
+
+
+def render_participant_comms(event_json: str, participant_ids: set[int]) -> str | None:
+    """Render a comms event as a tagged message if the sender is a call participant.
+
+    Returns a string like ``[SMS from Marcus] Hey, running late`` for
+    participant comms, or None if the event is not from a participant or
+    is not a comms event worth surfacing.
+    """
+    try:
+        event = Event.from_json(event_json)
+    except Exception:
+        return None
+
+    cid = _event_contact_id(event)
+    if cid is None or cid not in participant_ids:
+        return None
+
+    name = _contact_name(event.contact)
+
+    if isinstance(event, SMSReceived):
+        return f"[SMS from {name}] {event.content}"
+    if isinstance(event, EmailReceived):
+        subj = event.subject or "(no subject)"
+        body_preview = (event.body or "")[:200].strip()
+        return f"[Email from {name}] {subj}" + (
+            f" — {body_preview}" if body_preview else ""
+        )
+    if isinstance(event, UnifyMessageReceived):
+        return f"[Message from {name}] {event.content}"
+
+    return None
+
+
+def render_event_for_fast_brain(event_json: str) -> str | None:
+    """Render a CM event as a ``[notification]``-style string for the fast brain.
+
+    Used for boss-on-call mode where the fast brain sees all system events.
+    Returns None for events that should be silently ignored (e.g. own
+    utterances, call guidance which is handled by a dedicated callback, or
+    events with no user-meaningful content).
+    """
+    try:
+        event = Event.from_json(event_json)
+    except Exception:
+        return None
+
+    if isinstance(event, CallGuidance):
+        return None
+
+    if isinstance(event, SMSReceived):
+        return f"SMS from {_contact_name(event.contact)}: {event.content}"
+    if isinstance(event, EmailReceived):
+        subj = event.subject or "(no subject)"
+        return f"Email from {_contact_name(event.contact)}: {subj}"
+    if isinstance(event, UnifyMessageReceived):
+        return f"Unify message from {_contact_name(event.contact)}: {event.content}"
+    if isinstance(event, ActorNotification):
+        return f"Action progress: {event.response}"
+    if isinstance(event, ActorResult):
+        status = "completed successfully" if event.success else "failed"
+        detail = event.result or event.error or ""
+        if isinstance(detail, dict):
+            detail = detail.get("summary", str(detail))
+        snippet = str(detail)[:200]
+        return f"Action {status}: {snippet}" if snippet else f"Action {status}"
+    if isinstance(event, ActorHandleStarted):
+        return f"Action started: {event.action_name} — {event.query}"
+    if isinstance(event, ActorSessionResponse):
+        return f"Action update: {event.content}"
+    if isinstance(event, NotificationInjectedEvent):
+        return event.content
+
+    return None

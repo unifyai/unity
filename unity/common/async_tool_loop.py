@@ -868,6 +868,7 @@ def start_async_tool_loop(
     multi_handle: bool = False,
     prompt_caching: Optional["PromptCacheParam"] = None,
     time_awareness: bool = False,
+    extra_ask_tools: Optional[Dict[str, Callable]] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -993,6 +994,7 @@ def start_async_tool_loop(
                 multi_handle_coordinator=multi_handle_coordinator,
                 prompt_caching=prompt_caching,
                 time_awareness=time_awareness,
+                extra_ask_tools=extra_ask_tools,
             )
         except asyncio.CancelledError:
             raise

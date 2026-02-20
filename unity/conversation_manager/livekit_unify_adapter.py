@@ -126,20 +126,46 @@ class UnifyLLMStream(llm.LLMStream):
 
     async def _run(self) -> None:
         """Stream responses from Unify and emit ChatChunk events."""
+        from livekit.agents.llm import ImageContent
+
         # Convert LiveKit ChatContext to Unify message format
-        messages: list[dict[str, str]] = []
+        messages: list[dict] = []
         system_messages: list[str] = []
 
         for item in self._chat_ctx.items:
             role = getattr(item, "role", None)
-            content = getattr(item, "text_content", None)
-            if role is None or not content:
+            if role is None:
+                continue
+            raw_content = getattr(item, "content", None)
+            if not raw_content:
                 continue
 
-            if role == "system":
-                system_messages.append(content)
+            # Check for multimodal content (ImageContent alongside text).
+            has_images = isinstance(raw_content, list) and any(
+                isinstance(c, ImageContent) for c in raw_content
+            )
+            if has_images:
+                parts: list[dict] = []
+                for c in raw_content:
+                    if isinstance(c, str):
+                        parts.append({"type": "text", "text": c})
+                    elif isinstance(c, ImageContent) and isinstance(c.image, str):
+                        parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": c.image},
+                            },
+                        )
+                if parts:
+                    messages.append({"role": role, "content": parts})
             else:
-                messages.append({"role": role, "content": content})
+                text = getattr(item, "text_content", None)
+                if not text:
+                    continue
+                if role == "system":
+                    system_messages.append(text)
+                else:
+                    messages.append({"role": role, "content": text})
 
         # Build client kwargs
         client_kwargs = dict(self._extra_kwargs)

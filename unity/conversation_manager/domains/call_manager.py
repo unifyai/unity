@@ -24,6 +24,15 @@ if TYPE_CHECKING:
     from unity.conversation_manager.in_memory_event_broker import InMemoryEventBroker
 
 
+def make_room_name(assistant_id: str, medium: str) -> str:
+    """Canonical LiveKit room name for a given assistant and medium.
+
+    Format: unity_{assistant_id}_{medium}
+    Examples: unity_25_phone, unity_25_meet, unity_25_teams
+    """
+    return f"unity_{assistant_id}_{medium}"
+
+
 @dataclass
 class CallConfig:
     assistant_id: str
@@ -33,6 +42,17 @@ class CallConfig:
     voice_provider: str
     voice_id: str
     voice_mode: str
+
+
+_BASE_FORWARD_CHANNELS = [
+    "app:call:*",
+    "app:comms:*",
+]
+_BOSS_EXTRA_CHANNELS = [
+    "app:actor:*",
+    "app:managers:output",
+    "app:logging:message_logged",
+]
 
 
 class LivekitCallManager:
@@ -57,9 +77,9 @@ class LivekitCallManager:
         # Initial guidance for outbound calls, set by make_call tool before the
         # call is placed, published to the fast brain after the subprocess spawns.
         self.initial_call_guidance: str = ""
-        # Callback for user screen share screenshots received via IPC.
+        # Callback for screenshots (user or assistant) received via IPC.
         # Set by the ConversationManager to route screenshots to its buffer.
-        self.on_user_screenshot: Callable[[str], None] | None = None
+        self.on_screenshot: Callable[[str], None] | None = None
         # Track the active call's channel type so the disconnect fallback
         # can publish the correct call-ended event.
         self._call_channel: str | None = None
@@ -90,11 +110,8 @@ class LivekitCallManager:
         if self._socket_server is None:
 
             async def _on_ipc_event(channel: str, event_json: str) -> None:
-                if (
-                    channel == "app:comms:user_screen_screenshot"
-                    and self.on_user_screenshot is not None
-                ):
-                    self.on_user_screenshot(event_json)
+                if channel == "app:comms:screenshot" and self.on_screenshot is not None:
+                    self.on_screenshot(event_json)
                 else:
                     await self._event_broker.publish(channel, event_json)
 
@@ -120,6 +137,16 @@ class LivekitCallManager:
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
+        # All calls get comms events; boss calls additionally get actor/manager events.
+        if self._socket_server:
+            is_boss = contact.get("contact_id") == 1
+            channels = (
+                _BASE_FORWARD_CHANNELS + _BOSS_EXTRA_CHANNELS
+                if is_boss
+                else list(_BASE_FORWARD_CHANNELS)
+            )
+            await self._socket_server.set_forward_channels(channels)
+
         # Set socket path in environment for subprocess
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
@@ -129,7 +156,7 @@ class LivekitCallManager:
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
         args = [
-            self.assistant_number,
+            make_room_name(self.assistant_id, "phone"),
             self.voice_provider,
             self.voice_id,
             outbound,
@@ -184,7 +211,6 @@ class LivekitCallManager:
         self,
         contact: dict,
         boss: dict,
-        livekit_agent_name: str | None,
         room_name: str | None,
     ):
         # Unify Meet is always inbound (user initiates)
@@ -194,35 +220,28 @@ class LivekitCallManager:
         # Start socket server and get path
         socket_path = await self._ensure_socket_server()
 
+        # All calls get comms events; boss calls additionally get actor/manager events.
+        if self._socket_server:
+            is_boss = contact.get("contact_id") == 1
+            channels = (
+                _BASE_FORWARD_CHANNELS + _BOSS_EXTRA_CHANNELS
+                if is_boss
+                else list(_BASE_FORWARD_CHANNELS)
+            )
+            await self._socket_server.set_forward_channels(channels)
+
         # Set socket path in environment for subprocess
         if socket_path:
             os.environ[CM_EVENT_SOCKET_ENV] = socket_path
             print(f"[LivekitCallManager] Socket server at {socket_path}")
 
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        livekit_agent_name = (
-            livekit_agent_name
-            if livekit_agent_name
-            else (
-                f"unity_{self.assistant_id}_web"
-                if self.assistant_id
-                else "unity_unify_meet_1"
-            )
-        )
-        room_name = (
-            room_name
-            if room_name
-            else (
-                f"unity_{self.assistant_id}_web"
-                if self.assistant_id
-                else "unity_unify_meet_1"
-            )
-        )
+        room_name = room_name or make_room_name(self.assistant_id, "meet")
         self.room_name = room_name
         # Both TTS and Realtime modes use the fast brain architecture and need
         # boss details and assistant bio for the phone agent prompt
         args = [
-            f"{livekit_agent_name}:{room_name}",
+            room_name,
             self.voice_provider,
             self.voice_id,
             False,
