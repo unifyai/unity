@@ -104,6 +104,9 @@ class CallEventSocketServer:
         # Signalled once the forward subscription is active, so callers of
         # start() can be sure published events will reach the server.
         self._forward_ready = asyncio.Event()
+        # Optional callback invoked when the last client disconnects.
+        # Signature: async def callback() -> None
+        self.on_client_disconnected: Callable[[], Awaitable[None]] | None = None
 
     @property
     def socket_path(self) -> str | None:
@@ -316,11 +319,19 @@ class CallEventSocketServer:
             async with self._clients_lock:
                 if client_socket in self._connected_clients:
                     self._connected_clients.remove(client_socket)
+                no_clients_left = len(self._connected_clients) == 0
             try:
                 client_socket.close()
             except Exception:
                 pass
             print("[CallEventSocketServer] Client disconnected")
+            if no_clients_left and self.on_client_disconnected is not None:
+                try:
+                    await self.on_client_disconnected()
+                except Exception as e:
+                    print(
+                        f"[CallEventSocketServer] on_client_disconnected error: {e}",
+                    )
 
     async def _process_message(self, message: str) -> None:
         """Process a received message and publish to event broker."""
@@ -447,7 +458,6 @@ class CallEventSocketServer:
         message_bytes = message.encode("utf-8")
 
         loop = asyncio.get_event_loop()
-        failed_clients = []
 
         async with self._clients_lock:
             if not self._connected_clients:
@@ -476,30 +486,27 @@ class CallEventSocketServer:
                 try:
                     await loop.sock_sendall(client, message_bytes)
                 except Exception as e:
+                    # Log but do NOT remove or close the client.
+                    # _handle_client() is the sole owner of the socket
+                    # lifecycle -- it may still have unread inbound data
+                    # (e.g. unify_call_ended) in the kernel receive buffer.
+                    # It will discover the broken connection naturally via
+                    # EOF or error on its next sock_recv and clean up in
+                    # its own finally block.
                     _log.warning(
-                        "[CallEventSocketServer] sock_sendall failed: %s",
+                        "[CallEventSocketServer] sock_sendall failed "
+                        "(client kept): %s",
                         e,
                     )
                     print(f"[CallEventSocketServer] Failed to send to client: {e}")
-                    failed_clients.append(client)
-
-            # Remove failed clients
-            for client in failed_clients:
-                if client in self._connected_clients:
-                    self._connected_clients.remove(client)
-                    try:
-                        client.close()
-                    except Exception:
-                        pass
 
         if self._connected_clients:
             _log.debug(
                 "[CallEventSocketServer] Sent: channel=%s message_id=%s "
-                "client_count=%d failed=%d",
+                "client_count=%d",
                 channel,
                 message_id,
                 len(self._connected_clients),
-                len(failed_clients),
             )
             print(
                 trace_kv(
