@@ -49,7 +49,6 @@ def init_metrics() -> None:
         return
 
     try:
-        logging.basicConfig()
         logging.getLogger("opentelemetry.exporter.cloud_monitoring").setLevel(
             logging.WARNING,
         )

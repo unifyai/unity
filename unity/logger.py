@@ -354,7 +354,15 @@ def get_otel_log_dir() -> Optional[Path]:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Console (Terminal) Logging
+#
+# This is the single authority for all Unity log output.  No other module
+# should call logging.basicConfig(), add handlers, or filter the root logger.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Prevent unity records from propagating to the root logger.  This eliminates
+# duplicate output from any root-level handler (e.g. logging.basicConfig())
+# that third-party code may install.
+LOGGER.propagate = False
 
 
 class _MillisFormatter(logging.Formatter):
@@ -381,6 +389,17 @@ if SETTINGS.UNITY_TERMINAL_LOG:
         LOGGER.setLevel(logging.DEBUG)
         _handler._unity_terminal = True  # type: ignore[attr-defined]
         LOGGER.addHandler(_handler)
+
+# Mute noisy third-party loggers so only unity.* output reaches the terminal.
+for _lib in (
+    "httpx",
+    "urllib3",
+    "openai",
+    "LiteLLM",
+    "LiteLLM Proxy",
+    "LiteLLM Router",
+):
+    logging.getLogger(_lib).setLevel(logging.WARNING)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration
