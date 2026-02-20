@@ -58,6 +58,8 @@ from unity.conversation_manager.medium_scripts.common import (
     render_participant_comms,
     publish_meet_interaction_from_track,
     FastBrainLogger,
+    hydrate_fast_brain_history,
+    trim_fast_brain_context,
 )
 from unity.conversation_manager.types.screenshot import (
     ScreenshotEntry,
@@ -271,13 +273,8 @@ async def entrypoint(ctx: JobContext) -> None:
         if not content:
             return
         current_rt = rt_ref[0]
-        chat_ctx = current_rt.chat_ctx
-        chat_ctx.add_message(role="user", content=content)
-
-        async def _update():
-            await current_rt.update_chat_ctx(chat_ctx)
-
-        asyncio.create_task(_update())
+        current_rt.chat_ctx.add_message(role="user", content=content)
+        asyncio.create_task(_trimmed_update_chat_ctx())
 
     def _publish_screenshot(entry: "ScreenshotEntry", filepath: str) -> None:
         """Fire-and-forget: write to disk and publish to slow brain via IPC."""
@@ -436,16 +433,11 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             maybe_speak_queued()
         else:
-            chat_ctx = rt.chat_ctx
-            chat_ctx.add_message(
+            rt.chat_ctx.add_message(
                 role="system",
                 content=[f"[notification] {content}"],
             )
-
-            async def update_ctx():
-                await rt.update_chat_ctx(chat_ctx)
-
-            asyncio.create_task(update_ctx())
+            asyncio.create_task(_trimmed_update_chat_ctx())
             trigger_generate_reply(
                 reason="notification",
                 source_id=guidance_id or "guidance_notify",
@@ -474,16 +466,11 @@ async def entrypoint(ctx: JobContext) -> None:
             "text": text,
         }
 
-        chat_ctx = rt.chat_ctx
-        chat_ctx.add_message(
+        rt.chat_ctx.add_message(
             role="system",
             content=[f"[notification] {notification_content}"],
         )
-
-        async def update_ctx():
-            await rt.update_chat_ctx(chat_ctx)
-
-        asyncio.create_task(update_ctx())
+        asyncio.create_task(_trimmed_update_chat_ctx())
 
         _log.guidance_say(guidance_id, text, guidance_source=guidance_source)
         session.say(text, allow_interruptions=True, add_to_chat_ctx=True)
@@ -548,14 +535,8 @@ async def entrypoint(ctx: JobContext) -> None:
         """Inject a system message into the STS chat context and trigger a reply."""
         if not session_ready or not rt_ref:
             return
-        current_rt = rt_ref[0]
-        chat_ctx = current_rt.chat_ctx
-        chat_ctx.add_message(role="system", content=[msg])
-
-        async def _update():
-            await current_rt.update_chat_ctx(chat_ctx)
-
-        asyncio.create_task(_update())
+        rt_ref[0].chat_ctx.add_message(role="system", content=[msg])
+        asyncio.create_task(_trimmed_update_chat_ctx())
         trigger_generate_reply(reason=reason, source_id="system_event")
 
     def on_participant_comms(data: dict) -> None:
@@ -601,6 +582,31 @@ async def entrypoint(ctx: JobContext) -> None:
     # Get realtime session (only available after session.start())
     rt = agent.realtime_llm_session
     rt_ref.append(rt)
+
+    # Trim-aware wrapper for syncing context to the Realtime API server.
+    async def _trimmed_update_chat_ctx() -> None:
+        window = SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW
+        trimmed = trim_fast_brain_context(rt.chat_ctx.items, window)
+        if len(trimmed) < len(rt.chat_ctx.items):
+            rt.chat_ctx._items[:] = trimmed
+        await rt.update_chat_ctx(rt.chat_ctx)
+
+    # Hydrate historical context from EventBus into the fast brain.
+    history_lines = await hydrate_fast_brain_history(
+        participant_ids=participant_ids,
+        is_boss_user=is_boss_user,
+        assistant_name=assistant_name or "Assistant",
+        limit=SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW,
+    )
+    if history_lines:
+        history_block = (
+            "--- Recent conversation history ---\n"
+            + "\n".join(history_lines)
+            + "\n--- Current call ---"
+        )
+        rt.chat_ctx.add_message(role="system", content=[history_block])
+        await _trimmed_update_chat_ctx()
+        _log.info(f"Hydrated {len(history_lines)} historical events into context")
 
     # Log real usage per turn via unillm (replaces duration-based heuristic)
     @rt.on("metrics_collected")

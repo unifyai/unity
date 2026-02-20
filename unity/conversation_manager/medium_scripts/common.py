@@ -15,13 +15,23 @@ if TYPE_CHECKING:
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import (
     Event,
+    PhoneCallReceived,
+    PhoneCallSent,
     PhoneCallStarted,
     PhoneCallEnded,
+    UnifyMeetReceived,
     UnifyMeetEnded,
     UnifyMeetStarted,
+    InboundPhoneUtterance,
+    InboundUnifyMeetUtterance,
+    OutboundPhoneUtterance,
+    OutboundUnifyMeetUtterance,
     SMSReceived,
+    SMSSent,
     EmailReceived,
+    EmailSent,
     UnifyMessageReceived,
+    UnifyMessageSent,
     ActorNotification,
     ActorResult,
     ActorHandleStarted,
@@ -1110,3 +1120,160 @@ def render_event_for_fast_brain(event_json: str) -> str | None:
         return event.content
 
     return None
+
+
+# -------- Fast brain history hydration & context windowing -------- #
+
+
+def _render_history_event(
+    event: Event,
+    participant_ids: set[int],
+    is_boss_user: bool,
+    assistant_name: str,
+) -> str | None:
+    """Render a single historical Comms event for fast brain context.
+
+    Returns a human-readable line for the event, or None to skip it.
+    Covers the same event types as the live forwarding rules, plus
+    utterances and sent messages which are only relevant for history.
+    """
+    cid = _event_contact_id(event)
+    name = _contact_name(getattr(event, "contact", {}) or {})
+
+    # -- Utterances (transcript lines) --
+    if isinstance(event, (InboundPhoneUtterance, InboundUnifyMeetUtterance)):
+        if cid is not None and cid in participant_ids:
+            return f"{name}: {event.content}"
+        return None
+    if isinstance(event, (OutboundPhoneUtterance, OutboundUnifyMeetUtterance)):
+        return f"{assistant_name}: {event.content}"
+
+    # -- Call lifecycle markers --
+    if isinstance(event, (PhoneCallReceived, PhoneCallSent, PhoneCallStarted)):
+        if cid is not None and cid in participant_ids:
+            return f"--- Call with {name} ---"
+        return None
+    if isinstance(event, (UnifyMeetReceived, UnifyMeetStarted)):
+        if cid is not None and cid in participant_ids:
+            return f"--- Meeting with {name} ---"
+        return None
+    if isinstance(event, (PhoneCallEnded, UnifyMeetEnded)):
+        if cid is not None and cid in participant_ids:
+            return f"--- Call ended ---"
+        return None
+
+    # -- Text messages (received + sent, filtered to participants) --
+    if isinstance(event, SMSReceived):
+        if cid is not None and cid in participant_ids:
+            return f"[SMS from {name}] {event.content}"
+        return None
+    if isinstance(event, SMSSent):
+        if cid is not None and cid in participant_ids:
+            return f"[SMS to {name}] {event.content}"
+        return None
+    if isinstance(event, EmailReceived):
+        if cid is not None and cid in participant_ids:
+            subj = event.subject or "(no subject)"
+            return f"[Email from {name}] {subj}"
+        return None
+    if isinstance(event, EmailSent):
+        if cid is not None and cid in participant_ids:
+            subj = event.subject or "(no subject)"
+            return f"[Email to {name}] {subj}"
+        return None
+    if isinstance(event, UnifyMessageReceived):
+        if cid is not None and cid in participant_ids:
+            return f"[Message from {name}] {event.content}"
+        return None
+    if isinstance(event, UnifyMessageSent):
+        if cid is not None and cid in participant_ids:
+            return f"[Message to {name}] {event.content}"
+        return None
+
+    # -- Boss-only: Actor events --
+    if is_boss_user:
+        if isinstance(event, ActorNotification):
+            return f"Action progress: {event.response}"
+        if isinstance(event, ActorResult):
+            status = "completed successfully" if event.success else "failed"
+            detail = event.result or event.error or ""
+            if isinstance(detail, dict):
+                detail = detail.get("summary", str(detail))
+            snippet = str(detail)[:200]
+            return f"Action {status}: {snippet}" if snippet else f"Action {status}"
+        if isinstance(event, ActorHandleStarted):
+            return f"Action started: {event.action_name} — {event.query}"
+        if isinstance(event, ActorSessionResponse):
+            return f"Action update: {event.content}"
+
+    return None
+
+
+async def hydrate_fast_brain_history(
+    participant_ids: set[int],
+    is_boss_user: bool,
+    assistant_name: str,
+    limit: int = 50,
+) -> list[str]:
+    """Load recent Comms events from EventBus and render them for the fast brain.
+
+    Returns a chronologically ordered list of rendered strings suitable for
+    injecting as historical context before the current call begins.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    bus_events = await EVENT_BUS.search(
+        filter='type == "Comms"',
+        limit=limit,
+    )
+    if not bus_events:
+        return []
+
+    # Bus events come in descending order (most recent first); reverse for chronological
+    bus_events.reverse()
+
+    rendered: list[str] = []
+    for bus_event in bus_events:
+        payload_cls = bus_event.payload_cls
+        if "." in payload_cls:
+            payload_cls = payload_cls.rsplit(".", 1)[-1]
+
+        try:
+            cm_event = Event.from_bus_event(bus_event)
+        except Exception:
+            continue
+
+        text = _render_history_event(
+            cm_event,
+            participant_ids,
+            is_boss_user,
+            assistant_name,
+        )
+        if text:
+            rendered.append(text)
+
+    return rendered
+
+
+def trim_fast_brain_context(items: list, window_size: int) -> list:
+    """Return a trimmed view of ChatContext items respecting a rolling window.
+
+    Preserves all contiguous system-role messages at the start of the list
+    (the system prompt / history preamble) and keeps at most ``window_size``
+    conversation items after them.
+    """
+    # Find where the system prompt block ends
+    system_end = 0
+    for i, item in enumerate(items):
+        if getattr(item, "role", None) == "system":
+            system_end = i + 1
+        else:
+            break
+
+    conversation_items = items[system_end:]
+    if len(conversation_items) <= window_size:
+        return list(items)
+
+    if window_size == 0:
+        return list(items[:system_end])
+    return list(items[:system_end]) + conversation_items[-window_size:]

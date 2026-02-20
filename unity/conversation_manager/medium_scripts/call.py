@@ -55,6 +55,8 @@ from unity.conversation_manager.medium_scripts.common import (
     render_participant_comms,
     publish_meet_interaction_from_track,
     FastBrainLogger,
+    hydrate_fast_brain_history,
+    trim_fast_brain_context,
 )
 from unity.conversation_manager.types.screenshot import (
     ScreenshotEntry,
@@ -143,8 +145,19 @@ class Assistant(Agent):
             await asyncio.sleep(0.1)
         _log.call_status("call_received")
 
+        from unity.settings import SETTINGS
+
+        window = SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW
+        trimmed_items = trim_fast_brain_context(chat_ctx.items, window)
+        if len(trimmed_items) < len(chat_ctx.items):
+            trimmed_ctx = llm.ChatContext()
+            for item in trimmed_items:
+                trimmed_ctx.items.append(item)
+        else:
+            trimmed_ctx = chat_ctx
+
         _log.llm_thinking(reason="llm_node_start")
-        async for chunk in super().llm_node(chat_ctx, tools, model_settings):
+        async for chunk in super().llm_node(trimmed_ctx, tools, model_settings):
             yield chunk
 
 
@@ -659,6 +672,23 @@ async def entrypoint(ctx: agents.JobContext):
 
     _log.session_start("Starting AgentSession")
     await session.start(room=ctx.room, agent=assistant, room_input_options=rio)
+
+    # Hydrate historical context from EventBus into the fast brain.
+    history_lines = await hydrate_fast_brain_history(
+        participant_ids=participant_ids,
+        is_boss_user=is_boss_user,
+        assistant_name=assistant_name or "Assistant",
+        limit=SETTINGS.conversation.FAST_BRAIN_CONTEXT_WINDOW,
+    )
+    if history_lines:
+        history_block = (
+            "--- Recent conversation history ---\n"
+            + "\n".join(history_lines)
+            + "\n--- Current call ---"
+        )
+        assistant._chat_ctx.add_message(role="system", content=[history_block])
+        session._chat_ctx.add_message(role="system", content=[history_block])
+        _log.info(f"Hydrated {len(history_lines)} historical events into context")
 
     # Mark session ready and process any buffered guidance BEFORE first utterance.
     # After this, the on_guidance callback will apply guidance immediately.
