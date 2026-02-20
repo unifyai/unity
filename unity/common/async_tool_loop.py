@@ -16,7 +16,7 @@ from typing import (
 )
 from ..logger import LOGGER
 from .llm_helpers import short_id
-from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
+from ._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
@@ -528,32 +528,85 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         loop_id_label = f"Question({parent_label})"
 
+        # ── Sibling lineage for the ask sub-loop ──────────────────────
+        # The ask loop is a *sibling* of the parent loop (not a child).
+        # It shares the parent's parent lineage so the frontend can
+        # place it at the correct nesting level in the action tree.
+        _parent_hierarchy = list(getattr(self, "_log_hierarchy", None) or [])
+        _sibling_lineage = _parent_hierarchy[:-1] if len(_parent_hierarchy) > 1 else []
+
+        # ── Boundary ManagerMethod events ─────────────────────────────
+        # Publish incoming/outgoing ManagerMethod events around the sub-loop
+        # so the frontend can create a distinct node for each ask() call.
+        # This mirrors the boundary wrapper pattern used by execute_code
+        # and execute_function in CodeActActor.
+        from secrets import token_hex as _token_hex
+        from ..events.manager_event_logging import (
+            new_call_id as _new_call_id,
+            publish_manager_method_event as _pub_mm,
+        )
+        from ..common.hierarchical_logger import build_hierarchy_label as _build_hl
+
+        _ask_call_id = _new_call_id()
+        _ask_suffix = _token_hex(2)
+        _ask_manager = (self._loop_id or "").split(".")[0] or "unknown"
+        _ask_hierarchy = [*_sibling_lineage, loop_id_label]
+        _ask_hierarchy_label = _build_hl(_ask_hierarchy, _ask_suffix)
+
+        await _pub_mm(
+            _ask_call_id,
+            _ask_manager,
+            "ask",
+            phase="incoming",
+            display_label="Answering Question",
+            question=question,
+            hierarchy=_ask_hierarchy,
+            hierarchy_label=_ask_hierarchy_label,
+        )
+
         # The question is sent as a plain user message (context is in system message)
         _ask_message = question
 
-        helper_handle = start_async_tool_loop(
-            inspection_client,
-            _ask_message,
-            ask_tools,  # ask_* tools for inner handle propagation
-            loop_id=loop_id_label,
-            parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=(
-                parent_chat_context_safe if _parent_chat_context else None
-            ),
-            propagate_chat_context=_propagate_chat_context,
-            prune_tool_duplicates=False,
-            interrupt_llm_with_interjections=False,
-            max_consecutive_failures=1,
-            timeout=300,
-        )
+        # Set _PENDING_LOOP_SUFFIX so the inner LoopConfig picks up
+        # the same suffix as our boundary event.
+        _suffix_token = _PENDING_LOOP_SUFFIX.set(_ask_suffix)
+        try:
+            helper_handle = start_async_tool_loop(
+                inspection_client,
+                _ask_message,
+                ask_tools,  # ask_* tools for inner handle propagation
+                loop_id=loop_id_label,
+                parent_lineage=_sibling_lineage,
+                parent_chat_context=(
+                    parent_chat_context_safe if _parent_chat_context else None
+                ),
+                propagate_chat_context=_propagate_chat_context,
+                prune_tool_duplicates=False,
+                interrupt_llm_with_interjections=False,
+                max_consecutive_failures=1,
+                timeout=300,
+            )
+        finally:
+            _PENDING_LOOP_SUFFIX.reset(_suffix_token)
 
         # Monkey-patch result() to record the assistant answer when available
+        # AND publish the outgoing ManagerMethod boundary event.
         if not _return_reasoning_steps:
             _orig_result = helper_handle.result
 
             async def _rec_result():  # type: ignore[return-type]
                 ans = await _orig_result()
                 self._append_user_visible_assistant(ans)
+                await _pub_mm(
+                    _ask_call_id,
+                    _ask_manager,
+                    "ask",
+                    phase="outgoing",
+                    display_label="Answering Question",
+                    answer=ans if isinstance(ans, str) else str(ans),
+                    hierarchy=_ask_hierarchy,
+                    hierarchy_label=_ask_hierarchy_label,
+                )
                 return ans
 
             helper_handle.result = _rec_result  # type: ignore[attr-defined]
@@ -577,6 +630,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         async def _wrap():
             answer = await helper_handle.result()
             self._append_user_visible_assistant(answer)
+            await _pub_mm(
+                _ask_call_id,
+                _ask_manager,
+                "ask",
+                phase="outgoing",
+                display_label="Answering Question",
+                answer=answer if isinstance(answer, str) else str(answer),
+                hierarchy=_ask_hierarchy,
+                hierarchy_label=_ask_hierarchy_label,
+            )
             return answer, inspection_client.messages
 
         helper_handle.result = _wrap  # type: ignore[attr-defined]
