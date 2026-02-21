@@ -353,10 +353,12 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     await cm.schedule_proactive_speech()
 
     if role == "user":
-        # Link any pending screenshot to this message by stamping it
-        # with the local_message_id.  Screenshot capture (both user and
-        # assistant) is handled by the fast brain and forwarded via IPC.
+        # Link any pending user/webcam screenshot (forwarded from the fast
+        # brain via IPC) to this message by stamping it with the message_id.
         cm._claim_pending_user_screenshot(message_id)
+
+        if cm.assistant_screen_share_active:
+            await cm.capture_assistant_screenshot(event.content, message_id)
 
         await cm.interject_or_run(event.content)
 
