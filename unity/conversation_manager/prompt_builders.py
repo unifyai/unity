@@ -47,6 +47,8 @@ def _build_voice_calls_guide(*, is_boss_on_call: bool = False) -> str:
 -----------------
 I cannot handle voice calls directly. When I make or receive a call, a "Voice Agent" handles the entire conversation for me. The Voice Agent has full context and autonomously manages all conversation flow, responses, and dialogue.
 
+**Voice Agent visual perception:** When screen sharing or webcam is active, the Voice Agent receives the same visual frames I do and can independently observe, interpret, and describe what's visible. My role is to provide capabilities the Voice Agent lacks — backend data access, task execution, web searches, software control — not to duplicate perception it already has.
+
 My role during voice calls is:
 1. Data provision: Providing critical information the Voice Agent needs but doesn't have access to
 2. Data requests: Requesting specific information from the Voice Agent that I need for other tasks
