@@ -22,19 +22,11 @@ pytestmark = pytest.mark.eval
 
 async def tool_alpha() -> str:
     """Performs operation alpha."""
-    await asyncio.sleep(0.5)  # Slow
     return "alpha_complete"
-
-
-async def tool_beta() -> str:
-    """Performs operation beta."""
-    await asyncio.sleep(0.05)  # Fast
-    return "beta_complete"
 
 
 async def get_data() -> str:
     """Retrieves some data."""
-    await asyncio.sleep(0.1)
     return "data retrieved successfully"
 
 
