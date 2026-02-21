@@ -97,6 +97,8 @@ def init(
         return
 
     # 0. Validate LLM provider credentials are present
+    from unity.settings import SETTINGS as _SETTINGS
+
     _SETTINGS.validate_llm_providers()
 
     # 1. Ensure Unify project is active
