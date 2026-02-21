@@ -173,6 +173,56 @@ class Timeline:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+import re
+import hashlib
+
+_FB_RE = re.compile(
+    r"\[FastBrain[^\]]*\]\s+(.*)",
+)
+
+_USER_SPEECH_ICON = "\U0001f9d1\u200d\U0001f4bb"  # 🧑‍💻
+_ASSISTANT_SPEECH_ICON = "\U0001f50a"  # 🔊
+
+_TS_MILLIS_RE = re.compile(r"^(\d{2}:\d{2}:\d{2}\.\d{3})\s")
+_TS_FULL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})[,.](\d{3})")
+
+
+def _extract_log_date(lines: list[str]) -> str:
+    """Extract YYYY-MM-DD from the first standard-format log line."""
+    for raw in lines[:100]:
+        m = _TS_FULL_RE.match(raw)
+        if m:
+            return m.group(1)
+    return "2026-01-01"
+
+
+def _parse_fb_line(line: str, log_date: str, line_idx: int) -> tuple[str, int, str] | None:
+    """Parse a FastBrainLogger line into (ts_utc, monotonic_proxy, body).
+
+    Returns None if the line is not a FastBrainLogger line.
+    """
+    m = _FB_RE.search(line)
+    if not m:
+        return None
+    body = m.group(1)
+
+    ts_utc = ""
+    tm = _TS_MILLIS_RE.match(line)
+    if tm:
+        ts_utc = f"{log_date}T{tm.group(1)}+00:00"
+    else:
+        tfm = _TS_FULL_RE.match(line)
+        if tfm:
+            ts_utc = f"{tfm.group(1)}T{tfm.group(2)}.{tfm.group(3)}+00:00"
+
+    return ts_utc, line_idx * 10, body
+
+
+def _content_hash(prefix: str, content: str) -> str:
+    digest = hashlib.sha1((content or "").encode("utf-8")).hexdigest()
+    return f"{prefix}-{digest[:12]}"
+
+
 def _extract_field(line: str, key: str, next_key: str | None = None) -> str:
     """Extract value for `key=...` bounded by ` next_key=` or end of line."""
     marker = f"{key}="
@@ -231,12 +281,21 @@ def _collect_full_text(lines: list[str], trace_line_idx: int, role: str) -> str:
 
 
 def parse_voice_log(path: Path) -> VoiceLogData:
-    """Parse all relevant trace events from the voice agent log."""
+    """Parse all relevant trace events from the voice agent log.
+
+    Supports both the legacy ``[TRACE::FAST_BRAIN_CALL]`` format and the
+    current ``FastBrainLogger`` emoji format introduced in c9e3c8f4a.
+    """
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
     data = VoiceLogData()
+    log_date = _extract_log_date(lines)
 
     for i, line in enumerate(lines):
+
+        # ══════════════════════════════════════════════════════════════════
+        # Legacy [TRACE::...] format (pre-c9e3c8f4a)
+        # ══════════════════════════════════════════════════════════════════
 
         # ── conversation_item_added ──
         if "event=conversation_item_added" in line and "[TRACE::" in line:
@@ -350,12 +409,126 @@ def parse_voice_log(path: Path) -> VoiceLogData:
                 ),
             )
 
+        # ══════════════════════════════════════════════════════════════════
+        # FastBrainLogger emoji format (post-c9e3c8f4a)
+        # ══════════════════════════════════════════════════════════════════
+
+        elif "[FastBrain" in line:
+            fb = _parse_fb_line(line, log_date, i)
+            if fb is None:
+                continue
+            ts_utc, mono, body = fb
+
+            if body.startswith("User state:"):
+                new_state = body.split(":", 1)[1].strip().split()[0]
+                data.user_states.append(
+                    UserStateChange(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        state_id=_extract_field(line, "state_id"),
+                        new_state=new_state,
+                    ),
+                )
+
+            elif body.startswith("Guidance from "):
+                source = body.split("Guidance from ", 1)[1].split(":")[0]
+                should_speak = "speak=True" in body
+                content = body.split("speak=True ", 1)[-1] if should_speak else body.split("speak=False ", 1)[-1]
+                gid = _extract_field(line, "guidance_id")
+                if " guidance_id=" in content:
+                    content = content[: content.index(" guidance_id=")]
+                data.guidance_events.append(
+                    GuidanceReceived(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        guidance_id=gid or _content_hash("guid", content),
+                        source=source,
+                        should_speak=should_speak,
+                        user_is_speaking=False,
+                        content=content.strip(),
+                    ),
+                )
+
+            elif body.startswith("Speaking guidance "):
+                parts = body.split("Speaking guidance ", 1)[1]
+                gid = parts.split(":")[0].strip()
+                text = parts.split(":", 1)[1].strip() if ":" in parts else ""
+                gsource = _extract_field(line, "guidance_source")
+                if " guidance_source=" in text:
+                    text = text[: text.index(" guidance_source=")]
+                data.session_says.append(
+                    SessionSay(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        guidance_id=gid,
+                        source=gsource,
+                        text=text,
+                    ),
+                )
+
+            elif body.startswith("LLM thinking"):
+                data.fb_triggers.append(
+                    GenerateReplyTrigger(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        generation_id=_extract_field(line, "generation_id"),
+                        reason=_extract_field(line, "reason"),
+                        source_id=_extract_field(line, "source_id"),
+                        queued_speech_count=_extract_int(
+                            line, "queued_speech",
+                        ),
+                    ),
+                )
+
+            elif _ASSISTANT_SPEECH_ICON in line and " source=" in body:
+                source = _extract_field(line, "source", "guidance_id")
+                gid = _extract_field(line, "guidance_id")
+                text = body.split(" source=")[0].strip()
+                if text.endswith("\u2026"):
+                    text = text[:-1]
+                data.utterances.append(
+                    Utterance(
+                        monotonic_ms=mono,
+                        ts_utc=ts_utc,
+                        role="assistant",
+                        text=text,
+                        utterance_id=_content_hash("utt", f"assistant:{text}"),
+                        speech_source=source,
+                        guidance_id=gid,
+                    ),
+                )
+
+            elif _USER_SPEECH_ICON in line:
+                text = body.strip()
+                if text.endswith("\u2026"):
+                    text = text[:-1]
+                if text:
+                    data.utterances.append(
+                        Utterance(
+                            monotonic_ms=mono,
+                            ts_utc=ts_utc,
+                            role="user",
+                            text=text,
+                            utterance_id=_content_hash("utt", f"user:{text}"),
+                            speech_source="generate_reply",
+                            guidance_id="",
+                        ),
+                    )
+
     data.utterances.sort(key=lambda u: u.monotonic_ms)
     data.guidance_events.sort(key=lambda g: g.monotonic_ms)
     data.session_says.sort(key=lambda s: s.monotonic_ms)
     data.fb_requests.sort(key=lambda r: r.start_ms)
     data.fb_triggers.sort(key=lambda t: t.monotonic_ms)
     data.user_states.sort(key=lambda u: u.monotonic_ms)
+
+    seen_utt: set[str] = set()
+    deduped: list[Utterance] = []
+    for u in data.utterances:
+        if u.utterance_id not in seen_utt:
+            seen_utt.add(u.utterance_id)
+            deduped.append(u)
+    data.utterances = deduped
 
     return data
 

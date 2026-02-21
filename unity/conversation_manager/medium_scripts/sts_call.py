@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import asyncio
 import logging
 import json
 from typing import AsyncIterable
+
+os.environ["UNITY_TERMINAL_LOG"] = "true"
 
 from dotenv import load_dotenv
 
