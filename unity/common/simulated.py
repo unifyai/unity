@@ -6,6 +6,8 @@ import inspect
 import threading
 from typing import Any, Dict, List, Tuple
 
+from unity.common.hierarchical_logger import ICONS
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,21 +99,21 @@ class SimulatedLog:
     """Small wrapper for consistent iconised request/steering logs."""
 
     _ICONS = {
-        "ask": "❓",
+        "ask": ICONS["clarification"],
         "update": "📝",
         "execute": "🎬",
         "act": "🎬",
-        "interject": "💬",
-        "pause": "⏸️",
-        "resume": "▶️",
-        "stop": "🛑",
+        "interject": ICONS["interjection"],
+        "pause": ICONS["pause"],
+        "resume": ICONS["resume"],
+        "stop": ICONS["stop_requested"],
         # simulated-only convenience
-        "clar_req": "❓",
-        "clar_ans": "💬",
-        "notification": "🔔",
+        "clar_req": ICONS["clarification"],
+        "clar_ans": ICONS["interjection"],
+        "notification": ICONS["notification"],
         # session lifecycle
-        "session_start": "🚀",
-        "session_end": "🏁",
+        "session_start": ICONS["session_start"],
+        "session_end": ICONS["session_end"],
     }
     _VERBS = {
         "ask": "Ask requested",
@@ -138,7 +140,7 @@ class SimulatedLog:
         except Exception:
             return
         try:
-            icon = SimulatedLog._ICONS.get(kind, "ℹ️")
+            icon = SimulatedLog._ICONS.get(kind, ICONS.get("info", "ℹ️"))
             verb = SimulatedLog._VERBS.get(kind, "Requested")
             suffix = ""
             if kind in {"ask", "update", "act", "interject"}:
@@ -159,7 +161,9 @@ class SimulatedLog:
             return
         try:
             q = SimulatedLineage.preview(question)
-            LOGGER.info(f"❓ [{label}] Clarification requested: {q}")
+            LOGGER.info(
+                f"{ICONS['clarification']} [{label}] Clarification requested: {q}",
+            )
         except Exception:
             pass
 
@@ -172,7 +176,9 @@ class SimulatedLog:
             return
         try:
             a = SimulatedLineage.preview(answer)
-            LOGGER.info(f"💬 [{label}] Clarification answer received: {a}")
+            LOGGER.info(
+                f"{ICONS['interjection']} [{label}] Clarification answer received: {a}",
+            )
         except Exception:
             pass
 
@@ -185,7 +191,7 @@ class SimulatedLog:
             return
         try:
             m = SimulatedLineage.preview(message)
-            LOGGER.info(f"🔔 [{label}] Notification: {m}")
+            LOGGER.info(f"{ICONS['notification']} [{label}] Notification: {m}")
         except Exception:
             pass
 
@@ -209,7 +215,7 @@ def maybe_tool_log_scheduled(segment: str, method: str, args: dict):
         cid = SimulatedLineage.extract_suffix(label) or ""
         try:
             LOGGER.info(
-                f"🛠️ [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
+                f"{ICONS['info']} [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
             )
         except Exception:
             pass
@@ -233,7 +239,7 @@ def maybe_tool_log_scheduled_with_label(label: str, method: str, args: dict):
         cid = SimulatedLineage.extract_suffix(label) or ""
         try:
             LOGGER.info(
-                f"🛠️ [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
+                f"{ICONS['info']} [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
             )
         except Exception:
             pass
@@ -262,7 +268,7 @@ def maybe_tool_log_completed(
         dt = _time.perf_counter() - float(t0)
         try:
             LOGGER.info(
-                f"✅ [{label}] ToolCall Completed in {dt:.2f}s | result={_json.dumps(result)}",
+                f"{ICONS['completed']} [{label}] ToolCall Completed in {dt:.2f}s | result={_json.dumps(result)}",
             )
         except Exception:
             pass
@@ -302,7 +308,7 @@ async def simulated_llm_roundtrip(
 
     try:
         if LOGGER is not None:
-            LOGGER.info(f"🔄 [{label}] LLM simulating…")
+            LOGGER.info(f"{ICONS['llm_thinking']} [{label}] LLM simulating…")
     except Exception:
         pass
     t0 = _time.perf_counter()
@@ -326,12 +332,14 @@ async def simulated_llm_roundtrip(
     try:
         if LOGGER is not None:
             if SimulatedLineage.has_outer():
-                LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms")
+                LOGGER.info(f"{ICONS['completed']} [{label}] LLM replied in {dt_ms} ms")
             else:
                 _ans_preview = str(answer)
                 if len(_ans_preview) > 800:
                     _ans_preview = _ans_preview[:800] + "…"
-                LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms:\n{_ans_preview}")
+                LOGGER.info(
+                    f"{ICONS['completed']} [{label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
+                )
     except Exception:
         pass
 
@@ -530,7 +538,7 @@ class SimulatedHandleMixin:
         try:
             suffix = f" – reason: {reason}" if reason else ""
             LOGGER.info(
-                f"🛑 [{getattr(self, '_log_label', 'handle')}] Stop requested{suffix}",
+                f"{ICONS['stop_requested']} [{getattr(self, '_log_label', 'handle')}] Stop requested{suffix}",
             )
         except Exception:
             pass

@@ -74,7 +74,7 @@ Contains two main parts:
 |-----------|------|---------|
 | **CommsManager** | `comms_manager.py` | Handles Pub/Sub subscriptions, receives inbound messages, bridges external events to internal event broker |
 | **ConversationManager** | `conversation_manager.py` | Main orchestrator—manages conversation state, inactivity detection, coordinates all managers |
-| **EventBroker** | `event_broker.py` | Internal message bus (Redis or in-memory) for component communication |
+| **EventBroker** | `event_broker.py` | Internal in-memory message bus for component communication |
 | **DebugLogger** | `debug_logger.py` | Logs job lifecycle to AssistantJobs project |
 
 > ⚠️ **Note**: `debug_logger.py` is misnamed—it's not just for debugging. It's the authoritative source for tracking which jobs are live. This file should be renamed to something like `job_tracker.py` or `assistant_jobs_logger.py`.

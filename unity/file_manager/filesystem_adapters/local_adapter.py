@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Iterable, List, Optional
 
 from unity.file_manager.filesystem_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 
 if TYPE_CHECKING:
     from unity.file_manager.sync import SyncManager
@@ -367,7 +369,9 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
                 loop.create_task(self._sync_manager.on_file_write(abs_path))
             except RuntimeError:
                 # No running loop - sync will happen on next poll
-                print(f"[LocalFS] No event loop for sync, will sync on next poll")
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [LocalFS] No event loop for sync, will sync on next poll",
+                )
 
         return relative_path
 
@@ -395,7 +399,9 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
             True if sync started successfully, False otherwise.
         """
         if not self._enable_sync:
-            print("[LocalFS] Sync disabled by constructor flag")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [LocalFS] Sync disabled by constructor flag",
+            )
             return False
 
         # Lazy create SyncManager to allow SESSION_DETAILS to be populated first
@@ -405,7 +411,9 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
             self._sync_manager = SyncManager()
 
         if not self._sync_manager.enabled:
-            print("[LocalFS] Sync not enabled (no desktop_url)")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [LocalFS] Sync not enabled (no desktop_url)",
+            )
             return False
 
         return await self._sync_manager.start()

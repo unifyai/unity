@@ -45,6 +45,7 @@ class Event:
 
     _registry: ClassVar[dict[str, "Event"]] = {}
     loggable: ClassVar[bool] = True
+    content_logged: ClassVar[bool] = False
     topic: ClassVar[str | None] = None
 
     def to_json(self):
@@ -146,7 +147,6 @@ class UnifyMeetReceived(Event):
     topic: ClassVar[str | None] = "app:comms:unify_meet_received"
 
     contact: dict
-    livekit_agent_name: str | None = None
     room_name: str | None = None
 
 
@@ -227,6 +227,7 @@ class RecordingReady(Event):
 @dataclass
 class SMSReceived(Event):
     topic: ClassVar[str | None] = "app:comms:msg_message"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     content: str
@@ -242,6 +243,7 @@ class UnifyMessageReceived(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:unify_message_message"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     content: str
@@ -309,6 +311,7 @@ class EmailReceived(Event):
     """
 
     topic: ClassVar[str | None] = "app:comms:email_message"
+    content_logged: ClassVar[bool] = True
 
     contact: dict
     subject: str
@@ -707,6 +710,27 @@ class UserScreenShareStopped(Event):
     """User stopped sharing their screen during a Unify Meet session."""
 
     topic: ClassVar[str | None] = "app:comms:user_screen_share_stopped"
+
+    reason: str = ""
+
+
+@dataclass
+class UserWebcamStarted(Event):
+    """User enabled their webcam during a Unify Meet session.
+
+    The user's webcam feed is now being streamed to the assistant.
+    """
+
+    topic: ClassVar[str | None] = "app:comms:user_webcam_started"
+
+    reason: str = ""
+
+
+@dataclass
+class UserWebcamStopped(Event):
+    """User disabled their webcam during a Unify Meet session."""
+
+    topic: ClassVar[str | None] = "app:comms:user_webcam_stopped"
 
     reason: str = ""
 

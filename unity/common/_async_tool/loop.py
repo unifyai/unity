@@ -50,6 +50,7 @@ from .tools_data import ToolsData, compute_context_injection
 from .dynamic_tools_factory import DynamicToolFactory
 from .time_context import create_time_context, TimeContext
 from ..context_dump import make_messages_safe_for_context_dump
+from ...common.hierarchical_logger import ICONS
 
 if TYPE_CHECKING:
     from .multi_handle import MultiHandleCoordinator
@@ -224,6 +225,7 @@ async def async_tool_loop_inner(
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
     prompt_caching: Optional["PromptCacheParam"] = None,
     time_awareness: bool = False,
+    extra_ask_tools: Optional[Dict[str, Callable]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -457,12 +459,15 @@ async def async_tool_loop_inner(
             if parent_chat_context_safe:
                 logger.info(
                     f"Parent Context: {json.dumps(parent_chat_context_safe, indent=4)}",
-                    prefix="⬇️",
+                    prefix=ICONS["tool_seeding"],
                 )
-            logger.info(f"System Message: {client.system_message}", prefix="📋")
+            logger.info(
+                f"System Message: {client.system_message}",
+                prefix=ICONS["system_message"],
+            )
         # Log user message (skip if seeding with a batch - per-item logs are emitted below)
         if not isinstance(message, list):
-            logger.info(f"User Message: {message}", prefix="🧑‍💻")
+            logger.info(f"User Message: {message}", prefix=ICONS["user_message"])
 
     # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
@@ -522,12 +527,18 @@ async def async_tool_loop_inner(
         # Transform roles to outer_* to disambiguate from current conversation roles
         ctx_content_transformed = _transform_context_roles(ctx_content)
         _has_parent_chat_context = True
+        if ctx_content_transformed:
+            _parent_ctx_detail = (
+                f"The messages below show that parent conversation's history up to the point "
+                f"when you received this request. Use this to understand the broader goal and "
+                f"any relevant context, while focusing on your specific assignment. "
+            )
+        else:
+            _parent_ctx_detail = f"None of the parent conversation history has been provided to this request. "
         runtime_context_parts.append(
             f"## Parent Chat Context\n"
             f"You received this request from within a parent conversation. "
-            f"The messages below show that parent conversation's history up to the point "
-            f"when you received this request. Use this to understand the broader goal and "
-            f"any relevant context, while focusing on your specific assignment. "
+            f"{_parent_ctx_detail}"
             f"Additional context updates may arrive during this session as the parent "
             f"conversation progresses.\n\n"
             f"IMPORTANT: Messages in the parent context use 'outer_user' and 'outer_assistant' "
@@ -604,6 +615,7 @@ async def async_tool_loop_inner(
         client=client,
         logger=logger,
         time_ctx=time_ctx,
+        extra_ask_tools=extra_ask_tools,
     )
 
     consecutive_failures = _LoopToolFailureTracker(max_consecutive_failures)
@@ -905,7 +917,10 @@ async def async_tool_loop_inner(
                 reason_txt = ""
             suffix = f" – reason: {reason_txt}" if reason_txt else ""
             try:
-                logger.defer_after_first_llm(f"Stop requested{suffix}", prefix="🛑")
+                logger.defer_after_first_llm(
+                    f"Stop requested{suffix}",
+                    prefix=ICONS["stop_requested"],
+                )
             except Exception:
                 pass
             # Optional generic banner payload to chain after stop (e.g., "Serialization complete")
@@ -1111,7 +1126,7 @@ async def async_tool_loop_inner(
         }
         await _msg_dispatcher.append_msgs([notice])
         if log_steps:
-            logger.info(f"Early exit – {reason}", prefix="⏹️")
+            logger.info(f"Early exit – {reason}", prefix=ICONS["early_exit"])
         return notice["content"]
 
     # ── small local helpers to dedupe repeated logic ─────────────────────────
@@ -1164,7 +1179,7 @@ async def async_tool_loop_inner(
         try:
             logger.info(
                 f"Clarification requested – {tool_name}: {question_text}",
-                prefix="❓",
+                prefix=ICONS["clarification"],
             )
         except Exception:
             pass
@@ -1198,7 +1213,7 @@ async def async_tool_loop_inner(
                 _msg_txt = str(payload)
             logger.info(
                 f"Notification from {tool_name}: {_msg_txt}",
-                prefix="🔔",
+                prefix=ICONS["notification"],
             )
         except Exception:
             pass
@@ -1587,7 +1602,10 @@ async def async_tool_loop_inner(
 
                 # Log a single concise interjection line
                 try:
-                    logger.info(f"Interjection received: {_msg_text}", prefix="💬")
+                    logger.info(
+                        f"Interjection received: {_msg_text}",
+                        prefix=ICONS["interjection"],
+                    )
                 except Exception:
                     pass
 
@@ -2103,7 +2121,7 @@ async def async_tool_loop_inner(
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
-                logger.info(f"LLM thinking…", prefix="🔄")
+                logger.info(f"LLM thinking…", prefix=ICONS["llm_thinking"])
                 logger.mark_llm_thinking()
 
             if interrupt_llm_with_interjections:
@@ -2360,7 +2378,7 @@ async def async_tool_loop_inner(
                         _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
                     logger.info(
                         f"{json.dumps(_msg_for_logging, indent=4)}",
-                        prefix="🤖",
+                        prefix=ICONS["llm_response"],
                     )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
@@ -2456,7 +2474,7 @@ async def async_tool_loop_inner(
                                 logger.info(
                                     f"{name} called while {len(tools_data.pending)} "
                                     f"task(s) are in-flight. Auto-cancelling to terminate.",
-                                    prefix="🔚",
+                                    prefix=ICONS["auto_cancel"],
                                 )
                                 await tools_data.cancel_pending_tasks()
 
@@ -2516,7 +2534,7 @@ async def async_tool_loop_inner(
                             logger.info(
                                 f"{name} called while {len(tools_data.pending)} "
                                 f"task(s) are in-flight. Auto-cancelling to terminate.",
-                                prefix="🔚",
+                                prefix=ICONS["auto_cancel"],
                             )
                             await tools_data.cancel_pending_tasks()
 
@@ -2599,7 +2617,7 @@ async def async_tool_loop_inner(
 
                             logger.info(
                                 f"Request {request_id} completed with answer: {answer[:100]}{'...' if len(answer) > 100 else ''}",
-                                prefix="✅",
+                                prefix=ICONS["completed"],
                             )
 
                             # Check if all requests are done - if so, loop will terminate
@@ -2694,7 +2712,7 @@ async def async_tool_loop_inner(
                             try:
                                 logger.info(
                                     "Assistant chose `wait` – no-op; not persisting to transcript.",
-                                    prefix="🕒",
+                                    prefix=ICONS["wait"],
                                 )
                             except Exception:
                                 pass
@@ -2720,7 +2738,7 @@ async def async_tool_loop_inner(
                         try:
                             logger.info(
                                 "Assistant called `wait` with no pending tools.",
-                                prefix="🕒",
+                                prefix=ICONS["wait"],
                             )
                         except Exception:
                             pass
@@ -3338,7 +3356,7 @@ async def async_tool_loop_inner(
                     logger.info(
                         f"LLM returned content while {len(blocked_on_clar)} task(s) "
                         f"await clarification. Cancelling blocked tasks to exit.",
-                        prefix="🔚",
+                        prefix=ICONS["auto_cancel"],
                     )
                     for t in blocked_on_clar:
                         t.cancel()
@@ -3359,7 +3377,7 @@ async def async_tool_loop_inner(
                     logger.info(
                         f"LLM returned text-only response while {len(not_blocked)} "
                         f"task(s) are in-flight. Auto-cancelling to terminate.",
-                        prefix="🔚",
+                        prefix=ICONS["auto_cancel"],
                     )
                     await tools_data.cancel_pending_tasks()
                     # Fall through to return the final answer
@@ -3392,7 +3410,7 @@ async def async_tool_loop_inner(
                     # All requests completed/cancelled and persist=False
                     logger.info(
                         "Multi-handle mode: all requests completed, terminating loop.",
-                        prefix="✅",
+                        prefix=ICONS["completed"],
                     )
                     multi_handle_coordinator.close()
                     return final_content  # Return last assistant content (may be empty)
@@ -3400,7 +3418,7 @@ async def async_tool_loop_inner(
                     # Still have pending requests - continue waiting
                     logger.info(
                         f"Multi-handle mode: {multi_handle_coordinator.registry.pending_count()} request(s) still pending.",
-                        prefix="⏳",
+                        prefix=ICONS["pending"],
                     )
                     # Wait for next interjection or tool completion
                     continue
@@ -3433,7 +3451,7 @@ async def async_tool_loop_inner(
 
                 logger.info(
                     "Persist mode: waiting for next interjection...",
-                    prefix="⏸️",
+                    prefix=ICONS["pause"],
                 )
                 # Block until an interjection arrives or cancellation is requested
                 cancel_waiter = asyncio.create_task(
@@ -3465,7 +3483,7 @@ async def async_tool_loop_inner(
                         await interject_queue.put(interjection)
                         logger.info(
                             "Persist mode: interjection received, resuming loop",
-                            prefix="▶️",
+                            prefix=ICONS["resume"],
                         )
                     except Exception:
                         pass

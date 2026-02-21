@@ -14,15 +14,15 @@ Usage
 
     # Backfill a single context
     result = backfill_private_fields(
-        "JohnDoe/MyAssistant/Contacts",
-        user_name="JohnDoe",
-        assistant_name="MyAssistant",
+        "42/7/Contacts",
+        user_context="42",
+        assistant_context="7",
     )
 
     # Backfill all contexts for a user/assistant combination
     results = backfill_all_contexts_for_user_assistant(
-        user_name="JohnDoe",
-        assistant_name="MyAssistant",
+        user_context="42",
+        assistant_context="7",
     )
 """
 
@@ -36,8 +36,8 @@ import unify
 def backfill_private_fields(
     context: str,
     *,
-    user_name: Optional[str] = None,
-    assistant_name: Optional[str] = None,
+    user_context: Optional[str] = None,
+    assistant_context: Optional[str] = None,
     batch_size: int = 100,
     filter: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -54,11 +54,11 @@ def backfill_private_fields(
     Parameters
     ----------
     context : str
-        The context to backfill (e.g., "JohnDoe/MyAssistant/Contacts")
-    user_name : str, optional
-        The user name to set for _user field
-    assistant_name : str, optional
-        The assistant name to set for _assistant field
+        The context to backfill (e.g., "42/7/Contacts")
+    user_context : str, optional
+        The user ID to set for _user field
+    assistant_context : str, optional
+        The assistant ID to set for _assistant field
     batch_size : int, default 100
         Number of logs to fetch per batch
     filter : str, optional
@@ -69,7 +69,7 @@ def backfill_private_fields(
     Dict[str, Any]
         Summary with total_updated count and context
     """
-    if user_name is None and assistant_name is None:
+    if user_context is None and assistant_context is None:
         return {
             "total_updated": 0,
             "context": context,
@@ -96,20 +96,19 @@ def backfill_private_fields(
         logs_to_update = []
         for lg in logs:
             needs_update = False
-            if user_name is not None and lg.entries.get("_user") is None:
+            if user_context is not None and lg.entries.get("_user") is None:
                 needs_update = True
-            if assistant_name is not None and lg.entries.get("_assistant") is None:
+            if assistant_context is not None and lg.entries.get("_assistant") is None:
                 needs_update = True
             if needs_update:
                 logs_to_update.append(lg.id)
 
         if logs_to_update:
-            # Build update entries
             entries: Dict[str, str] = {}
-            if user_name is not None:
-                entries["_user"] = user_name
-            if assistant_name is not None:
-                entries["_assistant"] = assistant_name
+            if user_context is not None:
+                entries["_user"] = user_context
+            if assistant_context is not None:
+                entries["_assistant"] = assistant_context
 
             # Batch update
             unify.update_logs(
@@ -132,22 +131,22 @@ def backfill_private_fields(
 
 def backfill_all_contexts_for_user_assistant(
     *,
-    user_name: str,
-    assistant_name: str,
+    user_context: str,
+    assistant_context: str,
     contexts: Optional[List[str]] = None,
     batch_size: int = 100,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Backfill _user and _assistant for all contexts belonging to a user/assistant.
 
-    If contexts is None, discovers them by prefix "{user_name}/{assistant_name}/".
+    If contexts is None, discovers them by prefix "{user_context}/{assistant_context}/".
 
     Parameters
     ----------
-    user_name : str
-        The user name (used as context prefix and _user field value)
-    assistant_name : str
-        The assistant name (used as context prefix and _assistant field value)
+    user_context : str
+        The user ID (used as context prefix and _user field value)
+    assistant_context : str
+        The assistant ID (used as context prefix and _assistant field value)
     contexts : List[str], optional
         Explicit list of contexts to backfill. If None, discovers via prefix.
     batch_size : int, default 100
@@ -159,7 +158,7 @@ def backfill_all_contexts_for_user_assistant(
         Mapping of context -> result dict (total_updated or error)
     """
     if contexts is None:
-        prefix = f"{user_name}/{assistant_name}/"
+        prefix = f"{user_context}/{assistant_context}/"
         all_contexts = unify.get_contexts(prefix=prefix)
         contexts = list(all_contexts.keys())
 
@@ -168,8 +167,8 @@ def backfill_all_contexts_for_user_assistant(
         try:
             result = backfill_private_fields(
                 ctx,
-                user_name=user_name,
-                assistant_name=assistant_name,
+                user_context=user_context,
+                assistant_context=assistant_context,
                 batch_size=batch_size,
             )
             results[ctx] = result
@@ -182,7 +181,7 @@ def backfill_all_contexts_for_user_assistant(
 # Backward compatibility aliases
 def backfill_assistant_field(
     context: str,
-    assistant_name: str,
+    assistant_context: str,
     *,
     batch_size: int = 100,
     filter: Optional[str] = None,
@@ -190,21 +189,21 @@ def backfill_assistant_field(
     """Backward-compatible wrapper for backfill_private_fields."""
     return backfill_private_fields(
         context,
-        assistant_name=assistant_name,
+        assistant_context=assistant_context,
         batch_size=batch_size,
         filter=filter,
     )
 
 
 def backfill_all_contexts_for_assistant(
-    assistant_name: str,
+    assistant_context: str,
     *,
     contexts: Optional[List[str]] = None,
     batch_size: int = 100,
 ) -> Dict[str, Dict[str, Any]]:
     """Backward-compatible wrapper - discovers contexts by old single-prefix pattern."""
     if contexts is None:
-        all_contexts = unify.get_contexts(prefix=f"{assistant_name}/")
+        all_contexts = unify.get_contexts(prefix=f"{assistant_context}/")
         contexts = list(all_contexts.keys())
 
     results: Dict[str, Dict[str, Any]] = {}
@@ -212,7 +211,7 @@ def backfill_all_contexts_for_assistant(
         try:
             result = backfill_private_fields(
                 ctx,
-                assistant_name=assistant_name,
+                assistant_context=assistant_context,
                 batch_size=batch_size,
             )
             results[ctx] = result

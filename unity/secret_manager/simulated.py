@@ -24,6 +24,7 @@ from ..common.simulated import (
     maybe_tool_log_completed,
 )
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 
 class _SimulatedSecretHandle(SimulatedHandleMixin, SteerableToolHandle):
@@ -72,7 +73,9 @@ class _SimulatedSecretHandle(SimulatedHandleMixin, SteerableToolHandle):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -101,7 +104,7 @@ class _SimulatedSecretHandle(SimulatedHandleMixin, SteerableToolHandle):
             if self._needs_clar and self._clar_down_q is not None:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -129,7 +132,7 @@ class _SimulatedSecretHandle(SimulatedHandleMixin, SteerableToolHandle):
                         pass
                     try:
                         LOGGER.info(
-                            f"💬 [{self._log_label}] Clarification answer received",
+                            f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
                         )
                     except Exception:
                         pass

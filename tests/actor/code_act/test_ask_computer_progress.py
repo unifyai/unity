@@ -70,6 +70,9 @@ async def test_code_act_ask_includes_computer_progress_tool(monkeypatch):
     )
 
     def _fake_actor_start_async_tool_loop(*args, **kwargs):
+        extra = kwargs.get("extra_ask_tools") or {}
+        _base = outer_task.get_ask_tools
+        setattr(outer_task, "get_ask_tools", lambda: {**_base(), **extra})
         return outer_handle
 
     class _DummyInspectionHandle:
@@ -189,6 +192,9 @@ async def test_code_act_ask_uses_computer_progress_for_inflight_action(monkeypat
     )
 
     def _fake_actor_start_async_tool_loop(*args, **kwargs):
+        extra = kwargs.get("extra_ask_tools") or {}
+        _base = outer_task.get_ask_tools
+        setattr(outer_task, "get_ask_tools", lambda: {**_base(), **extra})
         return outer_handle
 
     monkeypatch.setattr(

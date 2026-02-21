@@ -1,10 +1,9 @@
 import asyncio
-import logging
-from collections import deque
-
 from typing import Optional
 import contextlib
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
@@ -18,7 +17,6 @@ from unity.conversation_manager.domains.call_manager import (
 from unity.conversation_manager.domains.contact_index import (
     ContactIndex,
     CommsMessage,
-    GuidanceMessage,
     Message,
 )
 from unity.conversation_manager.domains.brain import build_brain_spec
@@ -40,49 +38,29 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
+from unity.conversation_manager.types.screenshot import (
+    generate_screenshot_path,
+    write_screenshot_to_disk,
+)
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-from unity.conversation_manager.domains.guidance_articulator import (
-    GuidanceArticulator,
-    GuidanceDecision,
-    ConversationMessage,
-)
-from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.conversation_manager.tracing import content_trace_id
-
-logger = logging.getLogger(__name__)
-
-# Set logging level and add handler if not already configured
-log_level = SETTINGS.conversation.LOG_LEVEL.upper()
-logger.setLevel(getattr(logging, log_level, logging.INFO))
-
-# Ensure we have a console handler to actually display logs
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(levelname)s: %(message)s")
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
+from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 
 MAX_CONV_MANAGER_MSGS = 50
 
 
 def _save_screenshot(entry: ScreenshotEntry) -> str:
-    """Save a screenshot to disk and return its relative path."""
-    import base64
-    from pathlib import Path
+    """Save a screenshot to disk and return its relative path.
 
-    subfolder = "Assistant" if entry.source == "assistant" else "User"
-    directory = Path("Screenshots") / subfolder
-    stem = entry.timestamp.strftime("%Y-%m-%dT%H-%M-%S.%f")
-    path = directory / f"{stem}.jpg"
-    suffix = 1
-    while path.exists():
-        path = directory / f"{stem}_{suffix}.jpg"
-        suffix += 1
-    path.write_bytes(base64.b64decode(entry.b64))
-    return str(path)
+    If the entry already carries a filepath (set by the fast brain), the file
+    is already on disk — just return the path without writing again.
+    """
+    if entry.filepath:
+        return entry.filepath
+    path = generate_screenshot_path(entry)
+    write_screenshot_to_disk(entry, path)
+    return path
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -155,7 +133,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
-        self.call_manager.on_user_screenshot = self._buffer_user_screenshot
+        self.call_manager.on_screenshot = self._buffer_screenshot
+        self.call_manager.on_fast_brain_generating = self._on_fast_brain_generating
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -188,9 +167,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
             None  # SnapshotState with element tracking for incremental diff computation
         )
 
-        # meet interaction state (screen share / remote control)
+        # meet interaction state (screen share / webcam / remote control)
         self.assistant_screen_share_active: bool = False
         self.user_screen_share_active: bool = False
+        self.user_webcam_active: bool = False
         self.user_remote_control_active: bool = False
 
         # screenshot buffer for slow brain visual context
@@ -205,12 +185,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # the exchange without a database filter query.
         self._recording_exchange_ids: dict[str, int] = {}
 
-        # recently-published guidance content for redundancy detection
-        self._recent_guidance: deque[str] = deque(maxlen=5)
-
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
+        self._fast_brain_active: bool = False
+        self._proactive_logger = FastBrainLogger(mode="tts")
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -221,6 +200,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._pending_llm_request_meta: list[dict[str, str]] = []
         self._current_event_trace: dict[str, str] | None = None
         self._event_trace_seq: int = 0
+        self._has_non_forwarded_event: bool = False
         self._llm_request_seq: int = 0
         self._llm_run_seq: int = 0
 
@@ -278,13 +258,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
         import aiohttp
         from datetime import datetime, timezone
 
-        desktop_url = SESSION_DETAILS.assistant.desktop_url or "http://localhost:3000"
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if desktop_url:
+            base_url = desktop_url.rstrip("/") + "/api"
+        else:
+            base_url = "http://localhost:3000"
         try:
             auth_key = SESSION_DETAILS.unify_key
             headers = {"authorization": f"Bearer {auth_key}"}
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{desktop_url}/screenshot",
+                    f"{base_url}/screenshot",
                     json={},
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
@@ -348,8 +332,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     local_message_id=local_message_id,
                 )
 
-    def _buffer_user_screenshot(self, event_json: str) -> None:
-        """Buffer a user screen share screenshot received from the fast brain via IPC."""
+    def _buffer_screenshot(self, event_json: str) -> None:
+        """Buffer a screenshot received from the fast brain via IPC.
+
+        Accepts both user and assistant screenshots, distinguished by the
+        ``source`` field in the JSON payload.  When a ``filepath`` is included,
+        the file has already been written to disk by the fast brain.
+        """
         import json as _json
         from datetime import datetime, timezone
 
@@ -357,23 +346,25 @@ class ConversationManager(metaclass=SingletonABCMeta):
             data = _json.loads(event_json)
             b64 = data.get("b64", "")
             utterance = data.get("utterance", "")
+            source = data.get("source", "user")
+            filepath = data.get("filepath")
             ts_str = data.get("timestamp")
             ts = (
                 datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
             )
             if b64:
                 self._screenshot_buffer.append(
-                    ScreenshotEntry(b64, utterance, ts, "user"),
+                    ScreenshotEntry(b64, utterance, ts, source, filepath=filepath),
                 )
                 self._session_logger.debug(
                     "screenshot_capture",
-                    f"Buffered user screenshot #{len(self._screenshot_buffer)} "
+                    f"Buffered {source} screenshot #{len(self._screenshot_buffer)} "
                     f"for utterance: {utterance[:60]}...",
                 )
         except Exception as e:
             self._session_logger.warning(
                 "screenshot_capture",
-                f"Error buffering user screenshot: {e}",
+                f"Error buffering screenshot: {e}",
             )
 
     def get_recent_voice_transcript(
@@ -540,233 +531,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             return kept
         except Exception:
             return messages
-
-    def _build_voice_agent_prompt(self) -> str:
-        """Build the fast brain prompt from CM state for the guidance articulator."""
-        from unity.settings import SETTINGS
-
-        contact = self.get_active_contact() or {}
-        boss = self.contact_index.get_contact(contact_id=1) or {}
-        is_boss_user = contact.get("contact_id") == 1
-
-        return build_voice_agent_prompt(
-            bio=self.assistant_about,
-            assistant_name=self.assistant_name or None,
-            boss_first_name=boss.get("first_name", ""),
-            boss_surname=boss.get("surname", ""),
-            boss_email_address=boss.get("email_address", ""),
-            boss_phone_number=boss.get("phone_number", ""),
-            boss_bio=boss.get("bio") or None,
-            contact_first_name=contact.get("first_name", ""),
-            contact_surname=contact.get("surname", ""),
-            contact_phone_number=contact.get("phone_number", ""),
-            contact_email=contact.get("email_address", ""),
-            contact_bio=contact.get("bio") or None,
-            is_boss_user=is_boss_user,
-            contact_rolling_summary=contact.get("rolling_summary", ""),
-            demo_mode=SETTINGS.DEMO_MODE,
-        ).flatten()
-
-    async def _articulate_and_publish_notification(
-        self,
-        notification_text: str,
-    ) -> None:
-        """Forward an actor notification directly to the articulator for voice-UX decision.
-
-        Bypasses the slow-brain's call_guidance gate. The articulator is the sole
-        decision-maker on whether the user hears this notification.
-        """
-        from datetime import datetime, timezone
-
-        guidance_id = content_trace_id("guid", notification_text)
-        self._session_logger.info(
-            "call_guidance",
-            f"Direct notification to articulator guidance_id={guidance_id}",
-        )
-
-        decision = await self._articulate_guidance(
-            notification_text,
-            datetime.now(timezone.utc),
-            guidance_id=guidance_id,
-        )
-
-        if decision.send_guidance:
-            contact = self.get_active_contact()
-            event = CallGuidance(
-                contact=contact or {},
-                content=notification_text,
-                response_text=decision.response_text,
-                should_speak=decision.should_speak,
-                source="actor_notification",
-            )
-            self._session_logger.info(
-                "call_guidance",
-                (
-                    f"Publishing notification guidance guidance_id={guidance_id} "
-                    f"speak={decision.should_speak}"
-                ),
-            )
-            event_json = event.to_json()
-            await self.event_broker.publish(
-                "app:call:call_guidance",
-                event_json,
-            )
-            await self.event_broker.publish(
-                "app:comms:assistant_call_guidance",
-                event_json,
-            )
-            self._recent_guidance.append(notification_text)
-        else:
-            self._session_logger.info(
-                "guidance_blocked",
-                f"Blocked notification guidance_id={guidance_id}: {notification_text[:50]}...",
-            )
-
-    async def _articulate_guidance(
-        self,
-        guidance_content: str,
-        slow_brain_start_time: "datetime",
-        *,
-        trace_run_id: str = "",
-        guidance_id: str = "",
-    ) -> GuidanceDecision:
-        """
-        Decide what to do with slow brain guidance: block, silently notify, or speak.
-
-        The slow brain takes 10-20 seconds to think. During this time, the user may
-        change topics, the fast brain may respond, etc. This method uses a fast LLM
-        articulator to determine relevance and, when appropriate, generate the exact
-        speech text the fast brain should utter.
-
-        Args:
-            guidance_content: The guidance text from the slow brain.
-            slow_brain_start_time: When the slow brain started thinking.
-
-        Returns:
-            GuidanceDecision with send_guidance, should_speak, and response_text.
-        """
-        from datetime import datetime, timezone
-
-        # Default decision: send guidance without speech (notify-only, fail-open)
-        default_decision = GuidanceDecision(
-            thoughts="No filtering needed.",
-            send_guidance=True,
-            can_speak_without_fabricating=True,
-            should_speak=False,
-            response_text="",
-        )
-
-        try:
-            # Get the current voice conversation
-            contact = self.get_active_contact()
-            if not contact:
-                return default_decision
-
-            contact_id = contact.get("contact_id")
-            conv_state = self.contact_index.get_conversation_state(contact_id)
-            if not conv_state:
-                return default_decision
-
-            # Get the voice thread
-            voice_medium = (
-                Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-            )
-            voice_thread = self.contact_index.get_messages_for_contact(
-                contact_id,
-                voice_medium,
-            )
-
-            if not voice_thread:
-                return default_decision
-
-            # Convert to ConversationMessage format with is_new flag
-            conversation_messages = []
-            for msg in voice_thread:
-                # GuidanceMessage is internal orchestration — not a real
-                # utterance. Its content is already in RECENTLY SENT GUIDANCE.
-                # Including it here would duplicate entries and, because it
-                # lacks a `role` attribute, the fallback would mislabel it.
-                if isinstance(msg, GuidanceMessage):
-                    continue
-
-                content = (msg.content or "").strip()
-
-                # Skip system messages (e.g., "<Call Started>")
-                if content.startswith("<") and content.endswith(">"):
-                    continue
-
-                role = getattr(msg, "role", "assistant")
-
-                # Check if this message arrived AFTER slow brain started
-                msg_time = getattr(msg, "timestamp", None)
-                is_new = False
-                if msg_time is not None:
-                    if msg_time.tzinfo is None:
-                        msg_time = msg_time.replace(tzinfo=timezone.utc)
-                    is_new = msg_time > slow_brain_start_time
-
-                conversation_messages.append(
-                    ConversationMessage(
-                        role=role,
-                        content=content,
-                        timestamp=msg_time or datetime.now(timezone.utc),
-                        is_new=is_new,
-                    ),
-                )
-
-            has_new_messages = any(m.is_new for m in conversation_messages)
-            has_new_user_turn = any(
-                m.is_new and (m.role or "").lower() == "user"
-                for m in conversation_messages
-            )
-            has_recent_guidance = len(self._recent_guidance) > 0
-
-            # Early return: skip the LLM when there is nothing to check against.
-            # Two dimensions can trigger the articulator:
-            #   1. Topic staleness — a new user turn may have changed the topic.
-            #   2. Redundancy — a previous slow-brain run already published
-            #      equivalent guidance (queue-of-2 overlap).
-            # If neither applies, go straight to the articulator for speech
-            # generation (but skip the relevance check since it's guaranteed fresh).
-            needs_relevance_check = (
-                has_new_messages and has_new_user_turn
-            ) or has_recent_guidance
-
-            # Build the full fast brain prompt for persona matching
-            voice_agent_prompt = self._build_voice_agent_prompt()
-
-            articulator = GuidanceArticulator()
-            decision = await articulator.articulate_guidance(
-                guidance_content,
-                conversation_messages,
-                voice_agent_prompt=voice_agent_prompt,
-                recent_guidance=(
-                    list(self._recent_guidance) if needs_relevance_check else None
-                ),
-            )
-
-            self._session_logger.debug(
-                "guidance_articulator",
-                (
-                    f"Decision run_id={trace_run_id or '-'} "
-                    f"guidance_id={guidance_id or '-'} "
-                    f"send={decision.send_guidance}, "
-                    f"speak={decision.should_speak}, "
-                    f"thoughts={decision.thoughts[:100]}..."
-                ),
-            )
-
-            return decision
-
-        except Exception as e:
-            self._session_logger.error(
-                "guidance_articulator",
-                (
-                    f"Error in guidance articulator run_id={trace_run_id or '-'} "
-                    f"guidance_id={guidance_id or '-'}, defaulting to notify-only: {e}"
-                ),
-            )
-            return default_decision
 
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
@@ -1019,6 +783,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self.last_snapshot,
             assistant_screen_share_active=self.assistant_screen_share_active,
             user_screen_share_active=self.user_screen_share_active,
+            user_webcam_active=self.user_webcam_active,
             user_remote_control_active=self.user_remote_control_active,
         )
 
@@ -1037,6 +802,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_action_steering_tools(),
             **action_tools.build_completed_action_tools(),
         }
+
+        # Strip guide_voice_agent when the fast brain already sees all
+        # events that triggered this turn (no guidance value to add).
+        if "guide_voice_agent" in tools:
+            is_boss_on_call = (self.get_active_contact() or {}).get("contact_id") == 1
+            if is_boss_on_call or not self._has_non_forwarded_event:
+                tools.pop("guide_voice_agent")
+        self._has_non_forwarded_event = False
 
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
@@ -1060,72 +833,48 @@ class ConversationManager(metaclass=SingletonABCMeta):
         if structured is not None:
             thoughts = getattr(structured, "thoughts", "")
 
-        # Handle call_guidance for voice modes.
-        # Extracted from tool call arguments (e.g. wait(call_guidance="...")).
-        # Skip for ActorNotification-origin runs — those are handled by the
-        # direct articulator path in the event handler.
-        is_notification_origin = origin_event_name == "ActorNotification"
-        if self.mode.is_voice and not is_notification_origin:
+        # Handle guide_voice_agent tool calls for voice modes.
+        # The slow brain decides BLOCK (omit the tool), NOTIFY (default),
+        # or SPEAK (should_speak=True + response_text) by calling
+        # guide_voice_agent in parallel with its action tool.
+        if self.mode.is_voice:
             call_guidance = ""
+            should_speak = False
+            response_text = ""
             for tool_exec in result.tools:
-                call_guidance = (tool_exec.args or {}).get("call_guidance", "")
-                if call_guidance:
+                if tool_exec.name == "guide_voice_agent":
+                    args = tool_exec.args or {}
+                    call_guidance = args.get("content", "")
+                    should_speak = args.get("should_speak", False)
+                    response_text = args.get("response_text", "")
                     break
 
             if call_guidance:
                 guidance_id = content_trace_id("guid", call_guidance)
-                self._session_logger.debug(
+                contact = self.get_active_contact()
+                event = CallGuidance(
+                    contact=contact,
+                    content=call_guidance,
+                    response_text=response_text,
+                    should_speak=should_speak,
+                    source="slow_brain",
+                )
+                self._session_logger.info(
                     "call_guidance",
                     (
-                        f"Evaluating guidance_id={guidance_id} run_id={run_id} "
-                        f"chars={len(call_guidance)}"
+                        f"Publishing guidance guidance_id={guidance_id} "
+                        f"run_id={run_id} speak={should_speak}"
                     ),
                 )
-                decision = await self._articulate_guidance(
-                    call_guidance,
-                    slow_brain_start_time,
-                    trace_run_id=run_id,
-                    guidance_id=guidance_id,
+                event_json = event.to_json()
+                await self.event_broker.publish(
+                    "app:call:call_guidance",
+                    event_json,
                 )
-
-                if decision.send_guidance:
-                    contact = self.get_active_contact()
-                    event = CallGuidance(
-                        contact=contact,
-                        content=call_guidance,
-                        response_text=decision.response_text,
-                        should_speak=decision.should_speak,
-                        source="slow_brain",
-                    )
-                    self._session_logger.info(
-                        "call_guidance",
-                        (
-                            f"Publishing guidance guidance_id={guidance_id} "
-                            f"run_id={run_id} contact_id={contact.get('contact_id') if contact else 'unknown'}"
-                        ),
-                    )
-                    event_json = event.to_json()
-                    subscribers = await self.event_broker.publish(
-                        "app:call:call_guidance",
-                        event_json,
-                    )
-                    self._session_logger.debug(
-                        "call_guidance",
-                        f"Published to app:call:call_guidance subscribers={subscribers} guidance_id={guidance_id}",
-                    )
-                    await self.event_broker.publish(
-                        "app:comms:assistant_call_guidance",
-                        event_json,
-                    )
-                    self._recent_guidance.append(call_guidance)
-                else:
-                    self._session_logger.info(
-                        "guidance_blocked",
-                        (
-                            f"Blocked guidance guidance_id={guidance_id} "
-                            f"run_id={run_id}: {call_guidance[:50]}..."
-                        ),
-                    )
+                await self.event_broker.publish(
+                    "app:comms:assistant_call_guidance",
+                    event_json,
+                )
 
         # Log LLM response
         self._session_logger.log_llm_response(
@@ -1207,13 +956,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     "event_id": event_id,
                     "event_name": event_name,
                 }
-                self._session_logger.debug(
-                    "event_trace",
-                    (
-                        f"Processing event_id={event_id} "
-                        f"event={event_name} channel={channel or '-'}"
-                    ),
-                )
+                if event.__class__.loggable:
+                    self._session_logger.debug(
+                        "event_trace",
+                        (
+                            f"Processing event_id={event_id} "
+                            f"event={event_name} channel={channel or '-'}"
+                        ),
+                    )
                 try:
                     await EventHandler.handle_event(
                         event,
@@ -1231,9 +981,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                print(
-                    log_str,
-                )  # need console logging of inactivity to detect idle containers
+                LOGGER.info(f"{DEFAULT_ICON} {log_str}")
                 self._session_logger.info("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
@@ -1351,15 +1099,31 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 return
 
             if adapter.sync_started:
-                print("[ConversationManager] Stopping file sync...")
+                LOGGER.debug(
+                    f"{DEFAULT_ICON} [ConversationManager] Stopping file sync...",
+                )
                 await adapter.stop_sync()
-                print("[ConversationManager] File sync stopped")
+                LOGGER.debug(f"{DEFAULT_ICON} [ConversationManager] File sync stopped")
         except Exception as e:
-            print(f"[ConversationManager] Failed to stop file sync: {e}")
+            LOGGER.error(
+                f"{DEFAULT_ICON} [ConversationManager] Failed to stop file sync: {e}",
+            )
 
     # Proactive speech related methods
 
     PROACTIVE_DEBOUNCE_SECONDS = 5
+
+    def _on_fast_brain_generating(self) -> None:
+        """Called via IPC when the fast brain starts generating a reply.
+
+        Sets ``_fast_brain_active`` so the proactive speech loop knows the
+        user is about to hear (or is already hearing) the assistant speak.
+        The flag is cleared when the corresponding ``OutboundUtterance``
+        arrives, and ``schedule_proactive_speech`` restarts the cycle from
+        the correct baseline.
+        """
+        self._fast_brain_active = True
+        asyncio.ensure_future(self.schedule_proactive_speech())
 
     async def schedule_proactive_speech(self):
         """Cancel any pending proactive speech and start a fresh cycle.
@@ -1367,20 +1131,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         Called on every user/assistant utterance event to reset the silence
         timer.  Only operates in voice modes (call / meet).
         """
-        self._session_logger.debug(
-            "proactive_speech",
-            f"schedule_proactive_speech called, mode={self.mode}",
-        )
         await self.cancel_proactive_speech()
 
         if not self.mode.is_voice:
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Skipping: mode {self.mode} not a voice mode",
-            )
             return
 
-        self._session_logger.debug("proactive_speech", "Creating proactive speech task")
         self._proactive_speech_task = asyncio.create_task(
             self._proactive_speech_loop(),
         )
@@ -1397,13 +1152,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self._proactive_speech_task = None
 
     async def _proactive_speech_loop(self):
+        _log = self._proactive_logger
         try:
-            # Debounce: wait for silence before consulting the LLM.
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Waiting {self.PROACTIVE_DEBOUNCE_SECONDS}s debounce",
-            )
+            _log.proactive_debounce(self.PROACTIVE_DEBOUNCE_SECONDS)
             await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
+
+            if self._fast_brain_active:
+                _log.proactive_deferred("fast brain is active")
+                return
 
             # Gather context for the decision.
             conversation_turns, _ = self.get_recent_voice_transcript()
@@ -1413,25 +1169,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
             )
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Decision: should_speak={decision.should_speak}, delay={decision.delay}s",
-            )
+            _log.proactive_decision(decision.should_speak, decision.delay)
 
             if not decision.should_speak:
-                # Go dormant.  The next utterance event will restart the cycle.
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Not speaking — going dormant until next utterance event",
-                )
+                _log.proactive_dormant()
                 return
 
             # Wait the requested delay (cancellable if an utterance arrives).
             if decision.delay > 0:
-                self._session_logger.info(
-                    "proactive_speech",
-                    f"Speaking in {decision.delay}s: {decision.content}",
-                )
+                _log.proactive_speaking(decision.delay, decision.content)
                 await asyncio.sleep(decision.delay)
 
             # Record in contact_index.
@@ -1450,10 +1196,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 )
 
             guidance_id = content_trace_id("guid", decision.content)
-            self._session_logger.info(
-                "call_guidance",
-                f"Publishing proactive guidance guidance_id={guidance_id}",
-            )
             event = CallGuidance(
                 contact=contact or {},
                 content=decision.content,
@@ -1465,13 +1207,10 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "app:call:call_guidance",
                 event.to_json(),
             )
-            self._session_logger.info(
-                "proactive_speech",
-                f"Spoke: {decision.content}",
-            )
+            _log.proactive_published(guidance_id, decision.content)
 
         except asyncio.CancelledError:
-            self._session_logger.debug("proactive_speech", "Task cancelled")
+            _log.proactive_cancelled()
             raise
         except Exception as e:
-            self._session_logger.error("proactive_speech", f"Error in loop: {e}")
+            _log.proactive_error(str(e))

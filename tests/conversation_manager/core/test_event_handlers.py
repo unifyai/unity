@@ -59,6 +59,8 @@ from unity.conversation_manager.events import (
     UserScreenShareStopped,
     UserRemoteControlStarted,
     UserRemoteControlStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
 )
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
@@ -353,24 +355,14 @@ class TestPingHandler:
     """Tests for the Ping event handler."""
 
     @pytest.mark.asyncio
-    async def test_ping_prints_keepalive_message(self, mock_cm, capsys):
-        """Ping handler prints keepalive message to stdout."""
+    async def test_ping_is_silent(self, mock_cm, capsys):
+        """Ping handler produces no log output."""
         event = Ping(kind="keepalive")
         await EventHandler.handle_event(event, mock_cm)
 
         captured = capsys.readouterr()
-        assert "Ping received - keeping conversation manager alive" in captured.out
-
-    @pytest.mark.asyncio
-    async def test_ping_logs_debug_message(self, mock_cm):
-        """Ping handler logs debug message."""
-        event = Ping(kind="test")
-        await EventHandler.handle_event(event, mock_cm)
-
-        mock_cm._session_logger.debug.assert_called_with(
-            "ping",
-            "Ping received - keeping conversation manager alive",
-        )
+        assert captured.out == ""
+        mock_cm._session_logger.debug.assert_not_called()
 
 
 # =============================================================================
@@ -724,7 +716,6 @@ class TestUnifyMeetHandlers:
         mock_cm.mode = Mode.TEXT
         event = UnifyMeetReceived(
             contact={"contact_id": 1},  # Boss contact
-            livekit_agent_name="TestAgent",
             room_name="room_123",
         )
 
@@ -1097,6 +1088,26 @@ class TestMeetInteractionEventHandlers:
         assert mock_cm.user_remote_control_active is False
 
     @pytest.mark.asyncio
+    async def test_user_webcam_started_sets_flag(self, mock_cm):
+        """UserWebcamStarted sets user_webcam_active to True."""
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted(reason="User enabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+
+    @pytest.mark.asyncio
+    async def test_user_webcam_stopped_clears_flag(self, mock_cm):
+        """UserWebcamStopped sets user_webcam_active to False."""
+        mock_cm.user_webcam_active = True
+
+        event = UserWebcamStopped(reason="User disabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is False
+
+    @pytest.mark.asyncio
     async def test_meet_interaction_pushes_notification(self, mock_cm):
         """All meet interaction events push a notification to the bar."""
         mock_cm.assistant_screen_share_active = False
@@ -1340,9 +1351,8 @@ class TestMeetInteractionEventHandlers:
         assert len(guidance_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_all_six_meet_events_have_fast_brain_guidance(self, mock_cm):
-        """Each of the six meet interaction events has corresponding fast brain
-        guidance text defined."""
+    async def test_all_meet_events_have_fast_brain_guidance(self, mock_cm):
+        """Each meet interaction event has corresponding fast brain guidance text."""
         from unity.conversation_manager.domains.event_handlers import (
             _MEET_FAST_BRAIN_GUIDANCE,
         )
@@ -1352,6 +1362,8 @@ class TestMeetInteractionEventHandlers:
             AssistantScreenShareStopped,
             UserScreenShareStarted,
             UserScreenShareStopped,
+            UserWebcamStarted,
+            UserWebcamStopped,
             UserRemoteControlStarted,
             UserRemoteControlStopped,
         ]
@@ -1360,6 +1372,84 @@ class TestMeetInteractionEventHandlers:
                 cls in _MEET_FAST_BRAIN_GUIDANCE
             ), f"{cls.__name__} missing from _MEET_FAST_BRAIN_GUIDANCE"
             assert len(_MEET_FAST_BRAIN_GUIDANCE[cls]) > 0
+
+    # --------------------------------------------------------------------- #
+    # Call-started screen share state sync (initialization race fix)
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_call_started_syncs_screen_share_state_to_fast_brain(
+        self,
+        mock_cm,
+    ):
+        """When assistant_screen_share_active is already True at call start,
+        the handler queues screen share guidance to the fast brain socket."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, event_json = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:call_guidance"
+        import json
+
+        event_data = json.loads(event_json)
+        content = event_data.get("payload", {}).get("content", "")
+        assert "screen sharing is now on" in content.lower()
+
+    @pytest.mark.asyncio
+    async def test_call_started_does_not_sync_when_screen_share_inactive(
+        self,
+        mock_cm,
+    ):
+        """When assistant_screen_share_active is False, no guidance is queued."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_started_no_crash_without_socket_server(
+        self,
+        mock_cm,
+    ):
+        """If socket server is not yet created, the handler skips gracefully."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_cm.call_manager._socket_server = None
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+        # Should not raise — the falsy check on _socket_server prevents the call.
+
+    @pytest.mark.asyncio
+    async def test_phone_call_started_also_syncs_screen_share_state(
+        self,
+        mock_cm,
+    ):
+        """PhoneCallStarted handler also syncs screen share state."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = PhoneCallStarted(
+            contact={"contact_id": 2, "phone_number": "+15555552222"},
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, _ = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:call_guidance"
 
     # --------------------------------------------------------------------- #
     # Renderer tests
@@ -1422,17 +1512,33 @@ class TestMeetInteractionEventHandlers:
         assert "<assistant_screen_share" not in result
         assert "<user_screen_share" not in result
 
-    def test_render_meet_state_all_three_active(self):
-        """All three active produces three independent sections."""
+    def test_render_meet_state_user_webcam_only(self):
+        """Only user webcam active produces a single webcam section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            user_webcam_active=True,
+        )
+        assert "<user_webcam status='active'>" in result
+        assert "</user_webcam>" in result
+        assert "webcam" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_all_four_active(self):
+        """All four active produces four independent sections."""
         from unity.conversation_manager.domains.renderer import Renderer
 
         result = Renderer.render_meet_interaction_state(
             assistant_screen_share_active=True,
             user_screen_share_active=True,
+            user_webcam_active=True,
             user_remote_control_active=True,
         )
         assert "<assistant_screen_share status='active'>" in result
         assert "<user_screen_share status='active'>" in result
+        assert "<user_webcam status='active'>" in result
         assert "<user_remote_control status='active'>" in result
 
     def test_render_meet_state_appears_at_top_of_full_render(self):

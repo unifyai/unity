@@ -79,8 +79,8 @@ class TestAtomicUpsert:
 
             with patch("unity.common.log_utils.SESSION_DETAILS") as mock_session:
                 mock_session.unify_key = "test-api-key"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
                 mock_session.assistant_record = {"agent_id": "456"}
 
@@ -91,7 +91,7 @@ class TestAtomicUpsert:
                         mock_unify.active_project.return_value = "Assistants"
 
                         result = await atomic_upsert(
-                            context="TestUser/TestAssistant/Spending/Monthly",
+                            context="user123/456/Spending/Monthly",
                             unique_keys={"_assistant_id": "str", "month": "str"},
                             field="cumulative_spend",
                             operation="+5.50",
@@ -139,8 +139,8 @@ class TestAtomicUpsert:
 
             with patch("unity.common.log_utils.SESSION_DETAILS") as mock_session:
                 mock_session.unify_key = "test-key"
-                mock_session.user_context = "JohnDoe"
-                mock_session.assistant_context = "AdaLovelace"
+                mock_session.user_context = "user_abc123"
+                mock_session.assistant_context = "asst_789"
                 mock_session.user.id = "user_abc123"
                 mock_session.assistant_record = {"agent_id": "asst_789"}
 
@@ -151,7 +151,7 @@ class TestAtomicUpsert:
                         mock_unify.active_project.return_value = "Assistants"
 
                         await atomic_upsert(
-                            context="JohnDoe/AdaLovelace/Spending/Monthly",
+                            context="user_abc123/asst_789/Spending/Monthly",
                             unique_keys={"_assistant_id": "str", "month": "str"},
                             field="cumulative_spend",
                             operation="+5.00",
@@ -163,9 +163,9 @@ class TestAtomicUpsert:
 
         # Verify private fields were injected
         initial_data = captured_payload.get("initial_data", {})
-        assert initial_data.get("_user") == "JohnDoe"
+        assert initial_data.get("_user") == "user_abc123"
         assert initial_data.get("_user_id") == "user_abc123"
-        assert initial_data.get("_assistant") == "AdaLovelace"
+        assert initial_data.get("_assistant") == "asst_789"
         assert initial_data.get("_assistant_id") == "asst_789"
 
     @pytest.mark.asyncio
@@ -195,8 +195,8 @@ class TestAtomicUpsert:
 
             with patch("unity.common.log_utils.SESSION_DETAILS") as mock_session:
                 mock_session.unify_key = "test-key"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
                 mock_session.assistant_record = {"agent_id": "456"}
                 mock_session.org_id = 789  # Set org context
@@ -209,7 +209,7 @@ class TestAtomicUpsert:
                         mock_unify.active_project.return_value = "Assistants"
 
                         await atomic_upsert(
-                            context="TestUser/TestAssistant/Spending/Monthly",
+                            context="user123/456/Spending/Monthly",
                             unique_keys={"_assistant_id": "str", "month": "str"},
                             field="cumulative_spend",
                             operation="+5.00",
@@ -244,8 +244,8 @@ class TestAtomicUpsert:
 
             with patch("unity.common.log_utils.SESSION_DETAILS") as mock_session:
                 mock_session.unify_key = "test-key"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
                 mock_session.assistant_record = {"agent_id": "456"}
 
@@ -257,7 +257,7 @@ class TestAtomicUpsert:
 
                         with pytest.raises(httpx.HTTPStatusError):
                             await atomic_upsert(
-                                context="TestUser/TestAssistant/Spending/Monthly",
+                                context="user123/456/Spending/Monthly",
                                 unique_keys={"_assistant_id": "str", "month": "str"},
                                 field="cumulative_spend",
                                 operation="+5.00",
@@ -287,15 +287,15 @@ class TestUpdateCumulativeSpend:
 
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "UTC"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 await _update_cumulative_spend(5.50)
 
         mock_upsert.assert_called_once()
         call_kwargs = mock_upsert.call_args.kwargs
-        assert call_kwargs["context"] == "TestUser/TestAssistant/Spending/Monthly"
+        assert call_kwargs["context"] == "user123/456/Spending/Monthly"
         assert call_kwargs["field"] == "cumulative_spend"
         assert "+5.5" in call_kwargs["operation"]
         assert call_kwargs["add_to_all_context"] is True
@@ -334,8 +334,8 @@ class TestUpdateCumulativeSpend:
 
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "UTC"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 # Should not raise
@@ -362,8 +362,8 @@ class TestUpdateCumulativeSpend:
         ):
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "America/New_York"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 await _update_cumulative_spend(5.50)
@@ -385,7 +385,7 @@ class TestUpdateCumulativeSpend:
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "UTC"
                 mock_session.user_context = None  # Missing
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 await _update_cumulative_spend(5.50)
@@ -401,7 +401,7 @@ class TestUpdateCumulativeSpend:
         ) as mock_upsert:
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "UTC"
-                mock_session.user_context = "TestUser"
+                mock_session.user_context = "user123"
                 mock_session.assistant_context = None  # Missing
                 mock_session.assistant_record = {"agent_id": "456"}
 
@@ -418,8 +418,8 @@ class TestUpdateCumulativeSpend:
         ) as mock_upsert:
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "UTC"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = None  # Missing
 
                 await _update_cumulative_spend(5.50)
@@ -447,8 +447,8 @@ class TestUpdateCumulativeSpend:
         ):
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "Invalid/Timezone"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 await _update_cumulative_spend(5.50)
@@ -478,8 +478,8 @@ class TestUpdateCumulativeSpend:
         ):
             with patch("unity.session_details.SESSION_DETAILS") as mock_session:
                 mock_session.assistant.timezone = "UTC"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.assistant_record = {"agent_id": "456"}
 
                 await _update_cumulative_spend(0.0001)
@@ -522,8 +522,8 @@ class TestConcurrentSpendUpdates:
 
             with patch("unity.common.log_utils.SESSION_DETAILS") as mock_session:
                 mock_session.unify_key = "test-key"
-                mock_session.user_context = "TestUser"
-                mock_session.assistant_context = "TestAssistant"
+                mock_session.user_context = "user123"
+                mock_session.assistant_context = "456"
                 mock_session.user.id = "user123"
                 mock_session.assistant_record = {"agent_id": "456"}
 
@@ -536,7 +536,7 @@ class TestConcurrentSpendUpdates:
                         # Launch 5 concurrent upserts
                         tasks = [
                             atomic_upsert(
-                                context="TestUser/TestAssistant/Spending/Monthly",
+                                context="user123/456/Spending/Monthly",
                                 unique_keys={"_assistant_id": "str", "month": "str"},
                                 field="cumulative_spend",
                                 operation=f"+{i}.00",
@@ -1232,7 +1232,7 @@ async def e2e_config():
         if response.status_code == 404:
             # Create the test user
             response = await client.post(
-                f"{config.base_url}/admin/auth-user",
+                f"{config.base_url}/admin/user",
                 headers=admin_headers,
                 json={
                     "email": f"{config.test_user_id}@test.local",

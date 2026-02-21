@@ -16,6 +16,9 @@ import logging
 import os
 import socket
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
+
 from opentelemetry import metrics
 from opentelemetry.exporter.cloud_monitoring import CloudMonitoringMetricsExporter
 from opentelemetry.resourcedetector.gcp_resource_detector import (
@@ -39,15 +42,18 @@ def init_metrics() -> None:
     global _provider
 
     if os.getenv("TEST"):
-        print("[metrics] Metrics export disabled (test mode)")
+        LOGGER.debug(
+            f"{ICONS['metrics']} [metrics] Metrics export disabled (test mode)",
+        )
         return
 
     if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-        print("[metrics] Metrics export disabled (no GCP credentials)")
+        LOGGER.debug(
+            f"{ICONS['metrics']} [metrics] Metrics export disabled (no GCP credentials)",
+        )
         return
 
     try:
-        logging.basicConfig()
         logging.getLogger("opentelemetry.exporter.cloud_monitoring").setLevel(
             logging.WARNING,
         )
@@ -71,7 +77,9 @@ def init_metrics() -> None:
                 },
             ),
         )
-        print(f"[metrics] Resource attributes: {resource.attributes}")
+        LOGGER.debug(
+            f"{ICONS['metrics']} [metrics] Resource attributes: {resource.attributes}",
+        )
 
         exporter = CloudMonitoringMetricsExporter()
         reader = PeriodicExportingMetricReader(
@@ -80,9 +88,13 @@ def init_metrics() -> None:
         )
         _provider = MeterProvider(resource=resource, metric_readers=[reader])
         metrics.set_meter_provider(_provider)
-        print("[metrics] GMP metrics export initialised (15 s interval)")
+        LOGGER.info(
+            f"{ICONS['metrics']} [metrics] GMP metrics export initialised (15 s interval)",
+        )
     except Exception as exc:
-        print(f"[metrics] Failed to initialise metrics export: {exc}")
+        LOGGER.error(
+            f"{ICONS['metrics']} [metrics] Failed to initialise metrics export: {exc}",
+        )
         _provider = None
 
 
@@ -91,9 +103,9 @@ def flush_metrics() -> None:
     if _provider is not None:
         try:
             _provider.force_flush(timeout_millis=5_000)
-            print("[metrics] Final metrics flushed")
+            LOGGER.debug(f"{ICONS['metrics']} [metrics] Final metrics flushed")
         except Exception as exc:
-            print(f"[metrics] Flush failed: {exc}")
+            LOGGER.error(f"{ICONS['metrics']} [metrics] Flush failed: {exc}")
 
 
 def shutdown_metrics() -> None:
@@ -101,6 +113,6 @@ def shutdown_metrics() -> None:
     if _provider is not None:
         try:
             _provider.shutdown()
-            print("[metrics] Metrics provider shut down")
+            LOGGER.debug(f"{ICONS['metrics']} [metrics] Metrics provider shut down")
         except Exception as exc:
-            print(f"[metrics] Shutdown failed: {exc}")
+            LOGGER.error(f"{ICONS['metrics']} [metrics] Shutdown failed: {exc}")

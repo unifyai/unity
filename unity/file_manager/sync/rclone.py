@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
+
 from .config import SyncConfig
 
 
@@ -47,7 +50,7 @@ class RcloneSync:
             True if setup successful, False otherwise
         """
         async with self._op_lock:
-            print("[FileSync] Setting up rclone...")
+            LOGGER.info(f"{ICONS['file_sync']} [FileSync] Setting up rclone...")
 
             try:
                 # 1. Write SSH private key to temp file with secure permissions
@@ -55,12 +58,16 @@ class RcloneSync:
                 key_path.parent.mkdir(parents=True, exist_ok=True)
                 key_path.write_text(ssh_private_key)
                 os.chmod(key_path, 0o600)
-                print(f"[FileSync] SSH key written to {key_path}")
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [FileSync] SSH key written to {key_path}",
+                )
 
                 # 2. Ensure local root exists with standard subdirectories
                 local_root = Path(self.config.local_root).expanduser()
                 local_root.mkdir(parents=True, exist_ok=True)
-                print(f"[FileSync] Local root: {local_root}")
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [FileSync] Local root: {local_root}",
+                )
 
                 # 3. Create rclone config file
                 self._config_path = tempfile.mktemp(suffix=".conf", prefix="rclone_")
@@ -72,20 +79,26 @@ user = {self.config.ssh_user}
 key_file = {self.config.ssh_key_path}
 """
                 Path(self._config_path).write_text(rclone_config)
-                print(f"[FileSync] Rclone config written to {self._config_path}")
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [FileSync] Rclone config written to {self._config_path}",
+                )
 
                 # 4. Test connection
                 success = await self._test_connection()
                 if success:
                     self._setup_done = True
-                    print("[FileSync] Setup complete, connection verified")
+                    LOGGER.info(
+                        f"{ICONS['file_sync']} [FileSync] Setup complete, connection verified",
+                    )
                 else:
-                    print("[FileSync] Setup failed: connection test failed")
+                    LOGGER.error(
+                        f"{ICONS['file_sync']} [FileSync] Setup failed: connection test failed",
+                    )
 
                 return success
 
             except Exception as e:
-                print(f"[FileSync] Setup failed: {e}")
+                LOGGER.error(f"{ICONS['file_sync']} [FileSync] Setup failed: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -111,7 +124,7 @@ key_file = {self.config.ssh_key_path}
             remote = f"{self.REMOTE_NAME}:{self.config.remote_root}"
             local = str(Path(self.config.local_root).expanduser())
 
-            print(f"[FileSync] Bisync: {local} ↔ {remote}")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Bisync: {local} ↔ {remote}")
 
             base_args = [
                 "bisync",
@@ -126,7 +139,9 @@ key_file = {self.config.ssh_key_path}
             ]
 
             if force_resync:
-                print("[FileSync] Using --resync for bisync initialization")
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [FileSync] Using --resync for bisync initialization",
+                )
                 return await self._run_with_retry(
                     self._build_cmd([*base_args, "--resync"]),
                     operation="bisync",
@@ -139,7 +154,9 @@ key_file = {self.config.ssh_key_path}
             )
 
             if not result.success and self._needs_resync_recovery(result.errors):
-                print("[FileSync] Bisync state corrupted, recovering with --resync...")
+                LOGGER.warning(
+                    f"{ICONS['file_sync']} [FileSync] Bisync state corrupted, recovering with --resync...",
+                )
                 result = await self._run_with_retry(
                     self._build_cmd([*base_args, "--resync"]),
                     operation="bisync (recovery)",
@@ -175,12 +192,16 @@ key_file = {self.config.ssh_key_path}
             try:
                 rel_path = local_file.relative_to(local_root)
             except ValueError:
-                print(f"[FileSync] File {local_path} is outside sync root, skipping")
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [FileSync] File {local_path} is outside sync root, skipping",
+                )
                 return SyncResult(success=True)
 
             remote_path = f"{self.REMOTE_NAME}:{self.config.remote_root}/{rel_path}"
 
-            print(f"[FileSync] Copying file: {local_file} → {remote_path}")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] Copying file: {local_file} → {remote_path}",
+            )
 
             cmd = self._build_cmd(["copyto", str(local_file), remote_path, "-v"])
             return await self._run_with_retry(cmd, operation=f"copy {rel_path}")
@@ -205,7 +226,9 @@ key_file = {self.config.ssh_key_path}
 
             remote_path = f"{self.REMOTE_NAME}:{self.config.remote_root}/{rel_path}"
 
-            print(f"[FileSync] Deleting remote: {remote_path}")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] Deleting remote: {remote_path}",
+            )
 
             cmd = self._build_cmd(["deletefile", remote_path, "-v"])
             return await self._run_with_retry(cmd, operation=f"delete {rel_path}")
@@ -226,10 +249,10 @@ key_file = {self.config.ssh_key_path}
         last_error = None
 
         for attempt in range(1, self.config.max_retries + 1):
-            print(
-                f"[FileSync] {operation} (attempt {attempt}/{self.config.max_retries})",
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] {operation} (attempt {attempt}/{self.config.max_retries})",
             )
-            print(f"[FileSync] cmd: {' '.join(cmd)}")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] cmd: {' '.join(cmd)}")
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -243,36 +266,48 @@ key_file = {self.config.ssh_key_path}
                 stderr_str = stderr.decode() if stderr else ""
 
                 if proc.returncode == 0:
-                    print(f"[FileSync] {operation} succeeded")
+                    LOGGER.debug(
+                        f"{ICONS['file_sync']} [FileSync] {operation} succeeded",
+                    )
                     if stdout_str:
                         # Truncate long output
                         output = stdout_str[:500]
                         if len(stdout_str) > 500:
                             output += "... (truncated)"
-                        print(f"[FileSync] stdout: {output}")
+                        LOGGER.debug(
+                            f"{ICONS['file_sync']} [FileSync] stdout: {output}",
+                        )
                     return SyncResult(success=True)
                 else:
                     last_error = f"Exit code {proc.returncode}: {stderr_str}"
-                    print(f"[FileSync] {operation} failed: {last_error}")
+                    LOGGER.error(
+                        f"{ICONS['file_sync']} [FileSync] {operation} failed: {last_error}",
+                    )
 
             except FileNotFoundError:
                 last_error = "rclone not found - is it installed?"
-                print(f"[FileSync] {operation} failed: {last_error}")
+                LOGGER.error(
+                    f"{ICONS['file_sync']} [FileSync] {operation} failed: {last_error}",
+                )
                 # Don't retry if rclone isn't installed
                 break
             except Exception as e:
                 last_error = str(e)
-                print(f"[FileSync] {operation} exception: {last_error}")
+                LOGGER.error(
+                    f"{ICONS['file_sync']} [FileSync] {operation} exception: {last_error}",
+                )
                 import traceback
 
                 traceback.print_exc()
 
             if attempt < self.config.max_retries:
                 delay = self.config.retry_delay_seconds * attempt
-                print(f"[FileSync] Retrying in {delay}s...")
+                LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
-        print(f"[FileSync] {operation} failed after {self.config.max_retries} attempts")
+        LOGGER.error(
+            f"{ICONS['file_sync']} [FileSync] {operation} failed after {self.config.max_retries} attempts",
+        )
         return SyncResult(success=False, errors=[last_error or "Unknown error"])
 
     def cleanup(self) -> None:
@@ -281,6 +316,8 @@ key_file = {self.config.ssh_key_path}
             if path and Path(path).exists():
                 try:
                     Path(path).unlink()
-                    print(f"[FileSync] Cleaned up: {path}")
+                    LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Cleaned up: {path}")
                 except Exception as e:
-                    print(f"[FileSync] Failed to clean up {path}: {e}")
+                    LOGGER.error(
+                        f"{ICONS['file_sync']} [FileSync] Failed to clean up {path}: {e}",
+                    )

@@ -24,6 +24,16 @@ from sandboxes.conversation_manager.commands import (
     parse_command,
 )
 from sandboxes.conversation_manager.event_publisher import EventPublisher
+from unity.conversation_manager.events import (
+    AssistantScreenShareStarted,
+    AssistantScreenShareStopped,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
+)
 from sandboxes.conversation_manager.io_gate import gated_input
 from sandboxes.conversation_manager.scenario_generator import ScenarioGenerator
 from sandboxes.conversation_manager.steering import SteeringController, is_active
@@ -44,6 +54,17 @@ from sandboxes.conversation_manager.state_snapshot import (
 )
 
 LG = logging.getLogger("conversation_manager_sandbox")
+
+_MEET_INTERACTION_EVENTS: dict[str, type] = {
+    "assistant_screen_share_start": AssistantScreenShareStarted,
+    "assistant_screen_share_stop": AssistantScreenShareStopped,
+    "user_screen_share_start": UserScreenShareStarted,
+    "user_screen_share_stop": UserScreenShareStopped,
+    "user_webcam_start": UserWebcamStarted,
+    "user_webcam_stop": UserWebcamStopped,
+    "user_remote_control_start": UserRemoteControlStarted,
+    "user_remote_control_stop": UserRemoteControlStopped,
+}
 
 PromptFn = Callable[[str], Awaitable[str]]
 
@@ -275,7 +296,11 @@ class CommandRouter:
         ]
 
         # Generate call transcript from the voice agent log if available.
-        voice_log = repo_root / ".logs_voice_agent.txt"
+        import os
+
+        _launch_cwd = os.environ.get("UNITY_SANDBOX_LAUNCH_CWD", "").strip()
+        _voice_root = Path(_launch_cwd).resolve() if _launch_cwd else repo_root
+        voice_log = _voice_root / ".logs_voice_agent.txt"
         if voice_log.exists():
             try:
                 from sandboxes.conversation_manager.call_transcript import (
@@ -670,6 +695,32 @@ class CommandRouter:
                     )
             await self.publisher.publish_call_end()
             return RouterResult(lines=["📞 Call ended."])
+
+        meet_event_cls = _MEET_INTERACTION_EVENTS.get(cmd.name)
+        if meet_event_cls is not None:
+            await self.publisher.publish_meet_interaction_event(
+                meet_event_cls,
+                cmd.args,
+            )
+            lines: list[str] = []
+            if (
+                cmd.name == "assistant_screen_share_start"
+                and getattr(self.args, "agent_mode", "") == "desktop"
+                and getattr(self.args, "_desktop_container_id", None)
+            ):
+                try:
+                    import webbrowser
+
+                    from sandboxes.conversation_manager.desktop_bootstrap import (
+                        _desktop_novnc_url,
+                    )
+
+                    url = _desktop_novnc_url()
+                    webbrowser.open(url)
+                    lines.append(f"🖥️  Opened assistant desktop in browser: {url}")
+                except Exception as exc:
+                    lines.append(f"⚠️ Could not open desktop viewer: {exc}")
+            return RouterResult(lines=lines)
 
         return RouterResult(lines=[f"⚠️ Unknown event command: {cmd.name}"])
 

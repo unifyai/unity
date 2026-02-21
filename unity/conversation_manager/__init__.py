@@ -3,7 +3,7 @@ ConversationManager service management.
 
 Provides in-process async operation of ConversationManager:
 - Call `start_async()` to run ConversationManager in the current process
-- Uses in-memory event broker (no Redis required)
+- Uses in-memory event broker
 - Direct access to ConversationManager instance
 - Simple testing with direct monkey-patching
 
@@ -19,10 +19,12 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from unity.session_details import SESSION_DETAILS
+
+LOGGER = logging.getLogger("unity")
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -49,7 +51,7 @@ async def start_async(
     Start ConversationManager in-process (async entry point).
 
     Runs the ConversationManager in the same process using asyncio,
-    with in-memory event passing (no Redis required).
+    with in-memory event passing.
 
     Args:
         project_name: Project name for logging
@@ -74,7 +76,9 @@ async def start_async(
     global _conversation_manager
 
     if _conversation_manager is not None:
-        print("ConversationManager is already running")
+        from unity.common.hierarchical_logger import ICONS
+
+        LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is already running")
         return _conversation_manager
 
     # Import here to avoid circular imports
@@ -101,7 +105,11 @@ async def stop_async(reason: str = "manual_stop") -> None:
     if _conversation_manager is None:
         return
 
-    print(f"Stopping ConversationManager (reason: {reason})...")
+    from unity.common.hierarchical_logger import ICONS
+
+    LOGGER.info(
+        f"{ICONS['lifecycle']} Stopping ConversationManager (reason: {reason})...",
+    )
 
     try:
         # Signal shutdown
@@ -110,10 +118,10 @@ async def stop_async(reason: str = "manual_stop") -> None:
         # Clean up
         await _conversation_manager.cleanup()
 
-        print("ConversationManager stopped")
+        LOGGER.info(f"{ICONS['lifecycle']} ConversationManager stopped")
         _shutdown_reason = reason
     except Exception as e:
-        print(f"Error stopping ConversationManager: {e}")
+        LOGGER.error(f"{ICONS['lifecycle']} Error stopping ConversationManager: {e}")
         _shutdown_reason = f"stop_error: {e}"
     finally:
         _conversation_manager = None

@@ -1,5 +1,7 @@
 import requests
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.settings import SETTINGS
 
 # admin headers and URLs
@@ -11,8 +13,7 @@ unity_comms_url = SETTINGS.conversation.COMMS_URL
 
 # dispatch LiveKit agent
 def dispatch_livekit_agent(
-    livekit_agent_name: str,
-    room_name: str = None,
+    room_name: str,
     *,
     record: bool = True,
     assistant_id: str = "",
@@ -20,6 +21,9 @@ def dispatch_livekit_agent(
 ):
     """
     Dispatch a LiveKit agent via the communication service.
+
+    The room_name (from make_room_name()) is used as both the LiveKit room
+    name and the agent worker registration name.
 
     This is a fire-and-forget operation - we dispatch and move on regardless of
     the result. The function is resilient to:
@@ -30,22 +34,18 @@ def dispatch_livekit_agent(
     Returns True if dispatch was attempted, False if skipped due to missing config.
     """
     if not unity_comms_url:
-        print(
-            "[dispatch_livekit_agent] Skipping: UNITY_COMMS_URL not configured. "
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [dispatch_livekit_agent] Skipping: UNITY_COMMS_URL not configured. "
             "Set this to enable LiveKit agent dispatch.",
         )
         return False
 
     try:
-        if not room_name:
-            room_name = livekit_agent_name
-        # Fire-and-forget: use requests.post directly (not unify.utils.http)
-        # to avoid retry logic. Timeout is expected; we dispatch and move on.
         response = requests.post(
             f"{unity_comms_url}/phone/dispatch-livekit-agent",
             headers=admin_headers,
             json={
-                "livekit_agent_name": livekit_agent_name,
+                "livekit_agent_name": room_name,
                 "room_name": room_name,
                 "record": record,
                 "assistant_id": assistant_id,
@@ -54,15 +54,18 @@ def dispatch_livekit_agent(
             timeout=1,
         )
         if response.status_code != 200:
-            print(f"Failed to dispatch LiveKit agent. {response.text}")
+            LOGGER.error(
+                f"{DEFAULT_ICON} Failed to dispatch LiveKit agent. {response.text}",
+            )
             return False
         else:
-            print("LiveKit agent dispatched")
+            LOGGER.info(f"{DEFAULT_ICON} LiveKit agent dispatched")
     except requests.exceptions.Timeout:
-        # Timeout is expected - the dispatch endpoint may be slow
-        print("LiveKit agent dispatched (timeout)")
+        LOGGER.info(f"{DEFAULT_ICON} LiveKit agent dispatched (timeout)")
     except requests.exceptions.RequestException as e:
         # Connection errors, DNS failures, etc. - don't crash, just log
-        print(f"[dispatch_livekit_agent] Request failed (non-fatal): {e}")
+        LOGGER.error(
+            f"{DEFAULT_ICON} [dispatch_livekit_agent] Request failed (non-fatal): {e}",
+        )
         return False
     return True

@@ -8,7 +8,6 @@ set -e
 export CONTAINER_START_TIME_MS=$(date +%s%3N)
 
 # Global variables to track processes
-REDIS_PID=""
 MAIN_PID=""
 AGENT_PID=""
 
@@ -21,16 +20,6 @@ cleanup() {
         echo "Stopping main application (PID: $MAIN_PID)..."
         kill -TERM $MAIN_PID 2>/dev/null || true
         wait $MAIN_PID 2>/dev/null || true
-    fi
-
-    # Stop Redis
-    if [ ! -z "$REDIS_PID" ]; then
-        echo "Stopping Redis (PID: $REDIS_PID)..."
-        kill -TERM $REDIS_PID 2>/dev/null || true
-        wait $REDIS_PID 2>/dev/null || true
-    else
-        echo "Stopping Redis..."
-        redis-cli shutdown 2>/dev/null || true
     fi
 
     if [ ! -z "$AGENT_PID" ]; then
@@ -49,17 +38,8 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGTERM SIGINT
 
-echo "Starting Redis server and services..."
-
-# Clear any existing Redis data to avoid format compatibility issues
-echo "Clearing existing Redis data..."
-rm -f /app/dump.rdb /tmp/dump.rdb /var/lib/redis/dump.rdb 2>/dev/null || true
-
-# Start Redis in the background and capture its PID
-echo "Starting Redis server..."
-redis-server --save "" --appendonly no &
-REDIS_PID=$!
-echo "Redis started with PID: $REDIS_PID"
+# Create log directories for file-based traces
+mkdir -p /var/log/unity /var/log/unify /var/log/unillm
 
 # Start agent-service on port 3000 (for web automation via Magnitude)
 echo "Starting agent-service..."

@@ -23,7 +23,7 @@ import logging
 import os
 import random
 import re
-import threading
+
 import hashlib
 
 import httpx
@@ -97,7 +97,7 @@ def _derive_test_context(item: pytest.Item) -> str:
             normalized = hashlib.md5(nodeid.encode("utf-8")).hexdigest()[:8]
         func_name = f"{func_name}/{normalized}"
 
-    # Mirror production-like hierarchy: .../<DefaultUser>/<Assistant>
+    # Mirror production hierarchy: .../{user_id}/{assistant_id}
     return f"{test_path}/{func_name}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
 
 
@@ -159,7 +159,7 @@ def pytest_report_header(config):
 
 
 # --------------------------------------------------------------------------- #
-# 2. Test stubs (Redis, ComputerWorker, DateTime)                              #
+# 2. Test stubs (ComputerWorker, DateTime)                                     #
 # --------------------------------------------------------------------------- #
 
 _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
@@ -173,57 +173,9 @@ def static_now():
 @pytest.fixture(autouse=True)
 def stub_external_deps(monkeypatch):
     """
-    This fixture automatically stubs heavy external dependencies for tests,
-    namely Redis. It runs for every test.
+    This fixture automatically stubs heavy external dependencies for tests.
+    It runs for every test.
     """
-
-    # --- Redis stub -----------------------------------------------------------
-    class _FakePubSub:
-        def __init__(self):
-            self._messages = []
-            self._thread = None
-
-        def subscribe(self, *args, **kwargs):
-            # Support both positional and keyword arguments
-            # Keyword args are channel_name=handler_function pairs
-            pass
-
-        def listen(self):
-            while self._messages:
-                yield self._messages.pop()
-            while True:
-                # Keep the loop alive without blocking
-                yield {"type": "noop"}
-
-        def get_message(self):
-            return None
-
-        def run_in_thread(self, daemon=True):
-            # Mock implementation that returns a fake thread with stop() method
-            class StoppableThread(threading.Thread):
-                def __init__(self, *args, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    self._stop_flag = False
-
-                def stop(self):
-                    self._stop_flag = True
-
-            self._thread = StoppableThread(target=lambda: None, daemon=daemon)
-            return self._thread
-
-    class _FakeRedis:
-        def __init__(self, *a, **k):
-            self._pubsub = _FakePubSub()
-            self.published: list[tuple[str, str]] = []
-
-        def pubsub(self, **kwargs):
-            return self._pubsub
-
-        def publish(self, chan, msg):
-            self.published.append((chan, msg))
-
-    # Safely patch redis.Redis with our fake version
-    monkeypatch.setattr("redis.Redis", _FakeRedis)
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
     # All timestamps in prompts come from prompt_helpers.now() which returns either:

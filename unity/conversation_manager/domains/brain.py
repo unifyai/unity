@@ -35,9 +35,10 @@ def _build_response_models() -> dict[Mode, type[BaseModel]]:
     )
 
     # Voice mode uses the same response model as text mode.
-    # call_guidance is now delivered via tool parameters (e.g. wait(call_guidance="..."))
-    # rather than the response content, because the model reliably populates tool
-    # arguments but intermittently skips the content field when tool_choice is required.
+    # Guidance is delivered via the standalone guide_voice_agent tool (called in
+    # parallel with the action tool) rather than the response content, because
+    # the model reliably populates tool arguments but intermittently skips the
+    # content field when tool_choice is required.
     return {
         Mode.CALL: TextResponse,
         Mode.MEET: TextResponse,
@@ -88,19 +89,24 @@ class BrainSpec:
 
         # Build multimodal content: text state + screenshot blocks aligned with
         # the user utterances that triggered them.
-        has_assistant = any(s.source == "assistant" for s in self.screenshots)
-        has_user = any(s.source == "user" for s in self.screenshots)
-        if has_assistant and has_user:
+        sources = {s.source for s in self.screenshots}
+        if len(sources) > 1:
             header = (
-                "The following screenshots were captured during screen sharing, "
-                "from both your desktop and the user's screen, each paired with "
+                "The following screenshots were captured from multiple visual "
+                "sources (desktop, user screen, and/or webcam), each paired with "
                 "what the user said at that moment. They are in chronological order."
             )
-        elif has_user:
+        elif "user" in sources:
             header = (
                 "The following screenshots were captured from the user's screen "
                 "during screen sharing, each paired with what the user said "
                 "at that moment. They are in chronological order."
+            )
+        elif "webcam" in sources:
+            header = (
+                "The following frames were captured from the user's webcam, "
+                "each paired with what the user said at that moment. "
+                "They are in chronological order."
             )
         else:
             header = (
@@ -122,6 +128,7 @@ class BrainSpec:
         source_labels = {
             "assistant": "Assistant's Screen",
             "user": "User's Screen",
+            "webcam": "User's Webcam",
         }
         for i, entry in enumerate(self.screenshots, 1):
             label = source_labels.get(entry.source, "Screenshot")
@@ -188,6 +195,9 @@ def build_brain_spec(
 
     # Get boss contact (contact_id=1) from ContactManager - the source of truth
     boss_contact = cm.contact_index.get_contact(1) or {}
+    is_boss_on_call = cm.mode.is_voice and (
+        (cm.get_active_contact() or {}).get("contact_id") == 1
+    )
     system_prompt = build_system_prompt(
         bio=cm.assistant_about,
         contact_id=1,
@@ -196,6 +206,7 @@ def build_brain_spec(
         phone_number=boss_contact.get("phone_number"),
         email_address=boss_contact.get("email_address"),
         is_voice_call=cm.mode.is_voice,
+        is_boss_on_call=is_boss_on_call,
         demo_mode=SETTINGS.DEMO_MODE,
     )
 

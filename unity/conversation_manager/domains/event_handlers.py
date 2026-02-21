@@ -3,6 +3,8 @@ import traceback
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
@@ -50,7 +52,11 @@ class EventHandler:
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         event_key = _event_type_to_log_key(event.__class__)
-        if hasattr(cm, "_session_logger"):
+        if (
+            hasattr(cm, "_session_logger")
+            and not event.__class__.content_logged
+            and event.__class__.loggable
+        ):
             event_trace = getattr(cm, "_current_event_trace", None) or {}
             cm._session_logger.info(
                 event_key,
@@ -76,9 +82,7 @@ class EventHandler:
 
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
-    log_str = "Ping received - keeping conversation manager alive"
-    print(log_str)
-    cm._session_logger.debug("ping", log_str)
+    pass
 
 
 @EventHandler.register(PhoneCallAnswered)
@@ -137,7 +141,6 @@ async def _(event: CallInitEvents, cm: "ConversationManager", *args, **kwargs):
             await cm.call_manager.start_unify_meet(
                 contact,
                 boss,
-                e.livekit_agent_name,
                 e.room_name,
             )
             message_content = "<Recieving Call...>"
@@ -202,6 +205,21 @@ async def _(
     )
     conv_state = cm.contact_index.get_or_create_conversation(contact_id)
     conv_state.on_call = True
+
+    # Sync meet interaction state that may have been set before the call started.
+    # The fast brain starts with all flags as False and relies on guidance delivery,
+    # so any state that was already active needs to be pushed now.
+    if cm.assistant_screen_share_active and cm.call_manager._socket_server:
+        guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
+        guidance_event = CallGuidance(
+            contact=contact,
+            content=guidance_text,
+            source="meet_interaction",
+        )
+        await cm.call_manager._socket_server.queue_for_clients(
+            "app:call:call_guidance",
+            guidance_event.to_json(),
+        )
 
     # No LLM run here — call guidance is pre-computed via make_call(context=...).
     # The slow brain will be woken later by:
@@ -324,18 +342,19 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         local_message_id=message_id,
     )
 
+    # Outbound utterances signal that the fast brain's generation+TTS cycle
+    # completed — clear the suppression flag so proactive speech can resume.
+    if role == "assistant":
+        cm._fast_brain_active = False
+
     # Reset proactive speech on any utterance (user or assistant).
     await cm.schedule_proactive_speech()
 
     if role == "user":
-        # Link any pending user screenshot to this message by stamping it
-        # with the local_message_id, then pass the same id to the assistant
-        # screenshot capture so both can be matched back deterministically.
+        # Link any pending screenshot to this message by stamping it
+        # with the local_message_id.  Screenshot capture (both user and
+        # assistant) is handled by the fast brain and forwarded via IPC.
         cm._claim_pending_user_screenshot(message_id)
-        if cm.assistant_screen_share_active:
-            asyncio.create_task(
-                cm.capture_assistant_screenshot(event.content, message_id),
-            )
 
         await cm.interject_or_run(event.content)
 
@@ -445,12 +464,12 @@ async def _(
             exchange_id,
             {"recording_url": event.recording_url},
         )
-        print(
-            f"[RecordingReady] Stored recording_url on exchange "
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [RecordingReady] Stored recording_url on exchange "
             f"{exchange_id} for {name}",
         )
     else:
-        print(f"[RecordingReady] No exchange_id found for {name}")
+        LOGGER.debug(f"{DEFAULT_ICON} [RecordingReady] No exchange_id found for {name}")
 
 
 @EventHandler.register(
@@ -462,6 +481,7 @@ async def _(
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
+    cm._has_non_forwarded_event = True
     if isinstance(event, ActorClarificationRequest):
         if event.handle_id in cm.in_flight_actions:
             from unity.common.prompt_helpers import now as prompt_now
@@ -614,6 +634,13 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     contact_id = contact.get("contact_id") if isinstance(contact, dict) else None
     sender_name = _get_sender_name(contact)
 
+    # Flag non-participant comms during voice calls. The fast brain only
+    # renders comms from the active call contact; everything else is dropped.
+    if getattr(cm.mode, "is_voice", False):
+        call_contact_id = (cm.call_manager.call_contact or {}).get("contact_id")
+        if contact_id != call_contact_id:
+            cm._has_non_forwarded_event = True
+
     match event:
         case SMSSent():
             medium = Medium.SMS_MESSAGE
@@ -625,6 +652,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             message_content = event.content
             notif_content = f"SMS Received from {sender_name}"
             role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "sms_received",
+                f"({event_trace.get('event_id', '-')}) "
+                f"SMS from {sender_name}: {event.content}",
+            )
         case EmailSent():
             # Email handling is special: push to ALL contacts involved
             email_to = event.to or []
@@ -651,6 +684,14 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             return  # Early return - email handling is complete
 
         case EmailReceived():
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "email_received",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Email from {sender_name}\n"
+                f"Subject: {event.subject}\n\n"
+                f"{event.body}",
+            )
             # Email handling is special: push to ALL contacts involved
             email_to = event.to or []
             email_cc = event.cc or []
@@ -687,6 +728,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             attachments = event.attachments
             notif_content = f"Unify message from {sender_name}"
             role = "user"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "unify_message_received",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Message from {sender_name}: {event.content}",
+            )
 
     # Non-email messages: push to single contact only
     if contact_id is not None:
@@ -720,6 +767,7 @@ async def _(event: Error, cm: "ConversationManager", *args, **kwargs):
     lightweight notification and triggers a follow-up brain turn so the brain
     can see the failure and decide how to recover.
     """
+    cm._has_non_forwarded_event = True
     cm.notifications_bar.push_notif("Error", event.message, event.timestamp)
     await cm.request_llm_run(delay=0)
 
@@ -766,6 +814,7 @@ async def _(event: UnknownContactCreated, cm: "ConversationManager", *args, **kw
         or "Unknown"
     )
 
+    cm._has_non_forwarded_event = True
     cm._session_logger.info(
         "unknown_contact_created",
         f"New unknown contact created: {contact_name} via {event.medium}",
@@ -869,6 +918,7 @@ async def _(event: GetChatHistory, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(ActorHandleStarted)
 async def _(event: ActorHandleStarted, cm: "ConversationManager", *args, **kwargs):
+    cm._has_non_forwarded_event = True
     await cm.request_llm_run()
 
 
@@ -879,6 +929,7 @@ async def _(
     *args,
     **kwargs,
 ):
+    cm._has_non_forwarded_event = True
     cm._session_logger.info(
         "notification_injected",
         f"Notification: {event.content[:50]}...",
@@ -913,6 +964,7 @@ async def _(
 
 @EventHandler.register(ActorResult)
 async def _(event: ActorResult, cm: "ConversationManager", *args, **kwargs):
+    cm._has_non_forwarded_event = True
     action_data = cm.in_flight_actions.get(event.handle_id, {})
 
     # Log completion in handle_actions before moving to completed_actions.
@@ -942,6 +994,7 @@ async def _(event: ActorSessionResponse, cm: "ConversationManager", *args, **kwa
     a response means the actor is *done with this turn* and will not proceed
     until the brain interjects with the next instruction.
     """
+    cm._has_non_forwarded_event = True
     action_data = cm.in_flight_actions.get(event.handle_id, {})
 
     from unity.common.prompt_helpers import now as prompt_now
@@ -965,10 +1018,11 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
     Unlike ``ActorResponse``, notifications arrive while the actor is still
     working.  Progress is recorded in the action's history.
 
-    In voice mode, the notification is forwarded directly to the articulator
-    for an immediate voice-UX decision, bypassing the slow-brain's
-    call_guidance gate.
+    The slow brain is woken to decide whether to relay progress via
+    ``guide_voice_agent``.  On boss-on-call, the fast brain receives the
+    raw event directly via channel forwarding (so guidance is not needed).
     """
+    cm._has_non_forwarded_event = True
     if event.handle_id in cm.in_flight_actions:
         from unity.common.prompt_helpers import now as prompt_now
 
@@ -980,9 +1034,6 @@ async def _(event: ActorNotification, cm: "ConversationManager", *args, **kwargs
             },
         )
     await cm.request_llm_run()
-
-    if cm.mode.is_voice and event.response:
-        asyncio.create_task(cm._articulate_and_publish_notification(event.response))
 
 
 @EventHandler.register(SyncContacts)
@@ -1048,6 +1099,8 @@ _MEET_INTERACTION_NOTIFICATIONS: dict[type, str] = {
     AssistantScreenShareStopped: "The user disabled assistant screen sharing — they can no longer see your desktop.",
     UserScreenShareStarted: "The user started sharing their screen with you.",
     UserScreenShareStopped: "The user stopped sharing their screen.",
+    UserWebcamStarted: "The user enabled their webcam — you can now see them.",
+    UserWebcamStopped: "The user disabled their webcam.",
     UserRemoteControlStarted: "The user took remote control of your desktop — they now have mouse and keyboard control.",
     UserRemoteControlStopped: "The user released remote control of your desktop — you may resume computer actions.",
 }
@@ -1073,6 +1126,13 @@ _MEET_FAST_BRAIN_GUIDANCE: dict[type, str] = {
         "details. Do NOT guess or fabricate what is on their screen."
     ),
     UserScreenShareStopped: ("The user stopped sharing their screen."),
+    UserWebcamStarted: (
+        "The user enabled their webcam. Visual context is being captured "
+        "in the background. If they reference their appearance or something "
+        "visible on camera, acknowledge naturally and wait for the processed "
+        "details. Do NOT guess or fabricate what you see."
+    ),
+    UserWebcamStopped: ("The user disabled their webcam."),
     UserRemoteControlStarted: (
         "The user now has remote control of your desktop. Do not perform "
         "any computer actions — wait for them to release control."
@@ -1088,6 +1148,8 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
     AssistantScreenShareStopped: ("assistant_screen_share_active", False),
     UserScreenShareStarted: ("user_screen_share_active", True),
     UserScreenShareStopped: ("user_screen_share_active", False),
+    UserWebcamStarted: ("user_webcam_active", True),
+    UserWebcamStopped: ("user_webcam_active", False),
     UserRemoteControlStarted: ("user_remote_control_active", True),
     UserRemoteControlStopped: ("user_remote_control_active", False),
 }
@@ -1099,6 +1161,8 @@ _MEET_STATE_FLAGS: dict[type, tuple[str, bool]] = {
         AssistantScreenShareStopped,
         UserScreenShareStarted,
         UserScreenShareStopped,
+        UserWebcamStarted,
+        UserWebcamStopped,
         UserRemoteControlStarted,
         UserRemoteControlStopped,
     ),
@@ -1109,6 +1173,8 @@ async def _(
         | AssistantScreenShareStopped
         | UserScreenShareStarted
         | UserScreenShareStopped
+        | UserWebcamStarted
+        | UserWebcamStopped
         | UserRemoteControlStarted
         | UserRemoteControlStopped
     ),
@@ -1151,6 +1217,25 @@ async def _(
                 "app:call:call_guidance",
                 guidance_event.to_json(),
             )
+
+    # Eagerly initialize the MagnitudeBackend when screen sharing starts so
+    # the agent-service has an active session for fast brain screenshot capture.
+    # Runs in a thread because MagnitudeBackend.__init__ is synchronous
+    # (~1-4s for Chromium cold start).
+    if isinstance(event, AssistantScreenShareStarted):
+
+        def _ensure_backend():
+            try:
+                from unity.function_manager.primitives.runtime import ComputerPrimitives
+                from unity.manager_registry import ManagerRegistry
+
+                cp = ManagerRegistry.get_instance(ComputerPrimitives)
+                if cp is not None:
+                    _ = cp.backend
+            except Exception:
+                pass
+
+        asyncio.get_event_loop().run_in_executor(None, _ensure_backend)
 
     # Broadcast remote-control state change to all active CodeActActor loops
     # via the ComputerPrimitives singleton interject queue registry.

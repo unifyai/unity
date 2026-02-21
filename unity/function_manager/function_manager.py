@@ -13,6 +13,9 @@ import sys
 import tempfile
 import logging
 from pathlib import Path
+
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from secrets import token_hex
 from typing import (
     Any,
@@ -4953,10 +4956,14 @@ class FunctionManager(BaseFunctionManager):
         if sync_manager is None:
             return True  # No sync configured, continue anyway
 
-        print("[windows exec] Syncing files to remote...")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Syncing files to remote...",
+        )
         result = await sync_manager.sync_remote_changes()
         if not result.success:
-            print(f"[windows exec] Warning: sync failed: {result.errors}")
+            LOGGER.warning(
+                f"{ICONS['windows_exec']} [windows exec] Warning: sync failed: {result.errors}",
+            )
             return False
         return True
 
@@ -4969,10 +4976,14 @@ class FunctionManager(BaseFunctionManager):
         if sync_manager is None:
             return True
 
-        print("[windows exec] Syncing files from remote...")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Syncing files from remote...",
+        )
         result = await sync_manager.sync_remote_changes()
         if not result.success:
-            print(f"[windows exec] Warning: sync failed: {result.errors}")
+            LOGGER.warning(
+                f"{ICONS['windows_exec']} [windows exec] Warning: sync failed: {result.errors}",
+            )
             return False
         return True
 
@@ -5065,7 +5076,9 @@ class FunctionManager(BaseFunctionManager):
             )
 
         start_time = asyncio.get_event_loop().time()
-        print(f"[windows exec] Waiting for VM ready (timeout={timeout}s)")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Waiting for VM ready (timeout={timeout}s)",
+        )
 
         async with aiohttp.ClientSession() as session:
             while True:
@@ -5089,7 +5102,9 @@ class FunctionManager(BaseFunctionManager):
                             desktop_url = data.get("desktop_url")
 
                             if vm_ready and desktop_url:
-                                print(f"[windows exec] VM ready")
+                                LOGGER.info(
+                                    f"{ICONS['windows_exec']} [windows exec] VM ready",
+                                )
                                 logger.info(
                                     f"Windows VM ready for {assistant_id}: "
                                     f"{desktop_url}",
@@ -5147,7 +5162,7 @@ class FunctionManager(BaseFunctionManager):
         venv_dir = f"Local\\venvs\\venv_{venv_id}"
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
-        print(f"[windows exec] Preparing venv {venv_id}")
+        LOGGER.info(f"{ICONS['windows_exec']} [windows exec] Preparing venv {venv_id}")
 
         async with aiohttp.ClientSession() as session:
             # Step 1: Write pyproject.toml
@@ -5173,7 +5188,7 @@ class FunctionManager(BaseFunctionManager):
                     )
 
             # Step 2: Install uv via pip
-            print(f"[windows exec] Installing uv")
+            LOGGER.debug(f"{ICONS['windows_exec']} [windows exec] Installing uv")
             async with session.post(
                 f"{desktop_url}/api/exec",
                 json={
@@ -5189,7 +5204,7 @@ class FunctionManager(BaseFunctionManager):
 
             # Step 3: Run 'uv sync'
             venv_full_path = f"{self.REMOTE_WINDOWS_LOCAL_ROOT}\\{venv_dir}"
-            print(f"[windows exec] Running uv sync")
+            LOGGER.debug(f"{ICONS['windows_exec']} [windows exec] Running uv sync")
             async with session.post(
                 f"{desktop_url}/api/exec",
                 json={
@@ -5251,7 +5266,9 @@ class FunctionManager(BaseFunctionManager):
         implementation = _strip_custom_function_decorators(implementation)
 
         func_name_meta = func_data.get("name", "unknown")
-        print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Executing '{func_name_meta}' on remote Windows",
+        )
 
         # Step 1: Get desktop URL
         desktop_url = await self._wait_for_remote_windows_vm_ready()
@@ -5345,8 +5362,8 @@ if __name__ == "__main__":
             # Step 6: Execute script
             cwd = self.REMOTE_WINDOWS_LOCAL_ROOT
             exec_command = f'& "{python_path}" "{script_filename}"'
-            print(
-                f"[windows exec] Starting script: {exec_command} - CWD: {cwd} - "
+            LOGGER.debug(
+                f"{ICONS['windows_exec']} [windows exec] Starting script: {exec_command} - CWD: {cwd} - "
                 f"Kwargs: {call_kwargs}",
             )
 
@@ -5367,7 +5384,9 @@ if __name__ == "__main__":
             stdout = exec_result.get("stdout", "")
             stderr = exec_result.get("stderr", "")
             exit_code = exec_result.get("exitCode")
-            print(f"[windows exec] Execution complete (exitCode={exit_code})")
+            LOGGER.info(
+                f"{ICONS['windows_exec']} [windows exec] Execution complete (exitCode={exit_code})",
+            )
 
             # Step 7: Read result file
             result_filename = f"_result_{exec_id}.json"

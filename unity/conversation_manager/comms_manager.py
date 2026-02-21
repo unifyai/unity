@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING
 from dotenv import load_dotenv
 from google.cloud import pubsub_v1
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
 from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
@@ -202,7 +204,7 @@ def _get_or_create_unknown_contact(
             return new_contact
 
         except Exception as e:
-            print(f"Error in _get_or_create_unknown_contact: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error in _get_or_create_unknown_contact: {e}")
             return None
 
 
@@ -250,7 +252,9 @@ class CommsManager:
             data = json.loads(message.data.decode("utf-8"))
             thread = data["thread"]
             event = data["event"]
-            print(f"Received message from {thread}: {message.data.decode('utf-8')}")
+            LOGGER.debug(
+                f"{DEFAULT_ICON} Received message from {thread}: {message.data.decode('utf-8')}",
+            )
             if thread in ["startup", "assistant_update"]:
                 message.ack()
                 if thread == "startup":
@@ -325,6 +329,12 @@ class CommsManager:
                     "user_screen_share_stopped": lambda r: UserScreenShareStopped(
                         reason=r or "User stopped sharing their screen.",
                     ),
+                    "user_webcam_started": lambda r: UserWebcamStarted(
+                        reason=r or "User enabled their webcam.",
+                    ),
+                    "user_webcam_stopped": lambda r: UserWebcamStopped(
+                        reason=r or "User disabled their webcam.",
+                    ),
                     "user_remote_control_started": lambda r: UserRemoteControlStarted(
                         reason=r or "User took remote control of assistant desktop.",
                     ),
@@ -363,7 +373,9 @@ class CommsManager:
 
                     # Check blacklist before processing
                     if _is_blacklisted(medium_for_blacklist, contact_detail):
-                        print(f"Ignoring blacklisted email from: {contact_detail}")
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted email from: {contact_detail}",
+                        )
                         message.ack()
                         return
 
@@ -382,8 +394,8 @@ class CommsManager:
                         is_new_unknown = contact is not None
 
                     if contact is None:
-                        print(
-                            f"Failed to resolve contact for email from: {contact_detail}",
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for email from: {contact_detail}",
                         )
                         message.ack()
                         return
@@ -444,7 +456,9 @@ class CommsManager:
                                 self.loop,
                             )
                     except Exception as e:
-                        print(f"Failed scheduling attachment download: {e}")
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
+                        )
 
                 elif thread == "unify_message":
                     # contact_id is required - no default to prevent silent privilege escalation
@@ -452,8 +466,8 @@ class CommsManager:
                     # so we don't apply blacklist check or unknown contact creation here
                     target_contact_id = event.get("contact_id")
                     if target_contact_id is None:
-                        print(
-                            "Error: contact_id is required for unify_message, "
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Error: contact_id is required for unify_message, "
                             "skipping message",
                         )
                         message.ack()
@@ -463,8 +477,8 @@ class CommsManager:
                         None,
                     )
                     if contact is None:
-                        print(
-                            f"Error: contact_id {target_contact_id} not found in "
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Error: contact_id {target_contact_id} not found in "
                             f"contacts list, skipping message",
                         )
                         message.ack()
@@ -490,7 +504,9 @@ class CommsManager:
                                 self.loop,
                             )
                     except Exception as e:
-                        print(f"Failed scheduling attachment download: {e}")
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed scheduling attachment download: {e}",
+                        )
 
                 else:
                     # SMS message (thread == "msg")
@@ -499,7 +515,9 @@ class CommsManager:
 
                     # Check blacklist before processing
                     if _is_blacklisted(medium_for_blacklist, contact_detail):
-                        print(f"Ignoring blacklisted SMS from: {contact_detail}")
+                        LOGGER.debug(
+                            f"{DEFAULT_ICON} Ignoring blacklisted SMS from: {contact_detail}",
+                        )
                         message.ack()
                         return
 
@@ -518,8 +536,8 @@ class CommsManager:
                         is_new_unknown = contact is not None
 
                     if contact is None:
-                        print(
-                            f"Failed to resolve contact for SMS from: {contact_detail}",
+                        LOGGER.error(
+                            f"{DEFAULT_ICON} Failed to resolve contact for SMS from: {contact_detail}",
                         )
                         message.ack()
                         return
@@ -570,14 +588,16 @@ class CommsManager:
                             )
                             published += 1
                         except Exception as inner_e:
-                            print(f"Skipping malformed pre-hire item: {inner_e}")
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Skipping malformed pre-hire item: {inner_e}",
+                            )
 
-                    print(
-                        f"Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
+                    LOGGER.info(
+                        f"{DEFAULT_ICON} Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
                     )
                     message.ack()
                 except Exception as e:
-                    print(f"Error processing pre-hire logs: {e}")
+                    LOGGER.error(f"{DEFAULT_ICON} Error processing pre-hire logs: {e}")
                     message.nack()
             elif thread == "recording_ready":
                 recording_event = RecordingReady(
@@ -605,7 +625,6 @@ class CommsManager:
                         # unify_meet is internal, no blacklist check needed
                         call_event = UnifyMeetReceived(
                             contact=next(c for c in contacts if c["contact_id"] == 1),
-                            livekit_agent_name=event.get("livekit_agent_name"),
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_meet_received"
@@ -614,7 +633,9 @@ class CommsManager:
 
                         # Check blacklist before processing
                         if _is_blacklisted(Medium.PHONE_CALL, number):
-                            print(f"Ignoring blacklisted call from: {number}")
+                            LOGGER.debug(
+                                f"{DEFAULT_ICON} Ignoring blacklisted call from: {number}",
+                            )
                             message.ack()
                             return
 
@@ -633,7 +654,9 @@ class CommsManager:
                             is_new_unknown = contact is not None
 
                         if contact is None:
-                            print(f"Failed to resolve contact for call from: {number}")
+                            LOGGER.error(
+                                f"{DEFAULT_ICON} Failed to resolve contact for call from: {number}",
+                            )
                             message.ack()
                             return
 
@@ -690,18 +713,20 @@ class CommsManager:
                     message.ack()
                     future.result()  # Wait for publish to complete
                 except json.JSONDecodeError:
-                    print(f"Invalid message format for {thread} event")
+                    LOGGER.error(
+                        f"{DEFAULT_ICON} Invalid message format for {thread} event",
+                    )
                     message.ack()
                 except Exception as e:
-                    print(f"Error processing {thread} event: {e}")
+                    LOGGER.error(f"{DEFAULT_ICON} Error processing {thread} event: {e}")
                     import traceback
 
                     traceback.print_exc()
                     message.ack()
             else:
-                print(f"Unknown event type: {thread}")
+                LOGGER.error(f"{DEFAULT_ICON} Unknown event type: {thread}")
         except Exception as e:
-            print(f"Error processing message: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error processing message: {e}")
             message.ack()
 
     def subscribe_to_topic(self, subscription_id: str):
@@ -718,7 +743,9 @@ class CommsManager:
                 subscription_id,
             )
 
-            print(f"Starting subscription to {subscription_path}")
+            LOGGER.info(
+                f"{ICONS['subscription']} Starting subscription to {subscription_path}",
+            )
 
             streaming_pull_future = subscriber.subscribe(
                 subscription_path,
@@ -729,7 +756,9 @@ class CommsManager:
             self.subscribers[subscription_id] = streaming_pull_future
 
         except Exception as e:
-            print(f"Error setting up subscription {subscription_id}: {e}")
+            LOGGER.error(
+                f"{ICONS['subscription']} Error setting up subscription {subscription_id}: {e}",
+            )
 
     async def start(self):
         """Start all subscriptions and maintain connection to event manager."""
@@ -747,14 +776,16 @@ class CommsManager:
             while True:
                 await asyncio.sleep(1)
         except KeyboardInterrupt:
-            print("Shutting down...")
+            LOGGER.info(f"{ICONS['lifecycle']} Shutting down...")
             # Cleanup subscriptions
             for future in self.subscribers.values():
                 future.cancel()
 
     async def send_pings(self):
         """Send periodic pings to keep the event manager alive while waiting for startup."""
-        print("Starting ping mechanism for idle container...")
+        LOGGER.info(
+            f"{ICONS['subscription']} Starting ping mechanism for idle container...",
+        )
         while True:
             try:
                 # Send ping to event manager (direct await since we're in async context)
@@ -768,11 +799,13 @@ class CommsManager:
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
                 if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
-                    print("Startup received, stopping ping mechanism")
+                    LOGGER.info(
+                        f"{ICONS['subscription']} Startup received, stopping ping mechanism",
+                    )
                     break
 
             except Exception as e:
-                print(f"Error in ping mechanism: {e}")
+                LOGGER.error(f"{ICONS['subscription']} Error in ping mechanism: {e}")
                 await asyncio.sleep(30)  # Continue trying
 
 
@@ -786,4 +819,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main(), debug=SETTINGS.ASYNCIO_DEBUG)
+    asyncio.run(main(), debug=SETTINGS.UNITY_ASYNCIO_DEBUG)

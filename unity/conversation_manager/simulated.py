@@ -25,7 +25,7 @@ class SimulatedConversationManagerHandle(
     Simulated conversation manager handle for testing and demos.
 
     Uses a stateful LLM to simulate conversation steering without
-    actual Redis pub/sub or real conversation state.
+    actual pub/sub or real conversation state.
     """
 
     def __init__(

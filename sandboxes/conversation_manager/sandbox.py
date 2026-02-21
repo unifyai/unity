@@ -65,7 +65,7 @@ def _enable_unillm_boundary_logging() -> Path:
     """Enable full UniLLM request/response file logging for sandbox runs."""
     log_dir = Path(__file__).resolve().parents[2] / "logs" / "unillm"
     log_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["UNILLM_LOG"] = "true"
+    os.environ["UNILLM_TERMINAL_LOG"] = "true"
     os.environ["UNILLM_LOG_DIR"] = str(log_dir)
     try:
         from unillm.logger import configure_log_dir as _configure_log_dir
@@ -799,7 +799,8 @@ async def _main_async() -> None:
                 sandbox_state=state,
                 display_callback=_display,
                 include_call_guidance=bool(args.debug)
-                or bool(getattr(args, "voice", False)),
+                or bool(getattr(args, "voice", False))
+                or bool(getattr(args, "live_voice", False)),
                 voice_enabled=bool(getattr(args, "voice", False)),
                 stop_event=stop_sub,
                 trace_display=trace_display,

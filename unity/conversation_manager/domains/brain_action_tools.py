@@ -21,6 +21,8 @@ from pydantic import BaseModel as _BaseModel
 from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
@@ -362,7 +364,6 @@ class ConversationManagerBrainActionTools:
         contact_id: int | str,
         content: str,
         phone_number: str | None = None,
-        call_guidance: str = "",
     ) -> dict[str, Any]:
         """
         Send an SMS message to an existing contact.
@@ -387,9 +388,6 @@ class ConversationManagerBrainActionTools:
             phone_number: The recipient's phone number.  Required when the
                 contact does not yet have a phone number on file; omit when
                 the contact already has one.
-            call_guidance: Guidance for the Voice Agent on a live call. Use
-                to relay progress, data, or notifications to the caller.
-                Ignored when no voice call is active.
         """
         contact_id = _coerce_contact_id(contact_id)
         contact = self._cm.contact_index.get_contact(contact_id)
@@ -1016,7 +1014,9 @@ class ConversationManagerBrainActionTools:
             )
 
         to_number = contact.get("phone_number")
-        print(f"[make_call] context: {context}, to_number: {to_number}")
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
+        )
         # Store initial guidance so CallManager can publish it to the fast brain
         # after the subprocess spawns (before the recipient picks up).
         if context:
@@ -1050,7 +1050,6 @@ class ConversationManagerBrainActionTools:
         response_format: Optional[dict] = None,
         persist: bool = False,
         include_conversation_context: bool = True,
-        call_guidance: str = "",
     ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
@@ -1469,7 +1468,6 @@ class ConversationManagerBrainActionTools:
     async def wait(
         self,
         delay: int | None = None,
-        call_guidance: str = "",
     ) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
@@ -1493,16 +1491,62 @@ class ConversationManagerBrainActionTools:
             positive integer, the system schedules a follow-up thinking turn after
             that many seconds — useful for probing a long-running action or
             revisiting a situation after a reasonable interval.
-        call_guidance : str
-            Guidance for the Voice Agent on a live call. Use this to relay data,
-            progress, or notifications to the caller via the Voice Agent. Write in
-            the language currently spoken on the call so the Voice Agent can relay
-            it directly. Examples: "I found 9 backend engineer openings at OpenAI",
-            "Still looking through the results", "The meeting is confirmed for 3pm."
-            Leave empty when there is nothing meaningful to relay that the caller
-            doesn't already know. Ignored when no voice call is active.
         """
         return {"status": "waiting", "delay": delay}
+
+    async def guide_voice_agent(
+        self,
+        *,
+        content: str,
+        should_speak: bool = False,
+        response_text: str = "",
+    ) -> dict[str, Any]:
+        """
+        Relay information to the Voice Agent during a live call.
+
+        Call this tool **in parallel** with your action tool (``wait``, ``act``,
+        ``send_sms``, etc.) to send guidance to the Voice Agent. If you have
+        nothing to relay, simply omit this tool call entirely.
+
+        **Modes:**
+
+        1. **NOTIFY** (default) — Provide context for the Voice Agent to decide
+           how to phrase. The Voice Agent receives this as background context and
+           gets an LLM turn to decide whether and how to speak. Use for progress
+           updates, supplementary context, or information the Voice Agent can
+           articulate better with its conversational context.
+
+        2. **SPEAK** — Provide exact text to speak aloud immediately via TTS,
+           bypassing the Voice Agent's LLM. Set ``should_speak=True`` and provide
+           ``response_text``. Use when you can write a concise, natural sentence
+           the user should hear now (concrete data, completion confirmations).
+
+        3. **BLOCK** — Do not call this tool at all.
+
+        Write ``content`` in the language currently spoken on the call so the
+        Voice Agent can relay it without translating.
+
+        Do NOT use this tool to steer conversation style, suggest specific
+        dialogue, or micromanage the Voice Agent's approach. Provide data,
+        status, and progress — not conversational direction.
+
+        Args:
+            content: The guidance content to relay. Examples:
+                ``"I found 9 backend engineer openings at OpenAI"``,
+                ``"The meeting is confirmed for 3pm Thursday in the downtown office."``
+            should_speak: When True, ``response_text`` is spoken aloud via TTS,
+                bypassing the fast brain's LLM. Use for concrete data answers,
+                completion confirmations, or notifications the user should hear
+                immediately. When False (default), the guidance is injected as
+                silent context and the fast brain decides whether and how to speak.
+            response_text: Exact text to speak aloud when ``should_speak`` is
+                True. Must be concise (1-2 sentences), natural, and in the Voice
+                Agent's persona (first person, conversational). Examples:
+                ``"Your flight's at 6am out of Terminal 2, gate B14."``,
+                ``"Done — I've sent the email to Sarah."``.
+                Leave empty when ``should_speak`` is False.
+        """
+        return {"status": "guidance_noted"}
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the static tools dict for start_async_tool_loop."""
@@ -1515,6 +1559,8 @@ class ConversationManagerBrainActionTools:
             "make_call": self.make_call,
             "wait": self.wait,
         }
+        if getattr(self._cm.mode, "is_voice", False):
+            tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:
             tools["set_boss_details"] = self.set_boss_details
         else:

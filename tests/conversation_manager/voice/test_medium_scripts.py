@@ -370,13 +370,13 @@ class TestSTSPerTurnUsageLogging:
         from unillm import logger as unillm_logger
 
         monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
-        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
+        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_TERMINAL_LOG", True)
         monkeypatch.setattr(
             unillm_settings.SETTINGS,
             "UNILLM_LOG_DIR",
             str(tmp_path),
         )
-        monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
+        monkeypatch.setattr(unillm_logger, "_TERMINAL_LOG_ENABLED", True)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
 
@@ -463,13 +463,13 @@ class TestSTSPerTurnUsageLogging:
         from unillm import logger as unillm_logger
 
         monkeypatch.delenv("UNILLM_LOG_DIR", raising=False)
-        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_LOG", True)
+        monkeypatch.setattr(unillm_settings.SETTINGS, "UNILLM_TERMINAL_LOG", True)
         monkeypatch.setattr(
             unillm_settings.SETTINGS,
             "UNILLM_LOG_DIR",
             str(tmp_path),
         )
-        monkeypatch.setattr(unillm_logger, "_LOG_ENABLED", True)
+        monkeypatch.setattr(unillm_logger, "_TERMINAL_LOG_ENABLED", True)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR_CHECKED", False)
         monkeypatch.setattr(unillm_logger, "_LOG_DIR", None)
 
@@ -752,14 +752,14 @@ class TestCLIArgumentParsing:
             },
         )
 
-        # Simulate CLI args: script.py dev assistant_number VOICE_PROVIDER VOICE_ID OUTBOUND CHANNEL CONTACT BOSS ASSISTANT_BIO ASSISTANT_ID USER_ID
+        # argv[2] is the canonical room name from make_room_name() in call_manager
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "12345",
+                "unity_test_assistant_id_phone",
                 "elevenlabs",
                 "voice123",
                 "True",
@@ -772,7 +772,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        livekit_agent_name, room_name = common.configure_from_cli(
+        room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -782,20 +782,14 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        assert livekit_agent_name == "unity_12345"
-        assert room_name == "unity_12345"
+        assert room_name == "unity_test_assistant_id_phone"
         assert SESSION_DETAILS.voice.provider == "elevenlabs"
         assert SESSION_DETAILS.voice.id == "voice123"
         assert SESSION_DETAILS.voice_call.outbound is True
         assert SESSION_DETAILS.voice_call.channel == "phone"
 
-    def test_configure_from_cli_livekit_agent_name_with_room(self, monkeypatch):
-        """configure_from_cli handles livekit_agent_name:room_name format for UnifyMeet calls.
-
-        For UnifyMeet, the caller (LivekitCallManager.start_unify_meet) passes
-        "livekit_agent_name:room_name" where both are already prefixed with "unity_".
-        The function splits on ":" and returns the two parts.
-        """
+    def test_configure_from_cli_meet_room_name(self, monkeypatch):
+        """configure_from_cli returns the canonical room name for UnifyMeet calls."""
         from unity.conversation_manager.medium_scripts import common
         from unity.session_details import SESSION_DETAILS
 
@@ -804,15 +798,15 @@ class TestCLIArgumentParsing:
         contact_json = json.dumps({"contact_id": 1, "first_name": "Test"})
         boss_json = json.dumps({"contact_id": 1, "first_name": "Boss"})
 
-        # Simulate UnifyMeet call with colon-separated livekit_agent_name:room_name
-        # (This matches what LivekitCallManager.start_unify_meet passes)
+        # Simulate UnifyMeet call — argv[2] is the canonical room name
+        # (same as phone calls; agent_name = room_name for all mediums)
         monkeypatch.setattr(
             common.sys,
             "argv",
             [
                 "call.py",
                 "dev",
-                "unity_assistant_web:unity_assistant_web",  # Already prefixed by caller
+                "unity_25_meet",
                 "cartesia",
                 "voice456",
                 "False",
@@ -825,7 +819,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        livekit_agent_name, room_name = common.configure_from_cli(
+        room_name = common.configure_from_cli(
             extra_env=[
                 ("CONTACT", True),
                 ("BOSS", True),
@@ -835,10 +829,7 @@ class TestCLIArgumentParsing:
             ],
         )
 
-        # Colon triggers the split: "unity_assistant_web:unity_assistant_web"
-        # becomes livekit_agent_name="unity_assistant_web", room_name="unity_assistant_web"
-        assert livekit_agent_name == "unity_assistant_web"
-        assert room_name == "unity_assistant_web"
+        assert room_name == "unity_25_meet"
 
     def test_configure_from_cli_defaults_none_voice_provider(self, monkeypatch):
         """configure_from_cli defaults 'None' voice provider to cartesia."""
@@ -1062,12 +1053,13 @@ class TestInactivityTimeout:
 class TestFastBrainGuidanceFlow:
     """Coverage for guidance delivery in the TTS fast brain path."""
 
-    async def test_notify_only_guidance_injected_without_triggering_speech(
+    async def test_notify_only_guidance_triggers_reply_but_not_speech(
         self,
         monkeypatch,
     ):
-        """Guidance with should_speak=False injects into chat context but does
-        NOT trigger session.say() or generate_reply()."""
+        """Guidance with should_speak=False injects into chat context and
+        triggers generate_reply() (so the LLM can decide whether to respond)
+        but does NOT trigger session.say()."""
         from livekit.agents import llm
         from unity.conversation_manager.medium_scripts import call as call_script
 
@@ -1094,6 +1086,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1107,6 +1101,9 @@ class TestFastBrainGuidanceFlow:
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
 
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
@@ -1233,13 +1230,14 @@ class TestFastBrainGuidanceFlow:
         ]
         assert any("No, there is no contact named Bob." in txt for txt in agent_texts)
 
-        # Neither say() nor generate_reply() should have been triggered
+        # say() must NOT fire (the articulator decided not to speak), but
+        # generate_reply() SHOULD fire so the LLM gets a chance to react.
         assert (
             len(session.say_calls) == 0
         ), "Notify-only guidance must NOT trigger session.say()."
         assert (
-            session.generate_reply_calls == baseline_reply_calls
-        ), "Notify-only guidance must NOT trigger generate_reply()."
+            session.generate_reply_calls > baseline_reply_calls
+        ), "Notify-only guidance must trigger generate_reply()."
 
     async def test_should_speak_guidance_not_injected_into_chat_ctx(
         self,
@@ -1279,6 +1277,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1292,6 +1292,9 @@ class TestFastBrainGuidanceFlow:
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
 
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
@@ -1551,6 +1554,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1564,6 +1569,9 @@ class TestFastBrainGuidanceFlow:
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
 
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
@@ -1735,6 +1743,8 @@ class TestFastBrainGuidanceFlow:
                 return _done().__await__()
 
         class _FakeRoom:
+            name = "fake-room"
+
             def on(self, *args, **kwargs):
                 return lambda fn: fn
 
@@ -1748,6 +1758,9 @@ class TestFastBrainGuidanceFlow:
         class _FakeEventBroker:
             def __init__(self):
                 self.callbacks = {}
+
+            def set_logger(self, fb_logger):
+                pass
 
             def register_callback(self, channel, handler):
                 self.callbacks[channel] = handler
@@ -2032,3 +2045,99 @@ class TestSayMetaTextMatching:
         meta = {"guidance_id": "guid-abc", "source": "slow_brain"}
         result = match_say_meta(meta, "Some text")
         assert result is not None
+
+
+# =============================================================================
+# Participant comms rendering
+# =============================================================================
+
+
+class TestParticipantCommsRendering:
+    """Unit tests for render_participant_comms — verifies tag format and
+    participant-match filtering for comms events on any call."""
+
+    def _make_event_json(self, event):
+        return event.to_json()
+
+    def test_sms_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 5, "first_name": "Marcus", "surname": "Rivera"},
+            content="Running late, be there in 10.",
+        )
+        result = render_participant_comms(event.to_json(), {5})
+        assert result is not None
+        assert result.startswith("[SMS from Marcus Rivera]")
+        assert "Running late" in result
+
+    def test_email_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import EmailReceived
+
+        event = EmailReceived(
+            contact={"contact_id": 3, "first_name": "Sarah", "surname": "Chen"},
+            subject="Updated agenda",
+            body="See attached for the revised agenda.",
+        )
+        result = render_participant_comms(event.to_json(), {3})
+        assert result is not None
+        assert result.startswith("[Email from Sarah Chen]")
+        assert "Updated agenda" in result
+
+    def test_unify_message_from_participant_rendered_with_tag(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import UnifyMessageReceived
+
+        event = UnifyMessageReceived(
+            contact={"contact_id": 7, "first_name": "Priya", "surname": "Sharma"},
+            content="Check the shared doc.",
+        )
+        result = render_participant_comms(event.to_json(), {7})
+        assert result is not None
+        assert result.startswith("[Message from Priya Sharma]")
+        assert "shared doc" in result
+
+    def test_sms_from_non_participant_returns_none(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 99, "first_name": "Stranger", "surname": "Person"},
+            content="Hello?",
+        )
+        result = render_participant_comms(event.to_json(), {5, 3})
+        assert result is None
+
+    def test_non_comms_event_returns_none(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import ActorNotification
+
+        event = ActorNotification(handle_id=1, response="Searching...")
+        result = render_participant_comms(event.to_json(), {1, 5})
+        assert result is None
+
+    def test_multiple_participants_matched(self):
+        from unity.conversation_manager.medium_scripts.common import (
+            render_participant_comms,
+        )
+        from unity.conversation_manager.events import SMSReceived
+
+        event = SMSReceived(
+            contact={"contact_id": 3, "first_name": "Sarah", "surname": "Chen"},
+            content="On my way.",
+        )
+        result = render_participant_comms(event.to_json(), {1, 3, 5})
+        assert result is not None
+        assert "[SMS from Sarah Chen]" in result

@@ -6,6 +6,9 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
+
 from .config import SyncConfig
 from .rclone import RcloneSync, SyncResult
 
@@ -40,35 +43,43 @@ class SyncManager:
             True if sync started successfully, False otherwise
         """
         if not self.config.enabled:
-            print("[FileSync] Sync disabled (no desktop_url configured)")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] Sync disabled (no desktop_url configured)",
+            )
             return False
 
         if self._started:
-            print("[FileSync] Already started")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Already started")
             return True
 
-        print("[FileSync] Starting sync manager...")
+        LOGGER.info(f"{ICONS['file_sync']} [FileSync] Starting sync manager...")
 
         # 1. Get SSH private key from Orchestra secrets
         ssh_key = await self._get_ssh_private_key()
         if not ssh_key:
-            print("[FileSync] Failed to retrieve SSH key, sync disabled")
+            LOGGER.error(
+                f"{ICONS['file_sync']} [FileSync] Failed to retrieve SSH key, sync disabled",
+            )
             return False
 
         # 2. Setup rclone
         self._rclone = RcloneSync(self.config)
         if not await self._rclone.setup(ssh_key):
-            print("[FileSync] Rclone setup failed")
+            LOGGER.error(f"{ICONS['file_sync']} [FileSync] Rclone setup failed")
             return False
 
         # 3. Ensure assistant.txt sentinel exists so bisync has a file to diff
         self._ensure_sentinel()
 
         # 4. Initial bisync with --resync to establish bidirectional baseline
-        print("[FileSync] Performing initial bisync with --resync...")
+        LOGGER.info(
+            f"{ICONS['file_sync']} [FileSync] Performing initial bisync with --resync...",
+        )
         result = await self._rclone.bisync(force_resync=True)
         if not result.success:
-            print(f"[FileSync] Initial bisync failed: {result.errors}")
+            LOGGER.error(
+                f"{ICONS['file_sync']} [FileSync] Initial bisync failed: {result.errors}",
+            )
             # Continue anyway - remote might be empty on first run
 
         # 5. Start background polling for remote changes
@@ -78,7 +89,9 @@ class SyncManager:
         )
 
         self._started = True
-        print("[FileSync] Sync manager started successfully")
+        LOGGER.info(
+            f"{ICONS['file_sync']} [FileSync] Sync manager started successfully",
+        )
         return True
 
     async def on_file_write(self, path: str) -> None:
@@ -145,7 +158,7 @@ class SyncManager:
         if not self._started:
             return
 
-        print("[FileSync] Stopping sync manager...")
+        LOGGER.info(f"{ICONS['file_sync']} [FileSync] Stopping sync manager...")
 
         # Cancel polling task
         if self._poll_task:
@@ -158,13 +171,13 @@ class SyncManager:
 
         # Final bisync to push any pending changes and pull remote state
         if self._rclone:
-            print("[FileSync] Final bisync...")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Final bisync...")
             await self._rclone.bisync()
             self._rclone.cleanup()
             self._rclone = None
 
         self._started = False
-        print("[FileSync] Sync manager stopped")
+        LOGGER.info(f"{ICONS['file_sync']} [FileSync] Sync manager stopped")
 
     SENTINEL_NAME = "assistant.txt"
 
@@ -176,7 +189,7 @@ class SyncManager:
             return
         local_root.mkdir(parents=True, exist_ok=True)
         sentinel.write_text("unity assistant\n")
-        print(f"[FileSync] Created sentinel: {sentinel}")
+        LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Created sentinel: {sentinel}")
 
     async def _get_ssh_private_key(self) -> Optional[str]:
         """Retrieve SSH private key from Orchestra assistant secrets."""
@@ -189,25 +202,27 @@ class SyncManager:
         admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
         if not assistant_id:
-            print("[FileSync] No assistant_id configured")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] No assistant_id configured")
             return None
 
         if not user_id:
-            print("[FileSync] No user_id configured")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] No user_id configured")
             return None
 
         if not base_url:
-            print("[FileSync] No ORCHESTRA_URL configured")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] No ORCHESTRA_URL configured")
             return None
 
         if not admin_key:
-            print("[FileSync] No ORCHESTRA_ADMIN_KEY configured")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] No ORCHESTRA_ADMIN_KEY configured",
+            )
             return None
 
         url = f"{base_url}/admin/assistant/user/{user_id}"
         headers = {"Authorization": f"Bearer {admin_key}"}
 
-        print(f"[FileSync] Retrieving SSH key from {url}")
+        LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Retrieving SSH key from {url}")
 
         # Retry loop for secret retrieval
         max_retries = self.config.max_retries
@@ -217,8 +232,8 @@ class SyncManager:
             try:
                 from unify.utils import http
 
-                print(
-                    f"[FileSync] Fetching secrets (attempt {attempt}/{max_retries})...",
+                LOGGER.debug(
+                    f"{ICONS['file_sync']} [FileSync] Fetching secrets (attempt {attempt}/{max_retries})...",
                 )
                 resp = http.get(url, headers=headers, timeout=30)
 
@@ -234,8 +249,8 @@ class SyncManager:
                             break
 
                     if not matched:
-                        print(
-                            f"[FileSync] Assistant {assistant_id} not found in "
+                        LOGGER.debug(
+                            f"{ICONS['file_sync']} [FileSync] Assistant {assistant_id} not found in "
                             f"{len(assistants)} assistants for user {user_id}",
                         )
                         return None
@@ -244,53 +259,69 @@ class SyncManager:
                     key = secrets.get("vm_ssh_private_key")
 
                     if key:
-                        print("[FileSync] SSH key retrieved successfully")
+                        LOGGER.debug(
+                            f"{ICONS['file_sync']} [FileSync] SSH key retrieved successfully",
+                        )
                         return key
                     else:
-                        print("[FileSync] No vm_ssh_private_key in secrets")
+                        LOGGER.error(
+                            f"{ICONS['file_sync']} [FileSync] No vm_ssh_private_key in secrets",
+                        )
                         return None
                 else:
-                    print(
-                        f"[FileSync] Failed to get secrets: "
+                    LOGGER.debug(
+                        f"{ICONS['file_sync']} [FileSync] Failed to get secrets: "
                         f"status={resp.status_code}, body={resp.text[:200]}",
                     )
 
             except Exception as e:
-                print(f"[FileSync] Exception retrieving secrets: {e}")
+                LOGGER.error(
+                    f"{ICONS['file_sync']} [FileSync] Exception retrieving secrets: {e}",
+                )
                 import traceback
 
                 traceback.print_exc()
 
             if attempt < max_retries:
                 delay = retry_delay * attempt
-                print(f"[FileSync] Retrying in {delay}s...")
+                LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
-        print(f"[FileSync] Failed to retrieve SSH key after {max_retries} attempts")
+        LOGGER.error(
+            f"{ICONS['file_sync']} [FileSync] Failed to retrieve SSH key after {max_retries} attempts",
+        )
         return None
 
     async def _poll_remote_changes(self) -> None:
         """Background task to periodically sync remote changes."""
         interval = self.config.poll_interval_seconds
-        print(f"[FileSync] Starting remote change polling (interval={interval}s)")
+        LOGGER.debug(
+            f"{ICONS['file_sync']} [FileSync] Starting remote change polling (interval={interval}s)",
+        )
 
         while True:
             try:
                 await asyncio.sleep(interval)
 
                 if self._rclone:
-                    print("[FileSync] Polling: running bisync...")
+                    LOGGER.debug(
+                        f"{ICONS['file_sync']} [FileSync] Polling: running bisync...",
+                    )
                     result = await self._rclone.bisync()
                     if result.success:
-                        print("[FileSync] Polling: bisync completed successfully")
+                        LOGGER.debug(
+                            f"{ICONS['file_sync']} [FileSync] Polling: bisync completed successfully",
+                        )
                     else:
-                        print(f"[FileSync] Polling: bisync failed: {result.errors}")
+                        LOGGER.error(
+                            f"{ICONS['file_sync']} [FileSync] Polling: bisync failed: {result.errors}",
+                        )
 
             except asyncio.CancelledError:
-                print("[FileSync] Polling task cancelled")
+                LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Polling task cancelled")
                 break
             except Exception as e:
-                print(f"[FileSync] Polling error: {e}")
+                LOGGER.error(f"{ICONS['file_sync']} [FileSync] Polling error: {e}")
                 import traceback
 
                 traceback.print_exc()

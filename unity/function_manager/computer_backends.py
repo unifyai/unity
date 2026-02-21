@@ -339,7 +339,7 @@ class MockComputerBackend(ComputerBackend):
     """
     A lightweight mock backend for testing Actor logic without external services.
 
-    This backend requires no Redis, no Playwright, no Magnitude service. It returns
+    This backend requires no Playwright, no Magnitude service. It returns
     configurable canned responses and is designed for testing Actor logic without
     requiring external services.
 

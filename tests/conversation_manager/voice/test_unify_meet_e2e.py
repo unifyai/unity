@@ -551,7 +551,7 @@ class TestUnifyMeetSubprocessSpawning:
     When UnifyMeetReceived arrives, the system should:
     1. Call start_unify_meet() with correct room/agent names
     2. Spawn the voice agent subprocess
-    3. Pass correct arguments including room_name and livekit_agent_name
+    3. Pass correct arguments including room_name
     """
 
     async def test_unify_meet_received_calls_start_unify_meet(
@@ -569,8 +569,7 @@ class TestUnifyMeetSubprocessSpawning:
         ) as mock_start:
             event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="unity_25_web",
-                room_name="unity_room_12345",
+                room_name="unity_25_meet",
             )
             await initialized_cm.step(event)
 
@@ -589,10 +588,9 @@ class TestUnifyMeetSubprocessSpawning:
         """
         captured_args = {}
 
-        async def capture_start_unify_meet(contact, boss, agent_name, room_name):
+        async def capture_start_unify_meet(contact, boss, room_name):
             captured_args["contact"] = contact
             captured_args["boss"] = boss
-            captured_args["agent_name"] = agent_name
             captured_args["room_name"] = room_name
 
         with patch.object(
@@ -602,16 +600,12 @@ class TestUnifyMeetSubprocessSpawning:
         ):
             event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="unity_assistant_42_web",
-                room_name="meeting_room_xyz_789",
+                room_name="unity_42_meet",
             )
             await initialized_cm.step(event)
 
         assert (
-            captured_args["agent_name"] == "unity_assistant_42_web"
-        ), f"Agent name not passed correctly: {captured_args.get('agent_name')}"
-        assert (
-            captured_args["room_name"] == "meeting_room_xyz_789"
+            captured_args["room_name"] == "unity_42_meet"
         ), f"Room name not passed correctly: {captured_args.get('room_name')}"
 
     async def test_unify_meet_received_ignored_when_already_in_voice_mode(
@@ -634,7 +628,6 @@ class TestUnifyMeetSubprocessSpawning:
         ) as mock_start:
             event = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="agent",
                 room_name="room",
             )
             await initialized_cm.step(event)
@@ -769,7 +762,6 @@ class TestFullUnifyMeetLifecycle:
         ):
             received = UnifyMeetReceived(
                 contact=boss_contact,
-                livekit_agent_name="unity_test_agent",
                 room_name="unity_test_room",
             )
             await initialized_cm.step(received)

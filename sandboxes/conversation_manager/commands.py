@@ -87,10 +87,32 @@ Scenario seeding (idle-only):
   us <description>              Generate a synthetic scenario from text
   usv                           Generate a synthetic scenario from voice (requires --voice)
 
+Meet interaction events (Unify Meet session simulation):
+  assistant_screen_share_start [reason]    User enables viewing the assistant's desktop
+  assistant_screen_share_stop [reason]     User disables viewing the assistant's desktop
+  user_screen_share_start [reason]         User starts sharing their screen with the assistant
+  user_screen_share_stop [reason]          User stops sharing their screen
+  user_webcam_start [reason]               User enables their webcam
+  user_webcam_stop [reason]                User disables their webcam
+  user_remote_control_start [reason]       User takes remote control of the assistant's desktop
+  user_remote_control_stop [reason]        User releases remote control
+
 Steering (only while active):
   /pause, /resume, /i <msg>, /ask <q>, /stop [reason], /help
 """.strip(
     "\n",
+)
+
+
+_MEET_INTERACTION_COMMANDS = (
+    "assistant_screen_share_start",
+    "assistant_screen_share_stop",
+    "user_screen_share_start",
+    "user_screen_share_stop",
+    "user_webcam_start",
+    "user_webcam_stop",
+    "user_remote_control_start",
+    "user_remote_control_stop",
 )
 
 
@@ -246,6 +268,17 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         )
     if lower == "end_call":
         return ParsedCommand(kind="event", raw=raw, name="end_call")
+
+    for _cmd_name in _MEET_INTERACTION_COMMANDS:
+        if lower == _cmd_name:
+            return ParsedCommand(kind="event", raw=raw, name=_cmd_name)
+        if lower.startswith(_cmd_name + " "):
+            return ParsedCommand(
+                kind="event",
+                raw=raw,
+                name=_cmd_name,
+                args=trimmed[len(_cmd_name) + 1 :].strip(),
+            )
 
     # 5) Freeform text
     if in_call:

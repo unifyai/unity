@@ -257,6 +257,7 @@ class ToolsData:
         client,
         logger: "LoopLogger",
         time_ctx: "Optional[TimeContext]" = None,
+        extra_ask_tools: "Optional[Dict[str, Callable]]" = None,
     ):
         self._client = client
         self._logger = logger
@@ -284,14 +285,20 @@ class ToolsData:
         # Metadata for completed steerable tools, keyed by call_id.
         # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable, "handle": Any}
         self._completed_askable_tools: Dict[str, dict] = {}
+        # Caller-supplied ask tools injected at construction time (e.g.
+        # domain-specific read-only tools for handle.ask() inspection loops).
+        self._extra_ask_tools: Dict[str, Callable] = (
+            dict(extra_ask_tools) if extra_ask_tools else {}
+        )
 
     def get_ask_tools(self) -> Dict[str, Callable]:
         """Return a snapshot of currently available ``ask_*`` dynamic tools.
 
-        Merges retained ask tools from completed tasks with live ones,
-        giving precedence to live entries when keys overlap.
+        Merges three sources with increasing precedence:
+        completed ask handles < extra_ask_tools < live dynamic tools.
         """
         result = dict(self._completed_ask_handles)
+        result.update(self._extra_ask_tools)
         dt = self._dynamic_tools_ref
         if dt and isinstance(dt, dict):
             result.update({k: v for k, v in dt.items() if k.startswith("ask_")})

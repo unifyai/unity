@@ -50,6 +50,10 @@ RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
 COPY . /app
 RUN uv pip install --system --no-cache .
 
+# Clone magnitude fork (agent-service's package.json references ../magnitude via file: deps)
+# Must come after COPY so it isn't overwritten by the gitignored local magnitude/ directory
+RUN git clone --depth 1 --branch unity-modifications https://github.com/unifyai/magnitude.git /app/magnitude
+
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
 
@@ -80,9 +84,17 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
+# Logging: Unity emoji logs to terminal, unify/unillm quiet (file traces only)
+ENV UNITY_TERMINAL_LOG=true
+ENV UNIFY_TERMINAL_LOG=false
+ENV UNILLM_TERMINAL_LOG=false
+ENV UNITY_LOG_DIR=/var/log/unity
+ENV UNIFY_LOG_DIR=/var/log/unify
+ENV UNILLM_LOG_DIR=/var/log/unillm
+
 # Expose the ports that the applications use
-# 8000: conversation manager, 6379: Redis, 3000: agent-service (Magnitude)
-EXPOSE 8000 6379 3000
+# 8000: conversation manager, 3000: agent-service (Magnitude)
+EXPOSE 8000 3000
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]

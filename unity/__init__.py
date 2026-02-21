@@ -4,9 +4,6 @@ unity/__init__.py
 
 Package initialization for the Unity AI Assistant framework.
 
-Importing this package performs one-time setup:
-  - Configures logging to filter to unity.* loggers only
-
 The runtime must be explicitly initialized via init() before using managers:
 
     import unity
@@ -18,6 +15,8 @@ is a no-op if already initialized.
 LLM I/O logging is now handled directly in the unillm package. Enable it via:
   - UNILLM_IO_LOG=true (to enable logging)
   - UNILLM_LOG_DIR=/path/to/logs (to set the output directory)
+
+Logging is configured centrally in unity.logger (imported below).
 """
 
 from typing import Optional
@@ -47,57 +46,9 @@ except Exception:  # ImportError or others
     unify = _UnifyShim()  # type: ignore
 
 
-# ---------------------------------------------------------------------------
-# Default logging hygiene
-# ---------------------------------------------------------------------------
-
-from unity.settings import SETTINGS as _SETTINGS
-
-
-def _configure_default_logging() -> None:
-    """Apply safe, idempotent default logging rules.
-
-    Mutes verbose HTTP client libraries and filters to only show unity.* logs.
-    """
-    if getattr(_configure_default_logging, "_done", False):
-        return
-
-    try:
-        import logging
-
-        # 1) Keep our project logs visible
-        logging.getLogger("unity").setLevel(logging.INFO)
-
-        # 2) Mute common HTTP client libraries and LLM SDKs
-        logging.getLogger("httpx").setLevel(logging.WARNING)
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
-        logging.getLogger("openai").setLevel(logging.WARNING)
-        logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-        logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
-        logging.getLogger("LiteLLM Router").setLevel(logging.WARNING)
-
-        # 3) Only show logs from unity.* loggers
-        class _OnlyProject(logging.Filter):
-            def filter(self, record: "logging.LogRecord") -> bool:  # type: ignore[name-defined]
-                name = record.name or ""
-                return name == "unity" or name.startswith("unity.")
-
-        root = logging.getLogger()
-        root.addFilter(_OnlyProject())
-        for h in list(root.handlers):
-            try:
-                h.addFilter(_OnlyProject())
-            except Exception:
-                pass
-    except Exception:
-        # Never let logging setup crash imports
-        pass
-
-    _configure_default_logging._done = True  # type: ignore[attr-defined]
-
-
-_configure_default_logging()
-
+# Logging is configured entirely in unity.logger — import it so that
+# the module-level setup (handler, formatter, library muting) runs once.
+import unity.logger  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Lazy runtime initialisation
@@ -146,6 +97,8 @@ def init(
         return
 
     # 0. Validate LLM provider credentials are present
+    from unity.settings import SETTINGS as _SETTINGS
+
     _SETTINGS.validate_llm_providers()
 
     # 1. Ensure Unify project is active
@@ -175,8 +128,7 @@ def init(
         # No assistants returned or explicitly passed (offline)
         SESSION_DETAILS.assistant_record = default_assistant
 
-    # 2. Set the Unify context name using computed properties from SESSION_DETAILS
-    # Context is now UserName/AssistantName (e.g., "JohnDoe/MyAssistant")
+    # 2. Set the Unify context using user_id/assistant_id (e.g., "42/7")
     full_ctx = f"{SESSION_DETAILS.user_context}/{SESSION_DETAILS.assistant_context}"
 
     # Idempotent context setup: tolerate concurrent creation from parallel processes
@@ -219,8 +171,8 @@ def ensure_initialised(
 
     If both read and write contexts are already configured, this is a no-op.
     Otherwise, it calls :pyfunc:`init` to select an assistant and set a
-    consistent context (e.g. "{UserName}/{AssistantName}") before any manager
-    constructs its own sub-context (like "{UserName}/{AssistantName}/Contacts").
+    consistent context (e.g. "{user_id}/{assistant_id}") before any manager
+    constructs its own sub-context (like "{user_id}/{assistant_id}/Contacts").
     """
     try:
         ctxs = unify.get_active_context()
