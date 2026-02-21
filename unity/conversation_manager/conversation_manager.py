@@ -282,6 +282,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     data = await resp.json()
                     b64 = data.get("screenshot")
                     if b64:
+                        from unity.conversation_manager.medium_scripts.common import (
+                            _ensure_jpeg,
+                        )
+
+                        b64 = _ensure_jpeg(b64)
                         self._screenshot_buffer.append(
                             ScreenshotEntry(
                                 b64,
