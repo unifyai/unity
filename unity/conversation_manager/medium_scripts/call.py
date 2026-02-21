@@ -408,7 +408,8 @@ async def entrypoint(ctx: agents.JobContext):
         filepath = generate_screenshot_path(entry)
         screenshot_history.add(entry, filepath)
         _inject_visual_context()
-        _publish_screenshot(entry, filepath)
+        if entry.source != "assistant":
+            _publish_screenshot(entry, filepath)
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev):
