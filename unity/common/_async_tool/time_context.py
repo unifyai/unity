@@ -1,9 +1,9 @@
-import time as _time
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List
+from __future__ import annotations
 
-from ..prompt_helpers import now
+import json
+import time as _time
+from dataclasses import dataclass
+from typing import Union
 
 # --------------------------------------------------------------------------- #
 #  MONOTONIC TIME HELPER (monkey-patchable for tests)                         #
@@ -23,180 +23,164 @@ def perf_counter() -> float:
     return _time.perf_counter()
 
 
-@dataclass(frozen=True)
-class ToolTiming:
-    """Record of a single tool execution."""
+# --------------------------------------------------------------------------- #
+#  FORMATTING HELPERS                                                         #
+# --------------------------------------------------------------------------- #
 
-    call_id: str
-    name: str
-    started_offset_secs: float
-    duration_secs: float
+
+def _fmt(seconds: float, *, prefix: str = "") -> str:
+    """Core formatter for compact time strings.
+
+    Milliseconds are included only when the total value is under one minute.
+
+    Examples: ``0s``, ``100ms``, ``2s50ms``, ``1m30s``, ``1h2m30s``.
+
+    Parameters
+    ----------
+    seconds
+        Duration in seconds to format.
+    prefix
+        String prepended to the result (e.g. ``"+"`` for offsets).
+    """
+    if seconds < 0:
+        return f"{prefix}0s"
+
+    total_ms = int(round(seconds * 1000))
+    if total_ms == 0:
+        return f"{prefix}0s"
+
+    h, remainder_ms = divmod(total_ms, 3_600_000)
+    m, remainder_ms = divmod(remainder_ms, 60_000)
+    s, ms = divmod(remainder_ms, 1000)
+
+    parts: list[str] = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s:
+        parts.append(f"{s}s")
+    if ms and not h and not m:
+        parts.append(f"{ms}ms")
+    if not parts:
+        parts.append("0s")
+    return prefix + "".join(parts)
+
+
+def format_offset(seconds: float) -> str:
+    """Format *seconds* as a compact signed offset string."""
+    return _fmt(seconds, prefix="+")
+
+
+def format_duration(seconds: float) -> str:
+    """Format *seconds* as a compact human-readable duration."""
+    return _fmt(seconds)
+
+
+# --------------------------------------------------------------------------- #
+#  TIME CONTEXT                                                               #
+# --------------------------------------------------------------------------- #
+
+_EXPLANATION_PROMPT = (
+    "## Time Annotations\n"
+    "This conversation includes inline timing metadata so you can reason "
+    "about elapsed time and tool execution order.\n\n"
+    "- **Tool results** from non-steering tools include a JSON envelope:\n"
+    '  `{"tool_result": <result>, "metadata": {"called_at": "+1m30s", "duration": "2s45ms"}}`\n'
+    "  `called_at` is the offset since conversation start when the tool was invoked; "
+    "`duration` is wall-clock execution time.\n"
+    "- **User messages** are prefixed with `[elapsed: +XmYs]` showing "
+    "when the message was sent relative to conversation start.\n"
+    '- **Pending tool placeholders** include `"meta:started"` with the '
+    "invocation offset.\n\n"
+    "Use these annotations when reasoning about timing, ordering, or how "
+    "long operations took. Do NOT reproduce the annotations in your replies."
+)
 
 
 @dataclass
 class TimeContext:
-    """Tracks time-related context for an async tool loop.
+    """Tracks wall-clock offsets for an async tool loop.
 
-    Captures the conversation start time and maintains a history of tool
-    executions with their timing information. This context is injected
-    into system messages so the LLM can reason about time.
+    Provides compact offset/duration formatting and result-wrapping
+    helpers consumed by the tool loop infrastructure.
 
     Attributes
     ----------
-    loop_start_time : datetime
-        The datetime when the loop started (via now(as_string=False)).
     perf_counter_start : float
-        The time.perf_counter() value at loop start, used to compute
-        tool start offsets from ToolCallMetadata.scheduled_time.
-    tool_history : List[ToolTiming]
-        Chronological list of completed tool executions.
+        Monotonic ``perf_counter()`` value captured at loop start.
     """
 
-    loop_start_time: datetime
     perf_counter_start: float
-    tool_history: List[ToolTiming] = field(default_factory=list)
 
-    def elapsed_since_start(self) -> float:
-        """Return seconds elapsed since conversation started."""
-        current = now(as_string=False)
-        return (current - self.loop_start_time).total_seconds()
+    # -- offset helpers -------------------------------------------------------
 
-    def compute_start_offset(self, scheduled_perf_counter: float) -> float:
-        """Compute the start offset relative to loop start.
+    def current_offset(self) -> str:
+        """Return the current elapsed offset since loop start."""
+        return format_offset(perf_counter() - self.perf_counter_start)
 
-        Parameters
-        ----------
-        scheduled_perf_counter : float
-            The time.perf_counter() value when the tool was scheduled
-            (from ToolCallMetadata.scheduled_time).
+    def offset_at(self, perf_time: float) -> str:
+        """Return the offset string for a given ``perf_counter`` snapshot."""
+        return format_offset(perf_time - self.perf_counter_start)
 
-        Returns
-        -------
-        float
-            Seconds after loop_start_time when the tool was scheduled.
-        """
-        return scheduled_perf_counter - self.perf_counter_start
+    def duration_since(self, perf_time: float) -> str:
+        """Return the duration string from *perf_time* until now."""
+        return format_duration(perf_counter() - perf_time)
 
-    def add_tool_timing(
+    # -- result wrapping ------------------------------------------------------
+
+    def wrap_result(
         self,
-        call_id: str,
-        name: str,
-        start_offset: float,
-        duration: float,
-    ) -> None:
-        """Record a completed tool's timing information.
+        content: Union[str, list],
+        scheduled_time: float,
+    ) -> Union[str, list]:
+        """Wrap a serialized tool result with timing metadata.
 
         Parameters
         ----------
-        call_id : str
-            Unique identifier for this tool invocation.
-        name : str
-            Tool name (may be shared by multiple calls).
-        start_offset : float
-            Seconds after loop_start_time when the tool was scheduled.
-        duration : float
-            How long the tool took to execute in seconds.
-        """
-        self.tool_history.append(
-            ToolTiming(
-                call_id=call_id,
-                name=name,
-                started_offset_secs=start_offset,
-                duration_secs=duration,
-            ),
-        )
-
-    def _format_elapsed(self, seconds: float) -> str:
-        """Format elapsed seconds as human-readable duration."""
-        if seconds < 0:
-            return "0s"
-
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = seconds % 60
-
-        parts = []
-        if hours > 0:
-            parts.append(f"{hours}h")
-        if minutes > 0:
-            parts.append(f"{minutes}m")
-        if secs > 0 or not parts:
-            # Show decimal for sub-minute durations
-            if hours == 0 and minutes == 0:
-                parts.append(f"{secs:.1f}s")
-            else:
-                parts.append(f"{int(secs)}s")
-
-        return " ".join(parts)
-
-    def build_system_message(self) -> str:
-        """Build the time context section for injection into system messages.
-
-        Note: Current time is already injected via compose_system_prompt's
-        time footer (uses now()), so we don't duplicate it here. This method
-        focuses on:
-        - Conversation start (relative to current time)
-        - Tool execution history with call_id for unique identification
+        content
+            The value returned by ``serialize_tool_content`` — either a
+            JSON string or a list of content blocks (when images are present).
+        scheduled_time
+            The ``perf_counter`` value when the tool was scheduled.
 
         Returns
         -------
-        str
-            Formatted time context section for the system message.
+        str | list
+            * **str content** -- a JSON string of
+              ``{"tool_result": <content>, "metadata": {"called_at": …, "duration": …}}``.
+              ``tool_result`` holds the original *content* verbatim.
+            * **list content** (image blocks) -- the original list with a
+              metadata text block prepended.
         """
-        elapsed = self.elapsed_since_start()
-        elapsed_str = self._format_elapsed(elapsed)
+        called_at = self.offset_at(scheduled_time)
+        duration = self.duration_since(scheduled_time)
+        meta = {"called_at": called_at, "duration": duration}
 
-        lines = [
-            "## Time Context",
-            "Below is your temporal awareness for this conversation: when it started, "
-            "how long it's been running, and a log of every tool call with timing. "
-            "Consult it when reasoning about elapsed time or the order of events.",
-            f"- Conversation started: {elapsed_str} ago",
-        ]
+        if isinstance(content, list):
+            meta_block = {
+                "type": "text",
+                "text": json.dumps({"metadata": meta}),
+            }
+            return [meta_block, *content]
 
-        if self.tool_history:
-            lines.append("")
-            lines.append("### Tool Execution History")
-            lines.append("| call_id | tool | started (relative) | duration |")
-            lines.append("| --- | --- | --- | --- |")
+        envelope = {"tool_result": content, "metadata": meta}
+        return json.dumps(envelope, indent=4)
 
-            for tool in self.tool_history:
-                started = f"+{tool.started_offset_secs:.1f}s"
-                duration = f"{tool.duration_secs:.2f}s"
-                lines.append(
-                    f"| {tool.call_id} | {tool.name[:32]} | {started} | {duration} |",
-                )
+    # -- user message annotation ----------------------------------------------
 
-        return "\n".join(lines)
+    def prefix_user_message(self, text: str) -> str:
+        """Prepend the elapsed offset to a user message string."""
+        return f"[elapsed: {self.current_offset()}] {text}"
 
-    def update_system_message(self, msg: dict) -> None:
-        """Update a system message dict with refreshed time context.
+    # -- system prompt --------------------------------------------------------
 
-        Replaces the content of the dedicated time context system message
-        with the latest build (including any new tool timings).
-
-        Parameters
-        ----------
-        msg : dict
-            The time context system message dict (must have "_time_context" marker).
-        """
-        if not msg or not msg.get("_time_context"):
-            return
-
-        msg["content"] = self.build_system_message()
+    @staticmethod
+    def build_explanation_prompt() -> str:
+        """Return the static system-message content explaining inline time annotations."""
+        return _EXPLANATION_PROMPT
 
 
 def create_time_context() -> TimeContext:
-    """Create a new TimeContext with the current time as start.
-
-    Uses now() to get a datetime object that respects the assistant's timezone.
-
-    Returns
-    -------
-    TimeContext
-        A new time context initialized with the current time.
-    """
-    return TimeContext(
-        loop_start_time=now(as_string=False),
-        perf_counter_start=perf_counter(),
-    )
+    """Create a new ``TimeContext`` anchored at the current instant."""
+    return TimeContext(perf_counter_start=perf_counter())

@@ -1017,6 +1017,7 @@ async def test_resume_unblocks_base_tool(client, monkeypatch):
         tools={"pausable_fn": pausable_fn},
         timeout=180,
         max_steps=20,
+        time_awareness=False,
     )
 
     # Ensure LLM step started, then pause the outer handle

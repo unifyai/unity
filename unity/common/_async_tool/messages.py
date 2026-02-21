@@ -696,6 +696,7 @@ async def ensure_placeholders_for_pending(
     assistant_meta,
     client,
     msg_dispatcher,
+    time_ctx=None,
 ) -> list[str]:
     created: list[str] = []
     # Sort by call_idx to ensure deterministic placeholder ordering matching
@@ -731,10 +732,15 @@ async def ensure_placeholders_for_pending(
         if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
+        ph_content: dict = {"_placeholder": "pending"}
+        if time_ctx is not None:
+            with suppress(Exception):
+                ph_content["meta:started"] = time_ctx.offset_at(_inf.scheduled_time)
+
         placeholder = create_tool_call_message(
             name=_inf.name,
             call_id=_inf.call_id,
-            content=json.dumps({"_placeholder": "pending"}, indent=4),
+            content=json.dumps(ph_content, indent=4),
         )
         await insert_tool_message_after_assistant(
             assistant_meta,
