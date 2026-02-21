@@ -207,7 +207,6 @@ def stub_external_deps(monkeypatch):
 
     # Patch prompt_helpers.now everywhere it's imported
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
-    monkeypatch.setattr("unity.guidance_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.secret_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
