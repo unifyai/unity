@@ -1181,10 +1181,13 @@ async def hydrate_fast_brain_history(
     """
     from unity.events.event_bus import EVENT_BUS
 
-    bus_events = await EVENT_BUS.search(
-        filter='type == "Comms"',
-        limit=limit,
-    )
+    try:
+        bus_events = await EVENT_BUS.search(
+            filter='type == "Comms"',
+            limit=limit,
+        )
+    except RuntimeError:
+        return []
     if not bus_events:
         return []
 
