@@ -79,6 +79,7 @@ async def test_conversation_start_awareness(llm_config, monkeypatch):
         message="How long ago did this conversation start, in seconds?",
         tools={},
         response_format=ElapsedTimeResponse,
+        time_awareness=True,
     ).result()
 
     assert isinstance(answer, ElapsedTimeResponse)
@@ -118,6 +119,7 @@ async def test_tool_duration_awareness(llm_config, monkeypatch):
         ),
         tools={"get_data": get_data},
         response_format=ToolDurationResponse,
+        time_awareness=True,
     ).result()
 
     call_count = count_tool_calls(client.messages, "get_data")
@@ -187,6 +189,7 @@ async def test_faster_tool_identification(llm_config, monkeypatch):
         ),
         tools={"tool_alpha": tool_alpha, "tool_beta": gated_tool_beta},
         response_format=FasterToolResponse,
+        time_awareness=True,
     )
 
     await _wait_for_tool_result(client, "tool_alpha")
