@@ -223,7 +223,7 @@ async def async_tool_loop_inner(
     persist: bool = False,
     multi_handle_coordinator: Optional["MultiHandleCoordinator"] = None,
     prompt_caching: Optional["PromptCacheParam"] = None,
-    time_awareness: bool = True,
+    time_awareness: bool = False,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM

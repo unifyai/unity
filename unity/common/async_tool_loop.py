@@ -867,7 +867,7 @@ def start_async_tool_loop(
     persist: bool = False,
     multi_handle: bool = False,
     prompt_caching: Optional["PromptCacheParam"] = None,
-    time_awareness: bool = True,
+    time_awareness: bool = False,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
