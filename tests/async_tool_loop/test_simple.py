@@ -252,6 +252,7 @@ async def test_pretty_prints_json_string_tool_result(llm_config):
         ),
         tools={"emit_json": emit_json},
         max_consecutive_failures=2,
+        time_awareness=False,
     ).result()
 
     # Find the tool message for emit_json

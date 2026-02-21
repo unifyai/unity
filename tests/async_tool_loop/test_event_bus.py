@@ -75,6 +75,7 @@ async def test_basic_event_flow(llm_config) -> None:
             cancel_event=asyncio.Event(),
             pause_event=pause_event,
             prune_tool_duplicates=True,
+            time_awareness=False,
         )
 
     # Filter out internal runtime context events and check conversation flow.
