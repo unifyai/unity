@@ -196,7 +196,11 @@ def _extract_log_date(lines: list[str]) -> str:
     return "2026-01-01"
 
 
-def _parse_fb_line(line: str, log_date: str, line_idx: int) -> tuple[str, int, str] | None:
+def _parse_fb_line(
+    line: str,
+    log_date: str,
+    line_idx: int,
+) -> tuple[str, int, str] | None:
     """Parse a FastBrainLogger line into (ts_utc, monotonic_proxy, body).
 
     Returns None if the line is not a FastBrainLogger line.
@@ -433,7 +437,11 @@ def parse_voice_log(path: Path) -> VoiceLogData:
             elif body.startswith("Guidance from "):
                 source = body.split("Guidance from ", 1)[1].split(":")[0]
                 should_speak = "speak=True" in body
-                content = body.split("speak=True ", 1)[-1] if should_speak else body.split("speak=False ", 1)[-1]
+                content = (
+                    body.split("speak=True ", 1)[-1]
+                    if should_speak
+                    else body.split("speak=False ", 1)[-1]
+                )
                 gid = _extract_field(line, "guidance_id")
                 if " guidance_id=" in content:
                     content = content[: content.index(" guidance_id=")]
@@ -475,7 +483,8 @@ def parse_voice_log(path: Path) -> VoiceLogData:
                         reason=_extract_field(line, "reason"),
                         source_id=_extract_field(line, "source_id"),
                         queued_speech_count=_extract_int(
-                            line, "queued_speech",
+                            line,
+                            "queued_speech",
                         ),
                     ),
                 )
