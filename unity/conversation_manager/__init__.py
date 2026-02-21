@@ -19,14 +19,12 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from unity.session_details import SESSION_DETAILS
 
 LOGGER = logging.getLogger("unity")
-from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -78,6 +76,8 @@ async def start_async(
     global _conversation_manager
 
     if _conversation_manager is not None:
+        from unity.common.hierarchical_logger import ICONS
+
         LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is already running")
         return _conversation_manager
 
@@ -104,6 +104,8 @@ async def stop_async(reason: str = "manual_stop") -> None:
 
     if _conversation_manager is None:
         return
+
+    from unity.common.hierarchical_logger import ICONS
 
     LOGGER.info(
         f"{ICONS['lifecycle']} Stopping ConversationManager (reason: {reason})...",
