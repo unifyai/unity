@@ -1,6 +1,9 @@
+import os
 import sys
 import json
 import asyncio
+
+os.environ["UNITY_TERMINAL_LOG"] = "true"
 
 from dotenv import load_dotenv
 
