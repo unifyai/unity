@@ -527,12 +527,18 @@ async def async_tool_loop_inner(
         # Transform roles to outer_* to disambiguate from current conversation roles
         ctx_content_transformed = _transform_context_roles(ctx_content)
         _has_parent_chat_context = True
+        if ctx_content_transformed:
+            _parent_ctx_detail = (
+                f"The messages below show that parent conversation's history up to the point "
+                f"when you received this request. Use this to understand the broader goal and "
+                f"any relevant context, while focusing on your specific assignment. "
+            )
+        else:
+            _parent_ctx_detail = f"None of the parent conversation history has been provided to this request. "
         runtime_context_parts.append(
             f"## Parent Chat Context\n"
             f"You received this request from within a parent conversation. "
-            f"The messages below show that parent conversation's history up to the point "
-            f"when you received this request. Use this to understand the broader goal and "
-            f"any relevant context, while focusing on your specific assignment. "
+            f"{_parent_ctx_detail}"
             f"Additional context updates may arrive during this session as the parent "
             f"conversation progresses.\n\n"
             f"IMPORTANT: Messages in the parent context use 'outer_user' and 'outer_assistant' "
