@@ -82,7 +82,9 @@ class EventHandler:
 
 @EventHandler.register(Ping)
 async def _(event: Ping, cm: "ConversationManager", *args, **kwargs):
-    pass
+    log_str = "Ping received - keeping conversation manager alive"
+    print(log_str)  # need console logging of ping to detect idle containers
+    cm._session_logger.debug("ping", log_str)
 
 
 @EventHandler.register(PhoneCallAnswered)

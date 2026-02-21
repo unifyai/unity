@@ -355,14 +355,24 @@ class TestPingHandler:
     """Tests for the Ping event handler."""
 
     @pytest.mark.asyncio
-    async def test_ping_is_silent(self, mock_cm, capsys):
-        """Ping handler produces no log output."""
+    async def test_ping_prints_keepalive_message(self, mock_cm, capsys):
+        """Ping handler prints keepalive message to stdout."""
         event = Ping(kind="keepalive")
         await EventHandler.handle_event(event, mock_cm)
 
         captured = capsys.readouterr()
-        assert captured.out == ""
-        mock_cm._session_logger.debug.assert_not_called()
+        assert "Ping received - keeping conversation manager alive" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_ping_logs_debug_message(self, mock_cm):
+        """Ping handler logs debug message."""
+        event = Ping(kind="test")
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm._session_logger.debug.assert_called_with(
+            "ping",
+            "Ping received - keeping conversation manager alive",
+        )
 
 
 # =============================================================================
