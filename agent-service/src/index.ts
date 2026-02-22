@@ -532,7 +532,7 @@ const startDesktop = async (): Promise<BrowserAgent> => {
       llm: {
         provider: 'openai-generic',
         options: {
-          model: 'claude-4.5-opus@anthropic',
+          model: 'claude-4.6-opus@anthropic',
           baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
           headers: {
             'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
@@ -565,7 +565,7 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
       llm: {
         provider: 'openai-generic',
         options: {
-          model: 'claude-4.5-opus@anthropic',
+          model: 'claude-4.6-opus@anthropic',
           baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
           headers: {
             'Authorization': `Bearer ${process.env.UNIFY_KEY}`,

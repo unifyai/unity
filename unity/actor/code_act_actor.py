@@ -28,6 +28,7 @@ from unity.actor.execution import (
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
+    _CURRENT_ENVIRONMENTS,
     _CURRENT_PACKAGE_OVERLAY,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
@@ -3010,6 +3011,7 @@ class CodeActActor(BaseCodeActActor):
         # when it receives a _notification_up_q from the async tool loop.
 
         token = _CURRENT_SANDBOX.set(sandbox)
+        env_token = _CURRENT_ENVIRONMENTS.set(sandbox_envs)
 
         # Set agent context for depth tracking and handle access
         parent_ctx = _CURRENT_AGENT_CONTEXT.get()
@@ -3055,6 +3057,10 @@ class CodeActActor(BaseCodeActActor):
                 pass
             try:
                 _CURRENT_SANDBOX.reset(token)
+            except Exception:
+                pass
+            try:
+                _CURRENT_ENVIRONMENTS.reset(env_token)
             except Exception:
                 pass
             try:
