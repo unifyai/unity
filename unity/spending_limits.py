@@ -48,6 +48,7 @@ class _LimitCheckResult:
     entity_name: Optional[str] = None
     limit_set_at: Optional[str] = None  # ISO format timestamp
     organization_id: Optional[int] = None  # For member limits
+    credit_balance: Optional[float] = None  # Billing account credit balance
 
 
 def _get_api_key() -> Optional[str]:
@@ -90,10 +91,14 @@ async def _check_assistant_limit(
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
         limit_set_at = data.get("limit_set_at")
+        credit_balance = data.get("credit_balance")
 
         # No limit set = unlimited
         if limit is None:
-            return _LimitCheckResult(exceeded=False)
+            return _LimitCheckResult(
+                exceeded=False,
+                credit_balance=credit_balance,
+            )
 
         exceeded = spend >= limit
         return _LimitCheckResult(
@@ -104,6 +109,7 @@ async def _check_assistant_limit(
             entity_id=agent_id,
             entity_name=data.get("agent_name"),
             limit_set_at=limit_set_at,
+            credit_balance=credit_balance,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -137,9 +143,13 @@ async def _check_user_limit(
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
         limit_set_at = data.get("limit_set_at")
+        credit_balance = data.get("credit_balance")
 
         if limit is None:
-            return _LimitCheckResult(exceeded=False)
+            return _LimitCheckResult(
+                exceeded=False,
+                credit_balance=credit_balance,
+            )
 
         exceeded = spend >= limit
         return _LimitCheckResult(
@@ -149,6 +159,7 @@ async def _check_user_limit(
             current_spend=spend,
             entity_id=user_id,
             limit_set_at=limit_set_at,
+            credit_balance=credit_balance,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -182,9 +193,13 @@ async def _check_member_limit(
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
         limit_set_at = data.get("limit_set_at")
+        credit_balance = data.get("credit_balance")
 
         if limit is None:
-            return _LimitCheckResult(exceeded=False)
+            return _LimitCheckResult(
+                exceeded=False,
+                credit_balance=credit_balance,
+            )
 
         exceeded = spend >= limit
         return _LimitCheckResult(
@@ -195,6 +210,7 @@ async def _check_member_limit(
             entity_id=user_id,
             limit_set_at=limit_set_at,
             organization_id=org_id,
+            credit_balance=credit_balance,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -227,9 +243,13 @@ async def _check_org_limit(
         limit = data.get("limit")
         spend = data.get("cumulative_spend", 0)
         limit_set_at = data.get("limit_set_at")
+        credit_balance = data.get("credit_balance")
 
         if limit is None:
-            return _LimitCheckResult(exceeded=False)
+            return _LimitCheckResult(
+                exceeded=False,
+                credit_balance=credit_balance,
+            )
 
         exceeded = spend >= limit
         return _LimitCheckResult(
@@ -240,6 +260,7 @@ async def _check_org_limit(
             entity_id=str(org_id),
             entity_name=data.get("organization_name"),
             limit_set_at=limit_set_at,
+            credit_balance=credit_balance,
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
@@ -401,11 +422,20 @@ async def check_spending_limits_callback(
         except ValueError:
             return None
 
+    # Collect credit_balance from the first result that has it.
+    # All endpoints return the same billing account's balance, so any one suffices.
+    credit_balance: Optional[float] = None
+
     # Return first exceeded result
     for result in results:
         if isinstance(result, Exception):
             logger.warning(f"Limit check failed with exception: {result}")
             continue
+
+        # Capture credit_balance from the first result that provides it
+        if credit_balance is None and result.credit_balance is not None:
+            credit_balance = result.credit_balance
+
         if result.exceeded:
             current = (
                 f"${result.current_spend:.2f}" if result.current_spend else "unknown"
@@ -428,6 +458,19 @@ async def check_spending_limits_callback(
                 entity_id=result.entity_id,
                 entity_name=result.entity_name,
             )
+
+    # Check credit balance: block if credits are exhausted.
+    # This piggybacks on the existing spending limit HTTP calls — no extra
+    # round-trip. The balance comes from Orchestra's billing account, which
+    # is the authoritative source.
+    if credit_balance is not None and credit_balance <= 0:
+        return LimitCheckResponse(
+            allowed=False,
+            reason=(
+                f"Insufficient credits: balance is ${credit_balance:.2f}. "
+                "Please add credits to continue."
+            ),
+        )
 
     return LimitCheckResponse(allowed=True)
 
