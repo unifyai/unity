@@ -63,6 +63,11 @@ _PARENT_CHAT_CONTEXT: contextvars.ContextVar[list | None] = contextvars.ContextV
     default=None,
 )
 
+_CURRENT_ENVIRONMENTS: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "code_act_current_environments",
+    default={},
+)
+
 
 # ---------------------------------------------------------------------------
 # Validation helpers
