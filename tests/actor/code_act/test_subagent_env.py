@@ -1,4 +1,4 @@
-"""Tests for subagent environment support (create_env and AgentContext)."""
+"""Tests for subagent environment support (create_env, AgentContext, env forwarding, guidance)."""
 
 import pytest
 
@@ -8,6 +8,10 @@ from unity.actor.code_act_actor import (
     _CURRENT_AGENT_CONTEXT,
 )
 from unity.actor.environments import create_env, BaseEnvironment
+from unity.actor.environments.actor import (
+    _resolve_parent_environments,
+)
+from unity.actor.execution.session import _CURRENT_ENVIRONMENTS
 
 
 class TestCreateEnv:
@@ -158,3 +162,117 @@ class TestAgentContext:
 
         # Verify reset worked
         assert get_current_agent_context().depth == original.depth
+
+
+class TestResolveParentEnvironments:
+    """Tests for _resolve_parent_environments()."""
+
+    def _make_env(self, namespace: str) -> BaseEnvironment:
+        """Create a dummy environment with the given namespace."""
+
+        class Svc:
+            async def do_work(self) -> str:
+                """Placeholder."""
+                return "ok"
+
+        return create_env(namespace, Svc())
+
+    def test_no_prompt_functions_returns_empty(self):
+        """When prompt_functions is None or empty, return empty forwarded list."""
+        forwarded, remaining = _resolve_parent_environments(None)
+        assert forwarded == []
+        assert remaining == []
+
+        forwarded, remaining = _resolve_parent_environments([])
+        assert forwarded == []
+        assert remaining == []
+
+    def test_no_parent_envs_returns_all_as_remaining(self):
+        """When no parent environments are set, everything goes to remaining."""
+        forwarded, remaining = _resolve_parent_environments(
+            ["colliers", "primitives.files"],
+        )
+        assert forwarded == []
+        assert remaining == ["colliers", "primitives.files"]
+
+    def test_matches_parent_namespace(self):
+        """Custom parent namespaces should be forwarded."""
+        colliers_env = self._make_env("colliers")
+        token = _CURRENT_ENVIRONMENTS.set({"colliers": colliers_env})
+        try:
+            forwarded, remaining = _resolve_parent_environments(
+                ["colliers", "primitives.files"],
+            )
+            assert len(forwarded) == 1
+            assert forwarded[0] is colliers_env
+            assert remaining == ["primitives.files"]
+        finally:
+            _CURRENT_ENVIRONMENTS.reset(token)
+
+    def test_primitives_never_forwarded(self):
+        """The 'primitives' namespace must always go through DB resolution."""
+
+        prim_env = self._make_env("primitives")
+        token = _CURRENT_ENVIRONMENTS.set({"primitives": prim_env})
+        try:
+            forwarded, remaining = _resolve_parent_environments(
+                ["primitives", "primitives.contacts"],
+            )
+            assert forwarded == []
+            assert remaining == ["primitives", "primitives.contacts"]
+        finally:
+            _CURRENT_ENVIRONMENTS.reset(token)
+
+    def test_deduplicates_same_namespace(self):
+        """Multiple references to the same parent namespace should forward only once."""
+        rendering_env = self._make_env("rendering")
+        token = _CURRENT_ENVIRONMENTS.set({"rendering": rendering_env})
+        try:
+            forwarded, remaining = _resolve_parent_environments(
+                ["rendering", "rendering.render_pdf"],
+            )
+            assert len(forwarded) == 1
+            assert forwarded[0] is rendering_env
+            assert remaining == []
+        finally:
+            _CURRENT_ENVIRONMENTS.reset(token)
+
+    def test_mixed_parent_and_db(self):
+        """Mix of parent envs and DB names are correctly split."""
+        colliers_env = self._make_env("colliers")
+        rendering_env = self._make_env("rendering")
+        token = _CURRENT_ENVIRONMENTS.set(
+            {
+                "colliers": colliers_env,
+                "rendering": rendering_env,
+            },
+        )
+        try:
+            forwarded, remaining = _resolve_parent_environments(
+                ["colliers", "primitives.contacts.ask", "rendering", "my_function"],
+            )
+            assert len(forwarded) == 2
+            assert colliers_env in forwarded
+            assert rendering_env in forwarded
+            assert remaining == ["primitives.contacts.ask", "my_function"]
+        finally:
+            _CURRENT_ENVIRONMENTS.reset(token)
+
+
+class TestCurrentEnvironmentsContextVar:
+    """Tests for the _CURRENT_ENVIRONMENTS ContextVar lifecycle."""
+
+    def test_default_is_empty_dict(self):
+        """Default value should be an empty dict."""
+        assert _CURRENT_ENVIRONMENTS.get({}) == {}
+
+    def test_set_and_reset(self):
+        """ContextVar should be settable and resettable."""
+        env = create_env("test_ns", type("Svc", (), {"work": lambda self: None})())
+        envs = {"test_ns": env}
+
+        token = _CURRENT_ENVIRONMENTS.set(envs)
+        assert _CURRENT_ENVIRONMENTS.get({}) is envs
+
+        _CURRENT_ENVIRONMENTS.reset(token)
+        assert _CURRENT_ENVIRONMENTS.get({}) == {}
