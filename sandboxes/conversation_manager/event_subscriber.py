@@ -143,12 +143,32 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return f"[{sender} → Assistant • Phone] (interrupt)"
 
     if isinstance(event, SMSSent):
-        to_name = _contact_label(getattr(event, "contact", {}), fallback="recipient")
-        return f"[SMS → {to_name}] {event.content}"
+        to_name = _contact_label(getattr(event, "contact", {}), fallback="User")
+        return f"[Assistant → {to_name} • SMS] {event.content}"
+    if isinstance(event, UnifyMessageSent):
+        to_name = _contact_label(getattr(event, "contact", {}), fallback="User")
+        content = str(getattr(event, "content", "") or "").strip()
+        attachments = getattr(event, "attachments", []) or []
+        if attachments:
+            return (
+                f"[Assistant → {to_name} • Unify] {content} [+{len(attachments)} files]"
+            )
+        return f"[Assistant → {to_name} • Unify] {content}"
     if isinstance(event, EmailSent):
-        return f"[Email → User] Subject: {event.subject}\n{event.body}"
+        to_addrs = getattr(event, "to", []) or []
+        to_label = (
+            ", ".join(to_addrs[:2]) + ("..." if len(to_addrs) > 2 else "")
+            if to_addrs
+            else "User"
+        )
+        subject = str(getattr(event, "subject", "") or "").strip()
+        body = str(getattr(event, "body", "") or "").strip()
+        header = f"[Assistant → {to_label} • Email] Subject: {subject}"
+        if body:
+            return f"{header}\n{body}"
+        return header
     if isinstance(event, OutboundPhoneUtterance):
-        return f"[Phone → User] {event.content}"
+        return f"[Assistant → User • Phone] {event.content}"
     if isinstance(event, UnifyMeetStarted):
         return "🎙️ Live voice ready — you can start speaking."
     if isinstance(event, UnifyMeetEnded):
@@ -161,7 +181,7 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
             in_call = bool(getattr(sandbox_state, "in_call", False))
             live_voice = bool(getattr(sandbox_state, "live_voice_active", False))
             if in_call and not live_voice:
-                return f"[Phone → User] {event.content}"
+                return f"[Assistant → User • Phone] {event.content}"
         except Exception:
             pass
         return f"[Call Guidance] {event.content}"
@@ -722,7 +742,10 @@ async def subscribe_to_responses(
                         ack = "✅ Email sent."
                         if to_email:
                             ack = f"✅ Email sent to {to_email}."
-                        await _maybe_call(display_callback, f"[Phone → User] {ack}")
+                        await _maybe_call(
+                            display_callback,
+                            f"[Assistant → User • Phone] {ack}",
+                        )
 
                     # UX: when an outbound SMS is emitted while we're in a call,
                     # acknowledge it in the call channel. Do not "speak" the SMS body
@@ -742,7 +765,10 @@ async def subscribe_to_responses(
                         ack = "✅ SMS sent."
                         if to_name:
                             ack = f"✅ SMS sent to {to_name}."
-                        await _maybe_call(display_callback, f"[Phone → User] {ack}")
+                        await _maybe_call(
+                            display_callback,
+                            f"[Assistant → User • Phone] {ack}",
+                        )
                         if voice_enabled:
                             try:
                                 from sandboxes.utils import speak
