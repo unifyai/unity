@@ -12,11 +12,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import pytest
 
 from unity.conversation_manager.medium_scripts.common import ScreenshotHistory
 from unity.conversation_manager.types.screenshot import ScreenshotEntry
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -76,21 +74,15 @@ def _count_visual(ctx: _FakeChatContext) -> int:
     return sum(
         1
         for it in ctx.items
-        if it.role == "user"
-        and any("[Screenshot" in str(c) for c in it.content)
+        if it.role == "user" and any("[Screenshot" in str(c) for c in it.content)
     )
 
 
 # ── Bug 1: Visual context accumulation ──────────────────────────────────────
 
 
-def test_visual_ctx_does_not_accumulate():
-    """_capture_screenshots_for_llm must not desync _visual_ctx_msg_id.
-
-    Simulates 5 cycles of _inject_visual_context (live ctx) +
-    _capture_screenshots_for_llm (copy ctx). The live context should
-    always have exactly 1 visual context message.
-    """
+def test_visual_ctx_does_not_accumulate_in_live():
+    """_inject_visual_context must replace, not accumulate, in session._chat_ctx."""
     _visual_ctx_msg_id: str | None = None
     live = _FakeChatContext()
     live.add_message(role="system", content=["prompt"])
@@ -99,8 +91,6 @@ def test_visual_ctx_does_not_accumulate():
 
     for i in range(5):
         content = [f"[Screenshot #{i}]"]
-
-        # _inject_visual_context path (live ctx)
         if _visual_ctx_msg_id is not None:
             idx = live.index_by_id(_visual_ctx_msg_id)
             if idx is not None:
@@ -108,18 +98,58 @@ def test_visual_ctx_does_not_accumulate():
         msg = live.add_message(role="user", content=content)
         _visual_ctx_msg_id = msg.id
 
-        # _capture_screenshots_for_llm path (copy — reads but does NOT write)
+    assert _count_visual(live) == 1
+
+
+def test_visual_ctx_does_not_accumulate_in_copy():
+    """_capture_screenshots_for_llm must produce exactly 1 visual context
+    message in the copy, even though _handle_screenshot indirectly mutates
+    _visual_ctx_msg_id via _inject_visual_context.
+
+    The fix: save _visual_ctx_msg_id BEFORE calling _handle_screenshot,
+    and use the saved value to remove the old message from the copy.
+    """
+    _visual_ctx_msg_id: str | None = None
+    live = _FakeChatContext()
+    live.add_message(role="system", content=["prompt"])
+    live.add_message(role="user", content=["Hello"])
+    live.add_message(role="assistant", content=["Hi"])
+    last_copy = None
+
+    for i in range(5):
+        content = [f"[Screenshot #{i}]"]
+
+        # Periodic _inject_visual_context (between llm_node calls)
+        if _visual_ctx_msg_id is not None:
+            idx = live.index_by_id(_visual_ctx_msg_id)
+            if idx is not None:
+                live.items.pop(idx)
+        msg = live.add_message(role="user", content=content)
+        _visual_ctx_msg_id = msg.id
+
+        # LiveKit copies chat_ctx BEFORE llm_node runs
         copy = live.copy()
-        remove_id = _visual_ctx_msg_id
-        if remove_id is not None:
-            idx = copy.index_by_id(remove_id)
+        saved_vid = _visual_ctx_msg_id  # Save BEFORE _handle_screenshot
+
+        # _handle_screenshot → _inject_visual_context mutates _visual_ctx_msg_id
+        if _visual_ctx_msg_id is not None:
+            idx = live.index_by_id(_visual_ctx_msg_id)
+            if idx is not None:
+                live.items.pop(idx)
+        new_msg = live.add_message(role="user", content=content)
+        _visual_ctx_msg_id = new_msg.id
+
+        # Use saved_vid (which exists in the copy) to remove
+        if saved_vid is not None:
+            idx = copy.index_by_id(saved_vid)
             if idx is not None:
                 copy.items.pop(idx)
         copy.add_message(role="user", content=content)
+        last_copy = copy
 
-    assert _count_visual(live) == 1, (
-        f"Expected 1 visual context message, got {_count_visual(live)}"
-    )
+    assert (
+        _count_visual(last_copy) == 1
+    ), f"Expected 1 visual context message in copy, got {_count_visual(last_copy)}"
 
 
 # ── Bug 2: Screenshot cleanup ───────────────────────────────────────────────

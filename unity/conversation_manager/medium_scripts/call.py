@@ -505,6 +505,8 @@ async def entrypoint(ctx: agents.JobContext):
                 utterance = getattr(last, "text_content", None) or ""
                 is_user_turn = getattr(last, "role", None) == "user"
 
+            copy_visual_id = _visual_ctx_msg_id
+
             if screen_capture._latest_frame_data is not None:
                 b64 = screen_capture.capture_screenshot()
                 if b64:
@@ -538,9 +540,8 @@ async def entrypoint(ctx: agents.JobContext):
             if captured_any:
                 content = screenshot_history.build_visual_context_content()
                 if content:
-                    remove_id = _visual_ctx_msg_id
-                    if remove_id is not None:
-                        idx = chat_ctx.index_by_id(remove_id)
+                    if copy_visual_id is not None:
+                        idx = chat_ctx.index_by_id(copy_visual_id)
                         if idx is not None:
                             chat_ctx.items.pop(idx)
                     chat_ctx.add_message(role="user", content=content)
