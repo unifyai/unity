@@ -544,7 +544,9 @@ async def entrypoint(ctx: agents.JobContext):
                         idx = chat_ctx.index_by_id(copy_visual_id)
                         if idx is not None:
                             chat_ctx.items.pop(idx)
-                    chat_ctx.add_message(role="user", content=content)
+                    msg = chat_ctx.add_message(role="user", content=content)
+                    chat_ctx.items.pop()
+                    chat_ctx.items.insert(-1, msg)
         except Exception as e:
             print(f"[llm_node] screenshot capture error (non-fatal): {e}")
 
