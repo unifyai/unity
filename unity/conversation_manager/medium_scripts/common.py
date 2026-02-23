@@ -1174,34 +1174,49 @@ async def hydrate_fast_brain_history(
     assistant_name: str,
     limit: int = 50,
 ) -> list[str]:
-    """Load recent Comms events from EventBus and render them for the fast brain.
+    """Load recent Comms events from the backend and render them for the fast brain.
 
-    Returns a chronologically ordered list of rendered strings suitable for
-    injecting as historical context before the current call begins.
+    Queries Orchestra directly via ``unify.get_logs()`` rather than going
+    through the EventBus proxy, which is not initialised in the voice agent
+    subprocess.  Returns a chronologically ordered list of rendered strings
+    suitable for injecting as historical context before the current call begins.
     """
-    from unity.events.event_bus import EVENT_BUS
+    import unify
+
+    context = (
+        f"{SESSION_DETAILS.user_context}/" f"{SESSION_DETAILS.assistant_context}/Events"
+    )
 
     try:
-        bus_events = await EVENT_BUS.search(
+        logs = await asyncio.to_thread(
+            unify.get_logs,
+            context=context,
             filter='type == "Comms"',
+            sorting={"timestamp": "descending"},
             limit=limit,
         )
-    except RuntimeError:
+    except Exception:
         return []
-    if not bus_events:
+    if not logs:
         return []
 
-    # Bus events come in descending order (most recent first); reverse for chronological
-    bus_events.reverse()
+    # Logs arrive newest-first; reverse for chronological order
+    logs.reverse()
 
     rendered: list[str] = []
-    for bus_event in bus_events:
-        payload_cls = bus_event.payload_cls
+    for log in logs:
+        entries = log.entries
+        payload_cls = entries.get("payload_cls", "")
         if "." in payload_cls:
             payload_cls = payload_cls.rsplit(".", 1)[-1]
 
+        payload_json_str = entries.get("payload_json")
+        if not payload_json_str:
+            continue
+
         try:
-            cm_event = Event.from_bus_event(bus_event)
+            payload = json.loads(payload_json_str)
+            cm_event = Event.from_dict({"event_name": payload_cls, "payload": payload})
         except Exception:
             continue
 
