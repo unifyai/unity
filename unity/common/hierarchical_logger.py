@@ -14,6 +14,7 @@ This module provides:
 
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from secrets import token_hex
 from typing import Optional
@@ -146,6 +147,218 @@ ICONS = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Log categories
+#
+# Each category groups related event types so that entire classes of log output
+# can be toggled on/off with a single name.  The mapping is event_type → category;
+# the ``bus`` and ``livekit`` categories are special (handled in the terminal
+# filter) since they don't correspond to event types in ICONS.
+# ─────────────────────────────────────────────────────────────────────────────
+
+LOG_CATEGORIES: dict[str, set[str]] = {
+    # LLM decision-making (slow brain + fast brain)
+    "brain": {
+        "llm_thinking",
+        "llm_response",
+        "llm_completed",
+        "llm_cancelled",
+        "llm_error",
+        "llm_log_file",
+    },
+    # User and assistant speech / voice state
+    "speech": {
+        "user_speech",
+        "user_state",
+        "assistant_speech",
+        "outbound_utterance",
+        "inbound_utterance",
+    },
+    # Proactive speech brain
+    "proactive": {
+        "proactive_speech",
+        "proactive_debounce",
+        "proactive_decision",
+        "proactive_deferred",
+        "proactive_dormant",
+        "proactive_speaking",
+        "proactive_published",
+        "proactive_cancelled",
+        "proactive_error",
+    },
+    # Communication events (calls, SMS, email, messages arriving/departing)
+    "comms": {
+        "phone_call_received",
+        "phone_call_started",
+        "phone_call_ended",
+        "phone_call_sent",
+        "phone_call_answered",
+        "phone_call_not_answered",
+        "unify_meet_received",
+        "unify_meet_started",
+        "unify_meet_ended",
+        "sms_received",
+        "sms_sent",
+        "email_received",
+        "email_sent",
+        "unify_message_received",
+        "unify_message_sent",
+        "comms_outbound",
+        "participant_comms",
+        "boss_event",
+        "event",
+    },
+    # Guidance pipeline (received, applied, buffered)
+    "guidance": {
+        "guidance_received",
+        "guidance_applied",
+        "guidance_buffered",
+        "guidance_say",
+        "call_guidance",
+    },
+    # Actor tool calls, results, steering
+    "actor": {
+        "actor_request",
+        "actor_response",
+        "actor_result",
+        "actor_clarification",
+        "stop_requested",
+        "early_exit",
+        "clarification",
+        "notification",
+        "interjection",
+        "wait",
+        "auto_cancel",
+        "completed",
+        "pending",
+        "pause",
+        "resume",
+        "tool_seeding",
+        "user_message",
+        "system_message",
+        "state_update",
+        "notification_injected",
+        "notification_unpinned",
+        "direct_message",
+    },
+    # Session lifecycle (startup, shutdown, state commits, config)
+    "lifecycle": {
+        "session_start",
+        "session_end",
+        "session_ready",
+        "startup",
+        "lifecycle",
+        "shutdown",
+        "call_status",
+        "config",
+        "dispatch",
+        "info",
+        "summarize",
+        "screenshot",
+    },
+    # IPC transport (socket send/receive, traces)
+    "ipc": {
+        "ipc",
+        "ipc_inbound",
+        "ipc_outbound",
+        "ipc_error",
+    },
+    # Infrastructure (managers worker, liveview, metrics, etc.)
+    "infra": {
+        "managers_worker",
+        "file_sync",
+        "liveview",
+        "assistant_jobs",
+        "metrics",
+        "windows_exec",
+        "subscription",
+        "process_cleanup",
+        "ping",
+    },
+    # Event bus lines (⬥ default-icon messages with no specific event type)
+    "bus": set(),
+    # LiveKit's own third-party logging (livekit.agents, livekit.plugins.*)
+    "livekit": set(),
+}
+
+# Reverse lookup: event_type → category name
+_EVENT_TO_CATEGORY: dict[str, str] = {}
+for _cat, _events in LOG_CATEGORIES.items():
+    for _evt in _events:
+        _EVENT_TO_CATEGORY[_evt] = _cat
+
+DEFAULT_LOG_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "brain",
+        "speech",
+        "proactive",
+        "comms",
+        "guidance",
+        "actor",
+    },
+)
+
+ALL_LOG_CATEGORIES: frozenset[str] = frozenset(LOG_CATEGORIES.keys())
+
+# Module-level mutable state — populated by configure_log_categories()
+_enabled_categories: set[str] = set(DEFAULT_LOG_CATEGORIES)
+_enabled_event_types: set[str] = set()
+
+
+def _rebuild_event_set() -> None:
+    """Rebuild the flat set of visible event types from enabled categories."""
+    global _enabled_event_types
+    _enabled_event_types = set()
+    for cat in _enabled_categories:
+        _enabled_event_types |= LOG_CATEGORIES.get(cat, set())
+
+
+def configure_log_categories(categories: set[str] | None = None) -> None:
+    """Set which log categories are visible on the terminal.
+
+    Args:
+        categories: Explicit set of category names to enable.
+                    Pass ``None`` to reset to ``DEFAULT_LOG_CATEGORIES``.
+                    Use ``ALL_LOG_CATEGORIES`` to show everything.
+    """
+    global _enabled_categories
+    _enabled_categories = (
+        set(categories) if categories is not None else set(DEFAULT_LOG_CATEGORIES)
+    )
+    _rebuild_event_set()
+
+
+def is_event_visible(event_type: str) -> bool:
+    """Check whether *event_type* belongs to an enabled log category.
+
+    Uncategorized event types (not in any category) are always visible,
+    ensuring that ``warning``/``error`` and future event types are never
+    accidentally suppressed.
+    """
+    if event_type not in _EVENT_TO_CATEGORY:
+        return True
+    return event_type in _enabled_event_types
+
+
+def is_category_enabled(category: str) -> bool:
+    """Check whether a whole category is currently enabled."""
+    return category in _enabled_categories
+
+
+def get_enabled_categories() -> frozenset[str]:
+    """Return the currently enabled category names."""
+    return frozenset(_enabled_categories)
+
+
+def get_event_category(event_type: str) -> str | None:
+    """Return the category that *event_type* belongs to, or ``None``."""
+    return _EVENT_TO_CATEGORY.get(event_type)
+
+
+# Initialise the event set from the default categories.
+_rebuild_event_set()
+
+
 def get_icon(event_type: str) -> str:
     """Look up the emoji for *event_type*, falling back to ``DEFAULT_ICON``."""
     return ICONS.get(event_type.lower().replace(" ", "_"), DEFAULT_ICON)
@@ -241,6 +454,22 @@ class SessionLogger:
         """
         return self.lineage
 
+    def _log(
+        self,
+        level: int,
+        event_type: str,
+        message: str,
+        icon_override: Optional[str] = None,
+    ) -> None:
+        if not is_event_visible(event_type):
+            return
+        icon = icon_override or get_icon(event_type)
+        LOGGER.log(
+            level,
+            f"{icon} [{self._label}] {message}",
+            extra={"_category_checked": True},
+        )
+
     def info(
         self,
         event_type: str,
@@ -256,8 +485,7 @@ class SessionLogger:
             message: The log message
             icon_override: Optional icon to use instead of event-type lookup
         """
-        icon = icon_override or get_icon(event_type)
-        LOGGER.info(f"{icon} [{self._label}] {message}")
+        self._log(logging.INFO, event_type, message, icon_override)
 
     def debug(
         self,
@@ -267,8 +495,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log a debug-level message with event-specific icon."""
-        icon = icon_override or get_icon(event_type)
-        LOGGER.debug(f"{icon} [{self._label}] {message}")
+        self._log(logging.DEBUG, event_type, message, icon_override)
 
     def warning(
         self,
@@ -278,8 +505,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log a warning-level message with event-specific icon."""
-        icon = icon_override or get_icon(event_type)
-        LOGGER.warning(f"{icon} [{self._label}] {message}")
+        self._log(logging.WARNING, event_type, message, icon_override)
 
     def error(
         self,
@@ -289,8 +515,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log an error-level message with event-specific icon."""
-        icon = icon_override or get_icon(event_type)
-        LOGGER.error(f"{icon} [{self._label}] {message}")
+        self._log(logging.ERROR, event_type, message, icon_override)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Convenience methods for common event types
