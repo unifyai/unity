@@ -48,6 +48,9 @@ from unity.settings import SETTINGS
 
 LOGGER = logging.getLogger("unity")
 
+# Unique identifier for this process lifetime (used for log correlation)
+SESSION_ID = datetime.now(timezone.utc).isoformat()
+
 # File handler state (managed by configure_log_dir)
 _FILE_HANDLER: Optional[logging.FileHandler] = None
 _LOG_DIR: Optional[Path] = None
@@ -350,66 +353,63 @@ def get_otel_log_dir() -> Optional[Path]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Logging Setup for Verbose Asyncio Debug Mode
+# Console (Terminal) Logging
+#
+# This is the single authority for all Unity log output.  No other module
+# should call logging.basicConfig(), add handlers, or filter the root logger.
 # ─────────────────────────────────────────────────────────────────────────────
 
-if SETTINGS.ASYNCIO_DEBUG_VERBOSE:
-    import asyncio
+# Prevent unity records from propagating to the root logger.  This eliminates
+# duplicate output from any root-level handler (e.g. logging.basicConfig())
+# that third-party code may install.
+LOGGER.propagate = False
+
+
+class _MillisFormatter(logging.Formatter):
+    """Formatter that prepends ``HH:MM:SS.mmm`` to each log line.
+
+    Messages that don't already start with a non-ASCII character (i.e. an
+    emoji icon from the hierarchical logger) are auto-prefixed with ``⬥``
+    so every terminal line has a consistent visual anchor.
+    """
+
+    _DEFAULT_ICON = "⬥"
+
+    def format(self, record: logging.LogRecord) -> str:
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc).astimezone()
+        ts = dt.strftime("%H:%M:%S") + f".{int(dt.microsecond / 1000):03d}"
+        msg = record.getMessage()
+        if msg and ord(msg[0]) < 128:
+            msg = f"{self._DEFAULT_ICON} {msg}"
+        return f"{ts} {msg}"
+
+
+if SETTINGS.UNITY_TERMINAL_LOG:
     import sys
-    import threading
-
-    class _TaskFilter(logging.Filter):
-        """Attach asyncio task/thread names to log records."""
-
-        def filter(self, record: logging.LogRecord) -> bool:  # type: ignore[override]
-            task = asyncio.current_task()
-            record.task = task.get_name() if task else "-"
-            record.thread = threading.current_thread().name
-            return True
-
-    _FMT = "%(asctime)s %(levelname)7s [%(thread)s|%(task)s] %(message)s"
 
     _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter(_FMT))
+    _handler.setFormatter(_MillisFormatter())
 
-    _root = logging.getLogger()
-
-    # Avoid adding duplicates if logger.py is re-imported.
     _already_configured = any(
-        isinstance(h, logging.StreamHandler) and getattr(h, "_asyncio_debug", False)
-        for h in _root.handlers
+        isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)
+        for h in LOGGER.handlers
     )
 
     if not _already_configured:
-        _root.setLevel(logging.INFO)
-        _root.addFilter(_TaskFilter())
-        _handler._asyncio_debug = True  # type: ignore[attr-defined]
-        _root.addHandler(_handler)
+        LOGGER.setLevel(logging.DEBUG)
+        _handler._unity_terminal = True  # type: ignore[attr-defined]
+        LOGGER.addHandler(_handler)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Defensive Record Factory
-# Ensures optional fields exist to avoid KeyError in formatters.
-# ─────────────────────────────────────────────────────────────────────────────
-
-_orig_factory = logging.getLogRecordFactory()
-
-
-def _safe_record_factory(*args, **kwargs):  # pragma: no cover - trivial shim
-    rec = _orig_factory(*args, **kwargs)
-    if not hasattr(rec, "task"):
-        rec.task = "-"
-    if not hasattr(rec, "thread"):
-        try:
-            import threading as _th
-
-            rec.thread = _th.current_thread().name
-        except Exception:
-            rec.thread = "-"
-    return rec
-
-
-logging.setLogRecordFactory(_safe_record_factory)
-
+# Mute noisy third-party loggers so only unity.* output reaches the terminal.
+for _lib in (
+    "httpx",
+    "urllib3",
+    "openai",
+    "LiteLLM",
+    "LiteLLM Proxy",
+    "LiteLLM Router",
+):
+    logging.getLogger(_lib).setLevel(logging.WARNING)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration
@@ -459,7 +459,6 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         log_file = log_path / "unity.log"
         handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
 
-        # Use same format as console but with timestamp
         fmt = "%(asctime)s %(levelname)7s %(message)s"
         handler.setFormatter(logging.Formatter(fmt))
         handler.setLevel(logging.DEBUG)

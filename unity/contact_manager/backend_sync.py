@@ -21,13 +21,13 @@ _log = logging.getLogger(__name__)
 
 def _get_base_url() -> str | None:
     """Return base URL or None if not configured."""
-    url = SETTINGS.UNIFY_BASE_URL
+    url = SETTINGS.ORCHESTRA_URL
     return url
 
 
 def _get_admin_key() -> str | None:
     """Return admin key or None if not configured."""
-    return SETTINGS.ORCHESTRA_ADMIN_KEY
+    return SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

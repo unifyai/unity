@@ -5,10 +5,11 @@ import time
 import unillm
 from .base import BaseActor, BaseActorHandle
 import functools
-from typing import Optional, Type
+from typing import Any, Optional, Type
 from pydantic import BaseModel
 from unity.manager_registry import ManagerRegistry
-from unity.constants import LOGGER
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS, DEFAULT_ICON
 from unity.common.simulated import (
     SimulatedLineage,
     SimulatedLog,
@@ -16,6 +17,61 @@ from unity.common.simulated import (
     SimulatedHandleMixin,
 )
 from unity.common.llm_client import new_llm_client
+from unity.common.async_tool_loop import SteerableToolHandle
+
+
+class _StaticAnswerHandle(SteerableToolHandle):
+    """Trivial handle that wraps a static answer string for ask() returns."""
+
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        _parent_chat_context: list[dict] | None = None,
+    ) -> "SteerableToolHandle":
+        return self
+
+    async def interject(
+        self,
+        message: str,
+        *,
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:
+        pass
+
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        pass
+
+    async def pause(self) -> str:
+        return "Already completed."
+
+    async def resume(self) -> str:
+        return "Already completed."
+
+    def done(self) -> bool:
+        return True
+
+    def trigger_completion(self, result: str | None = None) -> None:
+        """No-op for static answer handles (already complete)."""
+
+    async def result(self) -> str:
+        return self._answer
+
+    async def next_clarification(self) -> dict:
+        return {}
+
+    async def next_notification(self) -> dict:
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        pass
 
 
 class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
@@ -37,7 +93,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     def __init__(
         self,
         llm: unillm.AsyncUnify,
-        description: str,
+        request: str,
         *,
         steps: int | None,
         duration: float | None = None,
@@ -53,9 +109,12 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         session_suffix: "str | None" = None,
         # Optional response format for structured output
         response_format: Optional[Type[BaseModel]] = None,
+        # Whether to emit notifications via next_notification()
+        emit_notifications: bool = True,
+        hold_completion: bool = False,
     ) -> None:
         self._llm = llm
-        self._description = description
+        self._request = request
         self._steps = steps
         self._duration = duration
         self._parent_chat_context = parent_chat_context
@@ -66,6 +125,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             log_mode if log_mode in ("print", "log", None) else "log"
         )
         self._response_format = response_format
+        self._emit_notifications = emit_notifications
 
         # Store optional entrypoint metadata and a planned completion result
         self._entrypoint_info: dict | None = entrypoint_info
@@ -98,6 +158,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         except Exception:
             self._log_label = "SimulatedActor.act"
 
+        self._init_completion_gate(hold_completion)
         self._start()
 
     @property
@@ -108,7 +169,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
         return self._clarification_down_q
 
-    def _run_actions(self, description: str) -> None:
+    def _run_actions(self, request: str) -> None:
         try:
             while True:
                 if self._requests_clarification:
@@ -152,21 +213,21 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                     # Prefer prebaked function-aware result if available
                     msg = (
                         self._planned_result
-                        or f"Completed '{description}' after {self._duration}\u2009s duration."
+                        or f"Completed '{request}' after {self._duration}\u2009s duration."
                     )
                     self._complete(msg)
                     return
                 if self._steps is not None and self._steps_taken >= (self._steps or 0):
                     msg = (
                         self._planned_result
-                        or f"Completed '{description}' in {self._steps} steps."
+                        or f"Completed '{request}' in {self._steps} steps."
                     )
                     self._complete(msg)
                     return
                 self._pause_event.wait()
                 time.sleep(0.1)
         finally:
-            self._description = None
+            self._request = None
             self._paused = None
             self._action_thread = None
             self._pause_event.set()
@@ -179,7 +240,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self._last_started_at = time.monotonic()
         self._action_thread = threading.Thread(
             target=self._run_actions,
-            args=(self._description,),
+            args=(self._request,),
             daemon=True,
         )
         self._action_thread.start()
@@ -192,7 +253,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                         rem = self.get_remaining_duration_seconds()
                         if rem is not None:
                             self._emit_status(
-                                f"⏳ Duration remaining: {max(0.0, rem):.1f}s",
+                                f"{ICONS['pending']} Duration remaining: {max(0.0, rem):.1f}s",
                             )
                         # Sleep in small chunks to be responsive to done-event (~20s total)
                         for _ in range(200):
@@ -236,21 +297,26 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 self._steps_taken += 1
             if self._steps is not None and self._steps_taken >= self._steps:
                 self._complete(
-                    f"Completed '{self._description}' in {self._steps} steps.",
+                    f"Completed '{self._request}' in {self._steps} steps.",
                 )
             # Emit steps remaining after each user-visible interaction that consumes a step
             try:
                 if self._steps is not None:
                     remaining = max(0, int(self._steps) - int(self._steps_taken))
-                    self._emit_status(f"🪜 Steps remaining: {remaining}")
+                    self._emit_status(f"{DEFAULT_ICON} Steps remaining: {remaining}")
             except Exception:
                 pass
 
     async def result(self) -> str:
-        # Simulate consuming the final step *if* steps are used and not yet done
-        if self._steps is not None and not self._done_event.is_set():
-            self.simulate_step()
-        await asyncio.to_thread(self._done_event.wait)
+        # Wait for action to complete using polling instead of asyncio.to_thread().
+        # Using asyncio.to_thread(_done_event.wait) creates executor threads that block
+        # indefinitely, which prevents pytest-asyncio from cleaning up the event loop
+        # after tests complete. Polling with asyncio.sleep() allows the coroutine to be
+        # cancelled cleanly during event loop shutdown.
+        while not self._done_event.is_set():
+            await asyncio.sleep(0.1)
+        # Honour the shared completion gate (no-op when hold_completion=False).
+        await self._await_completion_gate()
         raw_result = self._result_str  # type: ignore
 
         # If response_format is specified, generate structured output
@@ -265,216 +331,64 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                     "Do NOT include any extra keys or commentary.\n"
                     f"{json.dumps(schema, indent=2)}"
                 )
-                self._llm.set_response_format(self._response_format)
-                try:
-                    structured_result = await self._llm.generate(prompt)
-                finally:
-                    try:
-                        self._llm.reset_response_format()
-                    except Exception:
-                        pass
-                return structured_result
+                return await simulated_llm_roundtrip(
+                    self._llm,
+                    label="SimulatedActor.result",
+                    prompt=prompt,
+                    response_format=self._response_format,
+                )
             except Exception:
                 pass
 
         return raw_result
 
-    def stop(self, reason: Optional[str] = None) -> str:
-        if self._done_event.is_set():
-            return (
-                self._result_str or "Already stopped."
-            )  # Return existing result if done
-        if not self._description:
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Stop the in-flight handle.
+
+        Args:
+            reason: Optional reason for stopping.
+        """
+        if self._done_event.is_set() and self._gate_open:
+            return
+        if not self._request:
             raise Exception("No actions are currently being performed.")
-        msg = f"Stopped '{self._description}' for reason: {reason}"
+        msg = f"Stopped '{self._request}' for reason: {reason}"
         try:
             suffix = f" – reason: {reason}" if reason else ""
-            LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
+            LOGGER.info(
+                f"{ICONS['stop_requested']} [{self._log_label}] Stop requested{suffix}",
+            )
         except Exception:
             pass
+        self._open_completion_gate()
         # Unpause immediately so the action loop can observe the stop signal
         try:
             self._pause_event.set()
         except Exception:
             pass
         self._complete(msg)
-        return msg
 
     async def interject(
         self,
         message: str,
         *,
-        images: object | None = None,
+        _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
-        if not self._description:
+        if not self._request:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
 
         # Human-facing interject log (lineage-aligned)
         self._log_interject(message)
 
-        # Build a content list for a user message that includes the instruction and any attached images.
-        # Images are resolved to handles and added as image_url blocks (data URLs or signed URLs where available).
+        # Build a content list for a user message with the instruction
         content_blocks: list[dict] = [{"type": "text", "text": str(message)}]
 
-        # Best-effort image resolution and block construction
-        if images is not None:
-            try:
-                # Support ImageRefs containers (duck-typed via .root) and plain lists
-                items = list(getattr(images, "root", images) or [])
-            except Exception:
-                items = []
-
-            # Collect candidate handles by id or direct handle objects
-            handles: list[object] = []
-            ids_to_fetch: list[int] = []
-
-            # Local imports to avoid module import cycles
-            try:
-                from unity.image_manager.types import (
-                    RawImageRef as _RawImageRef,
-                    AnnotatedImageRef as _AnnotatedImageRef,
-                )
-            except Exception:  # pragma: no cover - robustness
-                _RawImageRef = object  # type: ignore
-                _AnnotatedImageRef = object  # type: ignore
-
-            for ref in items:
-                try:
-                    # Direct handle case (has raw() method and image_id attr)
-                    if hasattr(ref, "raw") and hasattr(ref, "image_id"):
-                        handles.append(ref)
-                        continue
-                    # Typed refs
-                    if isinstance(ref, _AnnotatedImageRef):
-                        ids_to_fetch.append(int(ref.raw_image_ref.image_id))
-                    elif isinstance(ref, _RawImageRef):
-                        ids_to_fetch.append(int(ref.image_id))
-                    # Primitive id
-                    elif isinstance(ref, int):
-                        ids_to_fetch.append(int(ref))
-                except Exception:
-                    continue
-
-            # Resolve any remaining ids to handles via ManagerRegistry
-            if ids_to_fetch:
-                try:
-                    mgr = ManagerRegistry.get_image_manager()
-                    fetched = mgr.get_images(ids_to_fetch)
-                    for h in fetched:
-                        if h is not None:
-                            handles.append(h)
-                except Exception:
-                    pass
-
-            # Convert handles to content blocks and append
-            for ih in handles:
-                try:
-                    # Prefer direct URLs when present on the underlying image record
-                    data_str = getattr(getattr(ih, "_image", object), "data", None)
-                    content_block: dict
-                    if isinstance(data_str, str) and (
-                        data_str.startswith("http://")
-                        or data_str.startswith("https://")
-                        or data_str.startswith("data:image/")
-                        or data_str.startswith("gs://")
-                    ):
-                        # Best-effort: sign GCS URLs if a storage client is available, else fall back to raw bytes
-                        if data_str.startswith("gs://") or data_str.startswith(
-                            "https://storage.googleapis.com/",
-                        ):
-                            try:
-                                from datetime import timedelta as _timedelta
-
-                                storage_client = getattr(
-                                    getattr(ih, "_manager", object),
-                                    "storage_client",
-                                    None,
-                                )
-                                if storage_client is not None:
-                                    from urllib.parse import urlparse as _urlparse
-
-                                    parsed_url = _urlparse(data_str)
-                                    bucket_name = ""
-                                    object_path = ""
-                                    if parsed_url.scheme == "gs":
-                                        bucket_name = parsed_url.netloc
-                                        object_path = parsed_url.path.lstrip("/")
-                                    elif (
-                                        parsed_url.hostname == "storage.googleapis.com"
-                                    ):
-                                        parts = parsed_url.path.lstrip("/").split(
-                                            "/",
-                                            1,
-                                        )
-                                        if len(parts) == 2:
-                                            bucket_name, object_path = parts
-                                    bucket = storage_client.bucket(bucket_name)
-                                    blob = bucket.blob(object_path)
-                                    signed_url = blob.generate_signed_url(
-                                        version="v4",
-                                        expiration=_timedelta(hours=1),
-                                        method="GET",
-                                    )
-                                    content_block = {
-                                        "type": "image_url",
-                                        "image_url": {"url": signed_url},
-                                    }
-                                else:
-                                    raise RuntimeError("no storage client")
-                            except Exception:
-                                raw = ih.raw()  # type: ignore[attr-defined]
-                                import base64 as _b64  # local import
-
-                                head = (
-                                    bytes(raw[:10])
-                                    if isinstance(raw, (bytes, bytearray))
-                                    else b""
-                                )
-                                if head.startswith(b"\xff\xd8"):
-                                    mime = "image/jpeg"
-                                elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-                                    mime = "image/png"
-                                else:
-                                    mime = "image/png"
-                                b64 = _b64.b64encode(raw).decode("ascii")
-                                content_block = {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                                }
-                        else:
-                            content_block = {
-                                "type": "image_url",
-                                "image_url": {"url": data_str},
-                            }
-                    else:
-                        # Fallback to raw bytes from handle
-                        raw = ih.raw()  # type: ignore[attr-defined]
-                        import base64 as _b64  # local import
-
-                        head = (
-                            bytes(raw[:10])
-                            if isinstance(raw, (bytes, bytearray))
-                            else b""
-                        )
-                        if head.startswith(b"\xff\xd8"):
-                            mime = "image/jpeg"
-                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-                            mime = "image/png"
-                        else:
-                            mime = "image/png"
-                        b64 = _b64.b64encode(raw).decode("ascii")
-                        content_block = {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime};base64,{b64}"},
-                        }
-
-                    content_blocks.append(content_block)
-                except Exception:
-                    # Skip malformed handle entries; continue attaching the rest
-                    continue
-
-        # Append a single composite user message so the vision model can "see" the images with the instruction
+        # Append a single composite user message
         try:
             self._llm.messages.append({"role": "user", "content": content_blocks})
         except Exception:
@@ -485,16 +399,12 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             fn = self._entrypoint_info
             prompt = (
                 "You are mid-execution of a function-driven simulated task.\n"
-                f"Task: {self._description}\n"
+                f"Task: {self._request}\n"
                 f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
                 f"Docstring:\n{fn.get('docstring','')}\n\n"
-                "Use any images attached in the most recent user message as ground truth for visual details."
             )
         else:
-            prompt = (
-                f"Current simulated actions:\n{self._description}\n\n"
-                "Use any images attached in the most recent user message as ground truth for visual details."
-            )
+            prompt = f"Current simulated actions:\n{self._request}\n\n"
         # Unified LLM roundtrip (includes timing, gated body, and optional dumps)
         try:
             _sys = getattr(self._llm, "system_message", None)
@@ -507,7 +417,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         )
 
     async def pause(self) -> str:
-        if not self._description:
+        if not self._request:
             raise Exception("The actor is not running, so nothing to pause.")
         if self._paused:
             return "Actor is already paused."
@@ -520,10 +430,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             self._last_started_at = None
         self.simulate_step()
         self._log_pause()
-        return f"Paused '{self._description}'."
+        return f"Paused '{self._request}'."
 
     async def resume(self) -> str:
-        if not self._description:
+        if not self._request:
             raise Exception("No actor is running, so nothing to resume.")
         if not self._paused:
             return "Actor is already running."
@@ -534,10 +444,25 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             self._last_started_at = time.monotonic()
         self.simulate_step()
         self._log_resume()
-        return f"Resumed '{self._description}'."
+        return f"Resumed '{self._request}'."
 
-    async def ask(self, question: str) -> str:
-        if not self._description:
+    async def ask(
+        self,
+        question: str,
+        *,
+        _parent_chat_context: list[dict] | None = None,
+    ) -> SteerableToolHandle:
+        """Ask a question about the current state.
+
+        Args:
+            question: The question to ask.
+            _parent_chat_context: Optional parent chat context for the inspection loop.
+                Accepted for API parity with real handles but not currently used.
+
+        Returns:
+            A SteerableToolHandle whose result() returns the answer string.
+        """
+        if not self._request:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
         # Build a concise child label consistent with simulated scheduler
@@ -554,14 +479,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             fn = self._entrypoint_info
             prompt = (
                 "You are executing a simulated function as part of a task. Answer briefly.\n"
-                f"Task: {self._description}\n"
+                f"Task: {self._request}\n"
                 f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
                 f"Docstring:\n{fn.get('docstring','')}\n\n"
                 f"User asks: {question}"
             )
         else:
             prompt = (
-                f"You are working on simulating these actions:\n{self._description}\n\n"
+                f"You are working on simulating these actions:\n{self._request}\n\n"
                 f"User asks: {question}"
             )
         try:
@@ -573,10 +498,33 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             label=q_label,
             prompt=prompt,
         )
-        return answer
+        return _StaticAnswerHandle(answer)
 
     def done(self) -> bool:
-        return self._done_event.is_set()
+        return self._done_event.is_set() and self._gate_open
+
+    def trigger_completion(self, result: str | None = None) -> None:
+        """Trigger immediate completion of the simulated actor.
+
+        Forces the actor to complete immediately, unblocking any awaiting
+        ``result()`` calls.  Also opens the shared completion gate from
+        :class:`SimulatedHandleMixin`.
+
+        Args:
+            result: Optional result string. If not provided, uses a default
+                    completion message.
+
+        Note: Idempotent - calling on an already-completed actor has no effect.
+        """
+        if not self._done_event.is_set():
+            msg = (
+                result
+                if result is not None
+                else f"Completed '{self._request}' (triggered)."
+            )
+            self._complete(msg)
+        # Delegate to the mixin to open the shared gate.
+        super().trigger_completion(result)
 
     # ------------------------
     # Status query helpers
@@ -585,7 +533,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         """Emit a status line to the central logger so it reaches the broadcast port."""
         try:
             LOGGER.info(
-                f"[{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
+                f"{DEFAULT_ICON} [{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
             )
         except Exception:
             pass
@@ -616,24 +564,38 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     # Event APIs required by SteerableToolHandle
     # ------------------------
     async def next_clarification(self) -> dict:
+        # If no clarification queue, block until the action completes
+        # (similar to next_notification when emit_notifications=False)
+        # Use polling instead of asyncio.to_thread() to allow clean cancellation
+        if self._clarification_up_q is None:
+            while not self._done_event.is_set():
+                await asyncio.sleep(0.1)
+            return {}
+
         try:
-            if self._clarification_up_q is not None:
-                msg = await self._clarification_up_q.get()
-                return {"message": msg}
+            msg = await self._clarification_up_q.get()
+            return {
+                "type": "clarification",
+                "call_id": "unknown",
+                "tool_name": "simulated_actor",
+                "question": msg,
+            }
         except Exception:
             pass
         return {}
 
     async def next_notification(self) -> dict:
-        # Consume a unit of progress and report a concise, simulation‑consistent update
-        try:
-            self.simulate_step()
-        except Exception:
-            pass
+        # If notifications are disabled, block until the action completes
+        # Use polling instead of asyncio.to_thread() to allow clean cancellation
+        if not self._emit_notifications:
+            while not self._done_event.is_set():
+                await asyncio.sleep(0.1)
+            return {}
 
+        # Report progress without consuming steps (observing isn't work)
         # Compose a small progress message consistent with the configured mode
         try:
-            desc = str(self._description) if self._description else "activity"
+            desc = str(self._request) if self._request else "activity"
         except Exception:
             desc = "activity"
 
@@ -684,6 +646,12 @@ class SimulatedActor(BaseActor):
         log_mode: "str | None" = "log",
         # New: simulation-only guidance (does not alter TaskScheduler flow)
         simulation_guidance: Optional[str] = None,
+        # Whether handles emit notifications via next_notification()
+        emit_notifications: bool = True,
+        hold_completion: bool = False,
+        # Accept but ignore parameters that real Actor may use
+        request: str = "",
+        **kwargs: Any,
     ) -> None:
         """
         Initialize a simulated actor.
@@ -693,18 +661,24 @@ class SimulatedActor(BaseActor):
                         before auto-completion.
             duration:   *(Optional)* Maximum wall-clock seconds before an activity
                         auto-completes. Pauses do not count toward this limit.
+            emit_notifications: Whether handles should emit notifications via
+                        next_notification(). When False, next_notification() blocks
+                        until the action completes. Defaults to True.
         """
+        super().__init__()
         self._steps = steps
         self._duration = duration
         self._requests_clarification = _requests_clarification
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
+        self._emit_notifications = emit_notifications
+        self._hold_completion = hold_completion
         # Store simulation-only guidance
         self._sim_guidance: Optional[str] = simulation_guidance
 
         # One shared, memory-retaining LLM for all activities
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, origin="SimulatedActor")
         # Compose a system message that preserves default behaviour while
         # allowing optional simulation guidance to influence simulated responses.
         _base_sys = (
@@ -722,8 +696,9 @@ class SimulatedActor(BaseActor):
     @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
-        description: str,
+        request: str,
         *,
+        clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -734,6 +709,10 @@ class SimulatedActor(BaseActor):
         session_suffix: Optional[str] = None,
         **kwargs,
     ) -> SimulatedActorHandle:
+        if not clarification_enabled:
+            _clarification_up_q = None
+            _clarification_down_q = None
+
         # Emit a scheduler-like nested log for starting an action
         try:
             parts = SimulatedLineage.parent_lineage()
@@ -758,7 +737,7 @@ class SimulatedActor(BaseActor):
             _log_sched(
                 _act_label,
                 "act",
-                {"description": description},
+                {"request": request},
             )
         except Exception:
             pass
@@ -790,7 +769,7 @@ class SimulatedActor(BaseActor):
                     "Return ONE short past-tense sentence that STARTS with 'Completed',\n"
                     "summarising the concrete outcome of running the function in the context below.\n"
                     "Do not include code or steps. Keep it under two sentences.\n\n"
-                    f"Task description: {description}\n"
+                    f"Task request: {request}\n"
                     f"Function: {name} {sig} (id={entrypoint})\n"
                     f"Docstring:\n{doc}\n\n"
                     f"Implementation:\n{impl}"
@@ -805,7 +784,7 @@ class SimulatedActor(BaseActor):
         # Construct the simulated handle with optional entrypoint context
         return SimulatedActorHandle(
             self._llm,
-            description,
+            request,
             steps=self._steps,
             duration=self._duration,
             parent_chat_context=_parent_chat_context,
@@ -817,4 +796,6 @@ class SimulatedActor(BaseActor):
             planned_result=planned_result,
             session_suffix=session_suffix,
             response_format=response_format,
+            emit_notifications=self._emit_notifications,
+            hold_completion=self._hold_completion,
         )

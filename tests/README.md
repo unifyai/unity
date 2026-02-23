@@ -14,6 +14,7 @@ This directory contains the test suite for Unity.
 - [Project Cleanup](#project-cleanup)
 - [Troubleshooting](#troubleshooting)
 - [Requirements](#requirements)
+- [Environment Variable Propagation](#environment-variable-propagation)
 - [Detailed Documentation](#detailed-documentation)
 
 ---
@@ -25,7 +26,7 @@ This directory contains the test suite for Unity.
 tests/parallel_run.sh tests/
 
 # Run a specific folder
-tests/parallel_run.sh tests/test_contact_manager/
+tests/parallel_run.sh tests/contact_manager/
 
 # Run with a timeout (useful for CI)
 tests/parallel_run.sh --timeout 300 tests/
@@ -79,13 +80,13 @@ Most tests sit somewhere between these extremes.
 
 ### Caching and Determinism
 
-When `UNIFY_CACHE="true"` (the default), all LLM responses are cached:
+When `UNILLM_CACHE="true"` (the default), all LLM responses are cached:
 - **First run**: LLM executes normally; responses stored in `.cache.ndjson`
 - **Subsequent runs**: Cached responses replayed—no actual LLM calls
 
 Both test types become deterministic after caching. To re-evaluate LLM behavior:
 ```bash
-parallel_run --env UNIFY_CACHE=false tests
+parallel_run --env UNILLM_CACHE=false tests
 ```
 
 ### Marking Tests as Eval
@@ -119,8 +120,8 @@ parallel_run [options] <targets>
 
 # Targeting
 parallel_run tests/                              # Directory
-parallel_run tests/test_foo.py                   # File
-parallel_run tests/test_foo.py::test_bar         # Specific test
+parallel_run tests/foo.py                   # File
+parallel_run tests/foo.py::test_bar         # Specific test
 
 # Common flags
 parallel_run --timeout 300 tests/                # Abort after 5 minutes
@@ -161,7 +162,7 @@ See [Parallel Runner Guide](docs/parallel-runner.md) for full documentation.
 
 ```bash
 # Terminal 1: Run tests
-parallel_run tests/test_contact_manager/
+parallel_run tests/contact_manager/
 
 # Terminal 2: Watch (optional - inline feedback is shown by default)
 watch_tests
@@ -174,11 +175,11 @@ watch_tests
 watch_tests                    # Look for f ❌ prefix
 
 # Attach to see full output
-attach 'f ❌ test_contact_manager-test_ask'
+attach 'f ❌ contact_manager-test_ask'
 
 # Or check the log file
 ls logs/pytest/*/             # Find the run directory
-cat logs/pytest/2025-12-05T14-30-22_unity_dev_ttys042/test_contact_manager-test_ask.txt
+cat logs/pytest/2025-12-05T14-30-22_unity_dev_ttys042/contact_manager-test_ask.txt
 ```
 
 ### Clean up after tests
@@ -194,7 +195,7 @@ kill_server --global  # Kill ALL tmux servers
 
 ```bash
 # Disable caching for fresh LLM calls
-parallel_run --env UNIFY_CACHE=false tests
+parallel_run --env UNILLM_CACHE=false tests
 
 # Use isolated projects per test
 parallel_run --env UNIFY_TESTS_RAND_PROJ=true tests
@@ -208,7 +209,7 @@ grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" tests/
 Some test suites (ContactManager, TranscriptManager, etc.) use pre-seeded scenario data that persists between runs for speed. To delete and recreate these scenarios from scratch:
 
 ```bash
-parallel_run --overwrite-scenarios tests/test_contact_manager
+parallel_run --overwrite-scenarios tests/contact_manager
 ```
 
 Use this when scenario seed data has changed (e.g., new contacts, updated transcript exchanges) and you need to regenerate the cached scenario state.
@@ -230,13 +231,13 @@ The fastest way to run CI tests on your current code—even uncommitted changes:
 
 ```bash
 # Test current code state (handles uncommitted/unpushed automatically)
-parallel_cloud_run.sh tests/test_contact_manager
+parallel_cloud_run.sh tests/contact_manager
 
 # Run all tests
 parallel_cloud_run.sh .
 
 # Override a setting from .env
-parallel_cloud_run.sh --env UNIFY_CACHE=false tests/
+parallel_cloud_run.sh --env UNILLM_CACHE=false tests/
 ```
 
 The script automatically:
@@ -266,22 +267,22 @@ Tests are **off by default** to avoid unnecessary CI costs. Trigger them explici
 git commit -m "Fix contact manager bug [run-tests]"
 
 # Run specific folder (single worker)
-git commit -m "Fix contact manager bug [parallel_run.sh tests/test_contact_manager]"
+git commit -m "Fix contact manager bug [parallel_run.sh tests/contact_manager]"
 
 # Run multiple folders (single worker, both run concurrently inside)
-git commit -m "Fix bugs [parallel_run.sh tests/test_contact_manager tests/test_transcript_manager]"
+git commit -m "Fix bugs [parallel_run.sh tests/contact_manager tests/transcript_manager]"
 
 # Run with extra args (single worker)
-git commit -m "Eval check [parallel_run.sh --eval-only tests/test_actor]"
+git commit -m "Eval check [parallel_run.sh --eval-only tests/actor]"
 
 # Run specific test file
-git commit -m "Fix test [parallel_run.sh tests/test_actor/test_code_act.py]"
+git commit -m "Fix test [parallel_run.sh tests/actor/code_act.py]"
 
 # Regular commit (no tests)
 git commit -m "Update documentation"
 ```
 
-The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything. Both `tests/test_foo` and `test_foo` work (paths are resolved relative to the `tests/` directory).
+The `[parallel_run.sh ...]` syntax accepts the same arguments as the local script—paths, flags, everything. Both `tests/foo` and `test_foo` work (paths are resolved relative to the `tests/` directory).
 
 ### CLI Trigger (`gh`)
 
@@ -297,16 +298,16 @@ gh workflow run tests.yml --repo unifyai/unity --ref main
 
 # Run specific folder
 gh workflow run tests.yml --repo unifyai/unity --ref main \
-  -f test_path="tests/test_actor"
+  -f test_path="tests/actor"
 
 # Run with extra args
 gh workflow run tests.yml --repo unifyai/unity --ref main \
-  -f test_path="tests/test_actor" \
+  -f test_path="tests/actor" \
   -f parallel_run_args="--eval-only"
 
 # Run on a different branch
 gh workflow run tests.yml --repo unifyai/unity --ref my-feature-branch \
-  -f test_path="tests/test_contact_manager"
+  -f test_path="tests/contact_manager"
 ```
 
 **Available inputs:**
@@ -362,8 +363,15 @@ All test commands **automatically detect the current git repository** and use th
 - ✅ Tests run against the **current repo's code**, not a hardcoded path
 - ✅ Logs appear in the **current repo's** `logs/pytest/` directory
 - ✅ No manual path adjustments needed
+- ✅ **Concurrent worktree tests don't interfere** with each other's orchestra
 
 **How it works:** When you run `parallel_run`, the shell function checks `git rev-parse --show-toplevel` to find the current repo root, then uses that repo's `tests/parallel_run.sh`. If you're not in a git repo, it falls back to the originally configured path.
+
+**Orchestra and shared logs:** Since local orchestra is a shared server (one instance for all worktrees), its logs go to a single location. When running from a worktree, `parallel_run.sh` creates symlinks:
+- `logs/orchestra/` → main repo's `logs/orchestra/`
+- `logs/all/` → main repo's `logs/all/` (for OTEL trace correlation)
+
+This means concurrent tests from different worktrees can run without restarting orchestra, while still having all logs accessible from each worktree's `logs/` directory.
 
 ### Browsing All Worktree Logs from Main Repo
 
@@ -376,9 +384,9 @@ When tests run from a worktree (via any method - `parallel_run`, direct `pytest`
 ├── worktree-xyz/  →  ~/.cursor/worktrees/unity/xyz/logs/pytest/
 └── ...
 
-/Users/you/unity/logs/llm/
+/Users/you/unity/logs/unillm/
 ├── 2025-12-05T14-30-45_unity_dev_ttys042/    # main repo's logs (terminal A)
-├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/logs/llm/
+├── worktree-oty/  →  ~/.cursor/worktrees/unity/oty/logs/unillm/
 └── ...
 ```
 
@@ -432,6 +440,40 @@ project_cleanup.sh --random-only
 - **coreutils** (macOS): `brew install coreutils` — provides `timeout` for helper scripts
 - **Python virtualenv**: Repo-local `.venv/` (create/sync via `uv sync --all-groups`)
 - **Environment**: Optional `.env` file at repo root (`.env`) for `UNIFY_KEY`, etc.
+
+---
+
+## Environment Variable Propagation
+
+Understanding how env vars flow from `.env` to your test process avoids subtle "variable is set but tests don't see it" bugs.
+
+### Local runs (`parallel_run.sh`)
+
+```
+.env  ──(sourced)──>  parallel_run.sh  ──(inherited)──>  tmux session  ──>  pytest
+```
+
+1. `parallel_run.sh` sources the repo-root `.env` file (via `set -a; source .env; set +a`), exporting all variables into its own process.
+2. It starts the local orchestra server, which **inherits the full environment** (so orchestra sees everything from `.env`).
+3. It creates tmux sessions for each test. These sessions use `bash -c` (not `bash -lc`), so they **inherit the full environment** from `parallel_run.sh` — every variable from `.env` is available.
+4. Any `--env KEY=VALUE` flags are always passed through and override inherited values.
+5. **Blocklist**: In shared project mode, `UNIFY_TESTS_DELETE_PROJ_ON_START` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` are explicitly unset in test sessions to prevent race conditions (multiple sessions trying to delete the same project). In random project mode, these are passed through safely.
+
+### CI runs (`parallel_cloud_run.sh` / commit triggers)
+
+```
+.env  ──(base64)──>  GitHub Actions  ──(decode to .env)──>  parallel_run.sh  ──(same as above)
+                     job-level env  ───────────────────────>  (merged into process)
+```
+
+1. `parallel_cloud_run.sh` base64-encodes your local `.env` and sends it as a workflow input.
+2. The CI runner decodes it back to `.env`, then `parallel_run.sh` sources it (same as local).
+3. CI also sets **job-level env vars** from GitHub secrets/repo variables (API keys, GCP config, etc.). These are always present regardless of `.env` content.
+4. **Commit-triggered tests** (`[run-tests]` in commit message) do **not** send any `.env` — they rely entirely on the job-level env vars.
+
+### pydantic-settings (Python side)
+
+Once inside a pytest process, `unity/settings.py` uses pydantic-settings with `env_file=".env"`. This reads the repo-root `.env` **again** at Python import time. So variables that aren't in the shell whitelist can still be picked up by the `SETTINGS` object — but only if the `.env` file exists in the working directory (which it does locally, but not on CI for commit-triggered runs).
 
 ---
 

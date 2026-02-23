@@ -1,11 +1,18 @@
+from __future__ import annotations
+
 import asyncio
 import uuid
 import unify
 import functools
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, TYPE_CHECKING
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from unity.data_manager.data_manager import DataManager
+
 import json
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.common.tool_outcome import ToolOutcome
 from unity.common.token_utils import count_tokens_per_utf_byte
 from unity.common import token_utils as _tok
@@ -214,6 +221,24 @@ class KnowledgeManager(BaseKnowledgeManager):
         else:
             self._contacts_ctx = None
 
+        # Lazily-initialized DataManager for delegation
+        self.__data_manager: Optional["DataManager"] = None
+
+    @property
+    def _data_manager(self) -> "DataManager":
+        """
+        Lazily-initialized DataManager instance for delegation.
+
+        All low-level data operations (filter, search, insert, update, delete,
+        joins, etc.) are delegated to the DataManager to ensure consistency
+        and avoid direct ``unify`` calls in KnowledgeManager utilities.
+        """
+        if self.__data_manager is None:
+            from unity.data_manager.data_manager import DataManager
+
+            self.__data_manager = DataManager()
+        return self.__data_manager
+
     async def _maybe_build_show_all_seed(
         self,
         message: Union[str, dict, List[Union[str, dict]]],
@@ -335,7 +360,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ]
             return seeded
         except Exception as e:
-            print(f"Error in _maybe_build_show_all_seed: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error in _maybe_build_show_all_seed: {e}")
             return None
 
     # Helpers #
@@ -424,7 +449,12 @@ class KnowledgeManager(BaseKnowledgeManager):
     # English-Text Command
 
     @functools.wraps(BaseKnowledgeManager.refactor, updated=())
-    @log_manager_call("KnowledgeManager", "refactor", payload_key="request")
+    @log_manager_call(
+        "KnowledgeManager",
+        "refactor",
+        payload_key="request",
+        display_label="Reorganizing Notes",
+    )
     async def refactor(
         self,
         text: str,
@@ -494,7 +524,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 tools=tools,
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
         # 3️⃣  Launch interactive tool-use loop
@@ -522,7 +552,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.update, updated=())
-    @log_manager_call("KnowledgeManager", "update", payload_key="request")
+    @log_manager_call(
+        "KnowledgeManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Notes",
+    )
     async def update(
         self,
         text: str,
@@ -596,7 +631,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 table_schemas_json=table_schemas_json,
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
-            ),
+            ).to_list(),
         )
 
         handle = start_async_tool_loop(
@@ -624,7 +659,12 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
     @manager_tool
-    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
+    @log_manager_call(
+        "KnowledgeManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Notes",
+    )
     async def ask(
         self,
         text: str,
@@ -704,15 +744,10 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_activity=include_activity,
                 case_specific_instructions=case_specific_instructions,
                 include_join_info=include_join_info,
-            ),
+            ).to_list(),
         )
 
-        use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
-        tool_policy_fn = (
-            None
-            if use_semantic_cache in ("read", "both")
-            else self._default_ask_tool_policy
-        )
+        tool_policy_fn = self._default_ask_tool_policy
         # Maybe seed a synthetic `show_all` dump as the first tool call (ask only)
         text = await self._maybe_build_show_all_seed(text, tables_overview) or text
 
@@ -725,8 +760,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             response_format=response_format,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),

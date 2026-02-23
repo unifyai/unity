@@ -1,9 +1,9 @@
 """
 Wrappers around unify.log/create_logs with:
-1. _user injection (user's name from USER_CONTEXT)
-2. _user_id injection (from USER_ID environment variable)
-3. _assistant injection (assistant's name from ASSISTANT_CONTEXT)
-4. _assistant_id injection (assistant's ID from ASSISTANT["agent_id"])
+1. _user injection (user ID, matches user_context path component)
+2. _user_id injection (user ID from SESSION_DETAILS)
+3. _assistant injection (assistant ID, matches assistant_context path component)
+4. _assistant_id injection (assistant's agent_id from assistant_record)
 5. Automatic addition to aggregation contexts by reference (copy=False)
 
 Usage
@@ -21,29 +21,35 @@ Replace direct unify.log/create_logs calls with these wrappers:
 The wrappers automatically:
 - Inject _user, _user_id, _assistant, _assistant_id as private fields
 - Add logs to aggregation contexts by reference (when add_to_all_context=True):
-  - {UserName}/All/{Suffix} - user-level aggregation (all assistants for this user)
+  - {user_id}/All/{Suffix} - user-level aggregation (all assistants for this user)
   - All/{Suffix} - global aggregation (all users, all assistants)
 
 For test contexts (starting with "tests/"), aggregation is scoped to the test root:
-  - {test_root}/{UserName}/All/{Suffix}
+  - {test_root}/{user_id}/All/{Suffix}
   - {test_root}/All/{Suffix}
 """
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import httpx
 import unify
 
 from unity.session_details import SESSION_DETAILS
+from unity.settings import SETTINGS
+
+logger = logging.getLogger(__name__)
 
 
-def _get_user_name() -> Optional[str]:
-    """Retrieve user's context name from SESSION_DETAILS.
+def _get_user_context() -> Optional[str]:
+    """Retrieve user's context path component (user ID) from SESSION_DETAILS.
 
-    Returns the user context name, including default values like "DefaultUser".
-    These are always injected because they are part of the context path structure
-    and are needed by orchestra for 3-tier deletion cascade.
+    Injected as _user into every log entry. Matches the user_id path segment
+    in context paths like {user_id}/{assistant_id}/Contacts.
+    Needed by orchestra for 3-tier deletion cascade.
     """
     return SESSION_DETAILS.user_context or None
 
@@ -53,42 +59,68 @@ def _get_user_id() -> Optional[str]:
     return SESSION_DETAILS.user.id or None
 
 
-def _get_assistant_name() -> Optional[str]:
-    """Retrieve assistant's context name from SESSION_DETAILS.
+def _get_assistant_context() -> Optional[str]:
+    """Retrieve assistant's context path component (assistant ID) from SESSION_DETAILS.
 
-    Returns the assistant context name, including default values like "Assistant".
-    These are always injected because they are part of the context path structure
-    and are needed by orchestra for 3-tier deletion cascade.
+    Injected as _assistant into every log entry. Matches the assistant_id path
+    segment in context paths like {user_id}/{assistant_id}/Contacts.
+    Needed by orchestra for 3-tier deletion cascade.
     """
     return SESSION_DETAILS.assistant_context or None
 
 
 def _get_assistant_id() -> Optional[str]:
-    """Retrieve assistant's ID from SESSION_DETAILS."""
+    """Retrieve assistant's agent_id from SESSION_DETAILS as a string."""
     if SESSION_DETAILS.assistant_record is not None:
-        return SESSION_DETAILS.assistant_record.get("agent_id")
+        agent_id = SESSION_DETAILS.assistant_record.get("agent_id")
+        if agent_id is not None:
+            return str(agent_id)
     return None
 
 
+def _get_org_id() -> Optional[int]:
+    """Retrieve organization ID from SESSION_DETAILS.
+
+    Returns None for personal (non-org) context.
+    """
+    return SESSION_DETAILS.org_id
+
+
+def _get_org_name() -> Optional[str]:
+    """Retrieve organization name from SESSION_DETAILS.
+
+    Returns None/empty for personal (non-org) context.
+    """
+    return SESSION_DETAILS.org_name or None
+
+
 def _inject_private_fields(entries: Dict[str, Any]) -> Dict[str, Any]:
-    """Inject _user, _user_id, _assistant, and _assistant_id into entries."""
+    """Inject _user, _user_id, _assistant, _assistant_id, _org, and _org_id into entries."""
     result = dict(entries)
 
-    user_name = _get_user_name()
-    if user_name is not None:
-        result["_user"] = user_name
+    user_ctx = _get_user_context()
+    if user_ctx is not None:
+        result["_user"] = user_ctx
 
     user_id = _get_user_id()
     if user_id is not None:
         result["_user_id"] = user_id
 
-    assistant_name = _get_assistant_name()
-    if assistant_name is not None:
-        result["_assistant"] = assistant_name
+    assistant_ctx = _get_assistant_context()
+    if assistant_ctx is not None:
+        result["_assistant"] = assistant_ctx
 
     assistant_id = _get_assistant_id()
     if assistant_id is not None:
         result["_assistant_id"] = assistant_id
+
+    org_name = _get_org_name()
+    if org_name is not None:
+        result["_org"] = org_name
+
+    org_id = _get_org_id()
+    if org_id is not None:
+        result["_org_id"] = org_id
 
     return result
 
@@ -98,39 +130,39 @@ def _derive_all_contexts(context: str) -> List[str]:
     Derive aggregation contexts from a user/assistant-scoped context.
 
     Returns two contexts for cross-assistant and cross-user aggregation:
-      - {UserName}/All/{suffix} - all assistants for this user
-      - All/{suffix}            - all users, all assistants
+      - {user_id}/All/{suffix} - all assistants for this user
+      - All/{suffix}           - all users, all assistants
 
     For test contexts (starting with "tests/"), the aggregation contexts are
     scoped to the test root for proper isolation:
-      - {test_root}/{UserName}/All/{suffix}
+      - {test_root}/{user_id}/All/{suffix}
       - {test_root}/All/{suffix}
 
     Examples:
         Production:
-        "JohnDoe/MyAssistant/Contacts" -> ["JohnDoe/All/Contacts", "All/Contacts"]
+        "42/7/Contacts" -> ["42/All/Contacts", "All/Contacts"]
 
         Testing:
-        "tests/test_foo/DefaultUser/Assistant/Contacts" ->
-            ["tests/test_foo/DefaultUser/All/Contacts", "tests/test_foo/All/Contacts"]
+        "tests/foo/default/default-assistant/Contacts" ->
+            ["tests/foo/default/All/Contacts", "tests/foo/All/Contacts"]
 
         Invalid (too few parts):
-        "JohnDoe/Contacts" -> []
+        "42/Contacts" -> []
         "Contacts" -> []
     """
     parts = context.split("/")
     if len(parts) < 3:
         return []
 
-    # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
-    # Find the User position by looking for "DefaultUser" marker
+    # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
+    # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
     if parts[0] == "tests":
         from unity.session_details import DEFAULT_USER_CONTEXT
 
         try:
             user_idx = parts.index(DEFAULT_USER_CONTEXT)
         except ValueError:
-            # Can't determine structure without the DefaultUser marker
+            # Can't determine structure without the DEFAULT_USER_CONTEXT marker
             return []
 
         # Need at least User/Assistant/Suffix after the test root
@@ -185,10 +217,10 @@ def log(
     Parameters
     ----------
     context : str
-        The context to log to (e.g., "JohnDoe/MyAssistant/Contacts")
+        The context to log to (e.g., "42/7/Contacts")
     add_to_all_context : bool, default False
         If True, add the log to aggregation contexts by reference:
-        - {UserName}/All/{Ctx} (user-level)
+        - {user_id}/All/{Ctx} (user-level)
         - All/{Ctx} (global)
     new : bool, default True
         Whether to create a new log entry
@@ -227,12 +259,12 @@ def create_logs(
     Parameters
     ----------
     context : str
-        The context to log to (e.g., "JohnDoe/MyAssistant/Tasks")
+        The context to log to (e.g., "42/7/Tasks")
     entries : List[Dict[str, Any]]
         List of entry dicts to create
     add_to_all_context : bool, default False
         If True, add logs to aggregation contexts by reference:
-        - {UserName}/All/{Ctx} (user-level)
+        - {user_id}/All/{Ctx} (user-level)
         - All/{Ctx} (global)
     **kwargs
         Additional arguments passed to unify.create_logs (e.g., batched=True)
@@ -260,3 +292,170 @@ def create_logs(
             _add_to_all(log_ids, context)
 
     return result
+
+
+# =============================================================================
+# Atomic Upsert for Spending Tracking
+# =============================================================================
+
+
+@dataclass
+class AtomicUpsertResult:
+    """Result of an atomic upsert operation."""
+
+    log_id: int
+    new_value: float
+    created: bool
+    mirrored_contexts: List[str]
+
+
+async def atomic_upsert(
+    context: str,
+    *,
+    unique_keys: Dict[str, str],
+    field: str,
+    operation: str,
+    initial_data: Optional[Dict[str, Any]] = None,
+    add_to_all_context: bool = False,
+    project: Optional[str] = None,
+) -> AtomicUpsertResult:
+    """
+    Atomically upsert a field value in a log entry.
+
+    This function calls Orchestra's `/v0/logs/atomic` endpoint which:
+    1. Ensures context exists with correct unique_keys configuration
+    2. Acquires advisory lock on unique key values (prevents race on first insert)
+    3. Finds log by unique_keys or creates it with initial_data
+    4. Applies atomic operation to field
+    5. Optionally mirrors to All/* archive context
+
+    Parameters
+    ----------
+    context : str
+        The context to upsert to (e.g., "42/7/Spending/Monthly")
+    unique_keys : Dict[str, str]
+        Key names to types for matching/creating logs
+        (e.g., {"_assistant_id": "str", "month": "str"})
+    field : str
+        The field to update atomically (e.g., "cumulative_spend")
+    operation : str
+        The atomic operation to apply (e.g., "+5.50" for increment)
+    initial_data : Dict[str, Any], optional
+        Data for creating a new log if one doesn't exist.
+        Must include all unique key values.
+    add_to_all_context : bool, default False
+        If True, mirror the log to All/* archive context
+    project : str, optional
+        The project name. Defaults to the active project.
+
+    Returns
+    -------
+    AtomicUpsertResult
+        Result containing log_id, new_value, created flag, and mirrored contexts
+
+    Raises
+    ------
+    httpx.HTTPStatusError
+        If the API request fails
+    """
+    if project is None:
+        project = unify.active_project()
+
+    # Inject private fields into initial_data
+    if initial_data is None:
+        initial_data = {}
+    initial_data = _inject_private_fields(initial_data)
+
+    # Build request payload
+    payload = {
+        "project": project,
+        "context": context,
+        "unique_keys": unique_keys,
+        "field": field,
+        "operation": operation,
+        "initial_data": initial_data,
+        "add_to_all_context": add_to_all_context,
+    }
+
+    # Get API credentials
+    api_key = SESSION_DETAILS.unify_key
+    base_url = SETTINGS.ORCHESTRA_URL
+
+    # Make the HTTP request to Orchestra
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{base_url}/logs/atomic",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    return AtomicUpsertResult(
+        log_id=data.get("log_id", 0),
+        new_value=data.get("new_value", 0.0),
+        created=data.get("created", False),
+        mirrored_contexts=data.get("mirrored_contexts", []),
+    )
+
+
+def atomic_upsert_sync(
+    context: str,
+    *,
+    unique_keys: Dict[str, str],
+    field: str,
+    operation: str,
+    initial_data: Optional[Dict[str, Any]] = None,
+    add_to_all_context: bool = False,
+    project: Optional[str] = None,
+) -> AtomicUpsertResult:
+    """
+    Synchronous version of atomic_upsert for use in non-async contexts.
+
+    See atomic_upsert() for full documentation.
+    """
+    if project is None:
+        project = unify.active_project()
+
+    # Inject private fields into initial_data
+    if initial_data is None:
+        initial_data = {}
+    initial_data = _inject_private_fields(initial_data)
+
+    # Build request payload
+    payload = {
+        "project": project,
+        "context": context,
+        "unique_keys": unique_keys,
+        "field": field,
+        "operation": operation,
+        "initial_data": initial_data,
+        "add_to_all_context": add_to_all_context,
+    }
+
+    # Get API credentials
+    api_key = SESSION_DETAILS.unify_key
+    base_url = SETTINGS.ORCHESTRA_URL
+
+    # Make the HTTP request to Orchestra
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(
+            f"{base_url}/logs/atomic",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    return AtomicUpsertResult(
+        log_id=data.get("log_id", 0),
+        new_value=data.get("new_value", 0.0),
+        created=data.get("created", False),
+        mirrored_contexts=data.get("mirrored_contexts", []),
+    )

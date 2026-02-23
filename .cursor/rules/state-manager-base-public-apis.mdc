@@ -1,6 +1,0 @@
----
-description: State Manager Base Public APIs
-globs: ["**/*"]
-alwaysApply: true
----
-The public API for all state managers (`ContactManager`, `TranscriptManager`, `TaskScheduler`, `WebSearcher` etc.) is fully contained in the docstrings of the abstract methods defined on the base class `Base{SomeManager}` in `base.py`. All high level usage instructions should be fully encapsulated in these docstrings. These docstrings are then attached to the public methods of any derived class via `@functools.wraps(Base{StateManager}.{public_method}, updated=())`. These docstrings should not make **any** reference to **other managers** (we don’t want to lock in any brittle cross-references, as other managers may change) and should also not make any reference to their **internal implementation**, include the private tools used for any particular instantiation of this abstract base class, with a consistent implementation agnostic public API.

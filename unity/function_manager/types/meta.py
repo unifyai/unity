@@ -4,6 +4,8 @@ Pydantic model for the Functions/Meta context.
 Stores metadata about the primitives, custom venvs, and custom functions sync state.
 """
 
+from typing import Dict
+
 from pydantic import BaseModel, Field
 
 
@@ -19,9 +21,13 @@ class FunctionsMeta(BaseModel):
         1,
         description="Fixed ID for the single metadata row.",
     )
-    primitives_hash: str = Field(
-        "",
-        description="Hash of all primitive signatures and docstrings.",
+    primitives_hash_by_manager: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-manager hash of primitive signatures and docstrings. "
+            "Keys are manager aliases (e.g., 'files', 'contacts'). "
+            "Enables scoped primitive sync without global recomputation."
+        ),
     )
     custom_venvs_hash: str = Field(
         "",

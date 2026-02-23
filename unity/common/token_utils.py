@@ -11,9 +11,10 @@ import math
 import json
 from typing import Optional, Any, Dict, List, Tuple
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.settings import SETTINGS
 from unity.common.grouping_helpers import iter_unique_values_via_groups
-
 
 _TIKTOKEN_AVAILABLE = True
 try:
@@ -35,8 +36,8 @@ def _warn_once() -> None:
     global _WARNED_ON_FALLBACK
     if not _WARNED_ON_FALLBACK:
         try:
-            print(
-                "⚠️  tiktoken not available – using a conservative char→token heuristic. "
+            LOGGER.warning(
+                f"{DEFAULT_ICON} tiktoken not available – using a conservative char→token heuristic. "
                 "Install `tiktoken` for precise accounting.",
             )
         except Exception:

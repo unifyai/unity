@@ -63,6 +63,7 @@ def _generate_embedding_safe_summary(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
+        origin="FileParser.generate_summary",
     )
 
     clipped_src = _clip_for_summary(prompt, source_text, settings=settings)
@@ -333,6 +334,7 @@ def extract_metadata(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
+        origin="FileParser.extract_metadata",
     )
 
     # Prefer the middle of the doc for metadata (often contains key definitions),

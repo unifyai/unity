@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+import pytest
+
+from unity.contact_manager.contact_manager import ContactManager
+from unity.common.data_store import DataStore
+from tests.helpers import _handle_project
+
+
+@_handle_project
+def test_data_store_updated_after_create():
+    cm = ContactManager()
+
+    # Sanity: resolve the DataStore instance for this context
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create a contact
+    out = cm._create_contact(first_name="CacheTest", surname="One")
+    cid = out["details"]["contact_id"]
+
+    # Verify DataStore has the newly created row (never reading from it elsewhere)
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
+    assert row.get("surname") == "One"
+
+
+@_handle_project
+def test_data_store_updated_after_update():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create then update
+    out = cm._create_contact(first_name="CacheTest", surname="Two")
+    cid = out["details"]["contact_id"]
+
+    cm.update_contact(contact_id=cid, surname="Updated")
+
+    # Verify DataStore reflects updated surname
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
+    assert row.get("surname") == "Updated"
+
+
+@_handle_project
+def test_data_store_deleted_after_delete():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create then delete
+    out = cm._create_contact(first_name="CacheTest", surname="DeleteMe")
+    cid = out["details"]["contact_id"]
+
+    # Ensure present first
+    _ = ds[cid]
+
+    cm._delete_contact(contact_id=cid)
+
+    # Verify removal from DataStore
+    with pytest.raises(KeyError):
+        _ = ds[cid]
+
+
+@_handle_project
+def test_filter_repopulates():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Seed a user contact
+    out = cm._create_contact(first_name="CacheTest", surname="Filter")
+    cid = out["details"]["contact_id"]
+
+    # Clear DataStore manually (simulate empty cache)
+    ds.clear()
+
+    # Read via filter_contacts and ensure cache is repopulated
+    rows = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    rows = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    assert rows and rows[0].contact_id == cid
+
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
+
+
+@_handle_project
+def test_search_repopulates():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Seed
+    out = cm._create_contact(first_name="CacheTest", bio="emails and texts")
+    cid = out["details"]["contact_id"]
+
+    ds.clear()
+
+    # Trigger semantic path (references provided) which writes-through filled rows
+    results = cm._search_contacts(references={"bio": "emails"}, k=1)
+    assert results and results["contacts"][0].contact_id == cid
+
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
+
+
+@_handle_project
+def test_system_present_after_init():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Assistant and default user should be cached
+    a = ds.get(0)
+    u = ds.get(1)
+    assert a is not None and a.get("should_respond") is True
+    assert u is not None and u.get("should_respond") is True
+
+
+@_handle_project
+def test_data_store_hygiene_after_custom_column_delete():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create a custom column and a contact that uses it
+    cm._create_custom_column(column_name="department", column_type="str")
+    cid = cm._create_contact(first_name="Jane", department="Engineering")["details"][
+        "contact_id"
+    ]
+
+    # Ensure cache has the field
+    row = ds[cid]
+    assert row.get("department") == "Engineering"
+
+    # Delete the custom column
+    cm._delete_custom_column(column_name="department")
+
+    # The cache should be scrubbed of the deleted key
+    row2 = ds[cid]
+    assert "department" not in row2
+
+
+@_handle_project
+def test_after_merge():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create two contacts and ensure both cached via writes
+    cid1 = cm._create_contact(first_name="John", surname="Doe")["details"]["contact_id"]
+    cid2 = cm._create_contact(first_name="Johnny", surname="Roe")["details"][
+        "contact_id"
+    ]
+
+    # Merge: keep cid1, take surname from cid2
+    cm._merge_contacts(
+        contact_id_1=cid1,
+        contact_id_2=cid2,
+        overrides={"contact_id": 1, "surname": 2},
+    )
+
+    # Kept contact should be present and updated
+    kept_row = ds[cid1]
+    assert kept_row["first_name"] == "John"
+    assert kept_row.get("surname") == "Roe"
+
+    # Deleted contact should be absent from DataStore
+    with pytest.raises(KeyError):
+        _ = ds[cid2]
+
+
+@_handle_project
+def test_data_store_never_contains_vector_columns():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create a contact and drive semantic path to create vectors server-side
+    cm._create_contact(first_name="VecTest", bio="likes vectors")
+    _ = cm._search_contacts(references={"bio": "vectors"}, k=1)
+
+    # Scan snapshot and assert no *_emb keys exist in cached rows
+    snap = ds.snapshot()
+    for _key, row in snap.items():
+        assert all(not str(k).endswith("_emb") for k in row.keys())
+
+
+@_handle_project
+def test_get_info_cache_fallback():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create contacts to query
+    out1 = cm._create_contact(first_name="Instant", surname="Read")
+    cid1 = out1["details"]["contact_id"]
+    out2 = cm._create_contact(first_name="Second", surname="Record")
+    cid2 = out2["details"]["contact_id"]
+
+    # 1) Cache hit path: ensure present in cache (creation write-through)
+    info_single = cm.get_contact_info(
+        cid1,
+        fields=["first_name", "surname"],
+        search_local_storage=True,
+    )
+    assert info_single == {cid1: {"first_name": "Instant", "surname": "Read"}}
+
+    # 2) Cache miss path: clear the cache and then call again
+    ds.clear()
+    info2_single = cm.get_contact_info(
+        cid1,
+        fields=["first_name"],
+        search_local_storage=True,
+    )
+    assert info2_single == {cid1: {"first_name": "Instant"}}
+
+    # After miss, cache should be repopulated
+    row = ds[cid1]
+    assert row.get("first_name") == "Instant"
+
+    # 3) Multi-id query: mix of hit and miss
+    # Ensure cid1 is cached and cid2 forces a backend read
+    _ = ds[cid1]
+    try:
+        _ = ds[cid2]
+        ds.delete(cid2)
+    except KeyError:
+        pass
+    info_multi = cm.get_contact_info(
+        [cid1, cid2],
+        fields=["surname"],
+        search_local_storage=True,
+    )
+    assert info_multi[cid1] == {"surname": "Read"}
+    assert info_multi[cid2] == {"surname": "Record"}

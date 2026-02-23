@@ -1,5 +1,5 @@
 .env
-.env.*
+.env.deprecated*
 *.env
 .sensitive_data
 application_default_credentials.json
@@ -37,4 +37,15 @@ intranet/logs/
 assets/
 discord_messages.md
 .cursor/debug.log
-logs/
+# ConversationManager sandbox persistent config (project-local)
+.cm_sandbox_config
+# Ignore log contents but keep the README and utility scripts
+logs/*
+!logs/README.md
+!logs/download_ci_logs.sh
+!logs/ci/
+logs/ci/*
+!logs/ci/.gitkeep
+.repairs_queries/
+# Self-hosted LiveKit Agents Playground (sandbox developer tooling)
+.livekit-playground/

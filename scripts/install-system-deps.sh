@@ -7,7 +7,7 @@
 #   RUN /tmp/install-system-deps.sh [--minimal]
 #
 # Flags:
-#   --minimal   Only install deps needed for testing (skips X11, browsers, VNC, etc.)
+#   --minimal   Only install deps needed for testing (skips X11, GUI automation, VNC, etc.)
 
 set -euo pipefail
 
@@ -55,20 +55,49 @@ apt-get install -y --no-install-recommends \
     libpulse0
 
 # =============================================================================
-# REDIS (for caching)
-# =============================================================================
-apt-get install -y --no-install-recommends redis-server
-
-# =============================================================================
 # TMUX (for parallel test runner)
 # =============================================================================
 apt-get install -y --no-install-recommends tmux
+
+# =============================================================================
+# ZSH (for shell function testing)
+# =============================================================================
+apt-get install -y --no-install-recommends zsh
 
 # =============================================================================
 # LOCALES (for UTF-8 emoji support)
 # =============================================================================
 apt-get install -y --no-install-recommends locales
 sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+
+# =============================================================================
+# POWERSHELL CORE (for shell function testing)
+# =============================================================================
+# Detect distro to use correct Microsoft repository
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    case "$ID-$VERSION_CODENAME" in
+        ubuntu-jammy)   MSFT_REPO="microsoft-ubuntu-jammy-prod jammy" ;;
+        ubuntu-noble)   MSFT_REPO="microsoft-ubuntu-noble-prod noble" ;;
+        debian-bookworm) MSFT_REPO="microsoft-debian-bookworm-prod bookworm" ;;
+        debian-bullseye) MSFT_REPO="microsoft-debian-bullseye-prod bullseye" ;;
+        *)
+            echo "Warning: Unknown distro $ID-$VERSION_CODENAME, skipping PowerShell installation"
+            MSFT_REPO=""
+            ;;
+    esac
+else
+    echo "Warning: Cannot detect distro, skipping PowerShell installation"
+    MSFT_REPO=""
+fi
+
+if [ -n "$MSFT_REPO" ]; then
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/$MSFT_REPO main" | tee /etc/apt/sources.list.d/microsoft.list > /dev/null
+    apt-get update
+    apt-get install -y --no-install-recommends powershell
+    echo "PowerShell installed: $(pwsh --version)"
+fi
 
 # =============================================================================
 # FULL PRODUCTION DEPENDENCIES (skipped with --minimal)
@@ -84,24 +113,7 @@ if [ "$MINIMAL" = false ]; then
         gnupg2 \
         ca-certificates
 
-    # X11 / Virtual desktop / VNC
-    apt-get install -y --no-install-recommends \
-        xvfb \
-        x11vnc \
-        fluxbox \
-        xdotool \
-        wmctrl \
-        xterm \
-        dbus \
-        dbus-x11 \
-        websockify
-
-    # XDG desktop portals
-    apt-get install -y --no-install-recommends \
-        xdg-desktop-portal \
-        xdg-desktop-portal-gtk
-
-    # Browser runtime dependencies
+    # Web runtime dependencies (for Playwright headless mode)
     apt-get install -y --no-install-recommends \
         libnss3 \
         libatk-bridge2.0-0 \
@@ -119,15 +131,6 @@ if [ "$MINIMAL" = false ]; then
     # Media processing
     apt-get install -y --no-install-recommends ffmpeg
 
-    # Full audio stack (PipeWire)
-    apt-get install -y --no-install-recommends \
-        pipewire \
-        pipewire-pulse \
-        pipewire-alsa \
-        wireplumber \
-        pulseaudio-utils \
-        alsa-utils
-
     # Filesystem utilities (for AppImage support)
     apt-get install -y --no-install-recommends \
         fuse3 \
@@ -137,7 +140,7 @@ if [ "$MINIMAL" = false ]; then
     # Image processing
     apt-get install -y --no-install-recommends libvips
 
-    # GTK4 and additional browser dependencies
+    # GTK4 and additional web automation dependencies
     apt-get install -y --no-install-recommends \
         libgtk-4-1 \
         libharfbuzz-icu0 \
@@ -145,6 +148,11 @@ if [ "$MINIMAL" = false ]; then
         libsecret-1-0 \
         libhyphen0 \
         libmanette-0.2-0
+
+    # =========================================================================
+    # RCLONE (for file sync between assistant and managed VM)
+    # =========================================================================
+    curl https://rclone.org/install.sh | bash
 fi
 
 # Cleanup apt cache

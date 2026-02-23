@@ -13,10 +13,10 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
     special_contacts_block as _special_contacts_block,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -62,7 +62,7 @@ def build_ask_prompt(
     columns: Union[List[Dict[str, str]], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *ask* using the shared composer."""
     # Extract custom columns (not in Contact model)
     custom_cols = get_custom_columns(Contact, columns)
@@ -191,8 +191,8 @@ Anti‑patterns to avoid
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
-        include_images_policy=True,
-        include_images_forwarding=True,
+        include_images_policy=False,
+        include_images_forwarding=False,
         images_extras_block=None,
         include_parallelism=True,
         schemas=[("Contact", Contact)],
@@ -210,7 +210,7 @@ def build_update_prompt(
     columns: Union[List[Dict[str, str]], Dict[str, str]],
     *,
     include_activity: bool = True,
-) -> str:
+) -> PromptParts:
     """Return the system-prompt used by *update* using the shared composer."""
     # Extract custom columns (not in Contact model)
     custom_cols = get_custom_columns(Contact, columns)
@@ -279,11 +279,11 @@ Realistic find-then-update flows
   2 Update the returned id:
     `{update_fname}(contact_id=<id>, response_policy="Share design updates weekly")`
 
-• Mark respond_to=True for the contact who is a footballer and recently wrapped up a kickoff call
+• Mark should_respond=True for the contact who is a footballer and recently wrapped up a kickoff call
   1 Ask a freeform question (no instructions about how to answer):
     `{ask_fname}(text="Which footballer wrapped up a kickoff call last week?")`
   2 Update the returned id:
-    `{update_fname}(contact_id=<id>, respond_to=True)`
+    `{update_fname}(contact_id=<id>, should_respond=True)`
 
 • Query may span multiple freeform fields (derived expression)
   1 Build a composite expression across `bio`, `rolling_summary`, and a custom field like `occupation`:
@@ -313,6 +313,15 @@ Basic create/update
   `{create_fname}(first_name='Jane', surname='Roe', email_address='jane.roe@example.com')`
 • Update a known contact id
   `{update_fname}(contact_id=42, phone_number='+15551234567')`
+
+Nameless contacts (organisation / service contacts)
+----------------------------------------------------
+Some contacts represent an organisation or service rather than a specific person — e.g. a support hotline, a help‑desk email, a company switchboard.  For these, leave `first_name` and `surname` as None and use `bio` to describe the entity:
+  `{create_fname}(phone_number='+18005551234', bio='Acme Corp billing support line')`
+
+If a transcript mentions a name during an interaction with such a contact (e.g. "Hi, this is Sarah from Billing"), that person is a transient representative — do NOT write their name into the contact's `first_name`/`surname`.  The contact detail belongs to the organisation, not to whoever happens to answer.
+
+Conversely, if a contact has no name simply because the name is unknown (e.g. "call my friend at this number"), populate the name as soon as it is discovered.  Use the `bio`, `response_policy`, and surrounding context to judge which case applies.
 
 Asking Questions
 ----------------
@@ -374,8 +383,8 @@ Anti‑patterns to avoid
         include_tools_block=True,
         usage_examples=usage_examples,
         clarification_examples_block=clarification_block or None,
-        include_images_policy=True,
-        include_images_forwarding=True,
+        include_images_policy=False,
+        include_images_forwarding=False,
         images_extras_block=None,
         include_parallelism=True,
         schemas=schemas,
@@ -411,6 +420,7 @@ def build_simulated_method_prompt(
     The wording mirrors the style already used in :class:`SimulatedContactManager`.
     """
     import json  # local import to avoid polluting module namespace
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
@@ -429,7 +439,7 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
 
     return "\n".join(parts)

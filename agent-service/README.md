@@ -1,6 +1,6 @@
 # Magnitude BrowserAgent Service
 
-This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, allowing a Python client (like the Hierarchical Actor) to perform autonomous web automation tasks.
+This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, allowing a Python client (like the CodeActActor) to perform autonomous web automation tasks.
 
 ## Setup
 
@@ -15,8 +15,12 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
     git clone <unity-repo-url>
     cd unity
 
-    # Clone Unity's magnitude fork into the magnitude/ subdirectory
-    git clone https://github.com/unifyai/magnitude.git magnitude
+    # Clone Unity's magnitude fork into the magnitude/ subdirectory (private repo - requires auth)
+    # Option 1: Using CLONE_TOKEN environment variable
+    git clone https://x-access-token:${CLONE_TOKEN}@github.com/unifyai/magnitude.git magnitude
+    # Option 2: Using gh CLI (if authenticated)
+    gh repo clone unifyai/magnitude magnitude
+
     cd magnitude
     git checkout unity-modifications  # Our branch with Unity enhancements
 
@@ -41,7 +45,8 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
     ```
     # agent-service/.env
     ANTHROPIC_API_KEY="sk-ant-..."    # or provide other LLM keys used by your magnitude-core config
-    UNIFY_BASE_URL="..."
+    ORCHESTRA_URL="..."
+    UNITY_COMMS_URL="..."
     UNIFY_KEY="..."
     # Optional keys depending on configured clients in magnitude-core (baml clients)
     GOOGLE_API_KEY="..."              # if using Google AI Studio clients
@@ -80,7 +85,7 @@ The `magnitude/` directory is our fork of the magnitude repository with Unity-sp
 
 - **Branch**: Always work on `unity-modifications` branch
 - **Upstream sync**: Use `upstream-main` branch to pull in latest magnitude changes
-- **Team sharing**: Push your changes to `https://github.com/unifyai/magnitude.git`
+- **Private repo**: This is a private fork; use `CLONE_TOKEN` or `gh` CLI for authenticated access
 
 See `MAGNITUDE_SETUP.md` in the repo root for detailed workflow instructions.
 

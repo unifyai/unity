@@ -8,6 +8,7 @@ compositional functions with:
 - Typing module and common type hints
 - Pydantic support (if available)
 - Access to primitives (state managers, computer use)
+- Steerable handle infrastructure (for functions that return steerable handles)
 """
 
 import asyncio
@@ -36,7 +37,7 @@ def create_base_globals() -> Dict[str, Any]:
     Creates a dictionary of safe global functions for code execution.
 
     This provides a controlled environment with:
-    - Safe built-in functions (excluding dangerous ones like eval, exec, open)
+    - Safe built-in functions (excluding dangerous ones like eval, exec)
     - Common standard library modules (asyncio, re, json, datetime, collections)
     - Typing module and common type hints
     - Pydantic support (if available)
@@ -69,6 +70,7 @@ def create_base_globals() -> Dict[str, Any]:
             "getattr",
             "setattr",
             "callable",
+            "issubclass",
             "dir",
             "vars",
             "iter",
@@ -91,8 +93,20 @@ def create_base_globals() -> Dict[str, Any]:
             "format",
             "chr",
             "ord",
-            # Exception classes
+            "id",
+            "hash",
+            "hex",
+            "oct",
+            "bin",
+            "bytearray",
+            "memoryview",
+            "complex",
+            "slice",
+            # Exception hierarchy
             "Exception",
+            "BaseException",
+            "ArithmeticError",
+            "LookupError",
             "NotImplementedError",
             "ValueError",
             "TypeError",
@@ -101,8 +115,29 @@ def create_base_globals() -> Dict[str, Any]:
             "AttributeError",
             "RuntimeError",
             "StopIteration",
+            "StopAsyncIteration",
             "AssertionError",
+            "NameError",
+            "ImportError",
+            "ModuleNotFoundError",
             "OSError",
+            "IOError",
+            "FileNotFoundError",
+            "FileExistsError",
+            "PermissionError",
+            "IsADirectoryError",
+            "NotADirectoryError",
+            "EOFError",
+            "UnicodeError",
+            "UnicodeDecodeError",
+            "UnicodeEncodeError",
+            "ZeroDivisionError",
+            "OverflowError",
+            "TimeoutError",
+            "ConnectionError",
+            "BrokenPipeError",
+            # File I/O
+            "open",
             # Class-related
             "super",
             "property",
@@ -155,16 +190,38 @@ def create_execution_globals() -> Dict[str, Any]:
     """
     Creates execution globals for running stored functions.
 
-    Extends create_base_globals() with the `primitives` object, which
-    provides lazy access to all primitive operations (state managers,
-    computer use, etc.).
+    Extends create_base_globals() with:
+    - The `primitives` object for lazy access to all primitive operations
+      (state managers, computer use, etc.)
+    - Steerable handle infrastructure for creating functions that return
+      steerable handles (SteerableToolHandle, start_async_tool_loop,
+      new_llm_client)
 
     All primitive imports and instantiations are lazy - only the primitives
     actually used by a function are loaded. This means functions that don't
-    need computer use won't import browser/desktop infrastructure.
+    need computer use won't import web/desktop infrastructure.
+
+    Steerable Functions
+    -------------------
+    Functions can return a ``SteerableToolHandle`` subclass to indicate they
+    are steerable. The execution layer will detect this at runtime via
+    ``isinstance(result, SteerableToolHandle)`` and wire up steering operations.
+
+    Example steerable function::
+
+        async def my_workflow(goal: str) -> SteerableToolHandle:
+            client = new_llm_client()
+            client.set_system_message("You are a helpful assistant.")
+            handle = start_async_tool_loop(
+                client=client,
+                message=goal,
+                tools={},
+                loop_id="my-workflow",
+            )
+            return handle
 
     Returns:
-        A dictionary of globals for function execution, including `primitives`.
+        A dictionary of globals for function execution.
     """
     globals_dict = create_base_globals()
 
@@ -173,6 +230,19 @@ def create_execution_globals() -> Dict[str, Any]:
 
     # Inject the primitives instance - all access is lazy
     globals_dict["primitives"] = Primitives()
+
+    # Steerable handle infrastructure - allows compositional functions to
+    # create and return steerable handles that the execution layer can detect
+    # and wire up for steering operations (interject, pause, stop, etc.)
+    from unity.common.async_tool_loop import (
+        SteerableToolHandle,
+        start_async_tool_loop,
+    )
+    from unity.common.llm_client import new_llm_client
+
+    globals_dict["SteerableToolHandle"] = SteerableToolHandle
+    globals_dict["start_async_tool_loop"] = start_async_tool_loop
+    globals_dict["new_llm_client"] = new_llm_client
 
     return globals_dict
 

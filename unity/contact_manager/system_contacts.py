@@ -78,12 +78,23 @@ def _resolve_user_details(self) -> Dict[str, Any]:
     When SESSION_DETAILS has not been initialized (e.g., during tests),
     returns default user info to avoid calling real APIs.
 
+    In DEMO_MODE, returns empty details because the boss (contact_id==1)
+    is the prospect being demoed to — their details are unknown at startup
+    and will be learned organically during the demo conversation.
+
     Returns
     -------
     dict
         User info dict with first_name, last_name, email, and optionally phone_number.
     """
     from ..session_details import SESSION_DETAILS
+    from ..settings import SETTINGS
+
+    # In demo mode, there is no real user account backing contact_id==1.
+    # The prospect's details will be populated during the demo via
+    # set_boss_details / inline communication tools.
+    if SETTINGS.DEMO_MODE:
+        return {}
 
     # If SESSION_DETAILS hasn't been initialized, use defaults.
     # This ensures tests don't call real APIs for user info.
@@ -135,7 +146,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
     if selected is not None:
         a = selected
         base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
-        base_fields["respond_to"] = True
+        base_fields["should_respond"] = True
         base_fields["response_policy"] = ""
         base_fields["is_system"] = True
         base_fields.update(
@@ -151,7 +162,7 @@ def provision_assistant_contact(self, assistant_log) -> None:
         )
     else:
         base_fields = {fld: None for fld in self._BUILTIN_FIELDS if fld != "contact_id"}
-        base_fields["respond_to"] = True
+        base_fields["should_respond"] = True
         base_fields["response_policy"] = ""
         base_fields["is_system"] = True
         base_fields.update(
@@ -199,22 +210,20 @@ def provision_assistant_contact(self, assistant_log) -> None:
             pass
         return
 
-    # Insert the assistant row. Use try-except to handle race conditions where
-    # another process creates the contact concurrently.
+    # Insert the assistant row. Race conditions are handled by Orchestra's
+    # field-level uniqueness enforcement on email_address / phone_number.
     try:
         self._create_contact(**base_fields)
-    except ValueError as e:
-        if "unique fields" in str(e):
-            # Another process created the contact concurrently – that's fine
-            pass
-        else:
-            raise
     except RequestError as e:
-        # Backend returned 500 due to DB-level race condition – contact exists
-        if e.response is not None and e.response.status_code == 500:
-            pass
-        else:
-            raise
+        if e.response is not None and e.response.status_code in (400, 500):
+            detail = ""
+            try:
+                detail = str(e.response.json().get("detail", ""))
+            except Exception:
+                detail = str(getattr(e.response, "text", ""))
+            if "unique" in detail.lower():
+                return
+        raise
 
 
 def provision_user_contact(self, user_log) -> None:
@@ -222,7 +231,44 @@ def provision_user_contact(self, user_log) -> None:
 
     Creates or updates the user (boss) contact using details resolved from
     SESSION_DETAILS, the Unify API, or default values.
+
+    In DEMO_MODE, the boss contact is the prospect being demoed to. If the
+    contact already exists (from a previous session), we preserve whatever
+    details were set during the demo (name, phone, email) and only warm
+    the local cache. If it doesn't exist yet, we create a minimal placeholder
+    with should_respond=True so communication tools work immediately.
     """
+    from ..settings import SETTINGS
+
+    if SETTINGS.DEMO_MODE:
+        if user_log is not None:
+            # Contact already exists — preserve all details set during the demo.
+            # Only ensure is_system is True (warm cache either way).
+            try:
+                entries = user_log.entries
+                if entries.get("is_system") is not True:
+                    self.update_contact(
+                        contact_id=1,
+                        _log_id=user_log.id,
+                        is_system=True,
+                    )
+                else:
+                    self._data_store.put(entries)
+            except Exception:
+                pass
+            return
+        # No existing contact — create a minimal placeholder.
+        try:
+            self._create_contact(
+                should_respond=True,
+                is_system=True,
+                response_policy=self.USER_MANAGER_RESPONSE_POLICY,
+                timezone="UTC",
+            )
+        except (ValueError, RequestError):
+            pass
+        return
+
     user_info = _resolve_user_details(self)
 
     base_fields: Dict[str, Any] = {
@@ -230,7 +276,7 @@ def provision_user_contact(self, user_log) -> None:
         for fld in self._BUILTIN_FIELDS
         if fld not in {"contact_id", "rolling_summary"}
     }
-    base_fields["respond_to"] = True
+    base_fields["should_respond"] = True
     base_fields["is_system"] = True
     base_fields.update(
         {
@@ -293,22 +339,20 @@ def provision_user_contact(self, user_log) -> None:
             pass
         return
 
-    # Insert the user row. Use try-except to handle race conditions where
-    # another process creates the contact concurrently.
+    # Insert the user row. Race conditions are handled by Orchestra's
+    # field-level uniqueness enforcement on email_address / phone_number.
     try:
         self._create_contact(**{k: v for k, v in base_fields.items() if v is not None})
-    except ValueError as e:
-        if "unique fields" in str(e):
-            # Another process created the contact concurrently – that's fine
-            pass
-        else:
-            raise
     except RequestError as e:
-        # Backend returned 500 due to DB-level race condition – contact exists
-        if e.response is not None and e.response.status_code == 500:
-            pass
-        else:
-            raise
+        if e.response is not None and e.response.status_code in (400, 500):
+            detail = ""
+            try:
+                detail = str(e.response.json().get("detail", ""))
+            except Exception:
+                detail = str(getattr(e.response, "text", ""))
+            if "unique" in detail.lower():
+                return
+        raise
 
 
 def _fetch_org_members() -> List[Dict[str, Any]]:
@@ -324,7 +368,7 @@ def _fetch_org_members() -> List[Dict[str, Any]]:
     from ..session_details import SESSION_DETAILS
     from ..settings import SETTINGS
 
-    base_url = SETTINGS.UNIFY_BASE_URL
+    base_url = SETTINGS.ORCHESTRA_URL
     api_key = SESSION_DETAILS.unify_key
 
     if not base_url or not api_key:
@@ -433,7 +477,7 @@ def provision_org_member_contacts(self) -> None:
                     bio=member.get("bio"),
                     timezone=member.get("timezone") or "UTC",
                     is_system=True,
-                    respond_to=True,
+                    should_respond=True,
                     response_policy="",
                 )
         except Exception:

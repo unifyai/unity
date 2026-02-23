@@ -1,6 +1,0 @@
----
-description: Real LLM for Tests
-globs: ["**/*"]
-alwaysApply: true
----
-We should *never* stub the unify LLM client, this should always be a real LLM using `unify.AsyncUnify`. The input and output is cached for each unique run, and so this do not slow down tests on CI, and the LLM responses become “locked in” for the test when re-running the same test a second + third time etc.

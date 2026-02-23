@@ -8,7 +8,6 @@ from ..common.async_tool_loop import SteerableToolHandle
 from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from .types.message import Message
 from .types.exchange import Exchange
 
@@ -39,7 +38,6 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[ImageRefs | List[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing transcripts** (read‑only) and obtain a live
@@ -95,16 +93,6 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
             supplied the LLM may push a follow‑up question onto
             *_clarification_up_q* and must read the human's answer from
             *_clarification_down_q*.
-        images : optional
-            Optional image references relevant to this transcript query. Provide numeric
-            ``image_id`` values (optionally annotated) to enable vision helpers like
-            ``ask_image`` or ``attach_image_raw`` within the tool loop.
-
-        Visual inputs policy
-        --------------------
-        • When delegating to another tool that declares an ``images`` parameter, forward the relevant images and
-          rewrite/augment their annotations so they align with the delegated question or action (not the original
-          user phrasing). Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
 
         Returns
         -------
@@ -192,6 +180,24 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
         raise NotImplementedError
 
+    def update_message_images(
+        self,
+        message_id: int,
+        images: list[dict],
+    ) -> None:
+        """
+        Attach or replace the images on an already-logged transcript message.
+
+        Parameters
+        ----------
+        message_id : int
+            The transcript message_id to update.
+        images : list[dict]
+            JSON-serialized AnnotatedImageRefs list, e.g.
+            [{"raw_image_ref": {"image_id": N}, "annotation": "..."}].
+        """
+        raise NotImplementedError
+
     def update_exchange_metadata(
         self,
         exchange_id: int,
@@ -207,11 +213,11 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
+    ) -> tuple[int, int]:
         """
         Log the first message of a new exchange and set initial exchange metadata.
 
-        Returns the newly assigned exchange_id.
+        Returns (exchange_id, message_id) for the newly created exchange and message.
         """
         raise NotImplementedError
 

@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 import unify
 from unify.utils.http import RequestError as _UnifyRequestError
 
-
 # Private fields injected by log_utils wrappers
 _PRIVATE_FIELDS: Dict[str, str] = {
     "_user": "str",
@@ -53,20 +52,20 @@ class TableStore:
         Derive aggregation contexts for this user/assistant-scoped context.
 
         Returns two contexts for cross-assistant and cross-user aggregation:
-          - {UserName}/All/{suffix} - all assistants for this user
-          - All/{suffix}            - all users, all assistants
+          - {user_id}/All/{suffix} - all assistants for this user
+          - All/{suffix}           - all users, all assistants
 
-        Example: "JohnDoe/MyAssistant/Contacts" returns:
-          - "JohnDoe/All/Contacts"
+        Example: "42/7/Contacts" returns:
+          - "42/All/Contacts"
           - "All/Contacts"
 
-        Returns empty list if context doesn't have UserName/AssistantName prefix.
+        Returns empty list if context doesn't have user_id/assistant_id prefix.
         """
         parts = self._ctx.split("/")
         if len(parts) < 3:
             return []
 
-        # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
+        # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
         # Scope aggregations to the test root to avoid cross-test contamination.
         if parts[0] == "tests":
             from unity.session_details import DEFAULT_USER_CONTEXT
@@ -90,7 +89,7 @@ class TableStore:
 
         # Production path: User/Assistant/Suffix
         user_ctx = parts[0]
-        suffix = "/".join(parts[2:])  # Everything after UserName/AssistantName
+        suffix = "/".join(parts[2:])  # Everything after user_id/assistant_id
         return [
             f"{user_ctx}/All/{suffix}",
             f"All/{suffix}",

@@ -14,7 +14,6 @@ Usage:
     # Get a manager via typed method (auto-resolves IMPL, returns singleton):
     contact_manager = ManagerRegistry.get_contact_manager()
     task_scheduler = ManagerRegistry.get_task_scheduler()
-    conductor = ManagerRegistry.get_conductor()
 
     # For simulated managers, pass description:
     ManagerRegistry.get_contact_manager(description="test scenario")
@@ -24,9 +23,9 @@ Usage:
 
 Available typed methods:
     - get_actor()
-    - get_conductor()
     - get_contact_manager()
     - get_conversation_manager_handle()
+    - get_data_manager()
     - get_file_manager()
     - get_function_manager()
     - get_guidance_manager()
@@ -43,13 +42,13 @@ from __future__ import annotations
 
 from abc import ABCMeta
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Dict, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type
 
 if TYPE_CHECKING:
     from .actor.base import BaseActor
-    from .conductor.base import BaseConductor
     from .contact_manager.base import BaseContactManager
     from .conversation_manager.base import BaseConversationManagerHandle
+    from .data_manager.base import BaseDataManager
     from .file_manager.managers.base import BaseFileManager
     from .function_manager.base import BaseFunctionManager
     from .guidance_manager.base import BaseGuidanceManager
@@ -60,6 +59,7 @@ if TYPE_CHECKING:
     from .task_scheduler.base import BaseTaskScheduler
     from .transcript_manager.base import BaseTranscriptManager
     from .web_searcher.base import BaseWebSearcher
+    from .function_manager.primitives.scope import PrimitiveScope
 
 __all__ = [
     "ManagerRegistry",
@@ -268,7 +268,17 @@ class ManagerRegistry:
 
     @classmethod
     def _resolve_impl(cls, manager_key: str) -> str:
-        """Resolve the IMPL setting for a manager key."""
+        """Resolve the IMPL setting for a manager key.
+
+        Checks environment variables at runtime first to support test-time
+        overrides. SETTINGS is frozen at import time, so test conftests that
+        set os.environ after import won't affect SETTINGS values.
+
+        The env var name is derived from the settings object's model_config
+        env_prefix (e.g., UNITY_CONTACT_ -> UNITY_CONTACT_IMPL).
+        """
+        import os
+
         settings_accessor = cls._settings_map.get(manager_key)
         if settings_accessor is None:
             raise ValueError(
@@ -276,6 +286,16 @@ class ManagerRegistry:
                 f"Available: {list(cls._settings_map.keys())}",
             )
         settings = settings_accessor()
+
+        # Derive env var name from the settings model_config env_prefix
+        env_prefix = settings.model_config.get("env_prefix", "")
+        if env_prefix:
+            env_var = f"{env_prefix}IMPL"
+            env_value = os.environ.get(env_var, "")
+            if env_value:
+                return env_value
+
+        # Fall back to SETTINGS value (frozen at import time)
         return getattr(settings, "IMPL", "real")
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -332,24 +352,6 @@ class ManagerRegistry:
         )
 
     @classmethod
-    def get_conductor(
-        cls,
-        *,
-        description: str | None = None,
-        simulation_guidance: str | None = None,
-        _force_new: bool = False,
-        **kwargs: Any,
-    ) -> "BaseConductor":
-        """Get the Conductor singleton (respects IMPL settings)."""
-        return cls.get(
-            "conductor",
-            description=description,
-            simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
-            **kwargs,
-        )
-
-    @classmethod
     def get_contact_manager(
         cls,
         *,
@@ -386,6 +388,25 @@ class ManagerRegistry:
         )
 
     @classmethod
+    def get_data_manager(
+        cls,
+        *,
+        _force_new: bool = False,
+        **kwargs: Any,
+    ) -> "BaseDataManager":
+        """Get the DataManager singleton (respects IMPL settings).
+
+        DataManager provides canonical data operations (filter, search, reduce,
+        join, vectorize, plot) that work on any Unify context. It owns the
+        Data/* namespace but can operate on any context including Files/*.
+        """
+        return cls.get(
+            "data",
+            _force_new=_force_new,
+            **kwargs,
+        )
+
+    @classmethod
     def get_file_manager(
         cls,
         *,
@@ -407,17 +428,35 @@ class ManagerRegistry:
     def get_function_manager(
         cls,
         *,
+        primitive_scope: Optional[PrimitiveScope] = None,
         description: str | None = None,
         simulation_guidance: str | None = None,
         _force_new: bool = False,
         **kwargs: Any,
     ) -> "BaseFunctionManager":
-        """Get the FunctionManager singleton (respects IMPL settings)."""
+        """Get the FunctionManager for a given primitive scope.
+
+        Unlike other managers, FunctionManager is NOT a singleton because each
+        scope requires its own instance with scoped primitive sync/search.
+
+        Parameters
+        ----------
+        primitive_scope : PrimitiveScope | None
+            Defines which managers' primitives are indexed and searchable.
+            If None, defaults to all_managers().
+        """
+        from unity.function_manager.primitives import PrimitiveScope
+
+        if primitive_scope is None:
+            primitive_scope = PrimitiveScope.all_managers()
+
+        # FunctionManager is always created fresh per scope (not singleton)
         return cls.get(
             "functions",
             description=description,
             simulation_guidance=simulation_guidance,
-            _force_new=_force_new,
+            _force_new=True,  # Always create new instance per scope
+            primitive_scope=primitive_scope,
             **kwargs,
         )
 
@@ -614,21 +653,19 @@ def _populate_registry() -> None:
     ManagerRegistry.register_settings("guidance", lambda: SETTINGS.guidance)
     ManagerRegistry.register_settings("secrets", lambda: SETTINGS.secret)
     ManagerRegistry.register_settings("web_search", lambda: SETTINGS.web)
+    ManagerRegistry.register_settings("data", lambda: SETTINGS.data)
     ManagerRegistry.register_settings("files", lambda: SETTINGS.file)
     ManagerRegistry.register_settings("functions", lambda: SETTINGS.function)
     ManagerRegistry.register_settings("images", lambda: SETTINGS.image)
     ManagerRegistry.register_settings("memory", lambda: SETTINGS.memory)
-    ManagerRegistry.register_settings("conductor", lambda: SETTINGS.conductor)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Actor implementations
     # ─────────────────────────────────────────────────────────────────────────
-    from .actor.hierarchical_actor import HierarchicalActor
     from .actor.single_function_actor import SingleFunctionActor
     from .actor.code_act_actor import CodeActActor
     from .actor.simulated import SimulatedActor
 
-    ManagerRegistry.register_class("actor", "hierarchical", HierarchicalActor)
     ManagerRegistry.register_class("actor", "single_function", SingleFunctionActor)
     ManagerRegistry.register_class("actor", "code_act", CodeActActor)
     ManagerRegistry.register_class("actor", "simulated", SimulatedActor)
@@ -714,6 +751,15 @@ def _populate_registry() -> None:
     ManagerRegistry.register_class("web_search", "simulated", SimulatedWebSearcher)
 
     # ─────────────────────────────────────────────────────────────────────────
+    # DataManager implementations
+    # ─────────────────────────────────────────────────────────────────────────
+    from .data_manager.data_manager import DataManager
+    from .data_manager.simulated import SimulatedDataManager
+
+    ManagerRegistry.register_class("data", "real", DataManager)
+    ManagerRegistry.register_class("data", "simulated", SimulatedDataManager)
+
+    # ─────────────────────────────────────────────────────────────────────────
     # FileManager implementations
     # ─────────────────────────────────────────────────────────────────────────
     from .file_manager.managers.file_manager import FileManager
@@ -731,16 +777,6 @@ def _populate_registry() -> None:
     ManagerRegistry.register_class("memory", "real", MemoryManager)
     ManagerRegistry.register_class("memory", "simulated", SimulatedMemoryManager)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Conductor implementations
-    # ─────────────────────────────────────────────────────────────────────────
-    from .conductor.conductor import Conductor
-    from .conductor.simulated import SimulatedConductor
-
-    ManagerRegistry.register_class("conductor", "real", Conductor)
-    ManagerRegistry.register_class("conductor", "simulated", SimulatedConductor)
-
-    # ─────────────────────────────────────────────────────────────────────────
     # FunctionManager implementations
     # ─────────────────────────────────────────────────────────────────────────
     from .function_manager.function_manager import FunctionManager

@@ -2,13 +2,38 @@
 Utility functions for embedding-based vector search through the logs.
 """
 
-import fcntl
 import hashlib
 import os
+import sys
 import tempfile
 import unify
 import threading
 from contextlib import contextmanager
+
+# Cross-platform file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(file_obj):
+        """Acquire an exclusive lock on the file (Windows)."""
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Windows)."""
+        file_obj.seek(0)
+        msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file(file_obj):
+        """Acquire an exclusive lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock_file(file_obj):
+        """Release the lock on the file (Unix)."""
+        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
+
 
 # Model to use for text embeddings
 EMBED_MODEL = "text-embedding-3-small"
@@ -67,9 +92,9 @@ def _cross_process_column_lock(context: str, key: str, timeout: float = 600.0):
         start = time.monotonic()
         while True:
             try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_file(lock_file)
                 break  # Successfully acquired lock
-            except BlockingIOError:
+            except (BlockingIOError, OSError):
                 elapsed = time.monotonic() - start
                 if elapsed >= timeout:
                     lock_file.close()
@@ -80,7 +105,7 @@ def _cross_process_column_lock(context: str, key: str, timeout: float = 600.0):
                 time.sleep(0.1)  # Brief sleep before retry
         yield
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(lock_file)
         lock_file.close()
 
 
@@ -195,6 +220,7 @@ def ensure_vector_column(
     source_column: str,
     derived_expr: str | None = None,
     *,
+    async_embeddings: bool = False,
     from_ids: list[int] | None = None,
 ) -> None:
     """
@@ -207,6 +233,7 @@ def ensure_vector_column(
         source_column (str): The name of the source column to embed. (eg: "content_plus_desc")
         derived_expr Optional(str): An optional expression to dynamically derive the source column
             (in case it's not already present) (eg: "str({name}) + ' || ' + str({description})")
+        async_embeddings (bool): Whether to generate embeddings asynchronously.
     """
     # If a derived expression was provided for the source, ensure the source column exists.
     if derived_expr is not None:
@@ -226,7 +253,7 @@ def ensure_vector_column(
         return
 
     # Define the embedding equation with explicit lg scoping and ensure the embedding column.
-    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}')"
+    embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}', async_embeddings={async_embeddings})"
     ensure_derived_column(
         context=context,
         key=embed_column,

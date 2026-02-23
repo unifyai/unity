@@ -1,190 +1,238 @@
+"""State manager environment for CodeActActor.
+
+Exposes state manager primitives (contacts, files, tasks, etc.) for use in
+generated plan code via the `primitives` namespace.
+"""
+
 from __future__ import annotations
 
-from typing import Any, Dict
+import asyncio
+from typing import Any, Dict, Optional, Set
 
-from unity.actor.environments.base import BaseEnvironment, ToolMetadata
-from unity.function_manager.primitives import PRIMITIVE_SOURCES, Primitives
+from unity.actor.environments.base import (
+    BaseEnvironment,
+    ToolMetadata,
+    _ClarificationQueueInjector,
+    build_filtered_method_docs,
+)
+from unity.function_manager.primitives import Primitives, PrimitiveScope, get_registry
 
 
 class StateManagerEnvironment(BaseEnvironment):
-    """State manager environment backed by `unity.function_manager.primitives.Primitives`.
+    """State manager environment backed by scoped Primitives.
 
     Exposes state manager methods like `primitives.contacts.ask(...)` for use inside
     generated plan code.
+
+    Parameters
+    ----------
+    primitives : Primitives | None
+        The Primitives instance to wrap. If None, a default instance exposing
+        all managers is created. The instance is already scoped at construction
+        time via ``Primitives(primitive_scope=...)``.
+    allowed_methods : set[str] | None
+        Optional set of fully-qualified method names to expose (e.g.,
+        ``{"primitives.contacts.ask", "primitives.tasks.update"}``). When
+        set, only these methods appear in ``get_tools()`` and
+        ``get_prompt_context()``. When ``None`` (default), all methods
+        from scoped managers are exposed.
+    clarification_up_q : asyncio.Queue | None
+        Queue for sending clarification requests to the user.
+    clarification_down_q : asyncio.Queue | None
+        Queue for receiving clarification responses from the user.
     """
 
-    def __init__(self, primitives: Primitives):
+    def __init__(
+        self,
+        primitives: Optional[Primitives] = None,
+        *,
+        allowed_methods: Optional[Set[str]] = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ):
+        primitives = primitives or Primitives()
+
+        super().__init__(
+            instance=primitives,
+            namespace="primitives",
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
         self._primitives = primitives
+        self._primitive_scope = primitives.primitive_scope
+        self._allowed_methods = frozenset(allowed_methods) if allowed_methods else None
+        self._registry = get_registry()
 
     @property
     def namespace(self) -> str:
         return "primitives"
 
+    @property
+    def primitive_scope(self) -> PrimitiveScope:
+        """The scope controlling which managers are exposed."""
+        return self._primitive_scope
+
     def get_instance(self) -> Primitives:
+        """Return the primitives instance."""
         return self._primitives
 
-    def get_prompt_context(self) -> str:
-        """Return Markdown-formatted rules/examples for using state managers."""
-        return ""
+    def get_sandbox_instance(self) -> Any:
+        """Return the instance for sandbox injection.
+
+        The Primitives instance is already scoped, so no additional filtering needed.
+        Optionally wraps for clarification queue injection.
+        """
+        instance: Any = self._primitives
+
+        # Optionally wrap for clarification queue injection.
+        if getattr(self, "_clarification_up_q", None) is None:
+            return instance
+        return _ClarificationQueueInjector(
+            target=instance,
+            clarification_up_q=self._clarification_up_q,
+            clarification_down_q=self._clarification_down_q,
+        )
 
     def get_tools(self) -> Dict[str, ToolMetadata]:
-        # The public surface for state managers is driven by the shared primitives registry
-        # (`PRIMITIVE_SOURCES`) to avoid hardcoding manager/method lists in multiple places.
-        #
+        """Get tool metadata for exposed managers."""
         # IMPORTANT: We are intentionally conservative with purity:
         # - Only clearly read-only methods are treated as pure (cacheable).
         # - Unknown methods default to impure to avoid incorrectly caching side effects.
         pure_methods = {
             "ask",
-            "ask_about_file",  # FileManager read-only
+            "ask_about_file",
             "get",
             "list",
             "search",
             "exists",
             "parse",
             "preview",
-            "reduce",  # FileManager read-only
-            "filter_files",  # FileManager read-only
-            "search_files",  # FileManager read-only
-            "visualize",  # FileManager read-only (generates plots, no mutation)
+            "reduce",
+            "filter_files",
+            "search_files",
+            "visualize",
+            "describe",
+            "list_columns",
         }
 
-        def _infer_primitives_attr_name(class_path: str) -> str | None:
-            class_name = class_path.rsplit(".", 1)[-1]
-            # Strip common suffixes used by managers.
-            for suffix in ("Manager", "Scheduler", "Searcher"):
-                if class_name.endswith(suffix):
-                    class_name = class_name[: -len(suffix)]
-                    break
-
-            base = class_name[:1].lower() + class_name[1:]
-
-            # Prefer plural if present on Primitives (common convention: contacts, tasks, secrets).
-            plural = f"{base}s"
-            if hasattr(Primitives, plural):
-                return plural
-            if hasattr(Primitives, base):
-                return base
-
-            # Fallback for irregular cases.
-            special = {
-                "Task": "tasks",
-                "Tasks": "tasks",
-                "Contact": "contacts",
-                "Transcript": "transcripts",
-                "Secret": "secrets",
-                "Web": "web",
-                "File": "files",
-            }
-            for k, v in special.items():
-                if class_name == k and hasattr(Primitives, v):
-                    return v
-            return None
-
         tools: Dict[str, ToolMetadata] = {}
-        for class_path, method_names in PRIMITIVE_SOURCES:
-            # Skip ComputerPrimitives; those belong to the `computer_primitives` environment.
-            if class_path.endswith(".ComputerPrimitives"):
-                continue
 
-            manager_attr = _infer_primitives_attr_name(class_path)
-            if not manager_attr:
-                # If the runtime `Primitives` interface doesn't expose this manager, skip it.
-                continue
-
+        for alias in sorted(self._primitive_scope.scoped_managers):
+            method_names = self._registry.primitive_methods(manager_alias=alias)
             for method_name in method_names:
-                fq_name = f"{self.namespace}.{manager_attr}.{method_name}"
+                fq_name = f"{self.namespace}.{alias}.{method_name}"
+                if (
+                    self._allowed_methods is not None
+                    and fq_name not in self._allowed_methods
+                ):
+                    continue
                 tools[fq_name] = ToolMetadata(
                     name=fq_name,
                     is_impure=(method_name not in pure_methods),
                     is_steerable=True,
                     docstring=None,
                     signature=None,
+                    function_id=self._registry.get_function_id(alias, method_name),
+                    function_context="primitive",
                 )
 
         return tools
 
     def get_prompt_context(self) -> str:
-        """Markdown-formatted guidance for using state-manager primitives in plans."""
+        """Generate self-contained prompt context: rules, method docs, and examples."""
+        parts: list[str] = []
 
-        return (
-            "### State manager primitives (`primitives.*`)\n"
-            "\n"
-            "Each manager owns a specific domain of the assistant's durable state. Choose the right manager for your task:\n"
-            "\n"
-            "**Facts/Policies & Domain Knowledge** → `primitives.knowledge`\n"
-            "- **Domain**: Organizational facts, policies, procedures, reference material, documentation, stored information\n"
-            "- `.ask(...)`: Query stored knowledge - company policies (return/refund/warranty/HR), procedures, facts, historical records\n"
-            "- `.update(...)`: Add/change facts, ingest structured data, update policies\n"
-            "- `.refactor(...)`: Restructure knowledge schemas (advanced)\n"
-            '- **Use when**: Questions about company policies, operational procedures, reference docs, "what is our X policy?", "summarize Y procedure"\n'
-            '- **Examples**: "What\'s our return policy?", "Summarize onboarding procedure", "Office hours?", "Warranty terms for X?"\n'
-            "\n"
-            "**People & Relationships** → `primitives.contacts`\n"
-            "- **Domain**: People, organizations, contact records (names, emails, phones, roles, locations)\n"
-            "- `.ask(...)`: Find contacts by name/email/attribute, query relationships, get contact details\n"
-            "- `.update(...)`: Create, edit, delete, or merge contact records\n"
-            '- **Use when**: Questions about specific people, contact info, "who is X?", "find contact in Y location"\n'
-            '- **Examples**: "Who is our contact at Acme Corp?", "Find Alice\'s email", "Contacts in Berlin?"\n'
-            "\n"
-            "**Durable Work & Tracking** → `primitives.tasks`\n"
-            "- **Domain**: Task management, work queues, assignments, deadlines, priorities\n"
-            "- `.ask(...)`: Query task status, what's due/scheduled, assignments, priorities\n"
-            "- `.update(...)`: Create, edit, delete, or reorder tasks (NOT for starting work)\n"
-            "- `.execute(...)`: Start durable, tracked execution (use this to run tasks, not `.update(...)`)\n"
-            '- **Use when**: Questions about tasks/work items, "what\'s due?", "tasks assigned to X?", "high-priority items?"\n'
-            '- **Examples**: "What tasks are due today?", "Show Alice\'s open tasks", "List high-priority items"\n'
-            "\n"
-            "**Conversation History** → `primitives.transcripts`\n"
-            "- **Domain**: Past messages, conversation history, communication records (chat/SMS/email)\n"
-            "- `.ask(...)`: Search messages, find what someone said, retrieve conversation context\n"
-            '- **Use when**: Questions about past communications, "what did X say?", "last message about Y?", "conversation with Z?"\n'
-            '- **Examples**: "What did Bob say yesterday?", "Last SMS with Alice?", "Messages mentioning budget?"\n'
-            "\n"
-            "**Time-Sensitive & Web** → `primitives.web`\n"
-            '- **Domain**: Current events, real-time information, external research, "today/latest/now" queries\n'
-            "- `.ask(...)`: Web search for current information, news, weather, public data\n"
-            "- **Use when**: Questions requiring up-to-date external information, current events, weather, news\n"
-            '- **Examples**: "Weather in Berlin today?", "Latest AI news?", "Current stock price?", "Recent announcements?"\n'
-            "\n"
-            "**Function & Task Guidance** → `primitives.guidance`\n"
-            "- **Domain**: Execution instructions, runbooks, how-to guides for functions/tasks\n"
-            "- `.ask(...)`: Query execution instructions, runbooks, best practices for specific operations\n"
-            "- `.update(...)`: Create, edit, or delete guidance entries linked to functions\n"
-            "- **Use when**: Questions about HOW to execute something, operational runbooks, incident response procedures\n"
-            '- **Examples**: "How do I handle DB failover?", "Incident response for API outage?"\n'
-            "\n"
-            "**Files & Documents** → `primitives.files`\n"
-            "- **Domain**: Received/downloaded files, document parsing, file metadata\n"
-            "- `.ask(...)`: Query about specific files, parse document contents, extract information from files\n"
-            "- `.organize(...)`: File management operations\n"
-            "- **Use when**: Questions about specific files/documents the user shared or system has\n"
-            '- **Examples**: "Parse the attached PDF", "What\'s in document X?", "Find files about Y"\n'
-            "\n"
-            "**Credentials & Secrets** → `primitives.secrets`\n"
-            "- **Domain**: API keys, passwords, tokens, credentials\n"
-            "- `.ask(...)`: Get metadata/placeholders only (never returns actual secret values)\n"
-            "- `.update(...)`: Create, edit, or delete secrets\n"
-            "- **Use when**: Managing credentials, API keys, secrets (rarely used in plans)\n"
-            "\n"
-            "**Manager Selection Priorities**:\n"
-            "1. **knowledge** takes priority for organizational policies, procedures, company facts, internal documentation\n"
-            "2. **transcripts** for historical communications (what was said/written)\n"
-            "3. **contacts** for people/relationship information\n"
-            "4. **tasks** for work items, deadlines, assignments\n"
-            "5. **web** for current external information (weather, news, real-time data)\n"
-            "6. **guidance** for execution instructions and runbooks\n"
-            "7. **files** when dealing with specific documents\n"
-            "\n"
-            "**General Rules**:\n"
-            "- All manager calls return a steerable handle; await `.result()` to get the final answer\n"
-            "- If a manager asks for clarification, wait for the user response and answer via the handle's API\n"
-            "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed\n"
-            "- When in doubt between managers, prefer the most specific domain match\n"
-        )
+        parts.append("""\
+### State Manager Rules
+
+- **Do not answer from scratch when `primitives` is available**:
+  - If the user asks an information question, prefer calling the relevant \
+state manager via `await primitives.<manager>.ask(...)` instead of answering \
+purely from memory.
+  - This applies even when you think you "already know" the answer \
+— use the manager as evidence/ground truth.
+
+- **Read vs write**:
+  - `await primitives.<manager>.ask(...)` is typically **pure** (read-only).
+  - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` \
+are **impure** (they mutate state or start work).
+
+- **Don't ask before updating**: when the task involves storing, saving, or \
+modifying records, go straight to the mutation method (`.update(...)`, \
+`.execute(...)`, `.refactor(...)`) — do NOT first call `.ask(...)` on the same \
+manager to check existing state. Mutation methods already inspect existing \
+records before writing, so a preemptive `.ask(...)` is duplicative. Bundle the \
+full intent (including any "check if exists" logic) into the mutation call's \
+natural-language `text` argument.
+
+- **Prefer return values as evidence**: treat return values from state managers \
+as the primary ground truth.
+
+- **Steerable handles**: Manager calls return `SteerableToolHandle` objects for \
+in-flight control.
+  You can either **await the result** for immediate use, or **return the handle \
+as the last expression** of `execute_code` to hand steering control back to the \
+outer loop (see `execute_code` docstring).
+  Prefer returning the handle when the operation may be long-running or likely \
+to need user steering (progress updates, corrections, cancellation). Prefer \
+awaiting when you need the result immediately for additional logic in the same \
+code block. If intent is neutral or uncertain, default to returning the handle \
+and only await when same-block composition truly requires it.
+
+- **Progress notifications around primitives calls**:
+  - Treat `primitives.*` calls as potentially long-running by default.
+  - Emit `notify({...})` before each primitives call so the outer loop can surface progress.
+  - If you await a primitives call and continue with additional steps, emit another \
+`notify({...})` with concrete completion details.
+  - If you return a handle directly, send one kickoff notification before returning \
+the handle.
+  - Keep notifications user-facing and high-level; avoid internal diagnostics.
+
+  **SteerableToolHandle API:**
+
+  | Method | Returns | Purpose |
+  |--------|---------|---------|
+  | `await handle.result()` | `str` | Wait for the final result |
+  | `await handle.ask(question)` | `SteerableToolHandle` | Query status without modifying execution |
+  | `await handle.interject(message)` | `None` | Inject corrections or context mid-flight |
+  | `await handle.pause()` | `str | None` | Pause at the next safe point |
+  | `await handle.resume()` | `str | None` | Resume a paused operation |
+  | `await handle.stop(reason=None)` | `None` | Terminate immediately |
+  | `handle.done()` | `bool` | Check if execution has completed |
+
+  ```python
+  handle = await primitives.tasks.execute(task_id=123)
+  result = await handle.result()  # wait for completion
+
+  # Mid-flight steering (while handle is running):
+  await handle.interject("Also include the Q2 numbers")
+  await handle.pause()   # pause if needed
+  await handle.resume()  # continue later
+  await handle.stop()    # cancel if no longer needed
+  ```""")
+
+        if self._allowed_methods is not None:
+            # Per-method filtering: build method docs only for allowed methods.
+            parts.append(self._build_filtered_method_docs())
+        else:
+            # Full registry-generated context (all methods for scoped managers).
+            registry_ctx = self._registry.prompt_context(self._primitive_scope)
+            if registry_ctx:
+                parts.append(registry_ctx)
+
+            examples = self._registry.prompt_examples(self._primitive_scope)
+            if examples:
+                parts.append(f"### Implementation Examples\n\n{examples}")
+
+        return "\n\n".join(p for p in parts if p and p.strip())
+
+    def _build_filtered_method_docs(self) -> str:
+        """Build method-level documentation for only the allowed methods."""
+        assert self._allowed_methods is not None
+        return build_filtered_method_docs(self._allowed_methods, self.namespace)
 
     async def capture_state(self) -> Dict[str, Any]:
-        """State manager \"state\" is primarily evidenced via return values."""
+        """State manager state is primarily evidenced via return values."""
         return {
             "type": "return_value",
             "note": "State manager evidence is captured via function return values.",

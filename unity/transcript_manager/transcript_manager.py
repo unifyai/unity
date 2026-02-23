@@ -54,7 +54,6 @@ from .images import (
     attach_image_to_context as _attach_image_to_context_impl,
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.context_registry import ContextRegistry, TableContext
 from ..common.model_to_fields import model_to_fields
 from ..common.metrics_utils import reduce_logs
@@ -195,7 +194,12 @@ class TranscriptManager(BaseTranscriptManager):
     # English-Text Question
     @functools.wraps(BaseTranscriptManager.ask, updated=())
     @manager_tool
-    @log_manager_call("TranscriptManager", "ask", payload_key="question")
+    @log_manager_call(
+        "TranscriptManager",
+        "ask",
+        payload_key="question",
+        display_label="Reviewing Conversations",
+    )
     async def ask(
         self,
         text: str,
@@ -212,7 +216,6 @@ class TranscriptManager(BaseTranscriptManager):
             None,
         ] = "default",
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self.get_tools("ask"))
@@ -242,26 +245,14 @@ class TranscriptManager(BaseTranscriptManager):
                 transcript_columns=_storage_list_columns(self),
                 contact_columns=self._contact_manager._list_columns(),
                 include_activity=include_activity,
-            ),
+            ).to_list(),
         )
 
-        # Decide effective tool policy (default requires search_messages first),
-        # with special handling when images are present to encourage image-aware tools.
-        if images:
-            effective_tool_policy = self._ask_tool_policy_with_images
-            use_semantic_cache = None
+        # Decide effective tool policy (default requires search_messages first).
+        if tool_policy == "default":
+            effective_tool_policy = require_first("search_messages")
         else:
-            if tool_policy == "default":
-                effective_tool_policy = require_first("search_messages")
-            else:
-                effective_tool_policy = tool_policy
-            use_semantic_cache = "both" if SETTINGS.UNITY_SEMANTIC_CACHE else None
-            # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-            effective_tool_policy = (
-                None
-                if use_semantic_cache in ("read", "both")
-                else effective_tool_policy
-            )
+            effective_tool_policy = tool_policy
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_loop(
@@ -272,12 +263,9 @@ class TranscriptManager(BaseTranscriptManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=effective_tool_policy,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            images=images,
             response_format=response_format,
         )
 
@@ -852,6 +840,25 @@ class TranscriptManager(BaseTranscriptManager):
             },
         }
 
+    def update_message_images(
+        self,
+        message_id: int,
+        images: list[dict],
+    ) -> None:
+        """Attach or replace images on an already-logged transcript message."""
+        log_ids = unify.get_logs(
+            context=self._transcripts_ctx,
+            filter=f"message_id == {message_id}",
+            return_ids_only=True,
+        )
+        if log_ids:
+            unify.update_logs(
+                logs=log_ids,
+                context=self._transcripts_ctx,
+                entries={"images": images},
+                overwrite=True,
+            )
+
     # ──────────────────────────────────────────────────────────────────────
     #  Image tools
     # ──────────────────────────────────────────────────────────────────────
@@ -1107,29 +1114,10 @@ class TranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
-        """Log the first message of a brand‑new exchange and set initial metadata.
+    ) -> tuple[int, int]:
+        """Log the first message of a brand-new exchange and set initial metadata.
 
-        Behaviour
-        ---------
-        - Requires that the provided message does NOT specify ``exchange_id``.
-          This method will auto‑assign a new exchange id by delegating to
-          :pyfunc:`log_messages` in synchronous mode.
-        - After successful creation, the corresponding ``Exchanges`` row is
-          updated with the given ``exchange_initial_metadata`` (if provided).
-
-        Parameters
-        ----------
-        message : dict | Message
-            The first message to log for the new exchange. Must not include
-            ``exchange_id``.
-        exchange_initial_metadata : dict | None
-            Optional initial metadata to persist on the created ``Exchanges`` row.
-
-        Returns
-        -------
-        int
-            The newly assigned ``exchange_id`` for this exchange.
+        Returns (exchange_id, message_id) for the newly created exchange and message.
         """
 
         # 1) Validate no exchange_id is provided by the caller
@@ -1220,7 +1208,8 @@ class TranscriptManager(BaseTranscriptManager):
             add_to_all_context=self.include_in_multi_assistant_table,
         )
 
-        return exid
+        tm_message_id = int(log.entries.get("message_id", -1))
+        return exid, tm_message_id
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
@@ -1238,24 +1227,3 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> tuple[str, Dict[str, Any]]:
         # Deprecated: use common.llm_policies.require_first("search_messages") instead.
         return require_first("search_messages")(step_index, current_tools)
-
-    @staticmethod
-    def _ask_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_messages/ask_image/attach_image_raw (if enabled); auto thereafter.
-
-        Encourages the model to either begin with a semantic query over transcripts
-        or explicitly use the image helpers when visual context is supplied.
-        """
-        from unity.settings import SETTINGS
-
-        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_messages", "ask_image", "attach_image_raw"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
-        return ("auto", current_tools)

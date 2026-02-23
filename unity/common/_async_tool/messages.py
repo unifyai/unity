@@ -7,10 +7,11 @@ import json
 import unillm
 from typing import Callable, Optional, Any
 from .utils import maybe_await
-from ...constants import LOGGER
+from ...logger import LOGGER
+from ...common.hierarchical_logger import DEFAULT_ICON
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
-from .images import append_images_with_source
+from ..context_dump import make_messages_safe_for_context_dump
 
 
 @contextmanager
@@ -95,12 +96,10 @@ def transform_tool_calls_to_context(
 ) -> list[dict]:
     """Transform assistant tool_calls into a system context message.
 
-    This unified function handles two scenarios:
-    1. Seeded transcripts for Claude reasoning models that require
-       provider-specific metadata (thinking blocks) which we lack when
-       replaying manually constructed tool calls.
-    2. Claude extended thinking re-enablement after forced-tool turns where
-       thinking was disabled (incompatible with tool_choice="required").
+    This function handles scenarios where assistant messages with tool_calls
+    need to be transformed into context messages for provider compatibility
+    (e.g., when replaying manually constructed tool calls that lack required
+    provider-specific metadata).
 
     Parameters
     ----------
@@ -194,9 +193,9 @@ def transform_tool_calls_to_context(
 
         elif role == "assistant":
             if predicate(m):
-                # Insert context AT THIS POSITION (where the transformed turn was)
-                # This maintains chronological order so Claude sees preserved turns
-                # before the synthetic summary of non-thinking turns.
+                # Insert context AT THIS POSITION (where the transformed turn was).
+                # This maintains chronological order so the model sees preserved
+                # turns before the synthetic summary of transformed turns.
                 if not context_inserted and tool_call_descriptions:
                     context_msg = {
                         "role": "system",
@@ -284,7 +283,7 @@ async def generate_with_preprocess(
         patched = preprocess_msgs(msgs_copy) or msgs_copy
     except Exception as exc:  # resilience – don't fail the loop
         LOGGER.error(
-            f"preprocess_msgs raised {exc!r}; using original messages.",
+            f"{DEFAULT_ICON} preprocess_msgs raised {exc!r}; using original messages.",
         )
         patched = msgs_copy
 
@@ -296,8 +295,8 @@ async def generate_with_preprocess(
     # Fix: Ensure the original system message is always at the front of
     # patched messages. The Unify client's generate() checks if ANY system
     # message exists in messages[], and if so, doesn't prepend system_message.
-    # This means if preprocessing adds a system message (like Claude's
-    # thinking-block context), the original system prompt gets dropped.
+    # This means if preprocessing adds a system message (e.g., for provider
+    # compatibility), the original system prompt gets dropped.
     #
     # We explicitly prepend the original system_message to patched messages
     # if it's not already there, ensuring it's always sent to the LLM.
@@ -379,13 +378,15 @@ def chat_context_repr(
     Strategy – keep the original list untouched and attach the new
     messages as ``children`` of the *last* element.
     """
+    safe_parent_ctx = make_messages_safe_for_context_dump(parent_ctx)
+    safe_current_msgs = make_messages_safe_for_context_dump(current_msgs)
     ctx_block = [
-        {"role": m.get("role"), "content": m.get("content")} for m in current_msgs
+        {"role": m.get("role"), "content": m.get("content")} for m in safe_current_msgs
     ]
-    if not parent_ctx:
+    if not safe_parent_ctx:
         return ctx_block
 
-    combined = copy.deepcopy(parent_ctx)
+    combined = copy.deepcopy(safe_parent_ctx)
     combined[-1].setdefault("children", []).extend(ctx_block)
     return combined
 
@@ -437,6 +438,46 @@ def _normalise_kwargs_for_bound_method(bound_method, incoming_kw: dict) -> dict:
         # 4) Filter unknown keys unless **kwargs is accepted
         if not has_varkw:
             kw = {k: v for k, v in kw.items() if k in params}
+
+        # 5) Coerce values to match type annotations (best-effort).
+        #    LLMs sometimes pass all args as strings even when the signature
+        #    expects int, float, bool, or dict.  Annotations may be actual
+        #    types OR strings (when `from __future__ import annotations` is
+        #    in effect), so we check both forms.
+        import json as _json
+
+        for param_name, param in params.items():
+            if param_name not in kw or param_name == "self":
+                continue
+            annotation = param.annotation
+            if annotation is _inspect.Parameter.empty:
+                continue
+            val = kw[param_name]
+            try:
+                ann_str = annotation if isinstance(annotation, str) else ""
+                origin = getattr(annotation, "__origin__", None)
+
+                is_int = annotation is int or ann_str == "int"
+                is_float = annotation is float or ann_str == "float"
+                is_bool = annotation is bool or ann_str == "bool"
+                is_dict = (
+                    annotation is dict
+                    or ann_str == "dict"
+                    or ann_str.startswith("Dict[")
+                    or (origin is not None and origin is dict)
+                )
+
+                if is_int and isinstance(val, str):
+                    kw[param_name] = int(val)
+                elif is_float and isinstance(val, str):
+                    kw[param_name] = float(val)
+                elif is_bool and isinstance(val, str):
+                    kw[param_name] = val.lower() in ("true", "1", "yes")
+                elif is_dict and isinstance(val, str):
+                    kw[param_name] = _json.loads(val)
+            except (ValueError, _json.JSONDecodeError):
+                pass
+
         return kw
     except Exception:
         # Best-effort; return original
@@ -482,7 +523,7 @@ async def forward_handle_call(
         for k in fallback_positional_keys:
             if kwargs and k in kwargs:
                 try:
-                    # Preserve additional kwargs (e.g., images) alongside the positional message
+                    # Preserve additional kwargs alongside the positional message
                     rest_kwargs = (
                         dict(normalised) if isinstance(normalised, dict) else {}
                     )
@@ -603,16 +644,22 @@ async def insert_tool_message_after_assistant(
     tool_msg,
     client,
     msg_dispatcher,
+    *,
+    skip_event_bus: bool = False,
 ) -> None:
     """
     Append *tool_msg* and move it directly after *parent_msg*, while
     updating the per-assistant `results_count` bookkeeping.
+
+    If *skip_event_bus* is True, the message is appended to the client
+    transcript but NOT published to the EventBus. This is used for
+    placeholder messages that will be updated in-place later.
     """
     meta = assistant_meta.setdefault(
         id(parent_msg),
         {"results_count": 0},
     )
-    await msg_dispatcher.append_msgs([tool_msg])
+    await msg_dispatcher.append_msgs([tool_msg], skip_event_bus=skip_event_bus)
     insert_pos = client.messages.index(parent_msg) + 1 + meta["results_count"]
     client.messages.insert(insert_pos, client.messages.pop())
     meta["results_count"] += 1
@@ -689,6 +736,7 @@ async def ensure_placeholders_for_pending(
     assistant_meta,
     client,
     msg_dispatcher,
+    time_ctx=None,
 ) -> list[str]:
     created: list[str] = []
     # Sort by call_idx to ensure deterministic placeholder ordering matching
@@ -724,10 +772,15 @@ async def ensure_placeholders_for_pending(
         if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
+        ph_content: dict = {"_placeholder": "pending"}
+        if time_ctx is not None:
+            with suppress(Exception):
+                ph_content["meta:started"] = time_ctx.offset_at(_inf.scheduled_time)
+
         placeholder = create_tool_call_message(
             name=_inf.name,
             call_id=_inf.call_id,
-            content=json.dumps({"_placeholder": "pending"}, indent=4),
+            content=json.dumps(ph_content, indent=4),
         )
         await insert_tool_message_after_assistant(
             assistant_meta,
@@ -735,6 +788,7 @@ async def ensure_placeholders_for_pending(
             placeholder,
             client,
             msg_dispatcher,
+            skip_event_bus=True,  # Don't publish placeholders; publish when final
         )
         _inf.tool_reply_msg = placeholder
         created.append(_inf.call_id)
@@ -749,7 +803,7 @@ async def schedule_missing_for_message(
     only_ids: set[str],
     *,
     tools_data,
-    parent_chat_context,
+    context_state,
     propagate_chat_context,
     assistant_meta,
     client,
@@ -784,18 +838,6 @@ async def schedule_missing_for_message(
                     scheduled.append(cid)
                     continue
 
-                # If helper arguments include images, append them to the live images registry immediately
-                with suppress(Exception):
-                    payload = (
-                        json.loads(args_json or "{}")
-                        if isinstance(args_json, str)
-                        else (args_json or {})
-                    )
-                    imgs = payload.get("images") if isinstance(payload, dict) else None
-                    if imgs is None and isinstance(payload, dict):
-                        imgs = payload.get("images")
-                    append_images_with_source(imgs)
-
                 # Other helpers: acknowledge but do not execute during backfill
                 try:
                     await acknowledge_helper_call(
@@ -823,7 +865,7 @@ async def schedule_missing_for_message(
                 args_json=args_json,
                 call_id=cid,
                 call_idx=idx,
-                parent_chat_context=parent_chat_context,
+                context_state=context_state,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
                 initial_paused=initial_paused,

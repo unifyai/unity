@@ -28,10 +28,10 @@ class ConversationManagerBrainTools:
         """Fetch a contact summary by contact_id (threads excluded)."""
         return self._cm.contact_index.get_contact(contact_id=contact_id)
 
-    def cm_list_active_tasks(self) -> list[dict[str, Any]]:
-        """List active tasks with minimal identifying information."""
+    def cm_list_in_flight_actions(self) -> list[dict[str, Any]]:
+        """List in-flight actions with minimal identifying information."""
         out: list[dict[str, Any]] = []
-        for handle_id, data in (self._cm.active_tasks or {}).items():
+        for handle_id, data in (self._cm.in_flight_actions or {}).items():
             out.append(
                 {
                     "handle_id": handle_id,
@@ -64,6 +64,6 @@ class ConversationManagerBrainTools:
         return {
             "cm_get_mode": self.cm_get_mode,
             "cm_get_contact": self.cm_get_contact,
-            "cm_list_active_tasks": self.cm_list_active_tasks,
+            "cm_list_in_flight_actions": self.cm_list_in_flight_actions,
             "cm_list_notifications": self.cm_list_notifications,
         }

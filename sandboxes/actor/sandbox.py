@@ -3,9 +3,15 @@
 An interactive, steerable sandbox for running and testing Actor implementations.
 
 This sandbox serves as a sophisticated command-line environment to launch,
-monitor, and interact with any of the core actor classes (Hierarchical and
-CodeAct). It fully supports advanced interactive
-features like in-flight interjection, clarification, and voice commands.
+monitor, and interact with the CodeActActor. It fully supports advanced
+interactive features like in-flight interjection, clarification, and steering commands.
+
+Usage examples:
+    # CodeAct without computer tools (data analysis, state managers only)
+    python -m sandboxes.actor.sandbox --actor code_act --no-computer -p MyProject
+
+    # CodeAct with web automation
+    python -m sandboxes.actor.sandbox --actor code_act -p MyProject
 """
 
 from __future__ import annotations
@@ -16,7 +22,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 from datetime import datetime
-
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -39,7 +44,6 @@ from sandboxes.utils import (
 )
 from unity.actor.base import BaseActor
 from unity.actor.code_act_actor import CodeActActor
-from unity.actor.hierarchical_actor import HierarchicalActor
 
 LG = logging.getLogger("actor_sandbox")
 
@@ -50,13 +54,19 @@ Actor Sandbox
 -------------
 Enter a high-level goal for the selected actor to execute.
 
-┌─────────────── Commands ───────────────┐
-│ <your goal>         - A high-level task for the actor to perform    │
-│ custom              - Interactively provide a multi-line goal       │
-│ save_project | sp   - Save project snapshot with current state      │
-│ help | h            - Show this help message                        │
-│ quit | exit         - Exit the sandbox                              │
-└────────────────────────────────────────┘
+┌─────────────────────────── Commands ───────────────────────────┐
+│ <your goal>         - A high-level task for the actor           │
+│ custom              - Interactively provide a multi-line goal   │
+│ save_project | sp   - Save project snapshot with current state  │
+│ help | h            - Show this help message                    │
+│ quit | exit         - Exit the sandbox                          │
+└─────────────────────────────────────────────────────────────────┘
+
+Steering controls (while a task is running):
+  /pause    - Pause execution
+  /resume   - Resume execution
+  /stop     - Stop execution
+  /i <msg>  - Interject with a message
 """
 
 
@@ -65,19 +75,49 @@ def _create_actor(args) -> BaseActor:
     actor_choice = args.actor.lower()
     LG.info(f"Instantiating actor: {actor_choice}")
 
-    # Common args for browser-based actors
-    browser_kwargs = {
-        "headless": args.headless,
-        "agent_server_url": args.agent_url,
-    }
+    if actor_choice == "code_act":
+        if args.no_computer:
+            # No computer tools - just state managers via Primitives
+            from unity.actor.environments import StateManagerEnvironment
+            from unity.function_manager.primitives import Primitives
+            from unity.manager_registry import ManagerRegistry
 
-    if actor_choice == "hierarchical":
-        return HierarchicalActor(
-            **browser_kwargs,
-            browser_mode="magnitude",
-        )
-    elif actor_choice == "code_act":
-        return CodeActActor(**browser_kwargs, browser_mode="magnitude")
+            primitives = Primitives()
+            environments = [StateManagerEnvironment(primitives)]
+
+            # Optionally inject FunctionManager if available
+            function_manager = None
+            try:
+                function_manager = ManagerRegistry.get_function_manager()
+            except Exception:
+                LG.debug("FunctionManager not available, continuing without it")
+
+            return CodeActActor(
+                environments=environments,
+                function_manager=function_manager,
+            )
+        else:
+            # Full computer mode (web/desktop)
+            from unity.actor.environments import (
+                ComputerEnvironment,
+                StateManagerEnvironment,
+            )
+            from unity.function_manager.primitives import (
+                ComputerPrimitives,
+                Primitives,
+            )
+
+            cp = ComputerPrimitives(
+                headless=args.headless,
+                agent_server_url=args.agent_url,
+                computer_mode="magnitude",
+            )
+            return CodeActActor(
+                environments=[
+                    ComputerEnvironment(cp),
+                    StateManagerEnvironment(),
+                ],
+            )
     else:
         raise ValueError(f"Unknown actor type: {actor_choice}")
 
@@ -90,14 +130,19 @@ async def _main_async() -> None:
         "--actor",
         "-a",
         type=str,
-        choices=["hierarchical", "code_act"],
+        choices=["code_act"],
         default="code_act",
         help="Select the actor implementation to run.",
     )
     parser.add_argument(
+        "--no-computer",
+        action="store_true",
+        help="Disable computer environment (CodeAct only - uses state managers only).",
+    )
+    parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run the browser in headless mode (no visible UI).",
+        help="Run the web view in headless mode (no visible UI).",
     )
     parser.add_argument(
         "--agent-url",
@@ -136,7 +181,9 @@ async def _main_async() -> None:
 
     # 2. Initialize the selected Actor
     actor = _create_actor(args)
-    LG.info(f"Actor '{args.actor}' initialized successfully.")
+    mode_desc = "no-computer" if args.no_computer else "computer-enabled"
+    LG.info(f"Actor '{args.actor}' initialized successfully ({mode_desc}).")
+    print(f"\n🎭 Actor '{args.actor}' initialized ({mode_desc})")
 
     # 3. Main REPL (Read-Eval-Print Loop)
     print(_COMMANDS_HELP)
@@ -145,7 +192,7 @@ async def _main_async() -> None:
     try:
         while True:
             try:
-                goal = input(f"goal-for-{args.actor}> ").strip()
+                goal = input(f"\n{args.actor}> ").strip()
                 if not goal:
                     continue
 
@@ -171,7 +218,9 @@ async def _main_async() -> None:
                     continue
 
                 # This is the core "dispatch and await" pattern for actors
-                print(f'▶️  Starting task for goal: "{goal}"' "...")
+                print(
+                    f'▶️  Starting task: "{goal[:80]}{"..." if len(goal) > 80 else ""}"',
+                )
                 if args.voice:
                     speak("On it.")
 
@@ -201,10 +250,11 @@ async def _main_async() -> None:
                 )
 
                 # C. PROCESS RESULT: Print the final outcome
-                print("\n---")
-                print(f"✅ Task Completed. Final Result:")
+                print("\n" + "=" * 60)
+                print("✅ Task Completed. Result:")
+                print("=" * 60)
                 print(final_result)
-                print("---\n")
+                print("=" * 60 + "\n")
                 chat_history.append({"role": "assistant", "content": final_result})
 
                 if args.voice:
@@ -218,7 +268,7 @@ async def _main_async() -> None:
                 print(f"❌ An unexpected error occurred: {e}")
 
     finally:
-        # Ensure resources like the browser are closed gracefully
+        # Ensure resources like the computer backend are closed gracefully
         print("Shutting down actor resources...")
         if hasattr(actor, "close") and asyncio.iscoroutinefunction(actor.close):
             await actor.close()

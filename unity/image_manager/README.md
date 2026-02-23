@@ -2,7 +2,7 @@
 
 This README documents the only supported usage pattern right now: a two‑function, zero‑wait pipeline where one function produces `ImageHandle` objects immediately (without blocking on backend upload), and a second function consumes those handles right away (`raw()`/`ask()`), observes label updates as soon as they are set, and later awaits resolution to obtain real `image_id` values and local annotations for logging into a separate table.
 
-Implementation lives in `unity/image_manager/`; representative tests live in `tests/test_image_manager/`.
+Implementation lives in `unity/image_manager/`; representative tests live in `tests/image_manager/`.
 
 
 ## Motivation and guarantees
@@ -204,4 +204,4 @@ In this design, `annotation` is context‑specific and not stored in the `Images
 ## File locations
 
 - Implementation: `unity/image_manager/`
-- Tests (examples of this flow): `tests/test_image_manager/`
+- Tests (examples of this flow): `tests/image_manager/`

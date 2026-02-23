@@ -9,7 +9,7 @@ from pydantic import (
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
 from typing import ClassVar, Optional
-from .medium import Medium
+from unity.conversation_manager.types import Medium
 
 UNASSIGNED = -1
 
@@ -41,6 +41,17 @@ class Message(BaseModel):
             "List of annotated image references aligned to the text. Each entry must be an AnnotatedImageRef."
         ),
     )
+    attachments: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "List of file attachments with metadata. Each attachment is a dict with keys: "
+            "id, filename, gs_url, content_type, size_bytes."
+        ),
+    )
+    metadata: Optional[dict] = Field(
+        default=None,
+        description="Medium-specific metadata (e.g. email_id for email replies).",
+    )
 
     # Central, single source of truth for shorthand aliases (full → shorthand)
     SHORTHAND_MAP: ClassVar[dict[str, str]] = {
@@ -52,6 +63,8 @@ class Message(BaseModel):
         "content": "c",
         "exchange_id": "xid",
         "images": "imgs",
+        "attachments": "atts",
+        "metadata": "meta",
     }
 
     @classmethod
@@ -92,6 +105,7 @@ class Message(BaseModel):
         # JSON serializer prunes empty fields. This avoids later reconstruction
         # paths treating missing keys as None (which fails validation).
         payload.setdefault("images", [])
+        payload.setdefault("attachments", [])
 
         return payload
 

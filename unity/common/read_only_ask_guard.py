@@ -62,6 +62,7 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
         client: "unillm.AsyncUnify | None" = None,
         loop_id: str = "",
         initial_user_message: Optional[Any] = None,
+        response_format: Optional[Any] = None,
     ):
         super().__init__(
             task=task,
@@ -72,6 +73,7 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
             client=client,
             loop_id=loop_id,
             initial_user_message=initial_user_message,
+            response_format=response_format,
         )
 
         self._early_result: Optional[str] = None
@@ -125,7 +127,7 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
             )
 
         # Build classification client
-        cls_client = new_llm_client()
+        cls_client = new_llm_client(origin="ReadOnlyAskGuard.classify")
 
         # Derive a concise label so the LLM knows which manager/method this is
         label = "ask"

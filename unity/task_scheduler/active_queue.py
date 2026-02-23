@@ -7,7 +7,7 @@ steerable handle in turn. It:
   queuing messages for later delivery when needed.
 - Provides queue-aware ask() by prepending a compact chain status and task list.
 - Emits per-task completion events and a final chain summary.
-- Uses passthrough when the queue is a singleton to preserve the inner handle's
+- Uses direct delegation when the queue is a singleton to preserve the inner handle's
   behavior and timing characteristics.
 """
 
@@ -54,7 +54,7 @@ class _InterjectionRouter:
                 except Exception:
                     return str(value)
 
-            client = new_llm_client()
+            client = new_llm_client(origin="ActiveQueue.route_interjection")
             schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
             sys = (
                 "You route user interjections to one or more tasks in a queue.\n"
@@ -310,10 +310,6 @@ class _QueueSnapshot:
 
 
 class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abstract-method]
-    # Mark queue handles as passthrough so outer ExecuteLoopHandle adopts and forwards
-    # steering (ask/interject/pause/resume/stop) automatically.
-    __passthrough__ = True
-
     def __init__(
         self,
         scheduler: "TaskScheduler",
@@ -338,17 +334,17 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         self._completions: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         # Queue-level universal notification stream (dict events)
         self._notif_q: asyncio.Queue[dict] = asyncio.Queue()
-        # Sticky pass-through flag: enabled only when the queue truly contains a
+        # Sticky direct-delegation flag: enabled only when the queue truly contains a
         # single task at creation time; once disabled it never re-enables for the
         # lifetime of this ActiveQueue instance.
         try:
             initial_q = self._s._get_queue_for_task(task_id=self._current_task_id)
             size = len(initial_q) if initial_q is not None else 0
-            # Treat isolated/detached (no queue membership) or true singleton as passthrough
-            self._passthrough_enabled: bool = size <= 1
+            # Treat isolated/detached (no queue membership) or true singleton as direct delegation
+            self._direct_delegation_enabled: bool = size <= 1
         except Exception:
-            # Fallback to passthrough to preserve inner handle semantics in ambiguous cases
-            self._passthrough_enabled = True
+            # Fallback to direct delegation to preserve inner handle semantics in ambiguous cases
+            self._direct_delegation_enabled = True
 
         # Background driver
         self._driver = asyncio.create_task(self._drive())
@@ -423,13 +419,13 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             return None
 
     # ----------------------------
-    # Pass-through helper methods
+    # Direct delegation helper methods
     # ----------------------------
     def _current_queue_size(self) -> int:
         try:
             q = self._s._get_queue_for_task(task_id=self._current_task_id)
             # When the current task is no longer a member of any queue (isolated/detached),
-            # treat the queue as a singleton for pass-through purposes.
+            # treat the queue as a singleton for direct delegation purposes.
             try:
                 contains_current = any(t.task_id == self._current_task_id for t in q)
             except Exception:
@@ -440,19 +436,19 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         except Exception:
             return 0
 
-    def _should_passthrough(self) -> bool:
+    def _should_delegate_directly(self) -> bool:
         """Return True when we should directly delegate to the inner handle.
 
         This is allowed only while the queue remains a true singleton. The
         moment an additional task appears in the queue (size > 1), we
-        permanently disable pass-through for the lifetime of this instance.
+        permanently disable direct delegation for the lifetime of this instance.
         """
-        if not getattr(self, "_passthrough_enabled", False):
+        if not getattr(self, "_direct_delegation_enabled", False):
             return False
         # If at any point the queue grows beyond a single task, flip sticky off.
         size = self._current_queue_size()
         if size > 1:
-            self._passthrough_enabled = False
+            self._direct_delegation_enabled = False
             return False
         return True
 
@@ -652,7 +648,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )
-                # Deliver any queued interjections (message + images) for the newly active task
+                # Deliver any queued interjections for the newly active task
                 try:
                     pending_msgs = getattr(self, "_queued_interjections", {}).pop(
                         self._current_task_id,
@@ -662,13 +658,9 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                         try:
                             if isinstance(_item, dict):
                                 _m = _item.get("message", "")
-                                _imgs = _item.get("images")
                             else:
-                                _m, _imgs = _item, None
-                            if _imgs is None:
-                                await self._current_handle.interject(_m)
-                            else:
-                                await self._current_handle.interject(_m, images=_imgs)
+                                _m = _item
+                            await self._current_handle.interject(_m)
                         except Exception:
                             pass
                 except Exception:
@@ -678,7 +670,12 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             # active_task_done() awaits on the completions queue
 
     # ----- Steerable surface proxies -----
-    async def interject(self, message: str, *, images: object | None = None) -> None:  # type: ignore[override]
+    async def interject(
+        self,
+        message: str,
+        *,
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:  # type: ignore[override]
         """Route interjections to specific tasks in the queue using an LLM router.
 
         The router receives the full queue snapshot and the user's instruction and
@@ -691,14 +688,14 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         tasks become active.
         """
 
-        # Passthrough when this is a true singleton queue (sticky while true)
-        if self._should_passthrough():
+        # Direct delegation when this is a true singleton queue (sticky while true)
+        if self._should_delegate_directly():
             if not (message or "").strip():
                 return
-            if images is None:
-                await self._current_handle.interject(message)
-            else:
-                await self._current_handle.interject(message, images=images)
+            await self._current_handle.interject(
+                message,
+                _parent_chat_context_cont=_parent_chat_context_cont,
+            )
             return
 
         # Fast path: empty/whitespace → no-op
@@ -737,10 +734,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 except Exception:
                     pass
                 return
-            if images is None:
-                await self._current_handle.interject(message)
-            else:
-                await self._current_handle.interject(message, images=images)
+            await self._current_handle.interject(message)
             return
 
         if not hasattr(self, "_queued_interjections"):
@@ -754,23 +748,18 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             for tid in task_ids:
                 if tid == self._current_task_id:
                     try:
-                        await self._current_handle.interject(instr, images=images)
+                        await self._current_handle.interject(instr)
                     except Exception:
                         pass
                 else:
-                    self._queued_interjections.setdefault(tid, []).append(
-                        {
-                            "message": instr,
-                            "images": images,
-                        },
-                    )
+                    self._queued_interjections.setdefault(tid, []).append(instr)
         return
 
-    def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+    async def stop(self, *, cancel: bool = False, reason: Optional[str] = None, **kwargs) -> None:  # type: ignore[override]
         try:
-            return self._current_handle.stop(cancel=cancel, reason=reason)
+            await self._current_handle.stop(cancel=cancel, reason=reason)
         except Exception:
-            return "Stopped."
+            pass
 
     async def pause(self) -> Optional[str]:  # type: ignore[override]
         try:
@@ -800,11 +789,11 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         return self._done_evt.is_set()
 
     async def result(self):  # type: ignore[override]
-        # Passthrough when the queue remains a true singleton at call time
-        if self._should_passthrough():
+        # Direct delegation when the queue remains a true singleton at call time
+        if self._should_delegate_directly():
             ret = await self._current_handle.result()
             # Ensure the queue-level handle reflects completion immediately after
-            # the inner handle resolves in passthrough mode.
+            # the inner handle resolves in direct delegation mode.
             try:
                 if not self._done_evt.is_set():
                     # Prefer any final result the driver may have assembled; otherwise use ret
@@ -961,7 +950,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         Policy
         ------
         - If and only if this queue has always remained a singleton since creation
-          (sticky passthrough), bypass the queue-level LLM and delegate directly to
+          (sticky direct delegation), bypass the queue-level LLM and delegate directly to
           the inner task's ask() with the user question unchanged.
         - Otherwise: construct a compact chain snapshot (head→tail) and headline;
           forward the user's question verbatim to the current task and capture its
@@ -971,10 +960,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
           granular).
         """
 
-        # Sticky singleton passthrough for ask(): delegate directly when this queue
+        # Sticky singleton direct delegation for ask(): delegate directly when this queue
         # has only ever contained a single task. If the queue ever grew (size > 1),
-        # _should_passthrough() permanently disables passthrough for this instance.
-        if self._should_passthrough():
+        # _should_delegate_directly() permanently disables delegation for this instance.
+        if self._should_delegate_directly():
             try:
                 return await self._current_handle.ask(question)  # type: ignore[arg-type]
             except Exception:
@@ -1020,7 +1009,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         )
 
         # Use an LLM to decide the appropriate granularity and compose the answer
-        client = new_llm_client()
+        client = new_llm_client(origin="ActiveQueue.ask")
 
         sys = (
             "You answer questions about a running chain of tasks. Decide the appropriate level of detail.\n"
@@ -1068,13 +1057,13 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             def __init__(self, text: str) -> None:
                 self._text = text
 
-            async def interject(self, message: str): ...
+            async def interject(self, message: str, **kwargs): ...
 
-            def stop(self, reason: Optional[str] = None): ...
+            async def stop(self, reason: Optional[str] = None, **kwargs): ...
 
-            def pause(self): ...
+            async def pause(self): ...
 
-            def resume(self): ...
+            async def resume(self): ...
 
             def done(self) -> bool:
                 return True
@@ -1082,7 +1071,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             async def result(self) -> str:
                 return self._text
 
-            async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
+            async def ask(self, question: str, **kwargs) -> "SteerableToolHandle":  # type: ignore[override]
                 return self
 
             # New abstract event APIs – provide harmless stubs for the static handle
@@ -1096,25 +1085,6 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 return None
 
         return _AnswerHandle(answer)
-
-    # ----------------------------
-    # Nested steer (tests/helper)
-    # ----------------------------
-    async def nested_steer(self, spec: dict) -> dict:
-        """
-        Apply a nested steering spec starting from this ActiveQueue.
-
-        This mirrors the AsyncToolLoopHandle.nested_steer surface so tests and
-        higher‑level orchestrators can target inner handles (ActiveTask/Actor).
-        """
-        try:
-            from ..common.async_tool_loop import (  # local import to avoid cycles
-                _nested_steer_on as _ns,
-            )
-        except Exception:
-            # If the helper cannot be imported, behave as a no‑op
-            return {"applied": [], "skipped": [], "status": {}}
-        return await _ns(self, spec or {})
 
     # ----------------------------
     # Queue steering: append tail
@@ -1191,9 +1161,9 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 queue_id=int(current_qid),
                 position="back",
             )
-            # Disable singleton passthrough permanently after growth
+            # Disable singleton direct delegation permanently after growth
             try:
-                self._passthrough_enabled = False
+                self._direct_delegation_enabled = False
             except Exception:
                 pass
             try:
@@ -1233,7 +1203,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         )
 
         try:
-            self._passthrough_enabled = False
+            self._direct_delegation_enabled = False
         except Exception:
             pass
 
@@ -1254,18 +1224,3 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             pass
 
         return f"Appended task {append_tid} to queue {q_emit}."
-
-    # ----------------------------
-    # Introspection helper (tests)
-    # ----------------------------
-    async def nested_structure(self) -> dict:  # type: ignore[override]
-        """
-        Return the minimal nested structure for this ActiveQueue, matching the
-        shape produced by AsyncToolLoopHandle.nested_structure, so tests can
-        introspect the queue → task → actor handle chain directly.
-        """
-        from ..common.async_tool_loop import (  # local import to avoid cycles
-            _nested_structure_on as _ns,
-        )
-
-        return await _ns(self)

@@ -14,7 +14,7 @@ class BaseStateManager(ABC):
     This abstract base exists solely to provide a single common ancestor for
     manager interfaces such as ContactManager, TranscriptManager, KnowledgeManager,
     TaskScheduler, FileManager, FunctionManager, GuidanceManager, ImageManager,
-    SecretManager, WebSearcher, and Conductor.
+    SecretManager, and WebSearcher.
 
     Purpose
     -------
@@ -114,7 +114,7 @@ def get_caller_description(manager_class_name: str) -> Optional[str]:
     Parameters
     ----------
     manager_class_name : str
-        The class name of the manager (e.g., "Conductor", "TaskScheduler").
+        The class name of the manager (e.g., "TaskScheduler", "ContactManager").
 
     Returns
     -------

@@ -15,6 +15,51 @@ UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
 UNASSIGNED = -1
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Lightweight contact detail models for outbound communication tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ContactDetailsBase(BaseModel):
+    """Minimal contact identity for lookup or creation."""
+
+    first_name: Optional[str] = Field(
+        default=None,
+        description="Contact's first name",
+        pattern=UNICODE_NAME_RE,
+    )
+    surname: Optional[str] = Field(
+        default=None,
+        description="Contact's surname",
+        pattern=UNICODE_NAME_RE,
+    )
+
+
+class ContactDetailsPhone(ContactDetailsBase):
+    """Contact details with phone number for SMS or calls."""
+
+    phone_number: Optional[str] = Field(
+        default=None,
+        description="Phone number with optional leading +, then digits only",
+        pattern=r"^\+?[0-9]+$",
+    )
+
+
+class ContactDetailsEmail(ContactDetailsBase):
+    """Contact details with email address for email communication."""
+
+    email_address: Optional[str] = Field(
+        default=None,
+        description="Email address (must contain exactly one @)",
+        pattern=r"^[^@]+@[^@]+$",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Contact model
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 class Contact(BaseModel):
     # Central, single source of truth for shorthand aliases (full → shorthand)
     SHORTHAND_MAP: ClassVar[dict[str, str]] = {
@@ -25,7 +70,7 @@ class Contact(BaseModel):
         "phone_number": "phone",
         "bio": "bio",
         "rolling_summary": "rs",
-        "respond_to": "resp",
+        "should_respond": "resp",
         "response_policy": "policy",
         "timezone": "tz",
         "is_system": "sys",
@@ -55,11 +100,13 @@ class Contact(BaseModel):
         default=None,
         description="Must contain exactly one @ with characters on either side",
         pattern=r"^[^@]+@[^@]+$",
+        json_schema_extra={"unique": True},
     )
     phone_number: Optional[str] = Field(
         default=None,
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
+        json_schema_extra={"unique": True},
     )
     bio: Optional[str] = Field(
         default=None,
@@ -69,8 +116,8 @@ class Contact(BaseModel):
         default=None,
         description="Short rolling conversation summary and current objectives with this contact.",
     )
-    respond_to: bool = Field(
-        default=False,
+    should_respond: bool = Field(
+        default=True,
         description="Whether the assistant should respond to inbound messages or calls from this contact.",
     )
     response_policy: Optional[str] = Field(

@@ -37,8 +37,8 @@ list_runs
 watch_tests --socket unity_dev_ttys042
 
 # Attach to a session in a specific socket (two equivalent syntaxes)
-attach --socket unity_dev_ttys042 'f ❌ test_actor-test_code_act'
-attach 'unity_dev_ttys042:f ❌ test_actor-test_code_act'  # shorthand
+attach --socket unity_dev_ttys042 'f ❌ actor-test_code_act'
+attach 'unity_dev_ttys042:f ❌ actor-test_code_act'  # shorthand
 
 # Kill failed sessions in a specific socket
 kill_failed --socket unity_dev_ttys042
@@ -97,10 +97,10 @@ Use `-s/--serial` to create one session per *file* instead (tests within a file 
 
 ```bash
 # DEFAULT: 15 tests run concurrently in 15 sessions (~1 min)
-parallel_run tests/test_contact_manager/test_ask.py
+parallel_run tests/contact_manager/test_ask.py
 
 # WITH -s: 15 tests in one file run serially (~10 min)
-parallel_run -s tests/test_contact_manager/test_ask.py
+parallel_run -s tests/contact_manager/test_ask.py
 ```
 
 **When to use `-s`:**
@@ -122,7 +122,7 @@ By default, `parallel_run` limits concurrent sessions to **25** to prevent resou
 
 ```bash
 # Lower concurrency for resource-constrained systems
-parallel_run -j 8 tests/test_contact_manager/
+parallel_run -j 8 tests/contact_manager/
 
 # Higher concurrency for powerful machines
 parallel_run -j 100 tests/
@@ -158,10 +158,10 @@ parallel_run --timeout 120 tests/my_tests
 **Timeout examples:**
 ```bash
 # Quick sanity check with 60s timeout
-parallel_run --timeout 60 tests/test_basic.py
+parallel_run --timeout 60 tests/basic.py
 
 # Long-running tests with 5 minute timeout
-parallel_run --timeout 300 tests/test_slow_suite/
+parallel_run --timeout 300 tests/slow_suite/
 ```
 
 ---
@@ -172,10 +172,10 @@ The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions
 
 ```bash
 # Single override
-parallel_run --env UNIFY_CACHE=false tests
+parallel_run --env UNILLM_CACHE=false tests
 
 # Multiple overrides (flag can be repeated)
-parallel_run -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+parallel_run -e UNILLM_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
 
 # Use isolated random projects (each session gets its own project)
 parallel_run --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
@@ -192,15 +192,14 @@ Settings are organized in two classes with inheritance:
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `UNIFY_MODEL` | str | `gpt-5.2@openai` | LLM model to use |
-| `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
+| `UNILLM_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
 | `LLM_IO_DEBUG` | bool | `true` | Log full LLM request/response payloads |
-| `ASYNCIO_DEBUG` | bool | `false` | Enable asyncio debug mode |
-| `ASYNCIO_VERBOSE_DEBUG` | bool | `false` | Verbose asyncio logging |
+| `UNITY_TERMINAL_LOG` | bool | `true` | Enable/disable terminal (console) logging |
+| `UNITY_ASYNCIO_DEBUG` | bool | `false` | Enable Python asyncio debug mode |
 | `PYTEST_LOG_TO_FILE` | bool | `true` | Log pytest output to files |
-| `UNITY_SEMANTIC_CACHE` | bool | `false` | Enable semantic cache mode |
 | `UNITY_READONLY_ASK_GUARD` | bool | `true` | Enable read-only ask guard |
-| `FIRST_ASK_TOOL_IS_SEARCH` | bool | `true` | Force semantic search on first `ask` step |
-| `FIRST_MUTATION_TOOL_IS_ASK` | bool | `true` | Force `ask` on first mutation step |
+| `FIRST_ASK_TOOL_IS_SEARCH` | bool | `false` | Force semantic search on first `ask` step |
+| `FIRST_MUTATION_TOOL_IS_ASK` | bool | `false` | Force `ask` on first mutation step |
 
 **Test-Only Settings**:
 
@@ -211,7 +210,6 @@ Settings are organized in two classes with inheritance:
 | `UNIFY_TESTS_RAND_PROJ` | bool | `false` | Use random project names (isolated per session) |
 | `UNIFY_TESTS_DELETE_PROJ_ON_START` | bool | `true` | Delete project before session starts (clean slate) |
 | `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` | bool | `false` | Delete random project when session exits |
-| `UNIFY_CACHE_BENCHMARK` | bool | `false` | Enable cache hit/miss benchmarking |
 | `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging |
 | `UNIFY_SKIP_SESSION_SETUP` | bool | `false` | Skip project/context creation (pre-done) |
 
@@ -232,14 +230,14 @@ This matches files like `test_contact_tool_docstrings.py`, `test_guidance_tool_d
 
 ## Statistical Sampling (`--repeat`)
 
-The `--repeat N` flag runs each test target N times. **The primary use case is for eval tests with `UNIFY_CACHE=false`**:
+The `--repeat N` flag runs each test target N times. **The primary use case is for eval tests with `UNILLM_CACHE=false`**:
 
 ```bash
 # Run a specific eval test 10 times without caching
-parallel_run --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
+parallel_run --env UNILLM_CACHE=false --repeat 10 --eval-only tests/contact_manager/test_ask.py
 
 # Run all eval tests 5 times each
-parallel_run --env UNIFY_CACHE=false --repeat 5 --eval-only tests
+parallel_run --env UNILLM_CACHE=false --repeat 5 --eval-only tests
 ```
 
 **Use cases:**
@@ -325,8 +323,8 @@ parallel_run --symbolic-only tests
 parallel_run --tags "experiment-1" tests
 
 # Combine options
-parallel_run --eval-only tests/test_contact_manager
-parallel_run --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
+parallel_run --eval-only tests/contact_manager
+parallel_run --env UNILLM_CACHE=false --eval-only tests/contact_manager
 ```
 
 ---

@@ -97,6 +97,7 @@ class ContextRegistry:
         from unity.image_manager.image_manager import ImageManager
         from unity.function_manager.function_manager import FunctionManager
         from unity.blacklist_manager.blacklist_manager import BlackListManager
+        from unity.data_manager.data_manager import DataManager
 
         return [
             ContactManager,
@@ -109,6 +110,7 @@ class ContextRegistry:
             WebSearcher,
             FunctionManager,
             BlackListManager,
+            DataManager,
         ]
 
     @classmethod
@@ -158,12 +160,12 @@ class ContextRegistry:
         Ensure aggregation contexts exist for cross-assistant and cross-user queries.
 
         Creates two contexts:
-          - {UserName}/All/{suffix} - all assistants for this user
-          - All/{suffix}            - all users, all assistants
+          - {user_id}/All/{suffix} - all assistants for this user
+          - All/{suffix}           - all users, all assistants
 
         For test contexts (starting with "tests/"), the aggregation contexts are
         scoped to the test root for proper isolation:
-          - {test_root}/{UserName}/All/{suffix}
+          - {test_root}/{user_id}/All/{suffix}
           - {test_root}/All/{suffix}
 
         These contexts:
@@ -175,15 +177,15 @@ class ContextRegistry:
         if len(parts) < 3:
             return
 
-        # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
-        # Find the User position by looking for "DefaultUser" marker
+        # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
+        # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
         if parts[0] == "tests":
             from unity.session_details import DEFAULT_USER_CONTEXT
 
             try:
                 user_idx = parts.index(DEFAULT_USER_CONTEXT)
             except ValueError:
-                # Can't determine structure without the DefaultUser marker
+                # Can't determine structure without the DEFAULT_USER_CONTEXT marker
                 return
 
             # Need at least User/Assistant/Suffix after the test root
@@ -314,3 +316,33 @@ class ContextRegistry:
                 future.result()
 
         cls._setup_complete = True
+
+    @classmethod
+    def get_known_base_contexts(cls) -> List[str]:
+        """
+        Return all registered base context names across all managers.
+
+        This returns the unresolved context names (e.g., "Contacts", "Knowledge",
+        "Tasks") from each manager's Config.required_contexts, not the fully
+        qualified paths.
+
+        Returns
+        -------
+        list[str]
+            Sorted list of unique base context names.
+
+        Usage Examples
+        --------------
+        >>> base_contexts = ContextRegistry.get_known_base_contexts()
+        >>> print(base_contexts)
+        ['Blacklist', 'Contacts', 'Data', 'Functions', 'Guidance', ...]
+        """
+        base_contexts = set()
+        for manager in cls._get_managers():
+            if hasattr(manager, "Config") and hasattr(
+                manager.Config,
+                "required_contexts",
+            ):
+                for table_ctx in manager.Config.required_contexts:
+                    base_contexts.add(table_ctx.name)
+        return sorted(base_contexts)

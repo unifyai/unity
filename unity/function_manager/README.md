@@ -23,7 +23,12 @@ This separation guarantees:
 
 ### Primitive ID Stability
 
-Primitives receive IDs based on their position in `PRIMITIVE_SOURCES` (in `primitives.py`). This registry is **append-only** – new primitives are added at the end, existing entries are never reordered or removed. This ensures IDs remain stable across Unify upgrades.
+Primitives receive stable IDs derived from a hash of their fully-qualified name (e.g., "ContactManager.ask" → deterministic integer). This means:
+- IDs are consistent across all deployments
+- Adding/removing methods doesn't affect other primitives' IDs
+- No manual ID management required
+
+Primitive methods are auto-discovered from `@abstractmethod` definitions on base classes (e.g., `BaseContactManager`), minus an explicit exclusion list for non-primitive methods like `clear()`.
 
 ---
 
@@ -50,7 +55,6 @@ async def update_contacts_and_search():
 | `primitives.knowledge` | KnowledgeManager | `ask`, `update`, `refactor` |
 | `primitives.tasks` | TaskScheduler | `ask`, `update`, `execute` |
 | `primitives.secrets` | SecretManager | `ask`, `update` |
-| `primitives.guidance` | GuidanceManager | `ask`, `update` |
 | `primitives.web` | WebSearcher | `ask` |
 | `primitives.computer` | ComputerPrimitives | `navigate`, `act`, `observe`, `query`, `reason` |
 
@@ -58,7 +62,7 @@ async def update_contacts_and_search():
 
 ## The `computer_primitives` Object
 
-When executed via an Actor, `computer_primitives` provides browser and desktop control:
+When executed via an Actor, `computer_primitives` provides web and desktop control:
 
 ```python
 async def browse_and_extract():
@@ -83,7 +87,7 @@ In practice, use `computer_primitives` when your function runs via an Actor – 
 
 Primitives are lazily synchronized to the database:
 
-1. On first access (e.g., `list_primitives()`, `search_functions_by_similarity()`), the manager calls `sync_primitives()`
+1. On first access (e.g., `list_primitives()`, `search_functions()`), the manager calls `sync_primitives()`
 2. A hash of all primitive signatures/docstrings is compared against the stored hash
 3. If changed, all primitives are deleted and re-inserted with their stable IDs
 4. The hash is stored in `Functions/Meta` for future comparisons
@@ -283,25 +287,56 @@ async def example_with_import():
 
 The sandbox includes `__import__`, so any package installed in the environment can be imported.
 
+### Best Practice: Domain Types & Type Hints (Avoid Surprise `NameError`s)
+
+Compositional functions are often used by the Actor/CodeActActor by **retrieving a callable** (e.g. via `search_functions(..., return_callable=True)`) and executing it in a fresh sandbox namespace.
+
+Here’s the simple rule:
+- If you reference a symbol in the **function body**, **import/define it** in the function (don’t assume it exists in globals).
+- If you reference a symbol only in **annotations** (including forward-ref strings), that’s usually fine.
+
+```python
+# ✅ OK: "User" only appears in the annotation (as a forward-ref string).
+# The function body doesn't need the User symbol at runtime.
+async def greet(user: "User") -> str:
+    return f"Hello {user.name}"
+
+
+# ⚠️ NOT OK: Role is used at runtime, so it MUST exist (import/define it).
+async def is_admin(role: "Role") -> bool:
+    return role == Role.ADMIN
+
+
+# ✅ Preferred: import the runtime type inside the function.
+async def is_admin(role: "Role") -> bool:
+    from my_app.types import Role
+    return role == Role.ADMIN
+```
+
+Note: if your code resolves type hints at runtime (e.g. `typing.get_type_hints(...)` or Pydantic model building),
+then all referenced names must be resolvable. `FunctionManager` makes annotation-resolution more robust, but it cannot
+guess the *real* domain objects for runtime logic—imports/definitions are the reliable solution.
+
 #### Pre-Injected by Sandbox
 
 These are always available (from `create_execution_globals()`):
 
 | Category | Available Names |
 |----------|-----------------|
-| **Builtins** | `print`, `len`, `str`, `int`, `float`, `list`, `dict`, `set`, `range`, `isinstance`, `hasattr`, `getattr`, `enumerate`, `zip`, `sorted`, `min`, `max`, `sum`, `any`, `all`, etc. |
+| **Builtins** | `print`, `len`, `str`, `int`, `float`, `list`, `dict`, `set`, `range`, `isinstance`, `issubclass`, `hasattr`, `getattr`, `enumerate`, `zip`, `sorted`, `min`, `max`, `sum`, `any`, `all`, etc. |
 | **Modules** | `asyncio`, `re`, `json`, `datetime`, `collections`, `statistics`, `functools` |
 | **Typing** | `typing`, `Any`, `Callable`, `Dict`, `List`, `Optional`, `Tuple`, `Set`, `Union`, `Literal` |
 | **Pydantic** | `pydantic`, `BaseModel`, `Field` |
 | **Primitives** | `primitives` – lazy access to all state managers |
+| **Steerable** | `SteerableToolHandle`, `start_async_tool_loop`, `new_llm_client` |
 
 #### Injected by Actor at Runtime
 
-When functions are executed via an Actor (`HierarchicalActor`, `SingleFunctionActor`), additional objects are injected:
+When functions are executed via an Actor (`CodeActActor`, `SingleFunctionActor`), additional objects are injected:
 
 | Name | Description |
 |------|-------------|
-| `computer_primitives` | Browser/desktop control (navigate, act, observe, query, reason) |
+| `computer_primitives` | Web/desktop control (navigate, act, observe, query, reason) |
 | `request_clarification` | Ask the user for clarification during execution |
 
 ---
@@ -339,6 +374,131 @@ async def research_contact(contact_name: str) -> str:
 
 ---
 
+## Steerable Functions
+
+Compositional functions can optionally return a **steerable handle** instead of a final result. This allows the calling layer (e.g., `SingleFunctionActor`) to forward steering operations (interject, pause, stop) into the running function.
+
+### What is a Steerable Function?
+
+A steerable function is one that:
+1. Starts a background task (e.g., an async tool loop, an actor)
+2. Returns a `SteerableToolHandle` immediately (before the task completes)
+3. Allows the caller to interact with the running task via the handle
+
+### Runtime Detection
+
+Steerability is detected at **runtime** via `isinstance(result, SteerableToolHandle)`:
+
+```python
+from unity.common.async_tool_loop import SteerableToolHandle
+
+result = await my_function()
+
+if isinstance(result, SteerableToolHandle):
+    # Function returned a steerable handle - can forward steering operations
+    await result.interject("Please also check for errors")
+    final_result = await result.result()
+else:
+    # Function returned a plain value - no steering possible
+    final_result = result
+```
+
+### Writing a Steerable Function
+
+Use the steerable infrastructure available in the execution globals:
+
+```python
+async def my_steerable_workflow(goal: str) -> SteerableToolHandle:
+    """
+    A steerable workflow that uses an async tool loop.
+
+    The caller can interject, pause, or stop this workflow while it runs.
+    """
+    # Create an LLM client
+    client = new_llm_client()
+    client.set_system_message("You are a helpful assistant.")
+
+    # Start an async tool loop - returns a handle immediately
+    handle = start_async_tool_loop(
+        client=client,
+        message=goal,
+        tools={},  # Add tools as needed
+        loop_id="my-workflow",
+    )
+
+    # Return the handle - the loop continues running in the background
+    return handle
+```
+
+### Available Infrastructure
+
+These are injected into the execution globals by `create_execution_globals()`:
+
+| Name | Purpose |
+|------|---------|
+| `SteerableToolHandle` | Base ABC for steerable handles and runtime `isinstance` checks |
+| `start_async_tool_loop` | Factory function to create async tool loop handles |
+| `new_llm_client` | Factory to create LLM clients for async tool loops |
+
+### Handle Methods
+
+Steerable handles provide these methods:
+
+| Method | Description |
+|--------|-------------|
+| `await handle.result()` | Wait for and return the final result |
+| `await handle.interject(message)` | Inject a message into the running task |
+| `await handle.pause()` | Pause the task (in-flight operations continue) |
+| `await handle.resume()` | Resume a paused task |
+| `handle.stop(reason)` | Cancel the task immediately |
+| `await handle.ask(question)` | Query the task's status without modifying it |
+
+### Example: Steerable Research Workflow
+
+```python
+async def steerable_research(topic: str) -> SteerableToolHandle:
+    """
+    Research a topic with the ability to steer mid-flight.
+
+    The caller can interject to refine the search, or stop early
+    if enough information has been gathered.
+    """
+    client = new_llm_client()
+    client.set_system_message(
+        "You are a research assistant. Search the web and compile findings. "
+        "Be thorough but respond to any user interjections to refine your approach."
+    )
+
+    # Define tools the LLM can use
+    tools = {
+        "web_search": primitives.web.ask,
+        "save_finding": primitives.knowledge.update,
+    }
+
+    return start_async_tool_loop(
+        client=client,
+        message=f"Research the following topic thoroughly: {topic}",
+        tools=tools,
+        loop_id=f"research-{topic[:20]}",
+        timeout=300,  # 5 minute timeout
+    )
+```
+
+### Non-Steerable Functions
+
+Regular functions that return plain values are **not** steerable:
+
+```python
+async def simple_lookup(name: str) -> str:
+    """A simple function - returns a plain value, not steerable."""
+    result = await primitives.contacts.ask(question=f"Who is {name}?")
+    return result  # Plain string, not a handle
+```
+
+The execution layer will detect this via `isinstance` and handle it normally.
+
+---
+
 ## API Summary
 
 ### Primitives
@@ -353,7 +513,7 @@ fm.sync_primitives()
 fm.list_primitives()
 
 # Search includes primitives by default
-fm.search_functions_by_similarity(query="navigate browser", include_primitives=True)
+fm.search_functions(query="navigate web", include_primitives=True)
 ```
 
 ### Compositional Functions
@@ -366,7 +526,7 @@ fm.add_functions(implementations=["async def foo(): pass"])
 fm.list_functions(include_implementations=False)
 
 # Search by similarity
-fm.search_functions_by_similarity(query="contact management", n=5)
+fm.search_functions(query="contact management", n=5)
 
 # Delete
 fm.delete_function(function_id=1)

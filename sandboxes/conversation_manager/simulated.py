@@ -5,6 +5,7 @@ from sandboxes.utils import (
     speak,
     record_until_enter,
     transcribe_deepgram,
+    activate_project,
 )
 from unity.conversation_manager.prompt_builders import (
     build_call_sys_prompt,
@@ -19,7 +20,6 @@ from unity.conversation_manager.events import (
     EmailReceived,
     EmailSent,
 )
-
 
 MEDIUM = "phone"
 
@@ -151,7 +151,7 @@ async def simulate():
     )
 
     args = parser.parse_args()
-    setup_unify_context(args.project_name, args.overwrite)
+    activate_project(args.project_name, args.overwrite)
 
     # Input for customised user profile
     print("Configure Bob (user) profile behaviour:")
