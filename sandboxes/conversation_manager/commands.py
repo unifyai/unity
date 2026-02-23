@@ -78,17 +78,19 @@ Inbound event simulation:
   msg <content>                 Simulate incoming Unify message
   sms <content>                 Simulate incoming SMS
   email <subject> | <body>      Simulate incoming email
-  call                          Start phone call (simulated, or live via LiveKit with --live-voice)
-  say <content>                 Phone utterance (during a simulated call)
-  sayv                          Record voice, transcribe, and send as a phone utterance (requires --voice)
-  sayv <content>                Send <content> as a phone utterance (convenience; no recording)
+  call                          Start simulated phone call
+  meet                          Start simulated Unify Meet session
+  say <content>                 Voice utterance (during a call or meet)
+  sayv                          Record voice, transcribe, and send as utterance (requires --voice)
+  sayv <content>                Send <content> as utterance (convenience; no recording)
   end_call                      End active phone call
+  end_meet                      End active Unify Meet session
 
 Scenario seeding (idle-only):
   us <description>              Generate a synthetic scenario from text
   usv                           Generate a synthetic scenario from voice (requires --voice)
 
-Meet interaction events (Unify Meet session simulation):
+Meet interaction events (requires active meet):
   assistant_screen_share_start [reason]    User enables viewing the assistant's desktop
   assistant_screen_share_stop [reason]     User disables viewing the assistant's desktop
   user_screen_share_start [reason]         User starts sharing their screen with the assistant
@@ -243,6 +245,8 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         )
     if lower == "call":
         return ParsedCommand(kind="event", raw=raw, name="call")
+    if lower == "meet":
+        return ParsedCommand(kind="event", raw=raw, name="meet")
     if lower.startswith("say "):
         return ParsedCommand(
             kind="event",
@@ -261,6 +265,8 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         )
     if lower == "end_call":
         return ParsedCommand(kind="event", raw=raw, name="end_call")
+    if lower == "end_meet":
+        return ParsedCommand(kind="event", raw=raw, name="end_meet")
 
     for _cmd_name in _MEET_INTERACTION_COMMANDS:
         if lower == _cmd_name:

@@ -24,6 +24,7 @@ LG = logging.getLogger("conversation_manager_sandbox")
 class SandboxState:
     chat_history: list[dict] = field(default_factory=list)
     in_call: bool = False
+    in_meet: bool = False
     last_event_published_at: float = 0.0
     live_voice_session: object = None
 
@@ -31,10 +32,15 @@ class SandboxState:
     def live_voice_active(self) -> bool:
         return self.live_voice_session is not None
 
+    @property
+    def in_voice_session(self) -> bool:
+        return self.in_call or self.in_meet
+
     def reset_ephemeral(self) -> None:
         """Reset sandbox-local state (CM state reset is handled separately)."""
         self.chat_history.clear()
         self.in_call = False
+        self.in_meet = False
         self.last_event_published_at = 0.0
         self.live_voice_session = None
 
