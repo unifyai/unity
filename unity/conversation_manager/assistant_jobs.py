@@ -7,6 +7,7 @@ assistant containers are currently running.
 from dotenv import load_dotenv
 
 load_dotenv()
+import json
 import time
 import traceback
 import requests
@@ -164,12 +165,48 @@ def _record_running_job_count(api_key: str) -> None:
         )
 
 
+def _mark_job_label(job_name: str, status: str):
+    """Patch the K8s Job unity-status label via the communication service."""
+    comms_url = SETTINGS.conversation.COMMS_URL.rstrip("/")
+    admin_key = SETTINGS.ORCHESTRA_ADMIN_KEY.get_secret_value()
+    if not comms_url or not admin_key:
+        LOGGER.debug(
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Skipping label update: COMMS_URL or admin key not configured",
+        )
+        return
+    try:
+        resp = requests.patch(
+            f"{comms_url}/infra/job/labels",
+            data={
+                "job_name": job_name,
+                "labels": json.dumps({"unity-status": status}),
+            },
+            headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=10,
+        )
+        if resp.ok:
+            LOGGER.info(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Marked job as {status}: {job_name}",
+            )
+        else:
+            LOGGER.warning(
+                f"{ICONS['assistant_jobs']} [assistant_jobs] Failed to mark job as {status} "
+                f"(status {resp.status_code}): {resp.text}",
+            )
+    except Exception as e:
+        LOGGER.warning(
+            f"{ICONS['assistant_jobs']} [assistant_jobs] Error marking job as {status}: {e}",
+        )
+
+
 def log_job_startup(job_name: str, user_id: str, assistant_id: str):
     """Update the running job record with job_name and liveview_url.
 
     The adapter already created the running=True record with all assistant info.
     This function just adds the container-specific details: job_name and liveview_url.
     """
+    _mark_job_label(job_name, "running")
+
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
         LOGGER.debug(
@@ -297,6 +334,8 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
 
 def mark_job_done(job_name: str):
     """Mark a job as done and record session-end metrics."""
+    _mark_job_label(job_name, "done")
+
     api_key = SESSION_DETAILS.shared_unify_key or None
     if not api_key:
         LOGGER.debug(
