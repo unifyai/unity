@@ -541,6 +541,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 assistant_screen_share_active = True
             elif "screen sharing is now off" in low:
                 assistant_screen_share_active = False
+                screenshot_history.clear(source="assistant")
+            if "stopped sharing" in low or "screen sharing is now off" in low:
+                source = "user" if "user" in low else "assistant"
+                screenshot_history.clear(source=source)
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
         guidance_source = payload.get("source", "")

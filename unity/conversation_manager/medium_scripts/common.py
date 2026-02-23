@@ -861,6 +861,16 @@ class ScreenshotHistory:
     def add(self, entry: "ScreenshotEntry", filepath: str) -> None:
         self._entries.append((entry, filepath))
 
+    def clear(self, source: str | None = None) -> None:
+        """Remove entries, optionally filtered by source.
+
+        When *source* is ``None``, all entries are removed.
+        """
+        if source is None:
+            self._entries.clear()
+        else:
+            self._entries = [(e, p) for e, p in self._entries if e.source != source]
+
     def build_visual_context_content(self) -> list:
         """Build a content list for a visual context chat message.
 
