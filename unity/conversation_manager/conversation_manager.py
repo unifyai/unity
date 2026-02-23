@@ -31,6 +31,7 @@ from unity.common.prompt_helpers import now as prompt_now
 
 from unity.common.llm_client import new_llm_client
 from unity.common.single_shot import single_shot_tool_decision
+from unity.events.manager_event_logging import _EVENT_SOURCE
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 
@@ -820,13 +821,17 @@ class ConversationManager(metaclass=SingletonABCMeta):
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
-        result = await single_shot_tool_decision(
-            client,
-            messages,
-            tools,
-            tool_choice="required" if tools else "auto",
-            response_format=response_model,
-        )
+        _source_token = _EVENT_SOURCE.set("ConversationManager")
+        try:
+            result = await single_shot_tool_decision(
+                client,
+                messages,
+                tools,
+                tool_choice="required" if tools else "auto",
+                response_format=response_model,
+            )
+        finally:
+            _EVENT_SOURCE.reset(_source_token)
 
         # Extract structured output (thoughts)
         structured = result.structured_output
