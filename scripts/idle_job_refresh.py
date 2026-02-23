@@ -6,8 +6,9 @@ Intended to run after a Unity Cloud Build completes, replacing the
 hourly Cloud Scheduler cron with an event-driven trigger.
 
 Usage:
-    python scripts/idle_job_refresh.py                 # prod (default)
+    python scripts/idle_job_refresh.py                 # prod (default, lists jobs)
     python scripts/idle_job_refresh.py --staging       # staging
+    python scripts/idle_job_refresh.py --no-list-jobs  # skip job listing
     python scripts/idle_job_refresh.py --delay 45
 """
 
@@ -24,9 +25,42 @@ ADAPTERS_URLS = {
 }
 
 
-def refresh_idle_jobs(adapters_url: str, delay: int = 30):
+def list_jobs(comms_url: str, admin_key: str, label: str):
+    """Fetch and print current jobs from the comms /infra/jobs endpoint."""
+    headers = {"Authorization": f"Bearer {admin_key}"}
+    try:
+        resp = requests.get(
+            f"{comms_url}/infra/jobs",
+            params={"label_selector": "app=unity"},
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        jobs = data.get("jobs", [])
+        names = [job["job_name"] for job in jobs]
+        print(f"\n--- {label} ({len(names)} jobs) ---")
+        for name in names:
+            print(f"  {name}")
+        if not names:
+            print("  (none)")
+        print()
+    except Exception as e:
+        print(f"  Failed to list jobs: {e}", file=sys.stderr)
+
+
+def refresh_idle_jobs(
+    adapters_url: str,
+    delay: int = 30,
+    comms_url: str | None = None,
+    admin_key: str | None = None,
+):
+    show_jobs = comms_url and admin_key
     create_url = f"{adapters_url}/scheduled/jobs/create"
     cleanup_url = f"{adapters_url}/scheduled/jobs/cleanup"
+
+    if show_jobs:
+        list_jobs(comms_url, admin_key, "Before job creation")
 
     for i in range(1, 3):
         print(f"[{i}/2] Creating idle job via {create_url}")
@@ -36,6 +70,9 @@ def refresh_idle_jobs(adapters_url: str, delay: int = 30):
             print(f"       Response: {resp.json()}")
         except Exception as e:
             print(f"       Failed: {e}", file=sys.stderr)
+
+    if show_jobs:
+        list_jobs(comms_url, admin_key, "After job creation")
 
     print(f"Waiting {delay}s for jobs to register as idle...")
     time.sleep(delay)
@@ -47,6 +84,9 @@ def refresh_idle_jobs(adapters_url: str, delay: int = 30):
         print(f"       Response: {resp.json()}")
     except Exception as e:
         print(f"       Failed: {e}", file=sys.stderr)
+
+    if show_jobs:
+        list_jobs(comms_url, admin_key, "After cleanup")
 
     print("Done.")
 
@@ -71,16 +111,43 @@ def main():
         default=30,
         help="Seconds to wait between job creation and cleanup (default: 30)",
     )
+    parser.add_argument(
+        "--no-list-jobs",
+        action="store_true",
+        help="Disable job listing at each step",
+    )
+    parser.add_argument(
+        "--comms-url",
+        default=None,
+        help="Override the comms service URL for job listing",
+    )
+    parser.add_argument(
+        "--admin-key",
+        default=None,
+        help="Override the admin key for job listing",
+    )
     args = parser.parse_args()
 
     if args.adapters_url:
-        url = args.adapters_url
+        adapters_url = args.adapters_url
     else:
         env = "staging" if args.staging else "prod"
-        url = os.getenv("UNITY_ADAPTERS_URL", ADAPTERS_URLS[env])
+        adapters_url = os.getenv("UNITY_ADAPTERS_URL", ADAPTERS_URLS[env])
         print(f"Environment: {env}")
 
-    refresh_idle_jobs(url, args.delay)
+    comms_url = None
+    admin_key = None
+    if not args.no_list_jobs:
+        comms_url = args.comms_url or os.getenv("UNITY_COMMS_URL")
+        admin_key = args.admin_key or os.getenv("ORCHESTRA_ADMIN_KEY")
+        if not comms_url or not admin_key:
+            parser.error(
+                "Job listing requires UNITY_COMMS_URL and ORCHESTRA_ADMIN_KEY "
+                "env vars (or --comms-url and --admin-key). "
+                "Use --no-list-jobs to skip."
+            )
+
+    refresh_idle_jobs(adapters_url, args.delay, comms_url, admin_key)
 
 
 if __name__ == "__main__":
