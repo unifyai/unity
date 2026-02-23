@@ -6,6 +6,8 @@ from typing import Any
 import unillm
 from pydantic import BaseModel
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 
 # Backward-compatible constant (now sourced from settings)
@@ -41,8 +43,17 @@ def new_llm_client(
     config.update(kwargs)
 
     if async_client:
-        return unillm.AsyncUnify(model, **config)
-    return unillm.Unify(model, **config)
+        client = unillm.AsyncUnify(model, **config)
+    else:
+        client = unillm.Unify(model, **config)
+
+    if origin:
+        icon = ICONS["llm_log_file"]
+        client.set_on_log_file(
+            lambda path, _o=origin: LOGGER.info(f"{icon} [{_o}] → {path}"),
+        )
+
+    return client
 
 
 def _make_openai_strict_json_schema_compatible(node: Any) -> None:
