@@ -584,10 +584,6 @@ class CommandRouter:
                     lines=["⚠️ Already in a voice session. End it first."],
                 )
             if getattr(self.args, "live_voice", False):
-                if getattr(st, "live_voice_active", False):
-                    return RouterResult(
-                        lines=["⚠️ A live voice call is already active."],
-                    )
                 try:
                     lines = await self.publisher.start_live_call()
                     return RouterResult(lines=lines)
@@ -608,6 +604,15 @@ class CommandRouter:
                 return RouterResult(
                     lines=["⚠️ Already in a voice session. End it first."],
                 )
+            if getattr(self.args, "live_voice", False):
+                try:
+                    lines = await self.publisher.start_live_meet()
+                    return RouterResult(lines=lines)
+                except Exception as exc:
+                    st.in_meet = False
+                    return RouterResult(
+                        lines=[f"❌ Failed to start live meet: {exc}"],
+                    )
             await self.publisher.publish_meet_start()
             return RouterResult(
                 lines=[
@@ -691,18 +696,29 @@ class CommandRouter:
         if cmd.name == "end_call":
             if getattr(st, "live_voice_active", False):
                 try:
-                    lines = await self.publisher.end_live_call()
+                    lines = await self.publisher.end_live_session()
                     return RouterResult(lines=lines)
                 except Exception as exc:
-                    LG.error("end_live_call failed: %s", exc, exc_info=True)
+                    LG.error("end_live_session failed: %s", exc, exc_info=True)
                     st.in_call = False
                     st.live_voice_session = None
                     return RouterResult(
-                        lines=[f"❌ Error ending live voice call: {exc}"],
+                        lines=[f"❌ Error ending live voice session: {exc}"],
                     )
             await self.publisher.publish_call_end()
             return RouterResult(lines=["📞 Call ended."])
         if cmd.name == "end_meet":
+            if getattr(st, "live_voice_active", False):
+                try:
+                    lines = await self.publisher.end_live_session()
+                    return RouterResult(lines=lines)
+                except Exception as exc:
+                    LG.error("end_live_session failed: %s", exc, exc_info=True)
+                    st.in_meet = False
+                    st.live_voice_session = None
+                    return RouterResult(
+                        lines=[f"❌ Error ending live voice session: {exc}"],
+                    )
             await self.publisher.publish_meet_end()
             return RouterResult(lines=["🎥 Unify Meet ended."])
 
