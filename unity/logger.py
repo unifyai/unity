@@ -483,7 +483,7 @@ if SETTINGS.UNITY_TERMINAL_LOG:
     )
 
     if not _already_configured:
-        LOGGER.setLevel(logging.DEBUG)
+        LOGGER.setLevel(logging.INFO)
         _handler._unity_terminal = True  # type: ignore[attr-defined]
         LOGGER.addHandler(_handler)
 
@@ -570,7 +570,7 @@ def configure_log_dir(log_dir: Optional[str] = None) -> Optional[Path]:
         handler._unity_file_handler = True  # type: ignore[attr-defined]
 
         LOGGER.addHandler(handler)
-        LOGGER.setLevel(logging.DEBUG)  # Ensure logger level allows debug
+        LOGGER.setLevel(logging.INFO)
 
         _FILE_HANDLER = handler
         _LOG_DIR = log_path
