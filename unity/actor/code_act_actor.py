@@ -1276,11 +1276,11 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         guidance_manager: Optional["GuidanceManager"] = None,
         can_compose: bool = True,
-        can_store: bool = True,
-        timeout: float = 1000,
+        can_store: bool = False,
+        timeout: float = 3600,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
-        prompt_caching: Optional["PromptCacheParam"] = None,
+        prompt_caching: Optional["PromptCacheParam"] = ("system", "tools", "messages"),
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
     ):
         """

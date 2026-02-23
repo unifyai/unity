@@ -92,11 +92,15 @@ class BaseActor(ABC):
         Shared initialization for concrete actor implementations.
 
         This centralizes:
-        - Environment dict construction from the provided list
+        - Environment resolution (EnvironmentManager fallback)
         - FunctionManager resolution (registry fallback)
         - GuidanceManager resolution (registry fallback)
         - Extraction of computer primitives for backward compatibility
+
+        If the EnvironmentManager has stored environments for the current
+        assistant, they override any explicitly passed defaults.
         """
+        environments = self._resolve_environments(environments)
         self.environments: Dict[str, "BaseEnvironment"] = self._setup_environments(
             environments=environments,
         )
@@ -112,6 +116,28 @@ class BaseActor(ABC):
 
         # Backward-compat: some call sites expect an actor-level computer primitives instance.
         self._computer_primitives = self._extract_computer_primitives()
+
+    @staticmethod
+    def _resolve_environments(
+        environments: Optional[list["BaseEnvironment"]],
+    ) -> list["BaseEnvironment"]:
+        """Resolve environments, checking EnvironmentManager for stored overrides.
+
+        If the EnvironmentManager has stored environments for the current
+        assistant, they completely replace whatever defaults were passed.
+        If no stored environments exist, the passed defaults are used as-is.
+        """
+        try:
+            from unity.manager_registry import ManagerRegistry
+
+            env_mgr = ManagerRegistry.get_environment_manager()
+            stored = env_mgr.load_all_environments()
+            if stored:
+                return stored
+        except Exception:
+            pass
+
+        return environments if environments is not None else []
 
     def _setup_environments(
         self,
