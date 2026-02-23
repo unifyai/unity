@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import re
 import pytest
@@ -200,3 +201,73 @@ async def test_litellm_logs_are_suppressed(llm_config, caplog):
         f"Found {len(litellm_logs)} log(s) from LiteLLM loggers that should be suppressed. "
         f"Logger names: {sorted(set(r.name for r in litellm_logs))}"
     )
+
+
+@pytest.mark.asyncio
+async def test_inline_log_file_paths(llm_config, capfd, tmp_path):
+    """
+    Verify that when UNILLM_LOG_DIR is set, each LLM call in the async tool
+    loop emits an inline log line with the finalized log file path and the
+    full parent lineage label.
+
+    The test:
+    1. Configures a temporary UNILLM_LOG_DIR
+    2. Runs a single-tool loop with loop_id="LogFileTest"
+    3. Asserts that stdout contains a 📝 line with the lineage label and
+       a path ending in .txt
+    4. Asserts the referenced file actually exists on disk
+    """
+    import unillm.logger as unillm_logger
+
+    log_dir = tmp_path / "unillm_logs"
+    log_dir.mkdir()
+    old_env = os.environ.get("UNILLM_LOG_DIR")
+    unillm_logger.configure_log_dir(str(log_dir))
+
+    try:
+
+        def noop_tool() -> str:
+            return "ok"
+
+        client = new_llm_client(**llm_config)
+        client.set_system_message("Call noop_tool, then reply 'done'.")
+
+        handle = start_async_tool_loop(
+            client=client,
+            message="start",
+            tools={"noop_tool": noop_tool},
+            loop_id="LogFileTest",
+            max_steps=5,
+            timeout=60,
+        )
+
+        await handle.result()
+
+        captured = capfd.readouterr()
+        stdout_lines = captured.out.splitlines()
+
+        log_file_lines = [
+            line for line in stdout_lines if "📝" in line and "LogFileTest" in line
+        ]
+
+        assert log_file_lines, (
+            "No stdout lines found with 📝 icon and 'LogFileTest' lineage. "
+            f"Stdout lines containing LogFileTest: "
+            f"{[l for l in stdout_lines if 'LogFileTest' in l]}"
+        )
+
+        for line in log_file_lines:
+            match = re.search(r"→ (.+\.txt)", line)
+            assert match, f"Could not extract .txt path from log line: {line}"
+            path_str = match.group(1)
+            assert os.path.isfile(path_str), f"Log file does not exist: {path_str}"
+            assert (
+                str(log_dir) in path_str
+            ), f"Log file {path_str} is not under expected dir {log_dir}"
+
+    finally:
+        if old_env is not None:
+            os.environ["UNILLM_LOG_DIR"] = old_env
+        else:
+            os.environ.pop("UNILLM_LOG_DIR", None)
+        unillm_logger.configure_log_dir(old_env)

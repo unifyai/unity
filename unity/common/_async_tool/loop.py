@@ -376,6 +376,15 @@ async def async_tool_loop_inner(
             setattr(outer_handle_container[0], "_log_hierarchy", list(cfg.lineage))
     logger = LoopLogger(cfg, log_steps)
 
+    # Wire inline log-file pointers: when UNILLM_LOG_DIR is set, each LLM call
+    # writes a request+response file.  The callback prints the finalized path
+    # in the terminal with the full parent lineage so the developer can click
+    # through to the exact I/O for each step.
+    if log_steps:
+        client.set_on_log_file(
+            lambda path: logger.info(f"→ {path}", prefix=ICONS["llm_log_file"]),
+        )
+
     # ── Time context for time-awareness ──────────────────────────────────────
     # Capture the conversation start time and track tool execution timings.
     time_ctx: Optional[TimeContext] = create_time_context() if time_awareness else None
