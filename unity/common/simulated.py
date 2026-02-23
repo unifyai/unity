@@ -42,15 +42,15 @@ class SimulatedLineage:
 
     @staticmethod
     def make_label(segment: str) -> str:
-        """Compose a nested label like '<outer...>->Segment(abcd)'."""
+        """Compose a nested label like '<outer(xxxx)>->Segment(abcd)'."""
         from secrets import token_hex  # noqa: WPS433
 
         try:
-            parts = SimulatedLineage.parent_lineage()
-            base = "->".join([*parts, segment]) if parts else segment
+            parts = SimulatedLineage.parent_lineage()  # already suffixed
         except Exception:
-            base = segment
-        return f"{base}({token_hex(2)})"
+            parts = []
+        suffixed = f"{segment}({token_hex(2)})"
+        return "->".join([*parts, suffixed]) if parts else suffixed
 
     @staticmethod
     def question_label(parent_label: str) -> str:
@@ -79,15 +79,20 @@ class SimulatedLineage:
     @staticmethod
     def make_label_with_suffix(segment: str, suffix: str) -> str:
         """
-        Compose '<outer...>->Segment(suffix)' using the provided suffix.
+        Compose '<outer(xxxx)>->Segment(abcd)' using the provided suffix.
+
+        Parent segments from TOOL_LOOP_LINEAGE are already suffixed;
+        only the leaf segment gets the suffix.
         """
+        from secrets import token_hex  # noqa: WPS433
+
         try:
-            parts = SimulatedLineage.parent_lineage()
-            base = "->".join([*parts, segment]) if parts else segment
+            parts = SimulatedLineage.parent_lineage()  # already suffixed
         except Exception:
-            base = segment
+            parts = []
         suf = str(suffix or "").strip()
-        return f"{base}({suf})" if suf else SimulatedLineage.make_label(segment)
+        suffixed = f"{segment}({suf})" if suf else f"{segment}({token_hex(2)})"
+        return "->".join([*parts, suffixed]) if parts else suffixed
 
     @staticmethod
     def preview(text: str, limit: int = PREVIEW_LIMIT) -> str:
