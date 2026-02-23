@@ -55,7 +55,7 @@ class ParsedCommand:
 HELP_TEXT = """
 ConversationManager Sandbox (REPL)
 --------------------------------
-Type a command at the prompt.
+Type a command at the prompt. <arg> = required, [arg] = optional.
 
 Meta commands:
   help | h            Show this help
