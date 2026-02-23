@@ -88,7 +88,7 @@ def init_metrics() -> None:
         )
         _provider = MeterProvider(resource=resource, metric_readers=[reader])
         metrics.set_meter_provider(_provider)
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['metrics']} [metrics] GMP metrics export initialised (15 s interval)",
         )
     except Exception as exc:

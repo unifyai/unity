@@ -267,14 +267,14 @@ async def run_conversation_manager(
             if _container_start_ms:
                 _spinup_s = (time.time() * 1000 - int(_container_start_ms)) / 1000.0
                 container_spinup.record(_spinup_s)
-                LOGGER.info(
+                LOGGER.debug(
                     f"{ICONS['metrics']} [metrics] Container spin-up: {_spinup_s:.2f}s",
                 )
 
         comms_manager = CommsManager(event_broker=event_broker)
         asyncio.create_task(comms_manager.start())
 
-    LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is running...")
+    LOGGER.debug(f"{ICONS['lifecycle']} ConversationManager is running...")
     return cm
 
 
@@ -300,17 +300,17 @@ async def main(project_name: str = "Assistants"):
         stop_event=_stop,
     )
 
-    LOGGER.info(f"{ICONS['lifecycle']} Server is Running...")
+    LOGGER.debug(f"{ICONS['lifecycle']} Server is Running...")
     await _stop.wait()
 
-    LOGGER.info(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
+    LOGGER.debug(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
-    LOGGER.info(f"{ICONS['lifecycle']} Cleanup finished")
+    LOGGER.debug(f"{ICONS['lifecycle']} Cleanup finished")
 
     # Shut down the metrics exporter (flushes remaining data internally).
     shutdown_metrics()
 
-    LOGGER.info(f"{ICONS['lifecycle']} Shutdown finished")
+    LOGGER.debug(f"{ICONS['lifecycle']} Shutdown finished")
 
     # Exit with special code 42 if:
     # - Shutdown was triggered by external signal (i.e. not inactivity timeout)

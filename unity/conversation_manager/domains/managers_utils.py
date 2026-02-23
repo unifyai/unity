@@ -516,8 +516,8 @@ async def log_message(
         else:
             # Log error but use the provided contact_id anyway since the event
             # already contains the full contact dict from the source
-            LOGGER.info(
-                f"{DEFAULT_ICON} Warning: contact_id {evt_contact_id} not in contact_index, "
+            LOGGER.warning(
+                f"{DEFAULT_ICON} contact_id {evt_contact_id} not in contact_index, "
                 f"using contact from event",
             )
             contact_id = evt_contact_id
@@ -629,7 +629,7 @@ async def log_message(
                 # Cache the exchange_id for subsequent pre-hire messages in the batch
                 if isinstance(event, PreHireMessage):
                     _pre_hire_exchange_id = exchange_id
-                    LOGGER.info(
+                    LOGGER.debug(
                         f"{ICONS['managers_worker']} [ManagersWorker] Cached pre-hire exchange_id: {exchange_id}",
                     )
             else:
@@ -655,7 +655,7 @@ async def log_message(
             if local_message_id is not None and tm_message_id is not None:
                 cm._local_to_global_message_ids[local_message_id] = tm_message_id
 
-            LOGGER.info(
+            LOGGER.debug(
                 f"{ICONS['managers_worker']} [ManagersWorker] Logged message: {medium}"
                 f" from {sender_id} to {receiver_ids}",
             )
@@ -870,7 +870,7 @@ def _init_managers(
     start_time = perf_counter()
 
     # 0. Initialize unity using SESSION_DETAILS (the canonical source of session config)
-    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
+    LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing unity...")
     local_start_time = perf_counter()
     if not SESSION_DETAILS.assistant_record:
         # When default_assistant is provided, unity.init() uses it directly
@@ -907,7 +907,7 @@ def _init_managers(
     api_key = SESSION_DETAILS.unify_key or None
 
     # 1. Configure EventBus
-    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Configuring EventBus...")
+    LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Configuring EventBus...")
     local_start_time = perf_counter()
     if api_key:
         EVENT_BUS._get_logger().session.headers["Authorization"] = f"Bearer {api_key}"
@@ -1095,7 +1095,7 @@ def _init_managers(
     per_manager_init.record(_cmhandle_dur, {"manager": "conversation_manager_handle"})
 
     # 7. Initialize Actor (use provided actor or create via ManagerRegistry)
-    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
+    LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Initializing Actor...")
     try:
         local_start_time = perf_counter()
         if actor is not None:
@@ -1212,7 +1212,7 @@ async def init_conv_manager(
             of creating one via ManagerRegistry. Useful for testing with specific
             Actor implementations (e.g., SimulatedActor).
     """
-    LOGGER.info(f"{ICONS['managers_worker']} [ManagersWorker] Processing startup")
+    LOGGER.debug(f"{ICONS['managers_worker']} [ManagersWorker] Processing startup")
 
     async with _init_lock:
         start_time = perf_counter()

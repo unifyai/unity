@@ -1294,7 +1294,7 @@ def configure_sandbox_logging(
     # terminal stays clean, then mirror root's handlers onto LOGGER so that
     # file / TCP routing works for unity.* log records.
     try:
-        from unity.logger import LOGGER as _unity_logger, _CategoryFilter
+        from unity.logger import LOGGER as _unity_logger
 
         for _h in list(_unity_logger.handlers):
             if isinstance(_h, _logging.StreamHandler) and getattr(
@@ -1303,9 +1303,7 @@ def configure_sandbox_logging(
                 False,
             ):
                 _unity_logger.removeHandler(_h)
-        _cat_filter = _CategoryFilter()
         for _h in root_logger.handlers:
-            _h.addFilter(_cat_filter)
             _unity_logger.addHandler(_h)
     except ImportError:
         pass

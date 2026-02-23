@@ -384,98 +384,11 @@ class _MillisFormatter(logging.Formatter):
         return f"{ts} {msg}"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Category-based log filter
-#
-# Intercepts log records on the terminal handler and suppresses messages whose
-# emoji prefix belongs to a disabled category.  This catches direct LOGGER
-# calls and LoopLogger output that bypasses the event-type gating in
-# SessionLogger / FastBrainLogger.
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _build_emoji_to_category() -> dict[str, str]:
-    """Build a reverse mapping from emoji → category name.
-
-    When an emoji appears in multiple categories (e.g. ``✅`` in both ``brain``
-    and ``actor``), the *first* category encountered wins.  The ordering in
-    ``LOG_CATEGORIES`` is intentional: higher-signal categories come first.
-    """
-    from unity.common.hierarchical_logger import ICONS, LOG_CATEGORIES
-
-    emoji_to_cat: dict[str, str] = {}
-    for cat, event_types in LOG_CATEGORIES.items():
-        for evt in event_types:
-            emoji = ICONS.get(evt)
-            if emoji and emoji not in emoji_to_cat:
-                emoji_to_cat[emoji] = cat
-    return emoji_to_cat
-
-
-class _CategoryFilter(logging.Filter):
-    """Suppresses log records whose leading emoji maps to a disabled category.
-
-    Records without a leading emoji (pure ASCII) are classified as ``bus``
-    (the default-icon ``⬥`` lines).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._emoji_to_category = _build_emoji_to_category()
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        from unity.common.hierarchical_logger import is_category_enabled
-
-        if record.levelno >= logging.WARNING:
-            return True
-
-        # SessionLogger / FastBrainLogger already checked event-type visibility;
-        # skip emoji-based re-classification (avoids icon_override mismatches).
-        if getattr(record, "_category_checked", False):
-            return True
-
-        msg = record.getMessage()
-        if not msg:
-            return True
-
-        # Pure ASCII → this will become a ⬥ line (bus category)
-        if ord(msg[0]) < 128:
-            return is_category_enabled("bus")
-
-        # Extract leading emoji (may be multi-codepoint like 🧑‍💻 or 🎙️)
-        # Try progressively shorter prefixes (max 7 chars covers ZWJ sequences)
-        for length in range(min(7, len(msg)), 0, -1):
-            candidate = msg[:length].rstrip()
-            if candidate in self._emoji_to_category:
-                return is_category_enabled(self._emoji_to_category[candidate])
-
-        # Unknown emoji — let it through (don't silently suppress unexpected logs)
-        return True
-
-
-def _apply_log_categories() -> None:
-    """Read UNITY_LOG_CATEGORIES from settings and configure filtering."""
-    from unity.common.hierarchical_logger import (
-        ALL_LOG_CATEGORIES,
-        configure_log_categories,
-    )
-
-    raw = SETTINGS.UNITY_LOG_CATEGORIES.strip()
-    if not raw:
-        configure_log_categories(None)  # use defaults
-    elif raw.lower() == "all":
-        configure_log_categories(set(ALL_LOG_CATEGORIES))
-    else:
-        cats = {c.strip() for c in raw.split(",") if c.strip()}
-        configure_log_categories(cats)
-
-
 if SETTINGS.UNITY_TERMINAL_LOG:
     import sys
 
     _handler = logging.StreamHandler(sys.stdout)
     _handler.setFormatter(_MillisFormatter())
-    _handler.addFilter(_CategoryFilter())
 
     _already_configured = any(
         isinstance(h, logging.StreamHandler) and getattr(h, "_unity_terminal", False)
@@ -487,9 +400,6 @@ if SETTINGS.UNITY_TERMINAL_LOG:
         _handler._unity_terminal = True  # type: ignore[attr-defined]
         LOGGER.addHandler(_handler)
 
-    # Apply category configuration from settings
-    _apply_log_categories()
-
 # Mute noisy third-party loggers so only unity.* output reaches the terminal.
 for _lib in (
     "httpx",
@@ -498,21 +408,11 @@ for _lib in (
     "LiteLLM",
     "LiteLLM Proxy",
     "LiteLLM Router",
+    "livekit",
+    "livekit.agents",
+    "livekit.plugins",
 ):
     logging.getLogger(_lib).setLevel(logging.WARNING)
-
-
-# LiveKit's own loggers go through Python's logging, not through LOGGER.
-# Mute them unless the "livekit" category is enabled.
-def _apply_livekit_log_level() -> None:
-    from unity.common.hierarchical_logger import is_category_enabled
-
-    level = logging.DEBUG if is_category_enabled("livekit") else logging.WARNING
-    for name in ("livekit", "livekit.agents", "livekit.plugins"):
-        logging.getLogger(name).setLevel(level)
-
-
-_apply_livekit_log_level()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File-based Logging Configuration

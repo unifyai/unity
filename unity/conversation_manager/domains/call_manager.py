@@ -338,4 +338,4 @@ class LivekitCallManager:
             f"{ICONS['ipc']} [LivekitCallManager] Killing voice agent process {proc.pid}...",
         )
         await asyncio.to_thread(terminate_process, proc, 0)
-        LOGGER.info(f"{ICONS['ipc']} [LivekitCallManager] Voice agent process killed")
+        LOGGER.debug(f"{ICONS['ipc']} [LivekitCallManager] Voice agent process killed")

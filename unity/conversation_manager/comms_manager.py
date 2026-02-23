@@ -601,7 +601,7 @@ class CommsManager:
                                 f"{DEFAULT_ICON} Skipping malformed pre-hire item: {inner_e}",
                             )
 
-                    LOGGER.info(
+                    LOGGER.debug(
                         f"{DEFAULT_ICON} Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
                     )
                     message.ack()
@@ -752,7 +752,7 @@ class CommsManager:
                 subscription_id,
             )
 
-            LOGGER.info(
+            LOGGER.debug(
                 f"{ICONS['subscription']} Starting subscription to {subscription_path}",
             )
 
@@ -785,14 +785,14 @@ class CommsManager:
             while True:
                 await asyncio.sleep(1)
         except KeyboardInterrupt:
-            LOGGER.info(f"{ICONS['lifecycle']} Shutting down...")
+            LOGGER.debug(f"{ICONS['lifecycle']} Shutting down...")
             # Cleanup subscriptions
             for future in self.subscribers.values():
                 future.cancel()
 
     async def send_pings(self):
         """Send periodic pings to keep the event manager alive while waiting for startup."""
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['subscription']} Starting ping mechanism for idle container...",
         )
         while True:
@@ -808,7 +808,7 @@ class CommsManager:
 
                 # Check if we've received a startup message (indicated by assistant_id changed)
                 if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID:
-                    LOGGER.info(
+                    LOGGER.debug(
                         f"{ICONS['subscription']} Startup received, stopping ping mechanism",
                     )
                     break

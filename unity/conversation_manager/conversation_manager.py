@@ -207,7 +207,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
-        self._session_logger.info(
+        self._session_logger.debug(
             "session_start",
             "ConversationManager session initialized",
         )
@@ -764,7 +764,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             screenshot_paths=screenshot_paths,
         )
         if screenshots:
-            self._session_logger.info(
+            self._session_logger.debug(
                 "screen_share",
                 f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
             )
@@ -988,8 +988,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                LOGGER.info(f"{DEFAULT_ICON} {log_str}")
-                self._session_logger.info("session_end", log_str)
+                LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
+                self._session_logger.debug("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
                 break  # Exit the loop after triggering shutdown
@@ -1086,7 +1086,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self._stop_file_sync()
 
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
-            self._session_logger.info(
+            self._session_logger.debug(
                 "session_end",
                 f"Marking job {self.job_name} done",
             )

@@ -5158,7 +5158,7 @@ class FunctionManager(BaseFunctionManager):
         venv_dir = f"Local\\venvs\\venv_{venv_id}"
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
-        LOGGER.info(f"{ICONS['windows_exec']} [windows exec] Preparing venv {venv_id}")
+        LOGGER.debug(f"{ICONS['windows_exec']} [windows exec] Preparing venv {venv_id}")
 
         async with aiohttp.ClientSession() as session:
             # Step 1: Write pyproject.toml

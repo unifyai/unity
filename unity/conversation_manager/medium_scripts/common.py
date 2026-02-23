@@ -54,7 +54,7 @@ from unity.conversation_manager.tracing import (
 )
 from unity.session_details import SESSION_DETAILS
 from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS, is_event_visible
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FastBrainLogger — mirrors the async tool loop's LoopLogger format so all
@@ -81,20 +81,10 @@ class FastBrainLogger:
         return self._label
 
     def _emit(self, event_type: str, msg: str) -> None:
-        if not is_event_visible(event_type):
-            return
-        LOGGER.info(
-            f"{ICONS[event_type]} [{self._label}] {msg}",
-            extra={"_category_checked": True},
-        )
+        LOGGER.info(f"{ICONS[event_type]} [{self._label}] {msg}")
 
     def _emit_debug(self, event_type: str, msg: str) -> None:
-        if not is_event_visible(event_type):
-            return
-        LOGGER.debug(
-            f"{ICONS[event_type]} [{self._label}] {msg}",
-            extra={"_category_checked": True},
-        )
+        LOGGER.debug(f"{ICONS[event_type]} [{self._label}] {msg}")
 
     # ── typed helpers ────────────────────────────────────────────────────
 
@@ -208,24 +198,21 @@ class FastBrainLogger:
         self._emit_debug("proactive_cancelled", "Proactive speech cancelled")
 
     def proactive_error(self, error: str) -> None:
-        if not is_event_visible("proactive_error"):
-            return
         LOGGER.error(
             f"{ICONS['proactive_error']} [{self._label}] Proactive error: {error}",
-            extra={"_category_checked": True},
         )
 
     def call_status(self, event_name: str) -> None:
-        self._emit("call_status", event_name)
+        self._emit_debug("call_status", event_name)
 
     def session_start(self, msg: str = "Session starting") -> None:
-        self._emit("session_start", msg)
+        self._emit_debug("session_start", msg)
 
     def session_end(self, msg: str = "Session ended") -> None:
-        self._emit("session_end", msg)
+        self._emit_debug("session_end", msg)
 
     def session_ready(self, msg: str = "Session ready") -> None:
-        self._emit("session_ready", msg)
+        self._emit_debug("session_ready", msg)
 
     def participant_comms(self, text: str) -> None:
         self._emit("participant_comms", _trunc(text))
@@ -458,7 +445,7 @@ def create_end_call(
     """
 
     async def end_call() -> None:
-        LOGGER.info(f"{ICONS['lifecycle']} Initiating graceful shutdown...")
+        LOGGER.debug(f"{ICONS['lifecycle']} Initiating graceful shutdown...")
 
         # Run pre-shutdown callback (e.g., usage logging) before cleanup
         if pre_shutdown_callback is not None:
@@ -496,7 +483,7 @@ def create_end_call(
             except Exception as e:  # noqa: BLE001
                 LOGGER.error(f"{DEFAULT_ICON} Error during task cancellation: {e}")
 
-        LOGGER.info(f"{ICONS['lifecycle']} Graceful shutdown completed")
+        LOGGER.debug(f"{ICONS['lifecycle']} Graceful shutdown completed")
 
     return end_call
 

@@ -52,7 +52,7 @@ class SyncManager:
             LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Already started")
             return True
 
-        LOGGER.info(f"{ICONS['file_sync']} [FileSync] Starting sync manager...")
+        LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Starting sync manager...")
 
         # 1. Get SSH private key from Orchestra secrets
         ssh_key = await self._get_ssh_private_key()
@@ -158,7 +158,7 @@ class SyncManager:
         if not self._started:
             return
 
-        LOGGER.info(f"{ICONS['file_sync']} [FileSync] Stopping sync manager...")
+        LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Stopping sync manager...")
 
         # Cancel polling task
         if self._poll_task:
@@ -177,7 +177,7 @@ class SyncManager:
             self._rclone = None
 
         self._started = False
-        LOGGER.info(f"{ICONS['file_sync']} [FileSync] Sync manager stopped")
+        LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Sync manager stopped")
 
     SENTINEL_NAME = "assistant.txt"
 

@@ -219,17 +219,17 @@ def cleanup_dangling_call_processes() -> int:
         }
 
         if not processes:
-            LOGGER.info(f"{ICONS['process_cleanup']} No dangling call processes found")
+            LOGGER.debug(f"{ICONS['process_cleanup']} No dangling call processes found")
             return 0
 
         terminated_count = 0
         for pid, command in processes.items():
             try:
-                LOGGER.info(
+                LOGGER.debug(
                     f"{ICONS['process_cleanup']} Force killing dangling call process PID {pid} with command {command}",
                 )
                 os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
-                LOGGER.info(f"{ICONS['process_cleanup']} Killed process {pid}")
+                LOGGER.debug(f"{ICONS['process_cleanup']} Killed process {pid}")
             except ProcessLookupError:
                 LOGGER.debug(
                     f"{ICONS['process_cleanup']} Process {pid} -> {command} not found",
