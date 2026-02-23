@@ -650,6 +650,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             message_content = event.content
             notif_content = f"SMS sent to {sender_name}"
             role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "sms_sent",
+                f"({event_trace.get('event_id', '-')}) "
+                f"SMS to {sender_name}: {event.content}",
+            )
         case SMSReceived():
             medium = Medium.SMS_MESSAGE
             message_content = event.content
@@ -662,6 +668,17 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
                 f"SMS from {sender_name}: {event.content}",
             )
         case EmailSent():
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            recipients = ", ".join((event.to or [])[:2])
+            if len(event.to or []) > 2:
+                recipients += "..."
+            cm._session_logger.info(
+                "email_sent",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Email to {recipients}\n"
+                f"Subject: {event.subject}\n\n"
+                f"{event.body}",
+            )
             # Email handling is special: push to ALL contacts involved
             email_to = event.to or []
             email_cc = event.cc or []
@@ -725,6 +742,12 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             attachments = event.attachments
             notif_content = f"Unify message sent to {sender_name}"
             role = "assistant"
+            event_trace = getattr(cm, "_current_event_trace", None) or {}
+            cm._session_logger.info(
+                "unify_message_sent",
+                f"({event_trace.get('event_id', '-')}) "
+                f"Message to {sender_name}: {event.content}",
+            )
         case UnifyMessageReceived():
             medium = Medium.UNIFY_MESSAGE
             message_content = event.content
