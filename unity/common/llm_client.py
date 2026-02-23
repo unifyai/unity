@@ -17,7 +17,7 @@ def new_llm_client(
     *,
     async_client: bool = True,
     stateful: bool = False,
-    debug_marker: str | None = None,
+    origin: str | None = None,
     **kwargs: Any,
 ) -> "unillm.AsyncUnify | unillm.Unify":
     """
@@ -36,7 +36,7 @@ def new_llm_client(
         "reasoning_effort": "low",
         "service_tier": "priority",
         "stateful": stateful,
-        "debug_marker": debug_marker,
+        "origin": origin,
     }
     config.update(kwargs)
 

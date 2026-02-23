@@ -540,7 +540,7 @@ class SimulatedContactManager(BaseContactManager):
 
         self._llm = _new_llm_client(
             stateful=True,
-            debug_marker="SimulatedContactManager",
+            origin="SimulatedContactManager",
         )
         # Mirror the real manager's tool exposure programmatically
         # and build the *exact* same prompts via the shared builders.

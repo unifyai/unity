@@ -50,7 +50,7 @@ class SimulatedConversationManagerHandle(
         # A shared, stateful LLM for maintaining conversation context
         self._llm = new_llm_client(
             stateful=True,
-            debug_marker="SimulatedConversationManager",
+            origin="SimulatedConversationManager",
         )
 
         # Initialize the system message for the stateful LLM
