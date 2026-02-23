@@ -363,6 +363,18 @@ async def entrypoint(ctx: agents.JobContext):
     assistant_screen_share_active = False
     _visual_ctx_msg_id: str | None = None
 
+    def _clear_visual_context(source: str | None = None) -> None:
+        """Remove visual context from chat contexts and clear screenshot history."""
+        nonlocal _visual_ctx_msg_id
+        screenshot_history.clear(source=source)
+        if not screenshot_history.build_visual_context_content():
+            for ctx in (assistant._chat_ctx, session._chat_ctx):
+                if _visual_ctx_msg_id is not None:
+                    idx = ctx.index_by_id(_visual_ctx_msg_id)
+                    if idx is not None:
+                        ctx.items.pop(idx)
+            _visual_ctx_msg_id = None
+
     def _inject_visual_context() -> None:
         """Replace the visual context system message in the chat context."""
         nonlocal _visual_ctx_msg_id
@@ -526,13 +538,12 @@ async def entrypoint(ctx: agents.JobContext):
             if captured_any:
                 content = screenshot_history.build_visual_context_content()
                 if content:
-                    nonlocal _visual_ctx_msg_id
-                    if _visual_ctx_msg_id is not None:
-                        idx = chat_ctx.index_by_id(_visual_ctx_msg_id)
+                    remove_id = _visual_ctx_msg_id
+                    if remove_id is not None:
+                        idx = chat_ctx.index_by_id(remove_id)
                         if idx is not None:
                             chat_ctx.items.pop(idx)
-                    msg = chat_ctx.add_message(role="user", content=content)
-                    _visual_ctx_msg_id = msg.id
+                    chat_ctx.add_message(role="user", content=content)
         except Exception as e:
             print(f"[llm_node] screenshot capture error (non-fatal): {e}")
 
@@ -644,6 +655,10 @@ async def entrypoint(ctx: agents.JobContext):
                 assistant_screen_share_active = True
             elif "screen sharing is now off" in low:
                 assistant_screen_share_active = False
+                _clear_visual_context(source="assistant")
+            if "stopped sharing" in low or "screen sharing is now off" in low:
+                source = "user" if "user" in low else "assistant"
+                _clear_visual_context(source=source)
         response_text = payload.get("response_text", "")
         should_speak = payload.get("should_speak", False)
         guidance_source = payload.get("source", "")
