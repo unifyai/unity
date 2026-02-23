@@ -162,49 +162,42 @@ _STORAGE_DEFERRED_NOTICE = textwrap.dedent("""
 
 
 def _build_filesystem_context() -> str:
-    from pathlib import Path, PurePosixPath
-
     from unity.file_manager.settings import get_local_root
 
     resolved = get_local_root()
-    # Display as ~/... when the path is inside the user's home directory.
-    # This keeps the prompt stable across environments (critical for LLM
-    # response caching) while still being accurate.
-    try:
-        relative = PurePosixPath(resolved).relative_to(Path.home())
-        local_root = f"~/{relative}"
-    except ValueError:
-        local_root = resolved
     return textwrap.dedent(f"""
         ### Filesystem Context
 
-        Your working directory is `{local_root}`.  This directory **persists
+        Your working directory is `{resolved}`.  This directory **persists
         across every interaction** with the user — files you create today will
-        still be here weeks or months from now.  All relative paths resolve
-        from this directory.
+        still be here weeks or months from now.  **Always use full absolute
+        paths** (starting with `{resolved}/`) when referencing any file or
+        directory.  Never use relative paths.
 
         | Location | Purpose |
         |----------|---------|
-        | `Downloads/` | **Inbound** — user-sent attachments are auto-saved here. |
-        | `Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
-        | `Screenshots/User/` | Auto-captured frames from the user's screen share. Read-only, cleared between sessions. |
-        | `Screenshots/Assistant/` | Auto-captured frames from the assistant's desktop. Read-only, cleared between sessions. |
-        | `Screenshots/Webcam/` | Auto-captured frames from the user's webcam. Read-only, cleared between sessions. |
-        | `.env` | Environment secrets managed by SecretManager. |
+        | `{resolved}/Downloads/` | **Inbound** — user-sent attachments are auto-saved here. |
+        | `{resolved}/Outputs/` | **Outbound** — save generated files here (reports, CSVs, images, etc.) so the caller can attach and send them to the user. May be auto-cleared between sessions. |
+        | `{resolved}/Screenshots/User/` | Auto-captured frames from the user's screen share. Read-only, cleared between sessions. |
+        | `{resolved}/Screenshots/Assistant/` | Auto-captured frames from the assistant's desktop. Read-only, cleared between sessions. |
+        | `{resolved}/Screenshots/Webcam/` | Auto-captured frames from the user's webcam. Read-only, cleared between sessions. |
+        | `{resolved}/.env` | Environment secrets managed by SecretManager. |
         | Everything else | Your own persistent workspace — organize however makes sense for the work. |
 
         **File conventions:**
-        - **Inbound**: Attachments arrive at `Downloads/<filename>`.  Reference
-          them with relative paths (e.g. `Downloads/report.pdf`).
-        - **Outbound**: Save files for the user to `Outputs/` and include the
-          relative path in your final answer (e.g. `Outputs/summary.csv`).
+        - **Inbound**: Attachments arrive at `{resolved}/Downloads/<filename>`.
+          Reference them with full paths (e.g. `{resolved}/Downloads/report.pdf`).
+        - **Outbound**: Save files for the user to `{resolved}/Outputs/` and
+          include the full path in your final answer
+          (e.g. `{resolved}/Outputs/summary.csv`).
         - **Screenshots**: Timestamped JPEGs auto-saved during screen sharing.
           Reference them for programmatic access (image analysis, OCR,
-          comparison, etc.) using relative paths
-          (e.g. `Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg`).
-        - **Stay inside the workspace**: Always use relative paths. Do not
-          reference absolute paths outside `{local_root}` (e.g. `/tmp`,
-          `/var`).  Everything you need is inside this workspace.
+          comparison, etc.) using full paths
+          (e.g. `{resolved}/Screenshots/Assistant/2026-02-16T14-30-45.123456.jpg`).
+        - **Stay inside the workspace**: Always use full absolute paths
+          rooted under `{resolved}/`.  Do not reference paths outside this
+          workspace (e.g. `/tmp`, `/var`).  Everything you need is inside
+          this workspace.
 
         **When to use the filesystem vs. primitives:**
         Most tasks will not require reading or writing local files.  The

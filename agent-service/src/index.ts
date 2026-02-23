@@ -4,7 +4,7 @@ import http from 'http';
 import expressWs from 'express-ws';
 import WebSocket from 'ws';
 import util from 'util';
-import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
+import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions, AgentMemory, Observation } from 'magnitude-core';
 import { z, ZodTypeAny, ZodAny, ZodType } from 'zod';
 import { partitionHtml, serializeToMarkdown, PartitionOptions, MarkdownSerializerOptions } from 'magnitude-extract';
 import dotenv from 'dotenv';
@@ -365,12 +365,31 @@ async function auth(req: Request, res: Response, next: Function) {
 
 app.use(auth);
 
-// Session registry: maps sessionId to BrowserAgent
+// --- CLI argument parsing ---
+function parseIntArg(flag: string, defaultValue: number): number {
+  const idx = process.argv.indexOf(flag);
+  if (idx !== -1 && idx + 1 < process.argv.length) {
+    const val = parseInt(process.argv[idx + 1], 10);
+    return isNaN(val) ? defaultValue : val;
+  }
+  return defaultValue;
+}
+
+const ACT_HISTORY_DEPTH = parseIntArg('--history-depth', 5);
+console.log(`[memory-carryover] Act history depth: ${ACT_HISTORY_DEPTH}`);
+
+// --- Session registry ---
+interface ActHistoryEntry {
+  task: string;
+  observations: Observation[];
+}
+
 interface SessionInfo {
   agent: BrowserAgent;
   mode: 'web' | 'desktop';
   createdAt: Date;
   lastAccessed: Date;
+  actHistory: ActHistoryEntry[];
 }
 
 const activeSessions = new Map<string, SessionInfo>();
@@ -622,6 +641,7 @@ app.post('/start', async (req: Request, res: Response) => {
       mode,
       createdAt: new Date(),
       lastAccessed: new Date(),
+      actHistory: [],
     });
 
     res.json({ status: 'started', sessionId });
@@ -647,7 +667,45 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
-    await session.agent.act(task, { override_cache: override_cache === true } as any);
+
+    const memory = new AgentMemory({ promptCaching: true });
+
+    if (session.actHistory.length > 0) {
+      let injectedCount = 0;
+      for (const entry of session.actHistory) {
+        memory.recordObservation(new Observation(
+          'thought' as any,
+          'user',
+          `Previously completed task: "${entry.task}"`
+        ));
+        injectedCount++;
+        for (const obs of entry.observations) {
+          memory.recordObservation(obs);
+          injectedCount++;
+        }
+      }
+      console.log(`[memory-carryover] Injecting history from ${session.actHistory.length} previous acts (${injectedCount} observations total)`);
+    } else {
+      console.log(`[memory-carryover] No prior act history in session`);
+    }
+
+    const boundary = memory.observationCount;
+
+    await session.agent.act(task, { memory, override_cache: override_cache === true } as any);
+
+    const newObservations = memory.getObservationsSlice(boundary);
+    const filtered = newObservations.filter(obs => {
+      const src = obs.source;
+      return src.startsWith('thought') || src.startsWith('action:taken:');
+    });
+
+    session.actHistory.push({ task, observations: filtered });
+    if (session.actHistory.length > ACT_HISTORY_DEPTH) {
+      session.actHistory = session.actHistory.slice(-ACT_HISTORY_DEPTH);
+    }
+
+    console.log(`[memory-carryover] Stored ${filtered.length} filtered observations for task "${task}" (history: ${session.actHistory.length}/${ACT_HISTORY_DEPTH})`);
+
     res.json({ status: 'success', message: `Task "${task}" completed.` });
   } catch (err) {
     handleAgentError(err, res);
