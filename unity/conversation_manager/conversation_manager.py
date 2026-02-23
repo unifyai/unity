@@ -282,6 +282,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     data = await resp.json()
                     b64 = data.get("screenshot")
                     if b64:
+                        from unity.conversation_manager.medium_scripts.common import (
+                            _ensure_jpeg,
+                        )
+
+                        b64 = _ensure_jpeg(b64)
                         self._screenshot_buffer.append(
                             ScreenshotEntry(
                                 b64,
@@ -762,10 +767,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "screen_share",
                 f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
             )
-        self._session_logger.debug(
-            "state_update",
-            f"State prompt:\n{brain_spec.state_prompt}",
-        )
         input_message = brain_spec.state_message()
         system_prompt = brain_spec.system_prompt
 
@@ -814,7 +815,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Single-shot LLM call: one decision, one action
         client = new_llm_client(
             SETTINGS.UNIFY_MODEL,
-            debug_marker="ConversationManager.decide",
+            origin="ConversationManager.decide",
         )
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])

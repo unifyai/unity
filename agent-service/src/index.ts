@@ -532,7 +532,7 @@ const startDesktop = async (): Promise<BrowserAgent> => {
       llm: {
         provider: 'openai-generic',
         options: {
-          model: 'claude-4.5-opus@anthropic',
+          model: 'claude-4.6-opus@anthropic',
           baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
           headers: {
             'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
@@ -565,7 +565,7 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
       llm: {
         provider: 'openai-generic',
         options: {
-          model: 'claude-4.5-opus@anthropic',
+          model: 'claude-4.6-opus@anthropic',
           baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
           headers: {
             'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
@@ -600,7 +600,7 @@ app.post('/start', async (req: Request, res: Response) => {
     for (const [existingId, existing] of activeSessions.entries()) {
       if (existing.mode === "desktop") {
         console.log(`Replacing existing desktop session: ${existingId}`);
-        existing.agent.stop().catch(err =>
+        existing.agent.stop().catch((err: unknown) =>
           console.error(`Error stopping old desktop session: ${err}`)
         );
         activeSessions.delete(existingId);

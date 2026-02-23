@@ -986,7 +986,7 @@ def start_async_tool_loop(
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
     if loop_id is not None:
-        client.set_debug_marker(loop_id)
+        client.set_origin(loop_id)
     loop_id = loop_id if loop_id is not None else short_id()
     interject_queue: asyncio.Queue[dict | str] = asyncio.Queue()
     cancel_event = asyncio.Event()
