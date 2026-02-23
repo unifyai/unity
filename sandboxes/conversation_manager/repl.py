@@ -40,8 +40,6 @@ class SandboxState:
 
 
 def get_prompt(state: SandboxState) -> str:
-    if state.in_call:
-        return "call> "
     return "> "
 
 

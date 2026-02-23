@@ -803,6 +803,7 @@ async def _main_async() -> None:
             except Exception:
                 pass
             print(line)
+            print("> ", end="", flush=True)
             try:
                 r = getattr(args, "_router", None)
                 if r is not None:
