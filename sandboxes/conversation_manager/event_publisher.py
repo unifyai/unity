@@ -102,8 +102,8 @@ class EventPublisher:
         Start a live voice call using the production voice agent over LiveKit.
 
         Returns a list of status lines to display to the user.
-        Connection details are written to .live_voice_connect.json and the
-        token is copied to the system clipboard for easy pasting.
+        A locally self-hosted LiveKit Agents Playground auto-connects in the
+        browser with the URL and token embedded as query params.
         """
         from sandboxes.conversation_manager.live_voice import start_session
 

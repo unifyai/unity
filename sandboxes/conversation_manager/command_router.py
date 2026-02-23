@@ -702,25 +702,7 @@ class CommandRouter:
                 meet_event_cls,
                 cmd.args,
             )
-            lines: list[str] = []
-            if (
-                cmd.name == "assistant_screen_share_start"
-                and getattr(self.args, "agent_mode", "") == "desktop"
-                and getattr(self.args, "_desktop_container_id", None)
-            ):
-                try:
-                    import webbrowser
-
-                    from sandboxes.conversation_manager.desktop_bootstrap import (
-                        _desktop_novnc_url,
-                    )
-
-                    url = _desktop_novnc_url()
-                    webbrowser.open(url)
-                    lines.append(f"🖥️  Opened assistant desktop in browser: {url}")
-                except Exception as exc:
-                    lines.append(f"⚠️ Could not open desktop viewer: {exc}")
-            return RouterResult(lines=lines)
+            return RouterResult(lines=[])
 
         return RouterResult(lines=[f"⚠️ Unknown event command: {cmd.name}"])
 
