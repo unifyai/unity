@@ -26,6 +26,7 @@ from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
 from unity.task_scheduler.settings import TaskSettings
 from unity.transcript_manager.settings import TranscriptSettings
+from unity.environment_manager.settings import EnvironmentSettings
 from unity.web_searcher.settings import WebSettings
 
 
@@ -173,6 +174,7 @@ class ProductionSettings(BaseSettings):
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
     data: DataSettings = Field(default_factory=DataSettings)
+    environment: EnvironmentSettings = Field(default_factory=EnvironmentSettings)
     file: FileSettings = Field(default_factory=FileSettings)
     function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
