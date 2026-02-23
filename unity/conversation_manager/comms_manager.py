@@ -35,6 +35,7 @@ from google.cloud import pubsub_v1
 from unity.logger import LOGGER
 from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
 from unity.settings import SETTINGS
+from unity.conversation_manager.assistant_jobs import mark_job_label
 from unity.conversation_manager.domains.comms_utils import (
     add_email_attachments,
     add_unify_message_attachments,
@@ -258,6 +259,9 @@ class CommsManager:
             if thread in ["startup", "assistant_update"]:
                 message.ack()
                 if thread == "startup":
+                    # mark job as running immediately after startup
+                    mark_job_label(SETTINGS.conversation.JOB_NAME, "running")
+
                     # acknowledge message and cancel startup subscription
                     while startup_subscription_id not in self.subscribers:
                         time.sleep(0.1)
