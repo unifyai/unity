@@ -6,14 +6,16 @@ Tests for the fast brain rolling context window and history hydration.
 
 Covers:
 - trim_fast_brain_context(): system prompt preservation, rolling window
-- hydrate_fast_brain_history(): EventBus query, event filtering, rendering
+- hydrate_fast_brain_history(): backend query via unify.get_logs, event filtering, rendering
 - _render_history_event(): per-event-type rendering and participant filtering
 
-All tests are symbolic — the EventBus is mocked to return synthetic events.
+All tests are symbolic — unify.get_logs is mocked to return synthetic log rows.
 """
 
+import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from livekit.agents import llm
@@ -69,15 +71,23 @@ BOB = {
 ASSISTANT_NAME = "Alex"
 
 
-def _make_bus_events(cm_events):
-    """Convert CM events to bus events in descending order (newest first)."""
-    bus_events = []
+def _make_log_rows(cm_events):
+    """Convert CM events to unify.Log-shaped rows in descending order (newest first)."""
+    rows = []
     for ev in cm_events:
-        bus_event = ev.to_bus_event()
-        bus_event.payload.pop("email_id", None)
-        bus_events.append(bus_event)
-    bus_events.reverse()
-    return bus_events
+        payload = ev.to_dict()["payload"]
+        payload.pop("email_id", None)
+        rows.append(
+            SimpleNamespace(
+                entries={
+                    "type": "Comms",
+                    "payload_cls": ev.__class__.__name__,
+                    "payload_json": json.dumps(payload),
+                },
+            ),
+        )
+    rows.reverse()
+    return rows
 
 
 def _build_chat_context(
@@ -353,18 +363,25 @@ class TestRenderHistoryEvent:
 
 
 # =============================================================================
-# hydrate_fast_brain_history — integration with EventBus mock
+# hydrate_fast_brain_history — integration with backend mock
 # =============================================================================
+
+MOCK_GET_LOGS = "unify.get_logs"
+MOCK_SESSION = "unity.conversation_manager.medium_scripts.common.SESSION_DETAILS"
 
 
 class TestHydrateFastBrainHistory:
 
+    @pytest.fixture(autouse=True)
+    def _mock_session(self):
+        with patch(MOCK_SESSION) as mock_sd:
+            mock_sd.user_context = "test_user"
+            mock_sd.assistant_context = "test_assistant"
+            yield
+
     @pytest.mark.asyncio
-    async def test_empty_bus_returns_empty_list(self):
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=[])
+    async def test_empty_backend_returns_empty_list(self):
+        with patch(MOCK_GET_LOGS, return_value=[]):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
         assert result == []
 
@@ -394,10 +411,7 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
 
         assert len(result) == 5
@@ -422,10 +436,7 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
 
         assert len(result) == 2
@@ -444,11 +455,7 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
-            # Only Alice (contact_id=2) is a participant
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
 
         assert len(result) == 1
@@ -471,10 +478,7 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({1}, True, ASSISTANT_NAME)
 
         assert len(result) == 2
@@ -492,49 +496,39 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
 
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_limit_passed_to_eventbus_search(self):
-        """The limit parameter is forwarded to EVENT_BUS.search."""
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=[])
+    async def test_limit_passed_to_backend(self):
+        """The limit parameter is forwarded to unify.get_logs."""
+        with patch(MOCK_GET_LOGS, return_value=[]) as mock_get_logs:
             await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME, limit=25)
 
-        mock_bus.search.assert_called_once_with(
+        mock_get_logs.assert_called_once_with(
+            context="test_user/test_assistant/Events",
             filter='type == "Comms"',
+            sorting={"timestamp": "descending"},
             limit=25,
         )
 
     @pytest.mark.asyncio
     async def test_malformed_event_skipped_gracefully(self):
-        """Events that fail from_bus_event() conversion are silently skipped."""
+        """Log rows that fail Event.from_dict() conversion are silently skipped."""
         good = SMSReceived(contact=ALICE, content="Good msg", timestamp=BASE_TIME)
-        bus_events = _make_bus_events([good])
-        # Inject a malformed bus event
-        from unity.events.event_bus import Event as BusEvent
-
-        bad = BusEvent(
-            calling_id="",
-            type="Comms",
-            timestamp=BASE_TIME.isoformat(),
-            payload={"broken": True},
-            payload_cls="NonExistentEvent",
+        log_rows = _make_log_rows([good])
+        bad_row = SimpleNamespace(
+            entries={
+                "type": "Comms",
+                "payload_cls": "NonExistentEvent",
+                "payload_json": json.dumps({"broken": True}),
+            },
         )
-        bus_events.insert(0, bad)
+        log_rows.insert(0, bad_row)
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=bus_events)
+        with patch(MOCK_GET_LOGS, return_value=log_rows):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
 
         assert len(result) == 1
@@ -570,10 +564,7 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
 
         assert len(result) == 5
@@ -585,10 +576,7 @@ class TestHydrateFastBrainHistory:
 
     @pytest.mark.asyncio
     async def test_outbound_utterances_always_included(self):
-        """Outbound utterances are included regardless of participant set.
-
-        The assistant's own speech is always relevant context.
-        """
+        """Outbound utterances are included regardless of participant set."""
         events = [
             OutboundPhoneUtterance(
                 contact=ALICE,
@@ -597,12 +585,41 @@ class TestHydrateFastBrainHistory:
             ),
         ]
 
-        with patch(
-            "unity.events.event_bus.EVENT_BUS",
-        ) as mock_bus:
-            mock_bus.search = AsyncMock(return_value=_make_bus_events(events))
-            # Empty participant set — outbound should still be included
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
             result = await hydrate_fast_brain_history(set(), False, ASSISTANT_NAME)
 
         assert len(result) == 1
         assert result[0] == "Alex: Hello!"
+
+    @pytest.mark.asyncio
+    async def test_works_without_event_bus_initialization(self):
+        """Subprocess scenario: history is returned even without unity.init().
+
+        The voice agent subprocess never calls unity.init(), so EVENT_BUS is
+        an uninitialized proxy.  Before the direct-backend change, this
+        function called EVENT_BUS.search() which raised RuntimeError, causing
+        every call to return [].  Now it queries the backend directly via
+        unify.get_logs(), so history is available from the first turn.
+        """
+        events = [
+            SMSReceived(contact=ALICE, content="Recent SMS", timestamp=BASE_TIME),
+            OutboundPhoneUtterance(
+                contact=ALICE,
+                content="Got it",
+                timestamp=BASE_TIME + timedelta(seconds=30),
+            ),
+        ]
+
+        with patch(MOCK_GET_LOGS, return_value=_make_log_rows(events)):
+            result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
+
+        assert len(result) == 2
+        assert "[SMS from Alice Smith] Recent SMS" == result[0]
+        assert "Alex: Got it" == result[1]
+
+    @pytest.mark.asyncio
+    async def test_backend_error_returns_empty_gracefully(self):
+        """Network or auth errors when querying the backend return empty history."""
+        with patch(MOCK_GET_LOGS, side_effect=ConnectionError("unreachable")):
+            result = await hydrate_fast_brain_history({2}, False, ASSISTANT_NAME)
+        assert result == []
