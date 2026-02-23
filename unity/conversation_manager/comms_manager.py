@@ -259,8 +259,13 @@ class CommsManager:
             if thread in ["startup", "assistant_update"]:
                 message.ack()
                 if thread == "startup":
-                    # mark job as running immediately after startup
-                    mark_job_label(SETTINGS.conversation.JOB_NAME, "running")
+                    # can't use asyncio.to_thread because this code runs on a pubsub
+                    # thread pool thread rather than the main event loop
+                    threading.Thread(
+                        target=mark_job_label,
+                        args=(SETTINGS.conversation.JOB_NAME, "running"),
+                        daemon=True,
+                    ).start()
 
                     # acknowledge message and cancel startup subscription
                     while startup_subscription_id not in self.subscribers:
