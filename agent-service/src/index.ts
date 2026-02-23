@@ -600,7 +600,7 @@ app.post('/start', async (req: Request, res: Response) => {
     for (const [existingId, existing] of activeSessions.entries()) {
       if (existing.mode === "desktop") {
         console.log(`Replacing existing desktop session: ${existingId}`);
-        existing.agent.stop().catch(err =>
+        existing.agent.stop().catch((err: unknown) =>
           console.error(`Error stopping old desktop session: ${err}`)
         );
         activeSessions.delete(existingId);
