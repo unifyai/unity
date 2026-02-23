@@ -97,20 +97,16 @@ class _LineageTrackedFunction:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         # Local imports to avoid import-time cycles.
         from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
-        from unity.common.hierarchical_logger import (
-            build_hierarchy_label,
-            log_boundary_event,
-        )
+        from unity.common.hierarchical_logger import log_boundary_event
 
         suffix = token_hex(2)
 
         parent = TOOL_LOOP_LINEAGE.get([])
         parent_lineage = list(parent) if isinstance(parent, list) else []
-        hierarchy = [*parent_lineage, self._function_name]
-        hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+        hierarchy = [*parent_lineage, f"{self._function_name}({suffix})"]
 
         try:
-            log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
+            log_boundary_event("->".join(hierarchy), "Executing function...", icon="🛠️")
         except Exception:
             pass
 
