@@ -884,7 +884,7 @@ async def _startup_sequence(cm: "ConversationManager"):
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     try:
-        cm._session_logger.info("startup", "Received startup event")
+        cm._session_logger.debug("startup", "Received startup event")
 
         # Set demo mode from startup event before initializing managers
         # Demo mode is derived from the presence of a demo_id
@@ -893,7 +893,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 
             SETTINGS.DEMO_MODE = True
             SETTINGS.DEMO_ID = event.demo_id
-            cm._session_logger.info(
+            cm._session_logger.debug(
                 "startup",
                 f"Demo mode enabled (demo_id={event.demo_id})",
             )

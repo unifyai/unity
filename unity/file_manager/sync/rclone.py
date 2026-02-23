@@ -50,7 +50,7 @@ class RcloneSync:
             True if setup successful, False otherwise
         """
         async with self._op_lock:
-            LOGGER.info(f"{ICONS['file_sync']} [FileSync] Setting up rclone...")
+            LOGGER.debug(f"{ICONS['file_sync']} [FileSync] Setting up rclone...")
 
             try:
                 # 1. Write SSH private key to temp file with secure permissions
