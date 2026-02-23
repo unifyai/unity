@@ -58,7 +58,6 @@ class LiveVoiceSession:
     livekit_url: str
     playground_url: str = ""
     log_file: str = ""
-    connection_file: str = ""
     browser_opened: bool = False
     ready: bool = False
     ready_source: str = ""
@@ -507,7 +506,6 @@ async def start_session(
         livekit_url=livekit_url,
         playground_url=playground_url,
         log_file=str(voice_agent_log.resolve()),
-        connection_file=str(_CONNECTION_FILE.resolve()),
         _log_fh=log_fh,
     )
     _write_connection_file(session)

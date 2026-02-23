@@ -127,8 +127,8 @@ Enables **real voice calls** through the sandbox. When `--live-voice` is active,
 
 1. Creates a LiveKit room
 2. Spawns the **production voice agent subprocess** (the same `call.py` used in production)
-3. Writes connection details to `.live_voice_connect.json` and copies the token to your clipboard
-4. Best-effort opens the LiveKit Agents Playground in your browser
+3. Bootstraps a local copy of the LiveKit Agents Playground (one-time; requires Node.js)
+4. Opens the playground in your browser with URL + token embedded as query params (auto-connects)
 5. Waits for a readiness signal (`UnifyMeetStarted`) before reporting the call as ready (with timeout fallback)
 
 The full fast-brain (voice agent) + slow-brain (ConversationManager) loop runs exactly as it does in production. You talk through your browser, and the sandbox displays all events (utterances, call guidance, actor actions) in real-time.

@@ -858,6 +858,20 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                     return
                 desktop_container_id = res.container_id
                 sender.send_lines([f"[desktop] {res.summary}"])
+                try:
+                    import webbrowser
+
+                    from sandboxes.conversation_manager.desktop_bootstrap import (
+                        _desktop_novnc_url,
+                    )
+
+                    url = _desktop_novnc_url()
+                    webbrowser.open(url)
+                    sender.send_lines(
+                        [f"🖥️  Opened assistant desktop in browser: {url}"],
+                    )
+                except Exception:
+                    pass
             else:
                 # Web mode: start a local agent-service process.
                 # Free the port first (only kills repo-owned agent-service).
