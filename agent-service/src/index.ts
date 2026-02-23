@@ -704,9 +704,8 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   try {
     const zodSchema: ZodTypeAny = schema ? jsonSchemaToZod(schema) : z.any();
     const session = activeSessions.get(sessionId)!;
-    const queryFn = (session.agent as unknown as { query: (q: unknown, s: ZodTypeAny) => Promise<unknown> }).query;
-    const dataUnknown: unknown = await queryFn(query, zodSchema);
-    res.json({ data: dataUnknown });
+    const data: unknown = await (session.agent as any).query(query, zodSchema);
+    res.json({ data });
   } catch (err) {
     handleAgentError(err, res);
   }
