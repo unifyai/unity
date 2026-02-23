@@ -17,7 +17,6 @@ import httpx
 import pytest
 from unillm.limit_hooks import LimitCheckRequest, LimitType
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -54,16 +53,16 @@ def _patch_context(*, org_id=None):
 
             stack = contextlib.ExitStack()
             stack.enter_context(
-                patch("unity.spending_limits._get_api_key", return_value="test-key")
+                patch("unity.spending_limits._get_api_key", return_value="test-key"),
             )
             stack.enter_context(
                 patch(
                     "unity.spending_limits._get_base_url",
                     return_value="http://test/v0",
-                )
+                ),
             )
             mock_session = stack.enter_context(
-                patch("unity.session_details.SESSION_DETAILS")
+                patch("unity.session_details.SESSION_DETAILS"),
             )
             mock_session.assistant_record = {"agent_id": "agent_1"}
             mock_session.user_id = "user_1"
@@ -124,7 +123,7 @@ class TestCreditBalanceBlocking:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -139,7 +138,7 @@ class TestCreditBalanceBlocking:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -154,7 +153,7 @@ class TestCreditBalanceBlocking:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -168,7 +167,7 @@ class TestCreditBalanceBlocking:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -183,7 +182,7 @@ class TestCreditBalanceBlocking:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -210,7 +209,7 @@ class TestCreditBalanceVsSpendingCap:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -229,7 +228,7 @@ class TestCreditBalanceVsSpendingCap:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -248,7 +247,7 @@ class TestCreditBalanceVsSpendingCap:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -268,7 +267,7 @@ class TestCreditBalanceVsSpendingCap:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -287,7 +286,7 @@ class TestCreditBalanceVsSpendingCap:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -314,7 +313,7 @@ class TestOrgCreditBalance:
         with _patch_context(org_id=789):
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -333,7 +332,7 @@ class TestOrgCreditBalance:
         with _patch_context(org_id=789):
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -359,7 +358,7 @@ class TestOrgCreditBalance:
         with _patch_context(org_id=789):
             with _patch_http(route_by_url):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -384,7 +383,7 @@ class TestMissingCreditBalance:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -400,7 +399,7 @@ class TestMissingCreditBalance:
         with _patch_context():
             with _patch_http(failing_get):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -435,7 +434,7 @@ class TestPartialEndpointFailures:
         with _patch_context():
             with _patch_http(mixed_get):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -458,7 +457,7 @@ class TestPartialEndpointFailures:
         with _patch_context():
             with _patch_http(mixed_get):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -490,7 +489,7 @@ class TestNonLlmSpendingDrainsCredits:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -509,7 +508,7 @@ class TestNonLlmSpendingDrainsCredits:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -532,7 +531,7 @@ class TestReasonMessage:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -547,7 +546,7 @@ class TestReasonMessage:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -577,7 +576,7 @@ class TestConcurrentCreditChecks:
             with _patch_http(slow_get):
                 tasks = [
                     check_spending_limits_callback(
-                        LimitCheckRequest(model="gpt-4", endpoint="test")
+                        LimitCheckRequest(model="gpt-4", endpoint="test"),
                     )
                     for _ in range(20)
                 ]
@@ -601,7 +600,7 @@ class TestConcurrentCreditChecks:
             with _patch_http(slow_get):
                 tasks = [
                     check_spending_limits_callback(
-                        LimitCheckRequest(model="gpt-4", endpoint="test")
+                        LimitCheckRequest(model="gpt-4", endpoint="test"),
                     )
                     for _ in range(20)
                 ]
@@ -632,7 +631,7 @@ class TestConcurrentCreditChecks:
                 results = []
                 for _ in range(10):
                     r = await check_spending_limits_callback(
-                        LimitCheckRequest(model="gpt-4", endpoint="test")
+                        LimitCheckRequest(model="gpt-4", endpoint="test"),
                     )
                     results.append(r)
 
@@ -659,7 +658,7 @@ class TestEdgeCases:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -673,7 +672,7 @@ class TestEdgeCases:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -687,7 +686,7 @@ class TestEdgeCases:
         with _patch_context():
             with _patch_http(resp):
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is False
@@ -702,7 +701,7 @@ class TestEdgeCases:
         with _patch_context():
             with _patch_http(resp_none):
                 result_none = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         # 0.0 → block
@@ -710,7 +709,7 @@ class TestEdgeCases:
         with _patch_context():
             with _patch_http(resp_zero):
                 result_zero = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result_none.allowed is True
@@ -723,7 +722,7 @@ class TestEdgeCases:
 
         with patch("unity.spending_limits._get_api_key", return_value=None):
             result = await check_spending_limits_callback(
-                LimitCheckRequest(model="gpt-4", endpoint="test")
+                LimitCheckRequest(model="gpt-4", endpoint="test"),
             )
 
         assert result.allowed is True
@@ -740,7 +739,7 @@ class TestEdgeCases:
                 mock_session.org_id = None
 
                 result = await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert result.allowed is True
@@ -769,7 +768,7 @@ class TestZeroLatencyOverhead:
         with _patch_context(org_id=None):
             with _patch_http(counting_get):
                 await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert call_count == 2  # assistant + user, no extra call for credits
@@ -789,7 +788,7 @@ class TestZeroLatencyOverhead:
         with _patch_context(org_id=789):
             with _patch_http(counting_get):
                 await check_spending_limits_callback(
-                    LimitCheckRequest(model="gpt-4", endpoint="test")
+                    LimitCheckRequest(model="gpt-4", endpoint="test"),
                 )
 
         assert call_count == 3  # assistant + member + org, no extra call
