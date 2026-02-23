@@ -1,8 +1,15 @@
 {
   "setup-worktree": [
+    "git submodule update --init --recursive",
     "cp \"$ROOT_WORKTREE_PATH/.env\" .env",
     "ln -sf \"$ROOT_WORKTREE_PATH/.venv\" .venv",
     "mkdir -p logs/pytest && ln -sf \"$ROOT_WORKTREE_PATH/logs/pytest\" logs/pytest/_root",
-    "mkdir -p logs/llm && ln -sf \"$ROOT_WORKTREE_PATH/logs/llm\" logs/llm/_root"
+    "mkdir -p logs/unillm && ln -sf \"$ROOT_WORKTREE_PATH/logs/unillm\" logs/unillm/_root",
+    "# Create symlinks for sibling repos (unify, unillm, orchestra) at worktree parent level",
+    "# These enable 'uv sync' to work in worktrees by resolving ../unify and ../unillm",
+    "# and allow parallel_run.sh to find the orchestra repo for local testing",
+    "[ -d \"$ROOT_WORKTREE_PATH/../unify\" ] && [ ! -e ../unify ] && ln -s \"$ROOT_WORKTREE_PATH/../unify\" ../unify || true",
+    "[ -d \"$ROOT_WORKTREE_PATH/../unillm\" ] && [ ! -e ../unillm ] && ln -s \"$ROOT_WORKTREE_PATH/../unillm\" ../unillm || true",
+    "[ -d \"$ROOT_WORKTREE_PATH/../orchestra\" ] && [ ! -e ../orchestra ] && ln -s \"$ROOT_WORKTREE_PATH/../orchestra\" ../orchestra || true"
   ]
 }

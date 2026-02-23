@@ -57,6 +57,29 @@ dependencies = ["torch>=2.0", "transformers>=4.30"]
 - `verify: bool = True` - Whether to verify function execution
 - `precondition: Optional[dict]` - Required state before execution
 - `auto_sync: bool = True` - Set to False to exclude from auto-sync
+- `windows_os_required: bool = False` - Route execution to Windows VM when True
+
+## Best Practice: Import Runtime Domain Types
+
+Custom compositional functions are frequently executed by retrieving a callable from the
+`FunctionManager` (e.g. semantic search) and running it in a fresh sandbox namespace.
+
+Simple rule: **if you use a symbol in the function body, import/define it inside the function**.
+
+Example:
+
+```python
+# ✅ OK: "User" is only an annotation (forward-ref string)
+@custom_function()
+async def greet(user: "User") -> str:
+    return f"Hello {user.name}"
+
+# ✅ Preferred: import the runtime type inside the function if you need it
+@custom_function()
+async def is_admin(role: "Role") -> bool:
+    from my_app.types import Role
+    return role == Role.ADMIN
+```
 
 ## Sync Behavior
 
@@ -79,6 +102,7 @@ class CustomFunctionMetadata:
     verify: bool = True
     precondition: Optional[Dict[str, Any]] = None
     auto_sync: bool = True
+    windows_os_required: bool = False
 
 
 def custom_function(
@@ -88,6 +112,7 @@ def custom_function(
     verify: bool = True,
     precondition: Optional[Dict[str, Any]] = None,
     auto_sync: bool = True,
+    windows_os_required: bool = False,
 ) -> Callable:
     """
     Decorator to mark a function for auto-sync to Functions/Compositional.
@@ -101,6 +126,10 @@ def custom_function(
         verify: Whether the Actor should verify function execution (default True).
         precondition: Optional dict specifying required state before execution.
         auto_sync: If False, function is excluded from auto-sync (default True).
+        windows_os_required: If True, function executes on remote Windows VM
+                             when assistant has desktop_mode='windows'. Use for
+                             Windows-only libraries like xlwings or COM automation.
+                             Files must be placed under ~/ for FileSync.
 
     Example:
         @custom_function(venv_name="ml_env")
@@ -108,6 +137,15 @@ def custom_function(
             '''Run in the ml_env virtual environment.'''
             import torch
             return x * 2
+
+        @custom_function(
+            venv_name="excel_env",
+            windows_os_required=True,
+        )
+        async def process_excel(input_path: str, output_path: str) -> dict:
+            '''Run on Windows VM. Paths must be under ~/.'''
+            import xlwings as xw
+            return {"sheets": 1}
     """
 
     def decorator(func: Callable) -> Callable:
@@ -118,6 +156,7 @@ def custom_function(
             verify=verify,
             precondition=precondition,
             auto_sync=auto_sync,
+            windows_os_required=windows_os_required,
         )
         return func
 

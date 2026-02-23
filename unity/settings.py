@@ -10,13 +10,13 @@ All settings can be overridden via environment variables or .env file.
 
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from unity.actor.settings import ActorSettings
-from unity.conductor.settings import ConductorSettings
 from unity.contact_manager.settings import ContactSettings
 from unity.conversation_manager.settings import ConversationSettings
+from unity.data_manager.settings import DataSettings
 from unity.file_manager.settings import FileSettings
 from unity.function_manager.settings import FunctionSettings
 from unity.guidance_manager.settings import GuidanceSettings
@@ -27,20 +27,6 @@ from unity.secret_manager.settings import SecretSettings
 from unity.task_scheduler.settings import TaskSettings
 from unity.transcript_manager.settings import TranscriptSettings
 from unity.web_searcher.settings import WebSettings
-
-
-def _parse_bool_or_str(v: Any) -> bool | str:
-    """Parse a value that can be bool, bool-string, or pass-through string."""
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str):
-        lower = v.lower()
-        if lower in ("true", "yes", "1"):
-            return True
-        if lower in ("false", "no", "0"):
-            return False
-        return v  # Pass through for special cache modes like "read-only"
-    return bool(v)
 
 
 def _parse_bool(v: Any) -> bool:
@@ -60,27 +46,34 @@ class ProductionSettings(BaseSettings):
     """
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Local Workspace
+    # ─────────────────────────────────────────────────────────────────────────
+    # Root directory for local file operations, CodeActActor working directory,
+    # virtual environments, and .env storage.  Defaults to ~/Unity/Local when
+    # empty.  Override via UNITY_LOCAL_ROOT env var.
+    UNITY_LOCAL_ROOT: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_MODEL: str = "gpt-5.2@openai"
-    UNIFY_CACHE: bool | str = True
+    UNIFY_MODEL: str = "claude-4.6-opus@anthropic"
 
     # ─────────────────────────────────────────────────────────────────────────
     # LLM Provider Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    OPENAI_API_KEY: str = ""
-    ANTHROPIC_API_KEY: str = ""
+    OPENAI_API_KEY: SecretStr = SecretStr("")
+    ANTHROPIC_API_KEY: SecretStr = SecretStr("")
     UNITY_VALIDATE_LLM_PROVIDERS: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # External Service Credentials
     # ─────────────────────────────────────────────────────────────────────────
-    ORCHESTRA_ADMIN_KEY: str = ""
+    ORCHESTRA_ADMIN_KEY: SecretStr = SecretStr("")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Infrastructure URLs
     # ─────────────────────────────────────────────────────────────────────────
-    UNIFY_BASE_URL: str = "https://api.unify.ai/v0"
+    ORCHESTRA_URL: str = "https://api.unify.ai/v0"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging / Observability
@@ -90,6 +83,24 @@ class ProductionSettings(BaseSettings):
     # When set, logs are written to {UNITY_LOG_DIR}/unity.log
     # Default: None (console only)
     UNITY_LOG_DIR: str = ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EventBus Publishing
+    # ─────────────────────────────────────────────────────────────────────────
+    # Controls whether EventBus publishes events (logging to Unify and local
+    # subscriptions/callbacks). Disabled by default for local development to
+    # reduce noise. Enable in production deployments.
+    EVENTBUS_PUBLISHING_ENABLED: bool = False
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # EventBus Pub/Sub Streaming (Live Actions)
+    # ─────────────────────────────────────────────────────────────────────────
+    # When enabled, EventBus.publish() also streams ManagerMethod and ToolLoop
+    # events to the assistant's GCP Pub/Sub topic with thread="action_event".
+    # This enables real-time frontend rendering of the agent's activity tree
+    # without polling Orchestra. Requires GCP credentials and a provisioned
+    # Pub/Sub topic. Disabled by default; enable in production deployments.
+    EVENTBUS_PUBSUB_STREAMING: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # OpenTelemetry Tracing
@@ -112,17 +123,18 @@ class ProductionSettings(BaseSettings):
     UNITY_OTEL_LOG_DIR: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Terminal Logging
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_TERMINAL_LOG: bool = True
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
     # ─────────────────────────────────────────────────────────────────────────
-    ASYNCIO_DEBUG: bool = False
-    ASYNCIO_DEBUG_VERBOSE: bool = False
+    UNITY_ASYNCIO_DEBUG: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure
     # ─────────────────────────────────────────────────────────────────────────
-    # Fixed datetime for LLM cache consistency in tests (ISO format string)
-    # When set, _get_now() returns this fixed datetime instead of datetime.now()
-    UNITY_FIXED_DATETIME: str = ""
     # Log subdirectory for LLM I/O log files (datetime-prefixed for ordering)
     UNITY_LOG_SUBDIR: str = ""
     # Terminal socket name for tmux isolation; also used as log subdir fallback
@@ -136,20 +148,21 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Feature Flags
     # ─────────────────────────────────────────────────────────────────────────
-    UNITY_SEMANTIC_CACHE: bool = False
     UNITY_READONLY_ASK_GUARD: bool = True
-    FIRST_ASK_TOOL_IS_SEARCH: bool = True
-    FIRST_MUTATION_TOOL_IS_ASK: bool = True
+    FIRST_ASK_TOOL_IS_SEARCH: bool = False
+    FIRST_MUTATION_TOOL_IS_ASK: bool = False
     STAGING: bool = False
+    DEMO_MODE: bool = False
+    DEMO_ID: int | None = None  # Demo assistant metadata ID (if DEMO_MODE is True)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Conductor Manager Configuration
+    # Manager Configuration
     # ─────────────────────────────────────────────────────────────────────────
     # Foundational managers (cannot be disabled, only implementation switched):
     #   - Actor, ContactManager, TranscriptManager, TaskScheduler, ConversationManager
     # Optional managers (can be disabled via ENABLED=False):
     #   - KnowledgeManager, GuidanceManager, SecretManager,
-    #     WebSearcher, GlobalFileManager
+    #     WebSearcher
 
     # ─────────────────────────────────────────────────────────────────────────
     # Composed Manager Settings
@@ -157,9 +170,9 @@ class ProductionSettings(BaseSettings):
     # Each manager owns its settings in its own settings.py file.
     # Access via SETTINGS.contact.IMPL, SETTINGS.transcript.IMPL, etc.
     actor: ActorSettings = Field(default_factory=ActorSettings)
-    conductor: ConductorSettings = Field(default_factory=ConductorSettings)
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
+    data: DataSettings = Field(default_factory=DataSettings)
     file: FileSettings = Field(default_factory=FileSettings)
     function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
@@ -174,16 +187,13 @@ class ProductionSettings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
-    @field_validator("UNIFY_CACHE", mode="before")
-    @classmethod
-    def parse_cache(cls, v: Any) -> bool | str:
-        return _parse_bool_or_str(v)
-
     @field_validator(
-        "ASYNCIO_DEBUG",
-        "ASYNCIO_DEBUG_VERBOSE",
+        "UNITY_TERMINAL_LOG",
+        "UNITY_ASYNCIO_DEBUG",
+        "DEMO_MODE",
+        "EVENTBUS_PUBLISHING_ENABLED",
+        "EVENTBUS_PUBSUB_STREAMING",
         "PYTEST_LOG_TO_FILE",
-        "UNITY_SEMANTIC_CACHE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
         "FIRST_MUTATION_TOOL_IS_ASK",

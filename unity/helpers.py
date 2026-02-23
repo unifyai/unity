@@ -27,6 +27,9 @@ from typing import Union
 
 import psutil
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
+
 
 def _find_unix_terminal() -> str | None:
     for term in (
@@ -167,17 +170,19 @@ def terminate_process(proc: subprocess.Popen, timeout: int = 5) -> None:
         # Wait for process to terminate
         try:
             proc.wait(timeout=timeout)
-            print("Process terminated gracefully")
+            LOGGER.info(f"{DEFAULT_ICON} Process terminated gracefully")
         except subprocess.TimeoutExpired:
             # If process doesn't terminate gracefully, force kill
-            print("Process did not terminate gracefully, force killing...")
+            LOGGER.warning(
+                f"{DEFAULT_ICON} Process did not terminate gracefully, force killing...",
+            )
             if sys.platform.startswith("win"):
                 proc.kill()
             else:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             proc.wait()
     except Exception as e:
-        print(f"Error during process termination: {e}")
+        LOGGER.error(f"{DEFAULT_ICON} Error during process termination: {e}")
 
 
 def cleanup_dangling_call_processes() -> int:
@@ -195,8 +200,8 @@ def cleanup_dangling_call_processes() -> int:
     """
     if sys.platform.startswith("win"):
         # Windows implementation would use tasklist/taskkill
-        print(
-            "Warning: cleanup_dangling_call_processes not yet implemented for Windows",
+        LOGGER.warning(
+            f"{ICONS['process_cleanup']} cleanup_dangling_call_processes not yet implemented for Windows",
         )
         return 0
 
@@ -214,30 +219,42 @@ def cleanup_dangling_call_processes() -> int:
         }
 
         if not processes:
-            print("No dangling call processes found")
+            LOGGER.info(f"{ICONS['process_cleanup']} No dangling call processes found")
             return 0
 
         terminated_count = 0
         for pid, command in processes.items():
             try:
-                print(
-                    f"Force killing dangling call process PID {pid} with command {command}",
+                LOGGER.info(
+                    f"{ICONS['process_cleanup']} Force killing dangling call process PID {pid} with command {command}",
                 )
                 os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
-                print(f"✅ Killed process {pid}")
+                LOGGER.info(f"{ICONS['process_cleanup']} Killed process {pid}")
             except ProcessLookupError:
-                print(f"❌ Process {pid} -> {command} not found")
+                LOGGER.debug(
+                    f"{ICONS['process_cleanup']} Process {pid} -> {command} not found",
+                )
             except PermissionError:
-                print(f"❌ Permission denied to kill process {pid} -> {command}")
+                LOGGER.error(
+                    f"{ICONS['process_cleanup']} Permission denied to kill process {pid} -> {command}",
+                )
             except ValueError:
-                print(f"❌ Invalid PID: {pid} -> {command}")
+                LOGGER.error(
+                    f"{ICONS['process_cleanup']} Invalid PID: {pid} -> {command}",
+                )
             except Exception as e:
-                print(f"❌ Error terminating process {pid} -> {command}: {e}")
+                LOGGER.error(
+                    f"{ICONS['process_cleanup']} Error terminating process {pid} -> {command}: {e}",
+                )
                 continue
 
-        print(f"Terminated {terminated_count} dangling call process(es)")
+        LOGGER.info(
+            f"{ICONS['process_cleanup']} Terminated {terminated_count} dangling call process(es)",
+        )
         return terminated_count
 
     except Exception as e:
-        print(f"Error during dangling process cleanup: {e}")
+        LOGGER.error(
+            f"{ICONS['process_cleanup']} Error during dangling process cleanup: {e}",
+        )
         return 0

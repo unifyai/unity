@@ -41,3 +41,37 @@ class ManagerMethodPayload(BaseModel):
         default=None,
         description="Outgoing answer/result text",
     )
+
+    # Hierarchy context for nested operations (e.g., Actor -> manager -> handle action).
+    hierarchy: list[str] = Field(
+        default_factory=list,
+        description="Lineage of nested operations",
+    )
+    hierarchy_label: str = Field(
+        default="",
+        description="Human-readable hierarchy label",
+    )
+
+    # User-facing display label for the action window (e.g., "Checking Contact Book").
+    display_label: Optional[str] = Field(
+        default=None,
+        description="User-friendly phrase describing this operation for non-technical users",
+    )
+
+    # Status and error information (typically for phase='outgoing').
+    status: str = Field(
+        default="ok",
+        description="Operation status: 'ok' or 'error'",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Human-readable error message (when status='error')",
+    )
+    error_type: Optional[str] = Field(
+        default=None,
+        description="Exception class name (when status='error')",
+    )
+    traceback: Optional[str] = Field(
+        default=None,
+        description="Truncated traceback (when status='error')",
+    )

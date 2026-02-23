@@ -32,12 +32,12 @@ class BaseActiveTask(SteerableToolHandle, ABC):
     """
 
     @abstractmethod
-    def stop(
+    async def stop(
         self,
         *,
         cancel: bool,
         reason: Optional[str] = None,
-    ) -> Optional[str]:
+    ) -> None:
         """Stop the live activity with explicit intent.
 
         Parameters
@@ -119,14 +119,6 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         question in natural language and allow this `ask` method to determine
         the best method to answer it.
 
-        Visual inputs policy
-        --------------------
-        • When relevant images are available, pass them via the ``images`` argument.
-        • When delegating to another tool that declares an ``images`` parameter, forward the
-          relevant images and rewrite/augment their annotations so they align with the delegated
-          question or action (not the original user phrasing). Prefer AnnotatedImageRefs; preserve
-          user‑referenced ordering when it matters.
-
         Task schema (reference)
         -----------------------
         {task_schema}
@@ -196,6 +188,14 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         describe the desired end-state in natural language and allow the
         `update` method to determine the best method to apply it.
 
+        Parameters
+        ----------
+        text : str
+            The mutation request in plain English
+            (e.g. "Create a task to review the Q4 report by Friday").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured outcome.
+
         Task schema (reference)
         -----------------------
         {task_schema}
@@ -216,13 +216,6 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         This method is not intended to be used to materialize transient
         conversational sessions. It should be used to create or modify durable
         Tasks and their scheduling/ordering.
-
-        Visual inputs policy
-        --------------------
-        • When relevant images are available, pass them via the ``images`` argument.
-        • When delegating to another tool that declares an ``images`` parameter (e.g., a read‑only ask),
-          forward the relevant images and rewrite/augment their annotations so they align with the delegated
-          request. Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
 
         Natural-language ordering semantics
         ----------------------------------

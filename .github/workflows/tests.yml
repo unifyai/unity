@@ -59,13 +59,33 @@ jobs:
         EVENT_NAME: ${{ github.event_name }}
         COMMIT_MSG: ${{ github.event.head_commit.message }}
         PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
       run: |
         # Helper function to extract [parallel_run.sh ...] content
+        # Matches ALL occurrences and combines their arguments
         extract_parallel_cmd() {
           local msg="$1"
-          # Extract content between [parallel_run.sh and ]
-          if [[ "$msg" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; then
-            echo "${BASH_REMATCH[1]}"
+          local result=""
+          local remaining="$msg"
+
+          # Loop through all matches of [parallel_run.sh ...]
+          while [[ "$remaining" =~ \[parallel_run\.sh[[:space:]]+([^\]]+)\] ]]; do
+            local match="${BASH_REMATCH[1]}"
+            # Skip literal "..." which is just documentation/example text
+            if [[ "$match" != "..." ]]; then
+              if [[ -n "$result" ]]; then
+                result="$result $match"
+              else
+                result="$match"
+              fi
+            fi
+            # Remove the matched portion and continue searching
+            remaining="${remaining#*"${BASH_REMATCH[0]}"}"
+          done
+
+          if [[ -n "$result" ]]; then
+            echo "$result"
           fi
         }
 
@@ -103,6 +123,14 @@ jobs:
 
         # For pull_request events, check PR title
         if [[ "$EVENT_NAME" == "pull_request" ]]; then
+          # Auto-run full suite for staging → main PRs (no tags required)
+          if [[ "$PR_BASE_REF" == "main" && "$PR_HEAD_REF" == "staging" ]]; then
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
+            echo "parallel_run_cmd=" >> "$GITHUB_OUTPUT"
+            echo "Tests auto-triggered: staging → main PR"
+            exit 0
+          fi
+
           # Check for [parallel_run.sh ...] first
           PARALLEL_CMD=$(extract_parallel_cmd "$PR_TITLE")
           if [[ -n "$PARALLEL_CMD" ]]; then
@@ -141,7 +169,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install black
-      run: pip install black
+      run: pip install black==26.1.0
 
     - name: Run black check
       run: black --diff --color --check .
@@ -172,13 +200,24 @@ jobs:
         # Sources (priority order):
         # 1. [parallel_run.sh ...] from commit/PR → parse paths and flags
         # 2. workflow_dispatch inputs → test_path + parallel_run_args
-        # 3. Default (test_path=".") → discover all test folders
+        # 3. Default (no paths) → discover all leaf test folders
+        #
+        # ALL paths (explicit or discovered) are expanded to leaf directories:
+        # - Files are kept as-is
+        # - Directories are expanded to their leaf sub-folders
+        #
+        # Leaf discovery (Option A algorithm):
+        # - Leaf directories (test files, no test subdirs) → one job per directory
+        # - Mixed directories (test files AND test subdirs) → one bundled job for
+        #   all direct test files (space-separated), plus recursive jobs for subdirs
+        # This maximizes parallelism regardless of how paths are specified.
 
         PARALLEL_CMD="${{ needs.should-run-tests.outputs.parallel_run_cmd }}"
         INPUT_PATH="${{ inputs.test_path }}"
         INPUT_ARGS="${{ inputs.parallel_run_args }}"
 
         # Initialize
+        declare -a RAW_PATHS=()
         declare -a PATHS=()
         declare -a FLAGS=()
 
@@ -197,30 +236,42 @@ jobs:
               FLAGS+=("$token")
               LAST_FLAG=""
             else
-              # It's a path
-              PATHS+=("$token")
+              # It's a path - collect for expansion
+              RAW_PATHS+=("$token")
               LAST_FLAG=""
             fi
           done
         elif [[ -n "$INPUT_PATH" && "$INPUT_PATH" != "." ]]; then
           # workflow_dispatch with specific path(s)
           # Split space-separated paths into array
-          read -ra PATHS <<< "$INPUT_PATH"
+          read -ra RAW_PATHS <<< "$INPUT_PATH"
           # Flags come from parallel_run_args input
           if [[ -n "$INPUT_ARGS" ]]; then
             read -ra FLAGS <<< "$INPUT_ARGS"
           fi
-          echo "Using test_path input: ${PATHS[*]}" >&2
-        else
-          # Default: discover all test folders
-          while IFS= read -r dir; do
-            PATHS+=("$dir")
-          done < <(find tests -mindepth 1 -maxdepth 1 -type d -name 'test*' | sort)
+          echo "Using test_path input: ${RAW_PATHS[*]}" >&2
+        fi
+
+        # Expand paths to leaf directories using discover_test_paths.py
+        # - If RAW_PATHS is empty, discover all test paths from tests/
+        # - If RAW_PATHS has entries, expand each directory to its leaf sub-folders
+        # This ensures maximum parallelism regardless of how paths are specified.
+        if (( ${#RAW_PATHS[@]} == 0 )); then
+          # No explicit paths - discover all
+          while IFS= read -r path; do
+            PATHS+=("$path")
+          done < <(python3 .github/scripts/discover_test_paths.py)
           # Flags come from parallel_run_args input (if any)
           if [[ -n "$INPUT_ARGS" ]]; then
             read -ra FLAGS <<< "$INPUT_ARGS"
           fi
-          echo "Discovered ${#PATHS[@]} test directories" >&2
+          echo "Discovered ${#PATHS[@]} test paths (leaf dirs + individual files)" >&2
+        else
+          # Expand explicit paths to their leaf directories
+          while IFS= read -r path; do
+            PATHS+=("$path")
+          done < <(python3 .github/scripts/discover_test_paths.py "${RAW_PATHS[@]}")
+          echo "Expanded ${#RAW_PATHS[@]} path(s) to ${#PATHS[@]} leaf test paths" >&2
         fi
 
         # Build JSON array of paths for matrix
@@ -245,7 +296,7 @@ jobs:
 
         # CI defaults for project management (can be overridden)
         # With local orchestra (default), these are ignored - each job has fresh DB
-        # Only relevant when UNIFY_BASE_URL is set to a non-local URL (staging/production)
+        # Only relevant when ORCHESTRA_URL is set to a non-local URL (staging/production)
         DELETE_ON_START="false"  # Default: no deletion (local orchestra has fresh DB)
         DELETE_ON_EXIT="false"   # Default: keep project after tests
         RANDOM_PROJECTS="false"  # Default: shared project mode
@@ -438,9 +489,9 @@ jobs:
       needs.discover.outputs.delete_on_start == 'true' &&
       needs.discover.outputs.random_projects != 'true'
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
-      # No fallback - if delete_on_start is enabled, UNIFY_BASE_URL must be set
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # No fallback - if delete_on_start is enabled, ORCHESTRA_URL must be set
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
     - uses: actions/checkout@v2
 
@@ -489,22 +540,31 @@ jobs:
       UNIFY_TESTS_RAND_PROJ: "false"              # Shared project mode
       UNIFY_TESTS_DELETE_PROJ_ON_START: "false"   # Handled by setup job at workflow level
       UNIFY_TESTS_DELETE_PROJ_ON_EXIT: "false"    # Keep project after tests
+      # LLM response caching (owned by unillm, read from env)
+      UNILLM_CACHE: "true"
       # Local orchestra path (cloned into workspace, not sibling directory)
       ORCHESTRA_REPO_PATH: ${{ github.workspace }}/orchestra
       # API credentials
-      # UNIFY_BASE_URL: if repo variable set, use remote; otherwise local orchestra sets it
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      # ORCHESTRA_URL: if repo variable set, use remote; otherwise local orchestra sets it
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Communication service URL (auto-selected based on branch: main→production, else→staging)
+      UNITY_COMMS_URL: ${{ github.ref_name == 'main' && 'https://unity-comms-app-262420637606.us-central1.run.app' || 'https://unity-comms-app-staging-262420637606.us-central1.run.app' }}
       # Orchestra GCP configuration (set by google-github-actions/auth step)
-      # ORCHESTRA_VERTEXAI_SERVICE_ACC_JSON is set via GOOGLE_APPLICATION_CREDENTIALS by auth action
-      ORCHESTRA_VERTEXAI_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-      ORCHESTRA_VERTEXAI_LOCATION: ${{ vars.GCP_LOCATION }}
+      # GOOGLE_APPLICATION_CREDENTIALS is set automatically by the google-github-actions/auth action
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_LOCATION: ${{ vars.GCP_LOCATION }}
       # GCP bucket names (passed to orchestra server)
       ORCHESTRA_GCP_BUCKET_NAME: ${{ vars.GCP_BUCKET_LOGS }}
       ORCHESTRA_GCP_ASSISTANT_IMAGES_BUCKET_NAME: ${{ vars.GCP_BUCKET_ASSISTANT_IMAGES }}
       ORCHESTRA_GCP_ASSISTANT_RECORDINGS_BUCKET_NAME: ${{ vars.GCP_BUCKET_RECORDINGS }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      # Unify API key for _prepare_shared_project.py and tests
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # Ensure local unillm/unify packages are found correctly
+      # The repos are cloned to ./unillm/ and ./unify/, with packages inside
+      PYTHONPATH: ${{ github.workspace }}/unillm:${{ github.workspace }}/unify
     steps:
     - uses: actions/checkout@v2
       with:
@@ -516,7 +576,25 @@ jobs:
         repository: unifyai/orchestra
         ref: ${{ needs.discover.outputs.orchestra_branch }}
         path: orchestra
-        token: ${{ secrets.ORCHESTRA_CLONE_TOKEN }}
+        token: ${{ secrets.CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Clone unify repo
+      uses: actions/checkout@v2
+      with:
+        repository: unifyai/unify
+        ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
+        path: unify
+        token: ${{ secrets.CLONE_TOKEN }}
+        fetch-depth: 1
+
+    - name: Clone unillm repo
+      uses: actions/checkout@v2
+      with:
+        repository: unifyai/unillm
+        ref: ${{ github.ref_name == 'main' && 'main' || 'staging' }}
+        path: unillm
+        token: ${{ secrets.CLONE_TOKEN }}
         fetch-depth: 1
 
     - name: Authenticate to Google Cloud
@@ -570,8 +648,14 @@ jobs:
                   "$key_upper" == *_PASSWORD || "$key_upper" == *_TOKEN || \
                   "$key_upper" == *_CREDENTIAL* || "$key_upper" == *_API_* || \
                   "$key_upper" == *APIKEY* ]]; then
-              echo "::add-mask::$value"
-              echo "Masked: $key"
+              # Skip values shorter than 4 characters to avoid catastrophic masking
+              # (e.g. a value of "3" would replace every digit 3 with *** everywhere)
+              if (( ${#value} >= 4 )); then
+                echo "::add-mask::$value"
+                echo "Masked: $key"
+              else
+                echo "Skipped masking $key (value too short: ${#value} chars)"
+              fi
             fi
           fi
         done < .env
@@ -581,13 +665,28 @@ jobs:
     - name: Normalize test path
       id: normalize-path
       run: |
-        # Each matrix entry is a single test path
-        echo "test_args=${{ matrix.test_path }}" >> $GITHUB_OUTPUT
+        # Each matrix entry is either a single test path or a space-separated
+        # bundle of files (from mixed directories with both files and subdirs)
+        RAW_PATH='${{ matrix.test_path }}'
+        echo "test_args=$RAW_PATH" >> $GITHUB_OUTPUT
 
-        # Normalize for artifact naming
-        normalized=$(echo '${{ matrix.test_path }}' | sed 's|^tests/test_||' | sed 's|^tests/||' | tr '/' '_')
+        # Normalize for artifact naming and display
+        if [[ "$RAW_PATH" == *" "* ]]; then
+          # Bundled multi-file entry: derive name from common parent directory
+          first_file="${RAW_PATH%% *}"
+          parent_dir=$(dirname "$first_file")
+          file_count=$(echo "$RAW_PATH" | wc -w | tr -d ' ')
+          normalized=$(echo "$parent_dir" | sed 's|^tests/||' | tr '/' '_')
+          normalized="${normalized}_${file_count}_files"
+          display_name="${parent_dir} (${file_count} files)"
+        else
+          normalized=$(echo "$RAW_PATH" | sed 's|^tests/||' | tr '/' '_')
+          display_name="$RAW_PATH"
+        fi
+
         if [[ -z "$normalized" || "$normalized" == "." ]]; then normalized="all"; fi
         echo "test_path_normalized=$normalized" >> $GITHUB_OUTPUT
+        echo "display_name=$display_name" >> $GITHUB_OUTPUT
 
         # Calculate timeout in seconds (default 120 minutes)
         TIMEOUT_MINS="${{ inputs.timeout_minutes }}"
@@ -606,11 +705,11 @@ jobs:
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
         packages: >-
-          tmux portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2
+          tmux zsh portaudio19-dev libnss3-dev libatk-bridge2.0-dev libdrm2
           libxkbcommon0 libgtk-3-dev libgbm-dev libgirepository1.0-dev
           libasound2t64 libatspi2.0-0 libgtk-3-0 libnspr4 libwayland-client0
           libxcomposite1 libxdamage1 libxrandr2 xvfb
-        version: 1.0
+        version: 1.1
 
     - name: Install uv and poetry
       run: |
@@ -624,43 +723,46 @@ jobs:
         path: |
           ~/.cache/uv
           .venv
-        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+        # Include unillm and unify pyproject.toml to bust cache when dependencies change
+        key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock', 'unillm/pyproject.toml', 'unify/pyproject.toml') }}
         restore-keys: |
           uv-${{ runner.os }}-
 
-    - name: Configure git for private repos
+    - name: Configure unify/unillm paths for CI
       run: |
-        # Allow uv to clone private GitHub repos (e.g., unillm)
-        git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
-      env:
-        GH_TOKEN: ${{ secrets.UNILLM_CLONE_TOKEN }}
-
-    - name: Configure unify/unillm for CI
-      run: |
-        # Local development uses editable local paths (../unify, ../unillm).
-        # CI doesn't have these sibling directories, so we replace with git URLs.
-        # Branch selection: main→main, all others→staging
-        if [[ "${{ github.ref_name }}" == "main" ]]; then
-          BRANCH="main"
-        else
-          BRANCH="staging"
-        fi
-        echo "Configuring unify/unillm to use $BRANCH branch"
-
-        # Replace local paths with git URLs
-        sed -i 's|unifyai = { path = "../unify", editable = true }|unifyai = { git = "https://github.com/unifyai/unify.git", branch = "'"$BRANCH"'" }|g' pyproject.toml
-        sed -i 's|unillm = { path = "../unillm", editable = true }|unillm = { git = "https://github.com/unifyai/unillm.git", branch = "'"$BRANCH"'" }|g' pyproject.toml
-
-        # Re-lock to resolve the git dependencies
-        uv lock --upgrade-package unifyai --upgrade-package unillm
+        # Local development uses sibling paths (../unify, ../unillm).
+        # CI clones these repos into the workspace, so update paths accordingly.
+        sed -i 's|path = "../unify"|path = "./unify"|g' pyproject.toml
+        sed -i 's|path = "../unillm"|path = "./unillm"|g' pyproject.toml
+        # unillm's pyproject.toml has path = "../unify" which correctly resolves to ./unify/ from ./unillm/
 
     - name: Sync dependencies with uv
       run: |
         # Install project and dev dependencies from pyproject.toml
         uv sync --all-groups
 
-    # Cache Playwright browsers (~500MB) to avoid re-downloading on every run
-    - name: Cache Playwright browsers
+    - name: Verify local packages installed correctly
+      run: |
+        # Ensure we got the LOCAL unillm/unify, not PyPI packages with the same name
+        # The local unillm exports AsyncUnify; the PyPI one exports UniLLM
+        # PYTHONPATH is set at job level to include ./unillm and ./unify
+        uv run python -c "
+        import sys
+        print('Python path (first 5):')
+        for p in sys.path[:5]:
+            print(f'  {p}')
+
+        from unillm import AsyncUnify, Unify
+        import unify
+
+        print(f'✓ unillm: {AsyncUnify.__module__}')
+        print(f'✓ unify: {unify.__file__}')
+        assert hasattr(unify, 'create_project'), f'Wrong unify package!'
+        print('✓ Local packages verified successfully')
+        "
+
+    # Cache Playwright assets (~500MB) to avoid re-downloading on every run
+    - name: Cache Playwright assets
       uses: actions/cache@v4
       id: playwright-cache
       with:
@@ -669,7 +771,7 @@ jobs:
         restore-keys: |
           playwright-${{ runner.os }}-
 
-    - name: Install Playwright browsers
+    - name: Install Playwright assets
       if: steps.playwright-cache.outputs.cache-hit != 'true'
       run: |
         uv run playwright install --with-deps
@@ -721,8 +823,11 @@ jobs:
         trap "kill $XVFB_PID 2>/dev/null" EXIT
 
         # parallel_run.sh handles starting local orchestra automatically
-        echo "Running: parallel_run.sh --timeout $TIMEOUT $EXTRA_ARGS $TEST_PATH"
-        tests/parallel_run.sh --timeout "$TIMEOUT" $EXTRA_ARGS "$TEST_PATH"
+        # Note: TEST_PATH must come before EXTRA_ARGS because EXTRA_ARGS may contain
+        # "-- pytest-args" and everything after -- is treated as pytest arguments
+        # TEST_PATH is unquoted to allow word splitting for bundled multi-file entries
+        echo "Running: parallel_run.sh --timeout $TIMEOUT $TEST_PATH $EXTRA_ARGS"
+        tests/parallel_run.sh --timeout "$TIMEOUT" $TEST_PATH $EXTRA_ARGS
         TEST_EXIT_CODE=$?
         echo "exit_code=$TEST_EXIT_CODE" >> "$GITHUB_OUTPUT"
         exit $TEST_EXIT_CODE
@@ -730,26 +835,20 @@ jobs:
     - name: Dump orchestra logs on failure
       if: failure()
       run: |
-        # Orchestra with ORCHESTRA_PREFIX=unity writes to /tmp/unity-local-server.*
         echo "=== Orchestra Server Logs ==="
-        if [ -f /tmp/unity-local-server.log ]; then
-          cat /tmp/unity-local-server.log
-          # Also copy to logs/orchestra/ so it gets uploaded with artifacts
-          if [ -d logs/orchestra ]; then
-            # Find the session directory (most recent timestamp)
-            session_dir=$(ls -td logs/orchestra/*/ 2>/dev/null | head -1)
-            if [ -n "$session_dir" ]; then
-              cp /tmp/unity-local-server.log "$session_dir/server.log"
-              echo "(Copied to $session_dir/server.log for artifact upload)"
-            fi
-          fi
+        if [ -f /tmp/orchestra-local-server.log ]; then
+          cat /tmp/orchestra-local-server.log
+          # Copy to logs/orchestra/ so it gets uploaded with artifacts
+          mkdir -p logs/orchestra
+          cp /tmp/orchestra-local-server.log logs/orchestra/server.log
+          echo "(Copied to logs/orchestra/server.log for artifact upload)"
         else
-          echo "No orchestra log file found at /tmp/unity-local-server.log"
+          echo "No orchestra log file found at /tmp/orchestra-local-server.log"
         fi
         echo ""
         echo "=== Orchestra Server Process Status ==="
-        if [ -f /tmp/unity-local-server.pid ]; then
-          PID=$(cat /tmp/unity-local-server.pid)
+        if [ -f /tmp/orchestra-local-server.pid ]; then
+          PID=$(cat /tmp/orchestra-local-server.pid)
           echo "Expected PID: $PID"
           if ps -p "$PID" > /dev/null 2>&1; then
             echo "Process is still running"
@@ -799,7 +898,7 @@ jobs:
         echo "Download logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
-        echo "## ❌ Test Failures: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## ❌ Test Failures: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $PASS_COUNT** passed, **❌ $FAIL_COUNT** failed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -808,12 +907,12 @@ jobs:
         echo "$FAILED_SESSIONS" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-        # Include duration summary if available
+        # Include duration and cache summary if available
         DURATION_FILE=$(find logs/pytest -name "duration_summary.txt" 2>/dev/null | head -1)
         if [ -n "$DURATION_FILE" ] && [ -f "$DURATION_FILE" ]; then
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "<details>" >> $GITHUB_STEP_SUMMARY
-          echo "<summary>📊 Test Durations (sorted fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📊 Test Stats: Duration & Cache (fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           cat "$DURATION_FILE" >> $GITHUB_STEP_SUMMARY
@@ -832,6 +931,19 @@ jobs:
           log_count=$(find logs/pytest -name "*.txt" -type f 2>/dev/null | wc -l | tr -d ' ')
         fi
 
+        # Fail if no tests ran - this indicates a problem (path resolution, collection error, etc.)
+        if [ "$log_count" -eq 0 ]; then
+          echo "## ⚠️ No Tests Ran: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**0 tests executed** — this likely indicates a problem with test discovery." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the 'Run tests' step logs for details." >> $GITHUB_STEP_SUMMARY
+          echo ""
+          echo "Error: No tests were executed. This indicates a problem with test discovery." >&2
+          echo "Check the 'Run tests' step output for pytest collection errors." >&2
+          exit 1
+        fi
+
         # Echo to step output (foldable view)
         echo "=== All tests passed ==="
         echo "✅ $log_count passed"
@@ -839,16 +951,16 @@ jobs:
         echo "View logs: $ARTIFACTS_URL"
 
         # Write to GitHub Summary page
-        echo "## ✅ All Tests Passed: \`${{ matrix.test_path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ All Tests Passed: \`${{ steps.normalize-path.outputs.display_name }}\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**✅ $log_count** passed — [view logs]($ARTIFACTS_URL)" >> $GITHUB_STEP_SUMMARY
 
-        # Include duration summary if available
+        # Include duration and cache summary if available
         DURATION_FILE=$(find logs/pytest -name "duration_summary.txt" 2>/dev/null | head -1)
         if [ -n "$DURATION_FILE" ] && [ -f "$DURATION_FILE" ]; then
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "<details>" >> $GITHUB_STEP_SUMMARY
-          echo "<summary>📊 Test Durations (sorted fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📊 Test Stats: Duration & Cache (fastest → slowest)</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           cat "$DURATION_FILE" >> $GITHUB_STEP_SUMMARY
@@ -870,6 +982,19 @@ jobs:
         include-hidden-files: true
         retention-days: 1
 
+    # =========================================================================
+    # Stop orchestra BEFORE log upload to ensure all PENDING trace files are
+    # finalized. Orchestra writes in-flight requests as *_PENDING_*.json and
+    # renames them on completion. If orchestra is still running during upload,
+    # the glob may find PENDING files that get renamed before upload reads them.
+    # =========================================================================
+    - name: Stop local orchestra (before log upload)
+      if: always()
+      continue-on-error: true  # Cleanup failures shouldn't affect job status
+      run: |
+        trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
+        orchestra/scripts/local.sh stop || true
+
     - name: Prepare logs for upload
       if: always()
       run: |
@@ -890,12 +1015,12 @@ jobs:
           echo "○ pytest logs: directory not found (skipping)"
         fi
 
-        # --- LLM logs ---
-        if [ -d logs/llm ]; then
-          file_count=$(find logs/llm -type f 2>/dev/null | wc -l | tr -d ' ')
-          echo "✓ llm logs: $file_count files"
+        # --- Unillm logs ---
+        if [ -d logs/unillm ]; then
+          file_count=$(find logs/unillm -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "✓ unillm logs: $file_count files"
         else
-          echo "○ llm logs: directory not found (skipping)"
+          echo "○ unillm logs: directory not found (skipping)"
         fi
 
         # --- Orchestra logs (requires filename sanitization) ---
@@ -934,7 +1059,8 @@ jobs:
 
     # =========================================================================
     # Cleanup steps - run AFTER artifact uploads
-    # These are housekeeping; failures here shouldn't affect job status
+    # Note: Orchestra is stopped BEFORE log upload (see above) to ensure
+    # PENDING trace files are finalized. This section handles tmux cleanup.
     # =========================================================================
     - name: Cleanup on cancellation
       if: cancelled()
@@ -942,17 +1068,9 @@ jobs:
         echo "Workflow cancelled - cleaning up tmux sessions and orphaned processes..."
         # Kill all unity tmux servers and purge orphaned test processes
         tests/kill_server.sh --all || true
-        # Stop local orchestra (using orchestra repo's script)
-        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
+        # Orchestra already stopped before log upload, but ensure it's down
+        orchestra/scripts/local.sh stop || true
         echo "Cleanup complete."
-
-    - name: Stop local orchestra
-      if: always()
-      continue-on-error: true  # Cleanup failures shouldn't affect job status
-      run: |
-        # Trap SIGTERM to exit gracefully (exit 143 can cause GHA to skip steps)
-        trap 'echo "Received SIGTERM, exiting gracefully"; exit 0' TERM
-        ORCHESTRA_PREFIX=unity orchestra/scripts/local.sh stop || true
 
   # Cleanup job: runs ONCE after all pytest jobs complete or are cancelled
   # Handles project deletion at workflow level to avoid race conditions
@@ -968,9 +1086,9 @@ jobs:
       needs.discover.outputs.random_projects != 'true' &&
       (needs.discover.outputs.delete_on_exit == 'true' || needs.pytest.result == 'cancelled')
     env:
-      UNIFY_KEY: ${{ secrets.UNIFY_API_KEY }}
-      # No fallback - if delete_on_exit is enabled, UNIFY_BASE_URL must be set
-      UNIFY_BASE_URL: ${{ vars.UNIFY_BASE_URL }}
+      UNIFY_KEY: ${{ secrets.UNIFY_KEY }}
+      # No fallback - if delete_on_exit is enabled, ORCHESTRA_URL must be set
+      ORCHESTRA_URL: ${{ vars.ORCHESTRA_URL }}
     steps:
     - uses: actions/checkout@v2
 
@@ -996,97 +1114,6 @@ jobs:
         except Exception as e:
             print(f"Note: Could not delete project '{project_name}': {e}")
         PYEOF
-
-  # LLM Cache check job: verifies 100% cache coverage across all tests
-  # This is a separate job so it shows as its own check in the GitHub UI
-  cache-check:
-    name: LLM Cache
-    runs-on: ubuntu-latest
-    needs: [should-run-tests, pytest]
-    # Run after pytest jobs complete (regardless of pass/fail), but not if cancelled
-    if: |
-      always() &&
-      needs.should-run-tests.outputs.run_tests == 'true' &&
-      needs.pytest.result != 'cancelled'
-    steps:
-    - name: Download logs from all jobs
-      uses: actions/download-artifact@v4
-      with:
-        pattern: logs-*
-        path: all-logs
-        merge-multiple: true
-
-    - name: Check cache coverage
-      run: |
-        TOTAL_HITS=0
-        TOTAL_MISSES=0
-        declare -a TESTS_WITH_MISSES=()
-
-        # Find all cache stats files
-        if [ -d "all-logs" ]; then
-          for f in $(find all-logs -name "*.cache_stats.json" 2>/dev/null | sort); do
-            hits=$(python3 -c "import json; print(json.load(open('$f')).get('hits', 0))" 2>/dev/null || echo 0)
-            misses=$(python3 -c "import json; print(json.load(open('$f')).get('misses', 0))" 2>/dev/null || echo 0)
-            TOTAL_HITS=$((TOTAL_HITS + hits))
-            TOTAL_MISSES=$((TOTAL_MISSES + misses))
-
-            # Track tests with misses
-            if [ "$misses" -gt 0 ]; then
-              # Extract test name from filename (e.g., test_foo--test_bar.cache_stats.json -> test_foo--test_bar)
-              test_name=$(basename "$f" .cache_stats.json)
-              TESTS_WITH_MISSES+=("$test_name ($misses misses)")
-            fi
-          done
-        fi
-
-        TOTAL=$((TOTAL_HITS + TOTAL_MISSES))
-
-        echo "=== LLM Cache Statistics ==="
-        echo "  Hits:   $TOTAL_HITS"
-        echo "  Misses: $TOTAL_MISSES"
-        echo "  Total:  $TOTAL"
-
-        # Handle case with no LLM calls
-        if [ $TOTAL -eq 0 ]; then
-          echo ""
-          echo "✅ No LLM calls made - cache check passed"
-          echo "## ✅ LLM Cache: No LLM calls" >> $GITHUB_STEP_SUMMARY
-          exit 0
-        fi
-
-        HIT_RATE=$(python3 -c "print(f'{$TOTAL_HITS * 100.0 / $TOTAL:.1f}')")
-        echo "  Hit Rate: ${HIT_RATE}%"
-        echo ""
-
-        # Check for misses
-        if [ $TOTAL_MISSES -gt 0 ]; then
-          echo "❌ Cache coverage is not 100% - $TOTAL_MISSES cache misses detected"
-          echo ""
-          echo "Tests with cache misses:"
-          for test in "${TESTS_WITH_MISSES[@]}"; do
-            echo "  - $test"
-          done
-
-          # Write to GitHub Summary
-          echo "## ❌ LLM Cache: ${HIT_RATE}% coverage" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**$TOTAL_MISSES** cache misses out of **$TOTAL** LLM calls" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Tests with cache misses:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          for test in "${TESTS_WITH_MISSES[@]}"; do
-            echo "- \`$test\`" >> $GITHUB_STEP_SUMMARY
-          done
-
-          exit 1
-        fi
-
-        echo "✅ 100% cache coverage"
-
-        # Write to GitHub Summary
-        echo "## ✅ LLM Cache: 100% coverage" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**$TOTAL_HITS** cache hits, **0** misses" >> $GITHUB_STEP_SUMMARY
 
   cache-consolidation:
     name: Consolidate and store cache

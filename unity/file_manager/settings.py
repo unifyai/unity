@@ -9,7 +9,24 @@ file_parsers/settings.py as FileParserSettings, which is intentionally
 separate to keep parsing concerns modular.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def get_local_root() -> str:
+    """Return the resolved local file root directory.
+
+    Uses ``SETTINGS.UNITY_LOCAL_ROOT`` when set, otherwise defaults to
+    ``~/Unity/Local``.  All code that needs the local file root should
+    call this function instead of hard-coding the path.
+    """
+    from unity.settings import SETTINGS
+
+    explicit = SETTINGS.UNITY_LOCAL_ROOT.strip()
+    if explicit:
+        return str(Path(explicit).expanduser().resolve())
+    return str(Path.home() / "Unity" / "Local")
 
 
 class FileSettings(BaseSettings):
@@ -18,15 +35,6 @@ class FileSettings(BaseSettings):
     Attributes:
         ENABLED: Whether FileManager is enabled.
         IMPL: Implementation type - "real" or "simulated".
-        CODESANDBOX_SERVICE_BASE_URL: Base URL for CodeSandbox service.
-        CODESANDBOX_SERVICE_PORT: Port for CodeSandbox service.
-        CODESANDBOX_API_TOKEN: API token for CodeSandbox.
-        INTERACT_API_BASE: Base URL for Interact API.
-        INTERACT_KEY: API key for Interact.
-        INTERACT_SECRET: API secret for Interact.
-        INTERACT_PERSON_ID: Person ID for Interact.
-        INTERACT_TENANT: Tenant for Interact.
-        CONSOLE_BASE_URL: Base URL for Unify Console (Plot API).
         PLOT_API_ENDPOINT: Endpoint path for plot creation.
         PLOT_API_TIMEOUT: Timeout in seconds for plot API requests.
         PLOT_API_MAX_RETRIES: Maximum number of retries for plot API requests.
@@ -36,21 +44,8 @@ class FileSettings(BaseSettings):
     ENABLED: bool = False
     IMPL: str = "real"
 
-    # CodeSandbox adapter settings
-    CODESANDBOX_SERVICE_BASE_URL: str = ""
-    CODESANDBOX_SERVICE_PORT: str = "3100"
-    CODESANDBOX_API_TOKEN: str = ""
-
-    # Interact adapter settings
-    INTERACT_API_BASE: str = ""
-    INTERACT_KEY: str = ""
-    INTERACT_SECRET: str = ""
-    INTERACT_PERSON_ID: str = ""
-    INTERACT_TENANT: str = ""
-
     # Plot API settings
-    CONSOLE_BASE_URL: str = "https://console.unify.ai"
-    PLOT_API_ENDPOINT: str = "/api/plot/create"
+    PLOT_API_ENDPOINT: str = "/logs/plot"
     PLOT_API_TIMEOUT: float = 30.0
     PLOT_API_MAX_RETRIES: int = 3
     PLOT_API_RETRY_BACKOFF: float = 1.0

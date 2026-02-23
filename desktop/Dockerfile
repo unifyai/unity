@@ -5,7 +5,7 @@ ENV DISPLAY=:99
 
 WORKDIR /app
 
-# System dependencies for virtual desktop/devices, browser runtime, and native modules
+# System dependencies for virtual desktop/devices, web runtime, and native modules
 RUN apt-get update && apt-get install -y \
     curl wget unzip git gnupg2 \
     xvfb x11vnc fluxbox xdotool wmctrl xterm dbus dbus-x11 websockify \
@@ -33,13 +33,26 @@ RUN chmod +x /app/desktop/desktop.sh
 RUN chmod -x /app/desktop/device.sh
 RUN chmod -x /app/desktop/startup.sh
 
+# Magnitude packages (agent-service depends on magnitude-core + magnitude-extract
+# via file: references that npm resolves as symlinks).
+COPY magnitude/packages/magnitude-core /app/magnitude/packages/magnitude-core
+COPY magnitude/packages/magnitude-extract /app/magnitude/packages/magnitude-extract
+# Install runtime dependencies for each magnitude package directly, bypassing the
+# workspace build system. This ensures platform-specific native modules (e.g.
+# @boundaryml/baml) are resolved for Linux.
+WORKDIR /app/magnitude/packages/magnitude-core
+RUN npm install --ignore-scripts --omit=dev
+WORKDIR /app/magnitude/packages/magnitude-extract
+RUN npm install --ignore-scripts --omit=dev
+
 # Agent service install
 WORKDIR /app/agent-service
 COPY agent-service/ ./
 RUN npm ci
 
-# Install Playwright browsers and rebuild native modules (sharp)
-RUN npx playwright@1.52.0 install --with-deps chromium
+# Install browser runtimes using magnitude-core's patchright (Playwright fork)
+# so the browser build matches what magnitude-core expects at runtime.
+RUN cd /app/magnitude/packages/magnitude-core && npx patchright install --with-deps chromium
 
 WORKDIR /app
 

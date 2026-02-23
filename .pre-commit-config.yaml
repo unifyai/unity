@@ -28,8 +28,9 @@ repos:
   hooks:
   - id: autoflake
     name: autoflake
-    entry: .venv/bin/autoflake
-    language: system
+    entry: autoflake
+    language: python
+    additional_dependencies: [autoflake>=2.3.1]
     types: [python]
     args: [--in-place, --remove-all-unused-imports, --remove-duplicate-keys]
     exclude: |
@@ -39,6 +40,7 @@ repos:
 
   - id: black
     name: Format with Black
-    entry: .venv/bin/black
-    language: system
+    entry: black
+    language: python
+    additional_dependencies: [black==26.1.0]
     types: [python]

@@ -1,6 +1,5 @@
 import sys
 import os
-import json
 import re
 import pytest
 from pathlib import Path
@@ -19,11 +18,11 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────────────
 # Early Environment Setup (MUST be before any unity/unify imports)
 # ─────────────────────────────────────────────────────────────────────────────
-# Set UNIFY_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
+# Set UNILLM_CACHE_DIR to use the MAIN repo's cache, not the worktree's.
 # This ensures all worktrees share the same LLM cache (.cache.ndjson) for
-# consistent cache hits. This must happen before unify is imported because
+# consistent cache hits. This must happen before unillm is imported because
 # the cache directory is captured at class definition time.
-if "UNIFY_CACHE_DIR" not in os.environ:
+if "UNILLM_CACHE_DIR" not in os.environ:
     repo_root = Path(__file__).resolve().parent
     git_path = repo_root / ".git"
     # Check if we're in a worktree (.git is a file, not a directory)
@@ -39,10 +38,9 @@ if "UNIFY_CACHE_DIR" not in os.environ:
                     repo_root = main_repo
         except Exception:
             pass  # Fall back to current repo root
-    os.environ["UNIFY_CACHE_DIR"] = str(repo_root)
+    os.environ["UNILLM_CACHE_DIR"] = str(repo_root)
 
 from unity.settings import SETTINGS
-
 
 _TEE_FILE_HANDLE: Optional[object] = None
 _TEE_ORIG_STREAM: Optional[object] = None
@@ -59,9 +57,9 @@ def _path_to_name(path: str) -> str:
     """Convert a test path to a filename-safe string.
 
     Examples:
-        tests/test_contact_manager/test_ask.py → test_contact_manager-test_ask
+        tests/contact_manager/test_ask.py → contact_manager-test_ask
         test_foo.py → test_foo
-        /abs/path/to/workspace/tests/test_foo.py → test_foo
+        /abs/path/to/workspace/tests/foo.py → foo
     """
     name = path.rstrip("/\\")
 
@@ -115,7 +113,8 @@ def _sanitize_filename(name: str, max_length: int = 200) -> str:
     import hashlib
 
     # Replace invalid characters with underscore or dash
-    name = re.sub(r'["\:<>|*?\r\n\\]', "_", name)
+    # Also replace / which appears in test params like text/plain
+    name = re.sub(r'["\:<>|*?\r\n\\/]', "_", name)
     # Collapse multiple underscores/dashes
     name = re.sub(r"[_-]{2,}", "-", name)
     # Remove leading/trailing underscores/dashes
@@ -219,12 +218,12 @@ def _derive_log_name_from_args(args: list) -> str:
     """Derive a semantic log filename from pytest command-line args.
 
     Examples:
-        ['tests/test_contact_manager/test_ask.py']
-            → 'test_contact_manager-test_ask'
-        ['tests/test_contact_manager/test_ask.py::test_foo']
-            → 'test_contact_manager-test_ask--test_foo'
-        ['tests/test_contact_manager/']
-            → 'test_contact_manager'
+        ['tests/contact_manager/test_ask.py']
+            → 'contact_manager-test_ask'
+        ['tests/contact_manager/test_ask.py::test_foo']
+            → 'contact_manager-test_ask--test_foo'
+        ['tests/contact_manager/']
+            → 'contact_manager'
         ['tests/']
             → 'tests'
         [] (no args)
@@ -232,7 +231,7 @@ def _derive_log_name_from_args(args: list) -> str:
         Multiple from same file:
             → 'test_session_behavior--TestA-test_x+1more'
         Multiple from same directory:
-            → 'test_contact_manager--test_ask+2more'
+            → 'contact_manager--test_ask+2more'
     """
     if not args:
         return "all"
@@ -391,7 +390,7 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
 
     Creates symlinks like:
         /main/repo/logs/pytest/worktree-oty -> /path/to/worktree/oty/logs/pytest
-        /main/repo/logs/llm/worktree-oty -> /path/to/worktree/oty/logs/llm
+        /main/repo/logs/unillm/worktree-oty -> /path/to/worktree/oty/logs/unillm
 
     This lets you browse all worktree logs from the main repo.
     """
@@ -404,7 +403,7 @@ def _ensure_worktree_log_symlinks(repo_root: Path) -> None:
 
     worktree_name = _get_worktree_name(repo_root)
 
-    for log_subdir in ("pytest", "llm"):
+    for log_subdir in ("pytest", "unillm"):
         main_log_dir = main_repo / "logs" / log_subdir
         worktree_log_dir = repo_root / "logs" / log_subdir
         symlink_path = main_log_dir / f"worktree-{worktree_name}"
@@ -475,20 +474,11 @@ def pytest_sessionstart(session):
     except ImportError:
         pass  # OpenTelemetry not installed
 
-    # Configure all file-based logging directories for trace correlation
-    # This enables correlation between pytest logs, Unity logs, Unify logs, and Orchestra traces
+    # Configure file-based logging directories for trace correlation.
+    # Unity LOGGER output goes to pytest stdout (captured in logs/pytest/),
+    # so we don't configure a separate logs/unity/ directory during tests.
     root_path = _get_log_root(Path(session.config.rootpath))
     subdir = _get_log_subdir()
-
-    # Unity LOGGER file output (async tool loop, managers, etc.)
-    unity_log_dir = root_path / "logs" / "unity" / subdir
-    unity_log_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        from unity.constants import configure_log_dir as configure_unity_log_dir
-
-        configure_unity_log_dir(str(unity_log_dir))
-    except ImportError:
-        os.environ["UNITY_LOG_DIR"] = str(unity_log_dir)
 
     # Unify SDK file logging
     unify_log_dir = root_path / "logs" / "unify" / subdir
@@ -499,6 +489,16 @@ def pytest_sessionstart(session):
         configure_unify_log_dir(str(unify_log_dir))
     except ImportError:
         os.environ["UNIFY_LOG_DIR"] = str(unify_log_dir)
+
+    # Unillm LLM I/O file logging (raw request/response traces)
+    unillm_log_dir = root_path / "logs" / "unillm" / subdir
+    unillm_log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        from unillm import configure_log_dir as configure_unillm_log_dir
+
+        configure_unillm_log_dir(str(unillm_log_dir))
+    except ImportError:
+        os.environ["UNILLM_LOG_DIR"] = str(unillm_log_dir)
 
     if not SETTINGS.PYTEST_LOG_TO_FILE:
         return
@@ -588,8 +588,8 @@ def pytest_unconfigure(config):
         tr.write_line(
             f"📁 This run's logs: {root_path / 'logs' / 'pytest' / subdir}/",
         )
-        tr.write_line(f"📂 Unity logs:       {root_path / 'logs' / 'unity' / subdir}/")
         tr.write_line(f"📂 Unify HTTP logs:  {root_path / 'logs' / 'unify' / subdir}/")
+        tr.write_line(f"📂 LLM I/O logs:     {root_path / 'logs' / 'unillm' / subdir}/")
         tr.write_line(f"📂 All log directories:  {root_path / 'logs'}/*/")
         tr.write_line("=" * 72)
     # Append a file-only trailer to match the IDE runner's banner.
@@ -606,32 +606,6 @@ def pytest_unconfigure(config):
             setattr(tr._tw, _TEE_STREAM_ATTR, _TEE_ORIG_STREAM)
         _TEE_ORIG_STREAM = None
         _TEE_STREAM_ATTR = None
-
-    # Write cache stats to JSON for CI aggregation
-    if _TEE_LOG_PATH is not None:
-        try:
-            from unity.common.llm_io_hooks import get_cache_stats
-
-            stats = get_cache_stats()
-            # Determine llm log directory path (same subdir as pytest logs)
-            log_subdir = _get_log_subdir()
-            log_root = _get_log_root(config.rootpath)
-            llm_log_dir = log_root / "logs" / "llm" / log_subdir
-
-            cache_stats_file = _TEE_LOG_PATH.with_suffix(".cache_stats.json")
-            cache_stats_file.write_text(
-                json.dumps(
-                    {
-                        "hits": stats["hits"],
-                        "misses": stats["misses"],
-                        "hit_rate": stats["hit_rate"],
-                        "llm_log_dir": str(llm_log_dir),
-                    },
-                    indent=2,
-                ),
-            )
-        except Exception:
-            pass  # Best effort - don't fail tests if cache stats can't be written
 
     _TEE_LOG_PATH = None
     # No sys.stdout/sys.stderr monkeypatch remains; nothing to restore here.

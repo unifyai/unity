@@ -42,6 +42,13 @@ class BaseSecretManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
         Interrogate existing secrets (read-only) and obtain a live handle.
 
+        Parameters
+        ----------
+        text : str
+            The query in plain English (e.g. "Which API keys do we have?").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured answer.
+
         Notes
         -----
         - Do not reveal raw secret values to the LLM. Answers must refer to
@@ -63,6 +70,14 @@ class BaseSecretManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
         Apply a mutation request – create, edit, or delete secrets – expressed
         in plain English and receive a steerable LLM handle.
+
+        Parameters
+        ----------
+        text : str
+            The mutation request in plain English
+            (e.g. "Store the Stripe API key as 'stripe_key'").
+        response_format : Type[BaseModel] | None, default ``None``
+            Optional Pydantic model to request a structured outcome.
 
         Notes
         -----

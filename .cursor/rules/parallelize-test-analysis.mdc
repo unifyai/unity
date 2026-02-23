@@ -1,6 +1,6 @@
 ---
 description: Run tests in background and analyze failures while they run
-globs: ["tests/**/*"]
+globs: ["**/*"]
 alwaysApply: true
 ---
 
@@ -13,7 +13,7 @@ Tests run in tmux sessions and stream results inline. For long test runs, you ca
 When you run `parallel_run.sh`, each test spawns in its own tmux session. The script blocks until all tests complete, streaming pass/fail results inline as tests finish. Log files are written to `logs/pytest/` as each test completes.
 
 For long-running test suites, you can run in the background and analyze failures incrementally:
-1. Start tests with `is_background: true`
+1. Start tests with `block_until_ms: 0` in the Shell tool call
 2. Read log files as they appear in `logs/pytest/`
 3. Analyze failures immediately
 4. Check back later for final results
@@ -21,8 +21,8 @@ For long-running test suites, you can run in the background and analyze failures
 ## Workflow (Background Mode)
 
 ```bash
-# 1. Start tests in background (use is_background: true in tool call)
-tests/parallel_run.sh tests/test_some_module/
+# 1. Start tests in background (use block_until_ms: 0 in Shell tool call)
+tests/parallel_run.sh tests/some_module/
 
 # 2. Check what logs exist (tests write here as they complete)
 ls logs/pytest/<latest-run-dir>/
@@ -44,4 +44,4 @@ This doesn't mean being hasty or sacrificing thoroughness. It means: **don't wai
 
 - **`surgical-verification-before-tests.mdc`**: Covers *pre-test* optimization (quick verification scripts)
 - **This rule**: Covers *mid-test* optimization (incremental analysis)
-- **`gitignored-directory-access.mdc`**: Explains how to read from `logs/pytest/` (use Shell for `ls`, Read tool for file contents)
+- **`log-directory-navigation.mdc`**: Explains how to read from `logs/pytest/` (use Shell for `ls`, Read tool for file contents)

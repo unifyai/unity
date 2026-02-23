@@ -13,8 +13,10 @@ The mode is determined by how this module is invoked:
 from __future__ import annotations
 
 from datetime import datetime
+import os
 import signal
 import sys
+import time
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
@@ -22,16 +24,18 @@ from dotenv import load_dotenv
 load_dotenv()
 import asyncio
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
-from unity.conversation_manager import debug_logger
+from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.comms_manager import CommsManager
+from unity.conversation_manager.metrics import container_spinup
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
-from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
-from unity.conversation_manager.events import SummarizeContext
+from unity.conversation_manager.metrics_push import init_metrics, shutdown_metrics
 from unity.helpers import cleanup_dangling_call_processes
 
 if TYPE_CHECKING:
@@ -48,8 +52,9 @@ def _signal_handler(signum, frame):
     """Handle shutdown signals gracefully (subprocess mode only)"""
     global _signal_shutdown
 
-    print(
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    LOGGER.info(
+        f"{ICONS['lifecycle']} "
+        + datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         + " - [MAIN.PY] Received signal "
         + str(signum)
         + ", shutting down gracefully...",
@@ -72,14 +77,13 @@ def _apply_test_mocks(cm: ConversationManager) -> None:
     comms_utils.send_unify_message = _async_mock_success
     comms_utils.send_email_via_address = _async_mock_success
     comms_utils.start_call = _async_mock_success
-    cm.call_manager.start_call = _sync_mock_success
-    cm.call_manager.start_unify_meet = _sync_mock_success
+    cm.call_manager.start_call = _async_mock_success
+    cm.call_manager.start_unify_meet = _async_mock_success
     cm.schedule_proactive_speech = _async_mock_success
-    debug_logger.log_job_startup = _sync_mock_success
-    debug_logger.mark_job_done = _sync_mock_success
+    assistant_jobs.log_job_startup = _sync_mock_success
+    assistant_jobs.mark_job_done = _sync_mock_success
     managers_utils.log_message = _async_mock_success
     managers_utils.publish_bus_events = _async_mock_success
-    EventHandler._registry[SummarizeContext] = _async_mock_success
 
 
 def _populate_session_details_from_env() -> None:
@@ -100,7 +104,7 @@ def create_conversation_manager(
     in-process modes.
 
     Args:
-        event_broker: The event broker (Redis or in-memory)
+        event_broker: The event broker
         stop_event: Event to signal shutdown
         project_name: Project name for logging
 
@@ -172,9 +176,50 @@ async def run_conversation_manager(
     # Populate session details from environment
     _populate_session_details_from_env()
 
+    # Initialise OTel metrics export to GCP Managed Prometheus.
+    # Only for cloud-deployed containers where the assistant is assigned via
+    # StartupEvent.  Pre-specified assistants (local dev / default) have no
+    # startup job or assistant-job logging, so metrics are skipped — all
+    # metric instruments remain harmless no-ops.
+    if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+        init_metrics()
+
+    # Set the process working directory to the local file root so that relative
+    # file paths in CodeActActor-generated code (e.g. "Downloads/report.pdf")
+    # resolve against the same root used by LocalFileSystemAdapter.  This must
+    # happen after settings/env are loaded but before any concurrent tasks are
+    # created, since os.chdir() is process-global.
+    from pathlib import Path as _P
+    from unity.file_manager.settings import get_local_root
+
+    _local_root = _P(get_local_root())
+    _local_root.mkdir(parents=True, exist_ok=True)
+    os.chdir(_local_root)
+
+    # Ensure standard workspace directories exist.
+    (_local_root / "Downloads").mkdir(exist_ok=True)
+
+    import shutil as _shutil
+
+    # Clear Outputs/ between sessions so generated files don't accumulate.
+    _outputs = _local_root / "Outputs"
+    if _outputs.exists():
+        _shutil.rmtree(_outputs)
+    _outputs.mkdir(exist_ok=True)
+
+    # Clear Screenshots/ between sessions (ephemeral visual context).
+    _screenshots = _local_root / "Screenshots"
+    if _screenshots.exists():
+        _shutil.rmtree(_screenshots)
+    (_screenshots / "User").mkdir(parents=True, exist_ok=True)
+    (_screenshots / "Assistant").mkdir(parents=True, exist_ok=True)
+    (_screenshots / "Webcam").mkdir(parents=True, exist_ok=True)
+
     # Clean up dangling call processes
     if cleanup_call_processes:
-        print("Checking for dangling call processes from previous runs...")
+        LOGGER.info(
+            f"{ICONS['process_cleanup']} Checking for dangling call processes from previous runs...",
+        )
         cleanup_dangling_call_processes()
 
     # Create event broker and stop event
@@ -197,15 +242,39 @@ async def run_conversation_manager(
     asyncio.create_task(cm.wait_for_events()).add_done_callback(log_task_exc)
     asyncio.create_task(cm.check_inactivity())
 
+    # For local development (non-idle containers), trigger initialization directly.
+    # In cloud deployment, initialization is triggered by StartupEvent from CommsManager.
+    # But for local dev, the assistant ID is already set from .env, so no StartupEvent arrives.
+    # Skip this in test mode - tests initialize managers explicitly with custom actors.
+    if SESSION_DETAILS.assistant.id != DEFAULT_ASSISTANT_ID and not should_apply_mocks:
+        # No _startup_sequence in local dev, so unblock the VM readiness gate
+        # directly (the VM is assumed reachable if configured via .env).
+        from unity.function_manager.primitives.runtime import _vm_ready
+
+        _vm_ready.set()
+        asyncio.create_task(managers_utils.init_conv_manager(cm))
+        asyncio.create_task(managers_utils.listen_to_operations(cm))
+
     # Start CommsManager if enabled
     should_enable_comms = (
         enable_comms_manager if enable_comms_manager is not None else not SETTINGS.TEST
     )
     if should_enable_comms:
+        # U1: Record container spin-up time for idle containers
+        # (entrypoint.sh → CommsManager start)
+        if SESSION_DETAILS.assistant.id == DEFAULT_ASSISTANT_ID:
+            _container_start_ms = os.environ.get("CONTAINER_START_TIME_MS")
+            if _container_start_ms:
+                _spinup_s = (time.time() * 1000 - int(_container_start_ms)) / 1000.0
+                container_spinup.record(_spinup_s)
+                LOGGER.info(
+                    f"{ICONS['metrics']} [metrics] Container spin-up: {_spinup_s:.2f}s",
+                )
+
         comms_manager = CommsManager(event_broker=event_broker)
         asyncio.create_task(comms_manager.start())
 
-    print("ConversationManager is running...")
+    LOGGER.info(f"{ICONS['lifecycle']} ConversationManager is running...")
     return cm
 
 
@@ -231,14 +300,17 @@ async def main(project_name: str = "Assistants"):
         stop_event=_stop,
     )
 
-    print("Server is Running...")
+    LOGGER.info(f"{ICONS['lifecycle']} Server is Running...")
     await _stop.wait()
 
-    print("Cleaning up conversation manager...")
+    LOGGER.info(f"{ICONS['lifecycle']} Cleaning up conversation manager...")
     await _conversation_manager.cleanup()
-    print("Cleanup finished")
+    LOGGER.info(f"{ICONS['lifecycle']} Cleanup finished")
 
-    print("Shutdown finished")
+    # Shut down the metrics exporter (flushes remaining data internally).
+    shutdown_metrics()
+
+    LOGGER.info(f"{ICONS['lifecycle']} Shutdown finished")
 
     # Exit with special code 42 if:
     # - Shutdown was triggered by external signal (i.e. not inactivity timeout)

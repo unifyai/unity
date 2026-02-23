@@ -3,12 +3,12 @@
     "context": "..",
     "dockerfile": "Dockerfile"
   },
-  "install": "cd /workspace && uv sync --all-groups",
+  "install": "cd /workspace && ./scripts/cloud-bootstrap.sh",
   "start": "cd /workspace && ./scripts/configure-git-identity.sh && ./scripts/install-git-hooks.sh && sudo service redis-server start",
   "terminals": [
     {
       "name": "Tests",
-      "command": "cd /workspace && echo '=== Unity Test Runner ===' && echo '' && echo 'To run ContactManager tests:' && echo '  ./tests/parallel_run.sh tests/test_contact_manager/' && echo '' && echo 'To run a specific test:' && echo '  ./tests/parallel_run.sh tests/test_contact_manager/test_ask.py' && echo '' && echo 'To debug CI failures (download artifacts):' && echo '  gh run download <run-id> -n pytest-logs-* -D /tmp/ci-logs'"
+      "command": "cd /workspace && echo '=== Unity Test Runner ===' && echo '' && echo 'To run ContactManager tests:' && echo '  ./tests/parallel_run.sh tests/contact_manager/' && echo '' && echo 'To run a specific test:' && echo '  ./tests/parallel_run.sh tests/contact_manager/test_ask.py' && echo '' && echo 'To debug CI failures (download artifacts):' && echo '  gh run download <run-id> -n pytest-logs-* -D /tmp/ci-logs'"
     }
   ]
 }

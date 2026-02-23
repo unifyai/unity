@@ -18,6 +18,9 @@ unset _ENV_FILE
 # Source common utilities (socket derivation, locale, timeout handling)
 source "$SCRIPT_DIR/_shell_common.sh"
 
+# Source shared argument parsing (used by both parallel_run.sh and parallel_cloud_run.sh)
+source "$SCRIPT_DIR/_parse_args.sh"
+
 # ---- Increase file descriptor limit ----
 # Parallel tests open many network connections. Each connection uses a file
 # descriptor. macOS defaults to 256 per process, which is easily exceeded.
@@ -68,7 +71,7 @@ _mark_reported() {
 
 # Report any sessions that have completed since last check
 # Prints pass/fail status inline during the drip-feed phase
-# Also records duration for end-of-run sorted output
+# Also records duration and cache stats for end-of-run sorted output
 report_completed_sessions() {
   # Guard against empty array (set -u treats empty array expansion as unbound)
   (( ${#CREATED_SESSION_IDS[@]} == 0 )) && return 0
@@ -88,14 +91,22 @@ report_completed_sessions() {
         local base="${current_name#p ✅ }"
         echo "  - p ✅ $base"
         _mark_reported "$sid"
-        # Record duration for sorted output
+        # Record duration and cache stats for sorted output
         if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
-          local start_time end_time duration
+          local start_time end_time duration hits misses
           start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
           if [[ -n "$start_time" ]]; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            echo "$duration|pass|$base" >> "$RESULTS_FILE"
+            # Read cache stats from temp file (written by inner script)
+            hits=0
+            misses=0
+            local stats_file="/tmp/parallel_run_cache_${sid}.txt"
+            if [[ -f "$stats_file" ]]; then
+              IFS='|' read -r hits misses < "$stats_file" 2>/dev/null || true
+              rm -f "$stats_file"
+            fi
+            echo "$duration|pass|$hits|$misses|$base" >> "$RESULTS_FILE"
           fi
         fi
         ;;
@@ -103,14 +114,22 @@ report_completed_sessions() {
         local base="${current_name#f ❌ }"
         echo "  - f ❌ $base"
         _mark_reported "$sid"
-        # Record duration for sorted output
+        # Record duration and cache stats for sorted output
         if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
-          local start_time end_time duration
+          local start_time end_time duration hits misses
           start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
           if [[ -n "$start_time" ]]; then
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            echo "$duration|fail|$base" >> "$RESULTS_FILE"
+            # Read cache stats from temp file (written by inner script)
+            hits=0
+            misses=0
+            local stats_file="/tmp/parallel_run_cache_${sid}.txt"
+            if [[ -f "$stats_file" ]]; then
+              IFS='|' read -r hits misses < "$stats_file" 2>/dev/null || true
+              rm -f "$stats_file"
+            fi
+            echo "$duration|fail|$hits|$misses|$base" >> "$RESULTS_FILE"
           fi
         fi
         ;;
@@ -150,205 +169,44 @@ trap '_cleanup_sessions TERM; exit 143' TERM
 # They get run explicitly by the test harness (e.g., test_parallel_run tests).
 EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .idea .vscode fixtures )
 
-# ---- Modes ----
-# Default: one session per test (maximum parallelism).
-# With -s/--serial: one session per file (tests within a file run serially).
-SERIAL=0
-
-# Timeout in seconds (0 = no timeout, wait indefinitely)
-# With --timeout N: abort if tests don't complete within N seconds
-TIMEOUT=0
-
-# Optional filename match (glob-like, e.g., "*_tool_docstring*")
-NAME_PATTERN=""
-
-# Test category filters (symbolic ↔ eval spectrum)
-# With --eval-only: run only tests marked with pytest.mark.eval
-# With --symbolic-only: run only tests NOT marked with pytest.mark.eval
-EVAL_ONLY=0
-SYMBOLIC_ONLY=0
-
-# Repeat count for statistical sampling
-# With --repeat N: run each test N times (useful for eval tests)
-REPEAT_COUNT=1
-
-# Overwrite scenarios flag
-# With --overwrite-scenarios: delete and recreate test scenarios from scratch
-OVERWRITE_SCENARIOS=0
-
-# Maximum concurrent sessions (default: number of CPU cores)
-# With -j/--jobs N: limit to N concurrent running sessions
-# Use -j 0 (or -j none/unlimited) for no limit (not recommended for large test suites)
-# Detect CPU cores for default MAX_JOBS (works on macOS and Linux/GitHub Actions)
-if [[ "$(uname)" == "Darwin" ]]; then
-  _NUM_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-else
-  _NUM_CORES=$(nproc 2>/dev/null || echo 4)
-fi
-MAX_JOBS=$_NUM_CORES
-
-# Environment variable overrides (accumulated via --env KEY=VALUE)
-declare -a ENV_OVERRIDES=()
-
-# Tags (accumulated via --tags, shorthand for UNIFY_TEST_TAGS)
-declare -a TAGS=()
-
-# Extra pytest arguments (passed through via -- separator)
-declare -a PYTEST_EXTRA_ARGS=()
-
 # Resolve repo root (parent of this script's directory)
-# SCRIPT_DIR is already set by sourcing _shell_common.sh
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-# Parse flags; collect positional args
-declare -a POSITIONAL_ARGS=()
-while (( "$#" )); do
-  case "$1" in
-    -t|--timeout)
-      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
-        TIMEOUT="$2"
-        shift 2
-      else
-        echo "Error: --timeout requires a positive integer (seconds)." >&2
-        exit 2
-      fi
-      ;;
-    -s|--serial)
-      SERIAL=1
-      shift
-      ;;
-    -m|--match)
-      if [[ -n "${2-}" ]]; then
-        NAME_PATTERN="$2"
-        shift 2
-      else
-        echo "Error: -m|--match requires a pattern argument (e.g., \"*_tool_docstring*\")." >&2
-        exit 2
-      fi
-      ;;
-    -e|--env)
-      if [[ -n "${2-}" && "$2" == *=* ]]; then
-        ENV_OVERRIDES+=( "$2" )
-        shift 2
-      else
-        echo "Error: -e|--env requires KEY=VALUE argument (e.g., --env UNIFY_CACHE=false)." >&2
-        exit 2
-      fi
-      ;;
-    --eval-only)
-      EVAL_ONLY=1
-      shift
-      ;;
-    --symbolic-only)
-      SYMBOLIC_ONLY=1
-      shift
-      ;;
-    --repeat)
-      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
-        REPEAT_COUNT="$2"
-        shift 2
-      else
-        echo "Error: --repeat requires a positive integer argument (e.g., --repeat 5)." >&2
-        exit 2
-      fi
-      ;;
-    --overwrite-scenarios)
-      OVERWRITE_SCENARIOS=1
-      shift
-      ;;
-    --tags)
-      if [[ -n "${2-}" ]]; then
-        # Split on comma and add each tag to TAGS array
-        IFS=',' read -ra tag_parts <<< "$2"
-        for tag in "${tag_parts[@]}"; do
-          [[ -n "$tag" ]] && TAGS+=( "$tag" )
-        done
-        shift 2
-      else
-        echo "Error: --tags requires a value (e.g., --tags experiment-1 or --tags \"foo,bar\")." >&2
-        exit 2
-      fi
-      ;;
-    -j|--jobs)
-      if [[ -z "${2-}" ]]; then
-        echo "Error: -j|--jobs requires an argument (e.g., --jobs 8, --jobs 0, --jobs none)." >&2
-        exit 2
-      fi
-      # Accept positive integers, 0, or keywords for unlimited
-      arg_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
-      if [[ "$2" =~ ^[0-9]+$ ]]; then
-        MAX_JOBS="$2"
-      elif [[ "$arg_lower" == "none" || "$arg_lower" == "unlimited" || "$arg_lower" == "inf" ]]; then
-        MAX_JOBS=0
-      else
-        echo "Error: -j|--jobs requires a non-negative integer or 'none'/'unlimited' (e.g., --jobs 8, --jobs 0, --jobs none)." >&2
-        exit 2
-      fi
-      shift 2
-      ;;
-    -h|--help)
-      echo "Usage: parallel_run.sh [options] [targets...]"
-      echo ""
-      echo "Run pytest tests in parallel tmux sessions."
-      echo "Always blocks until all tests complete (or timeout)."
-      echo ""
-      echo "Options:"
-      echo "  -t, --timeout N      Abort if tests don't complete within N seconds"
-      echo "  -s, --serial         One session per file (default: one per test)"
-      echo "  -m, --match PATTERN  Filter files by glob pattern"
-      echo "  -e, --env KEY=VALUE  Set environment variable (repeatable)"
-      echo "  -j, --jobs N         Max concurrent sessions (default: CPU cores, currently $_NUM_CORES)"
-      echo "  --eval-only          Run only @pytest.mark.eval tests"
-      echo "  --symbolic-only      Run only non-eval tests"
-      echo "  --repeat N           Run each test N times"
-      echo "  --tags TAG           Tag runs for filtering (repeatable)"
-      echo "  --overwrite-scenarios  Delete and recreate test scenarios"
-      echo "  -h, --help           Show this help"
-      echo "  --                   Pass remaining args directly to pytest"
-      echo ""
-      echo "Examples:"
-      echo "  parallel_run.sh tests/                    # Run all tests"
-      echo "  parallel_run.sh tests/test_foo.py        # Run one file"
-      echo "  parallel_run.sh --timeout 300 tests/     # 5-minute timeout"
-      echo "  parallel_run.sh -s tests/                # Serial mode (per-file)"
-      echo "  parallel_run.sh -j 8 tests/              # Limit to 8 concurrent"
-      echo "  parallel_run.sh --eval-only tests/       # Only eval tests"
-      echo "  parallel_run.sh -e UNIFY_CACHE=false tests/"
-      echo "  parallel_run.sh tests/ -- -v --tb=short  # Pass args to pytest"
-      exit 0
-      ;;
-    --)
-      shift
-      PYTEST_EXTRA_ARGS=("$@")
-      break
-      ;;
-    -*)
-      echo "Error: Unknown option: $1" >&2
-      echo "Run with -h for usage information." >&2
-      exit 2
-      ;;
-    *)
-      POSITIONAL_ARGS+=( "$1" )
-      shift
-      ;;
-  esac
-done
-
-# Validate mutually exclusive flags
-if (( EVAL_ONLY && SYMBOLIC_ONLY )); then
-  echo "Error: --eval-only and --symbolic-only are mutually exclusive." >&2
+# Parse arguments using shared helper
+# Returns: 0=success, 1=help requested, 2=error
+parse_test_args "$@"
+_parse_result=$?
+if (( _parse_result == 1 )); then
+  # Help requested
+  HELP_SCRIPT_NAME="parallel_run.sh"
+  print_help
+  exit 0
+elif (( _parse_result == 2 )); then
+  # Error (already printed)
   exit 2
 fi
+unset _parse_result
+
+# For backward compatibility, expose _NUM_CORES (used in some places)
+_NUM_CORES=$DETECTED_CPU_CORES
 
 # ---------------------------------------------------------------------------
 # Local Orchestra Setup
 # ---------------------------------------------------------------------------
-# UNIFY_BASE_URL is the single source of truth:
+# ORCHESTRA_URL is the single source of truth:
 # - Unset or localhost (127.0.0.1/localhost): use local orchestra
 # - Any other URL: use it directly (staging, production, etc.)
 #
 # Local orchestra is started via the orchestra repo's scripts/local.sh.
 # Set ORCHESTRA_REPO_PATH to override the default location (../orchestra).
+#
+# SHARED ORCHESTRA HANDLING:
+# When running from a git worktree (e.g., Cursor Background Agents) or an
+# adjacent clone (created by clone_adjacent.sh), we don't restart orchestra
+# just to change log directories. Instead, we create symlinks from the
+# worktree/clone's logs/ to wherever orchestra is currently logging. This
+# avoids disrupting concurrent tests in the main repo, other worktrees, or
+# other clones.
 
 _is_local_url() {
   local url="${1:-}"
@@ -356,97 +214,135 @@ _is_local_url() {
   [[ "$url" == *"127.0.0.1"* || "$url" == *"localhost"* ]]
 }
 
-# Resolve orchestra repo path (default: sibling directory)
-_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$REPO_ROOT/../orchestra}"
-_local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
-
-# Unity-specific seeding: models and endpoints needed for tests
-_seed_unity_models_and_endpoints() {
-  local db_port="${ORCHESTRA_DB_PORT:-5432}"
-  local db_container
-  db_container=$(docker ps --filter "publish=${db_port}" --format "{{.Names}}" 2>/dev/null | head -1)
-
-  if [[ -z "$db_container" ]]; then
-    echo "Warning: No PostgreSQL container found, skipping model seeding" >&2
-    return 1
-  fi
-
-  # Check if models already seeded
-  local model_exists
-  model_exists=$(docker exec "$db_container" psql -U orchestra -d orchestra -tAc \
-    "SELECT 1 FROM model WHERE mdl_code = 'gpt-5.2'" 2>/dev/null || echo "")
-
-  if [[ "$model_exists" == "1" ]]; then
-    return 0
-  fi
-
-  echo "Seeding models and endpoints for Unity tests..."
-  docker exec "$db_container" psql -U orchestra -d orchestra -c "
--- Task and modality (required for models)
-INSERT INTO modality (name) VALUES ('text_generation')
-ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO task (name, modality) VALUES ('chat', 'text_generation')
-ON CONFLICT (name) DO NOTHING;
-
--- Providers (id, name, image_url, display_name)
-INSERT INTO provider (id, name, image_url, display_name) VALUES
-  (1, 'openai', '', 'OpenAI'),
-  (12, 'anthropic', '', 'Anthropic'),
-  (36, 'vertex-ai', '', 'Google Vertex AI'),
-  (37, 'deepseek', '', 'DeepSeek')
-ON CONFLICT (id) DO NOTHING;
-
--- Models used by Unity tests (id, mdl_code, uploaded_at, task, active)
-INSERT INTO model (id, mdl_code, uploaded_at, task, active) VALUES
-  (100, 'gpt-5.2', NOW(), 'chat', true),
-  (101, 'gpt-4o', NOW(), 'chat', true),
-  (102, 'gpt-4o-mini', NOW(), 'chat', true),
-  (103, 'gpt-3.5-turbo', NOW(), 'chat', true),
-  (104, 'claude-3-5-sonnet', NOW(), 'chat', true),
-  (105, 'claude-3-haiku', NOW(), 'chat', true),
-  (106, 'claude-4.5-sonnet', NOW(), 'chat', true),
-  (107, 'gemini-1.5-flash', NOW(), 'chat', true),
-  (108, 'gemini-1.5-pro', NOW(), 'chat', true),
-  (109, 'deepseek-v3', NOW(), 'chat', true)
-ON CONFLICT (id) DO NOTHING;
-
--- Endpoints (id, mdl_id, provider_id, created_at, active)
-INSERT INTO endpoint (id, mdl_id, provider_id, created_at, active) VALUES
-  (100, 100, 1, NOW(), true),   -- gpt-5.2@openai
-  (101, 101, 1, NOW(), true),   -- gpt-4o@openai
-  (102, 102, 1, NOW(), true),   -- gpt-4o-mini@openai
-  (103, 103, 1, NOW(), true),   -- gpt-3.5-turbo@openai
-  (104, 104, 12, NOW(), true),  -- claude-3-5-sonnet@anthropic
-  (105, 105, 12, NOW(), true),  -- claude-3-haiku@anthropic
-  (106, 106, 12, NOW(), true),  -- claude-4.5-sonnet@anthropic
-  (107, 107, 36, NOW(), true),  -- gemini-1.5-flash@vertex-ai
-  (108, 108, 36, NOW(), true),  -- gemini-1.5-pro@vertex-ai
-  (109, 109, 37, NOW(), true)   -- deepseek-v3@deepseek
-ON CONFLICT (id) DO NOTHING;
-" >/dev/null 2>&1
+_is_git_worktree() {
+  # In git worktrees, .git is a file (containing "gitdir: /path/..."), not a directory
+  [[ -f "$REPO_ROOT/.git" ]]
 }
 
-if _is_local_url "${UNIFY_BASE_URL:-}"; then
+_is_adjacent_clone() {
+  # Adjacent clones (created by clone_adjacent.sh) symlink .venv to the main repo.
+  # They share the same orchestra instance and should not restart it.
+  [[ -L "$REPO_ROOT/.venv" ]]
+}
+
+_create_orchestra_log_symlinks() {
+  # Create symlinks from this repo's log directories to wherever orchestra is logging.
+  # This ensures all OTEL traces go to a single shared location, while allowing
+  # this repo (worktree or adjacent clone) to access them via symlinks.
+  #
+  # Called when orchestra is already running with logs pointing elsewhere and we
+  # don't want to restart it (worktree or adjacent clone).
+
+  local config_file="/tmp/orchestra-local-server.config"
+
+  [[ -f "$config_file" ]] || return 0
+
+  local current_otel_dir
+  current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$config_file" 2>/dev/null | cut -d= -f2-)
+
+  # Ensure logs/ directory exists in worktree
+  mkdir -p "$REPO_ROOT/logs"
+
+  # Symlink logs/all/ → main repo's logs/all/ (for OTEL trace correlation)
+  # This ensures unity/unify/unillm spans from worktree end up in same dir as orchestra spans
+  if [[ -n "$current_otel_dir" ]]; then
+    local link_path="$REPO_ROOT/logs/all"
+
+    if [[ -L "$link_path" ]]; then
+      local current_target
+      current_target=$(readlink "$link_path")
+      if [[ "$current_target" != "$current_otel_dir" ]]; then
+        rm "$link_path"
+        ln -s "$current_otel_dir" "$link_path"
+        echo "  Updated symlink: logs/all → $current_otel_dir"
+      fi
+    elif [[ ! -e "$link_path" ]]; then
+      ln -s "$current_otel_dir" "$link_path"
+      echo "  Created symlink: logs/all → $current_otel_dir"
+    fi
+  fi
+}
+
+# Resolve orchestra repo path (default: sibling directory)
+# For worktrees, look relative to the MAIN repo, not the worktree
+_orchestra_search_base="$REPO_ROOT"
+if _git_common_dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
+  # git rev-parse --git-common-dir returns a relative path ".git" for regular repos,
+  # but an absolute path for worktrees. Normalize to absolute for consistent comparison.
+  if [[ "$_git_common_dir" != /* ]]; then
+    _git_common_dir="$REPO_ROOT/$_git_common_dir"
+  fi
+  # If git-common-dir differs from $REPO_ROOT/.git, we're in a worktree
+  # Use the main repo's parent as the search base for orchestra
+  _main_repo_git="${_git_common_dir%/}"
+  if [[ "$_main_repo_git" != "$REPO_ROOT/.git" ]]; then
+    _orchestra_search_base="$(dirname "$_main_repo_git")"
+  fi
+fi
+_orchestra_repo_path="${ORCHESTRA_REPO_PATH:-$_orchestra_search_base/../orchestra}"
+_local_orchestra_script="$_orchestra_repo_path/scripts/local.sh"
+unset _git_common_dir _main_repo_git _orchestra_search_base
+
+if _is_local_url "${ORCHESTRA_URL:-}"; then
   if [[ -x "$_local_orchestra_script" ]]; then
-    # Set up Unity-specific orchestra configuration
-    export ORCHESTRA_PREFIX="${ORCHESTRA_PREFIX:-unity}"
+    # Set up orchestra configuration for tests
     export ORCHESTRA_SEED_USER=1
     export ORCHESTRA_TEST_USER_ID="${ORCHESTRA_TEST_USER_ID:-unity-test-user-001}"
     export ORCHESTRA_TEST_EMAIL="${ORCHESTRA_TEST_EMAIL:-unity-test@debug.local}"
 
-    # Set up log directories (created lazily by local.sh)
-    _orchestra_logs_dir="$REPO_ROOT/logs/orchestra"
-    _timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
-    export ORCHESTRA_LOG_DIR="$_orchestra_logs_dir/$_timestamp"
+    # Set up OTEL log directory for cross-repo trace correlation (logs/all/).
+    # Note: ORCHESTRA_LOG_DIR (per-request JSON traces to logs/orchestra/) is
+    # intentionally NOT set. Those traces duplicate the OTEL spans in logs/all/
+    # and add ~370MB to CI artifacts. Orchestra's own CI still uses it.
     export ORCHESTRA_OTEL_LOG_DIR="$REPO_ROOT/logs/all"
 
     # Check if local orchestra is already running
     if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
-      echo "Local orchestra already running: $_local_url"
-      export UNIFY_BASE_URL="$_local_url"
-      # Seed models even if orchestra was already running (idempotent)
-      _seed_unity_models_and_endpoints
+      # Orchestra is running - check if logging config matches what we need
+      _config_file="/tmp/orchestra-local-server.config"
+      _needs_restart=false
+
+      if [[ -f "$_config_file" ]]; then
+        # Read current config and compare with desired logging dirs
+        _current_otel_dir=$(grep "^ORCHESTRA_OTEL_LOG_DIR=" "$_config_file" 2>/dev/null | cut -d= -f2-)
+
+        # Check if OTEL dir points to our logs/all directory
+        if [[ "$_current_otel_dir" != "$ORCHESTRA_OTEL_LOG_DIR" ]]; then
+          _needs_restart=true
+        fi
+      else
+        # No config file means orchestra was started without our logging setup
+        _needs_restart=true
+      fi
+
+      if [[ "$_needs_restart" == "true" ]]; then
+        if _is_git_worktree || _is_adjacent_clone; then
+          # SHARED MODE: Don't restart orchestra (would disrupt other worktrees/clones).
+          # Instead, create symlinks so logs appear in expected locations.
+          echo "Shared orchestra: using existing instance, creating log symlinks..."
+          _create_orchestra_log_symlinks
+          export ORCHESTRA_URL="$_local_url"
+        else
+          # MAIN REPO MODE: Restart to pick up logging config. The restart wipes
+          # the database, which is intentional for test runs to ensure isolation.
+          _original_url="$_local_url"
+          echo "Restarting orchestra to apply logging configuration..."
+          "$_local_orchestra_script" restart >/dev/null 2>&1 || true
+          if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
+            echo "Using local orchestra: $_local_url"
+            export ORCHESTRA_URL="$_local_url"
+          else
+            echo "Warning: Orchestra restart failed, using existing instance (logging may not work)" >&2
+            export ORCHESTRA_URL="$_original_url"
+          fi
+          unset _original_url
+        fi
+      else
+        # Logging already configured correctly, reuse existing instance
+        echo "Local orchestra already running with logging enabled: $_local_url"
+        export ORCHESTRA_URL="$_local_url"
+      fi
+      unset _config_file _needs_restart _current_otel_dir
     else
       # Not running - need to start it
       # Stop any stale orchestra state first
@@ -477,9 +373,7 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
       if "$_local_orchestra_script" start >/dev/null 2>&1; then
         if _local_url=$("$_local_orchestra_script" check 2>/dev/null); then
           echo "Using local orchestra: $_local_url"
-          export UNIFY_BASE_URL="$_local_url"
-          # Seed Unity-specific models and endpoints
-          _seed_unity_models_and_endpoints
+          export ORCHESTRA_URL="$_local_url"
         else
           echo "Warning: Local orchestra started but not responding" >&2
         fi
@@ -491,11 +385,33 @@ if _is_local_url "${UNIFY_BASE_URL:-}"; then
     echo "Warning: Orchestra script not found at $_local_orchestra_script" >&2
     echo "  Set ORCHESTRA_REPO_PATH or clone orchestra repo to ../orchestra" >&2
   fi
-  unset _local_url _orchestra_logs_dir _timestamp
+  unset _local_url
 else
-  echo "Using remote orchestra: $UNIFY_BASE_URL"
+  echo "Using remote orchestra: $ORCHESTRA_URL"
 fi
 unset _orchestra_repo_path _local_orchestra_script
+
+# ---------------------------------------------------------------------------
+# Communication Service URL Setup
+# ---------------------------------------------------------------------------
+# UNITY_COMMS_URL is auto-selected based on git branch if not explicitly set:
+# - main branch → production: https://unity-comms-app-262420637606.us-central1.run.app
+# - other branches → staging: https://unity-comms-app-staging-262420637606.us-central1.run.app
+#
+# This mirrors the CI behavior in .github/workflows/tests.yml
+if [[ -z "${UNITY_COMMS_URL:-}" ]]; then
+  _current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+  if [[ "$_current_branch" == "main" ]]; then
+    export UNITY_COMMS_URL="https://unity-comms-app-262420637606.us-central1.run.app"
+    echo "Using production communication service (main branch)"
+  else
+    export UNITY_COMMS_URL="https://unity-comms-app-staging-262420637606.us-central1.run.app"
+    echo "Using staging communication service (branch: $_current_branch)"
+  fi
+  unset _current_branch
+else
+  echo "Using communication service: $UNITY_COMMS_URL"
+fi
 
 # Build pytest marker filter based on flags
 MARKER_FILTER=""
@@ -643,18 +559,6 @@ build_env_exports() {
     exports="$exports $kv"
   done
 
-  # Propagate relevant system environment variables if not already set via --env
-  # Note: UNIFY_TESTS_DELETE_PROJ_ON_START and UNIFY_TESTS_DELETE_PROJ_ON_EXIT are intentionally
-  # NOT propagated to individual sessions. They are handled at the script level to avoid race
-  # conditions where multiple sessions try to delete the shared project simultaneously.
-  # Exception: In random projects mode, deletion is safe per-session (handled in run_cmd).
-  local propagate_vars="UNIFY_TESTS_RAND_PROJ UNIFY_SKIP_SESSION_SETUP UNIFY_CACHE UNIFY_KEY UNIFY_BASE_URL UNITY_SKIP_SHARED_PROJECT_PREP"
-  for var_name in $propagate_vars; do
-    if ! is_var_in_env_overrides "$var_name" && [[ -n "${!var_name:-}" ]]; then
-      exports="$exports ${var_name}=${!var_name}"
-    fi
-  done
-
   # Append UNIFY_TEST_TAGS if any tags were specified via --tags
   if (( ${#TAGS[@]} > 0 )); then
     local joined_tags
@@ -672,6 +576,69 @@ set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 
 # Always operate from the repo root for discovery, regardless of where the script was invoked
 cd "$REPO_ROOT"
+
+# ---------------------------------------------------------------------------
+# Worktree dependency symlinks (for local editable packages)
+# ---------------------------------------------------------------------------
+# pyproject.toml references ../unify and ../unillm as editable local packages.
+# In the main repo at ~/unity, these resolve to ~/unify and ~/unillm.
+# In a worktree at ~/.cursor/worktrees/unity/xyz, they resolve to
+# ~/.cursor/worktrees/unity/unify which doesn't exist by default.
+#
+# This function creates symlinks at the worktree parent level so that
+# `uv sync` works correctly in any worktree without manual setup.
+ensure_worktree_dependency_symlinks() {
+  local git_file="$REPO_ROOT/.git"
+
+  # Only applies to git worktrees (where .git is a file, not a directory)
+  if [[ ! -f "$git_file" ]]; then
+    return 0
+  fi
+
+  # Parse the gitdir from .git file (format: "gitdir: /path/to/main/.git/worktrees/name")
+  local gitdir
+  gitdir=$(sed 's/^gitdir: //' "$git_file")
+
+  # Derive the main repo path: /main/repo/.git/worktrees/name -> /main/repo
+  local main_repo
+  main_repo=$(dirname "$(dirname "$(dirname "$gitdir")")")
+
+  # The worktree parent is where all worktrees live (e.g., ~/.cursor/worktrees/unity/)
+  local worktree_parent
+  worktree_parent=$(dirname "$REPO_ROOT")
+
+  # For each local dependency, ensure a symlink exists at the worktree parent level
+  local deps=("unify" "unillm")
+  for dep in "${deps[@]}"; do
+    local target="$main_repo/../$dep"  # e.g., ~/unify (sibling of main repo)
+    local link="$worktree_parent/$dep"  # e.g., ~/.cursor/worktrees/unity/unify
+
+    # Resolve to absolute path
+    if [[ -d "$target" ]]; then
+      target=$(cd "$target" && pwd -P)
+    else
+      # Local dependency doesn't exist; skip (will fail later in uv sync with clear error)
+      continue
+    fi
+
+    # Create symlink if missing or pointing to wrong location
+    if [[ -L "$link" ]]; then
+      local current_target
+      current_target=$(readlink "$link")
+      if [[ "$current_target" != "$target" ]]; then
+        echo "Updating worktree symlink: $link -> $target" >&2
+        rm "$link"
+        ln -s "$target" "$link"
+      fi
+    elif [[ ! -e "$link" ]]; then
+      echo "Creating worktree symlink: $link -> $target" >&2
+      ln -s "$target" "$link"
+    fi
+  done
+}
+
+# Ensure symlinks before venv setup (silent if not in a worktree)
+ensure_worktree_dependency_symlinks
 
 # ---------------------------------------------------------------------------
 # Python environment (uv + repo-local .venv)
@@ -784,7 +751,14 @@ run_cmd() {
   local inner
   local env_exports
   # Always export UTF-8 locale for proper emoji handling in session names
-  env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8'
+  # Enable cache stats tracking (UNILLM_CACHE_STATS must be set before importing unillm)
+  #
+  # Note: tmux sessions use `bash -c` (not `bash -lc`) so they inherit the full
+  # environment from parallel_run.sh. This means all .env variables are available
+  # without an explicit whitelist. The only vars that need special handling are:
+  # - UNIFY_TESTS_DELETE_PROJ_ON_START/EXIT: explicitly unset in shared project mode
+  #   to prevent race conditions (multiple sessions deleting the same project).
+  env_exports='export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 UNILLM_CACHE_STATS=true'
   if is_random_projects_mode; then
     # Random projects mode: each session gets its own isolated project.
     # Per-session deletion is safe here since projects don't overlap.
@@ -797,14 +771,19 @@ run_cmd() {
       env_exports="$env_exports UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True"
     fi
   else
-    # Shared project mode: skip session setup (already done by prepare script)
+    # Shared project mode: skip session setup (already done by prepare script).
+    # Blocklist: unset delete flags to prevent race conditions where multiple
+    # sessions try to delete the shared project simultaneously.
     env_exports="$env_exports UNIFY_SKIP_SESSION_SETUP=True"
+    env_exports="$env_exports; unset UNIFY_TESTS_DELETE_PROJ_ON_START UNIFY_TESTS_DELETE_PROJ_ON_EXIT"
   fi
   # Append user-provided --env overrides (includes UNITY_TEST_SOCKET for log scoping)
+  # Uses a separate `export` statement because in shared-project mode env_exports
+  # ends with `; unset ...` and bare NAME=VALUE pairs would be swallowed by unset.
   local user_overrides
   user_overrides="$(build_env_exports)"
   if [[ -n "$user_overrides" ]]; then
-    env_exports="$env_exports$user_overrides"
+    env_exports="$env_exports; export$user_overrides"
   fi
   # Build pytest command with optional marker filter, scenario overwrite, and extra args
   local pytest_cmd
@@ -830,8 +809,10 @@ run_cmd() {
   # Inner command runs inside tmux session after pytest completes.
   # The rename-session uses "|| true" to gracefully handle race conditions
   # where multiple sessions complete simultaneously or external agents interfere.
-  inner=$(printf '%s; cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then sid=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$sid" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
-  printf 'bash -lc %q' "$inner"
+  # The session ID is captured BEFORE pytest runs and exported as UNITY_TMUX_SESSION_ID
+  # so pytest's conftest.py can write cache stats to a known temp file location.
+  inner=$(printf '%s; export UNITY_TMUX_SESSION_ID=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_id}"); cd %q && %s; status=$?; sname=$(LC_ALL=en_US.UTF-8 tmux -L %q display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "p ✅ "*) base="${sname#p ✅ }" ;; "f ❌ "*) base="${sname#f ❌ }" ;; "r ⏳ "*) base="${sname#r ⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="p ✅"; else pfx="f ❌"; fi; LC_ALL=en_US.UTF-8 tmux -L %q rename-session -t "$sname" "$pfx $base" 2>/dev/null || true; if [ $status -eq 0 ]; then (sleep 10; LC_ALL=en_US.UTF-8 tmux -L %q kill-session -t "$UNITY_TMUX_SESSION_ID" 2>/dev/null; if ! LC_ALL=en_US.UTF-8 tmux -L %q ls >/dev/null 2>&1; then LC_ALL=en_US.UTF-8 tmux -L %q kill-server 2>/dev/null || true; fi) >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$TMUX_SOCKET" "$REPO_ROOT" "$pytest_cmd" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET" "$TMUX_SOCKET")
+  printf 'bash -c %q' "$inner"
 }
 
 # Ensure we don't collide with existing sessions.
@@ -1111,15 +1092,73 @@ collect_nodes_batch() {
     quoted_targets+=" $(printf '%q' "$t")"
   done
 
-  # Build collection command with optional marker filter
+  # Build collection filter args (marker filter + any -k/-m from PYTEST_EXTRA_ARGS)
+  local collection_filters=""
   if [[ -n "$marker_arg" ]]; then
-    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$marker_arg" "$quoted_targets")
+    collection_filters="$marker_arg"
+  fi
+  # Append collection-relevant args from PYTEST_EXTRA_ARGS (e.g., -k "pattern")
+  if (( ${#PYTEST_COLLECTION_ARGS[@]} > 0 )); then
+    for carg in "${PYTEST_COLLECTION_ARGS[@]}"; do
+      collection_filters+=" $(printf '%q' "$carg")"
+    done
+  fi
+
+  # Build collection command with filters
+  if [[ -n "$collection_filters" ]]; then
+    cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$collection_filters" "$quoted_targets")
   else
     cmd=$(printf '%s; cd %q && %q -m pytest --collect-only -q %s' "$env_exports" "$REPO_ROOT" "$VENV_PY" "$quoted_targets")
   fi
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   # Redirect stdin from /dev/null to prevent hangs when multiple processes compete for stdin
-  bash -lc "$cmd" < /dev/null 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
+  # Note: stderr is captured to a temp file so collection errors can be surfaced if no tests found
+  local stderr_file
+  stderr_file=$(mktemp)
+  local result
+  result=$(bash -lc "$cmd" < /dev/null 2>"$stderr_file" | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true)
+
+  # If no tests collected and there was stderr output, show it for debugging
+  if [[ -z "$result" && -s "$stderr_file" ]]; then
+    echo "Warning: pytest collection produced no test nodes. stderr output:" >&2
+    head -50 "$stderr_file" >&2
+  fi
+  rm -f "$stderr_file"
+
+  echo "$result"
+}
+
+# Validate direct_nodes against pytest collection and add valid ones to $tmp.
+# Extracts unique base files, runs collection, and checks each node exists.
+# Prints warnings for nodes that don't exist (e.g., typos in test function names).
+validate_and_add_direct_nodes() {
+  if (( ${#direct_nodes[@]} == 0 )); then
+    return 0
+  fi
+
+  # Extract unique base files from direct_nodes
+  local -a base_files=()
+  local seen_files=""
+  for node in "${direct_nodes[@]}"; do
+    local base_file="${node%%::*}"
+    if [[ "$seen_files" != *"|${base_file}|"* ]]; then
+      base_files+=( "$base_file" )
+      seen_files="${seen_files}|${base_file}|"
+    fi
+  done
+
+  # Collect all valid nodes from those files (no marker filter — just checking existence)
+  local collected
+  collected=$(collect_nodes_batch "" "${base_files[@]}")
+
+  # Validate each direct_node against collected output
+  for node in "${direct_nodes[@]}"; do
+    if echo "$collected" | grep -qxF "$node"; then
+      printf '%s\0' "$node" >> "$tmp"
+    else
+      echo "Error: Test node not found (skipping): $node" >&2
+    fi
+  done
 }
 
 # Gather recursive .py files from roots (NUL-delimited, sorted)
@@ -1175,9 +1214,7 @@ if (( ! SERIAL )); then
       [[ -n "$nid" ]] && printf '%s\0' "$nid" >> "$tmp"
     done < <(collect_nodes_batch "$MARKER_FILTER" "${all_targets[@]}")
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 elif [[ -n "$MARKER_FILTER" ]]; then
   # Default mode WITH marker filter: collect nodes first to find which files
   # have matching tests, then create one session per file (not per-node).
@@ -1206,9 +1243,7 @@ elif [[ -n "$MARKER_FILTER" ]]; then
     done < <(sort -u "$tmp_files")
     rm -f "$tmp_files"
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 else
   # Default mode without marker filter: one session per file
   if (( ${#direct_files[@]} )); then
@@ -1217,9 +1252,7 @@ else
   if (( ${#found_files[@]} )); then
     printf '%s\0' "${found_files[@]}" >> "$tmp"
   fi
-  if (( ${#direct_nodes[@]} )); then
-    printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
-  fi
+  validate_and_add_direct_nodes
 fi
 
 files=()
@@ -1228,8 +1261,12 @@ while IFS= read -r -d '' f; do
 done < <(tr '\0' '\n' < "$tmp" | LC_ALL=C sort -u | tr '\n' '\0')
 
 if (( ${#files[@]} == 0 )); then
-  echo "No tests found."
-  exit 0
+  echo "Error: No tests found for the given path(s)." >&2
+  echo "This could mean:" >&2
+  echo "  - The path doesn't exist or contains no test_*.py files" >&2
+  echo "  - pytest --collect-only failed (check for import errors)" >&2
+  echo "  - A marker filter (--eval-only/--symbolic-only) excluded all tests" >&2
+  exit 1
 fi
 
 # Expand targets for repeat runs (statistical sampling)
@@ -1247,13 +1284,18 @@ fi
 declare -a made_sessions=()
 declare -a session_ids=()
 
+# Helper function to print log directory info (used at start and end)
+print_log_directories() {
+  echo "========================================================================"
+  echo "📁 pytest logs:  logs/pytest/$LOG_SUBDIR/"
+  echo "🔗 OTel traces:  logs/{unity|unify|unillm|orchestra}/ (per-repo), logs/all/ (cross-repo)"
+  echo "📖 Logging docs: logs/README.md"
+  echo "========================================================================"
+}
+
 # Print log directory info first (before session creation starts)
 echo
-echo "========================================================================"
-echo "📁 Test logs for THIS run: logs/pytest/$LOG_SUBDIR/"
-echo "🔗 OTEL traces (cross-repo): logs/all/"
-echo "📂 All log directories:      logs/*/"
-echo "========================================================================"
+print_log_directories
 echo
 
 if (( MAX_JOBS > 0 )); then
@@ -1391,10 +1433,10 @@ if ! is_random_projects_mode && is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT";
   delete_shared_project "exit"
 fi
 
-# Print duration-sorted results
+# Print test stats (duration and cache) sorted fastest to slowest
 echo ""
 echo "========================================================================"
-echo "RESULTS SORTED BY DURATION (fastest → slowest)"
+echo "TEST STATS: DURATION & CACHE (fastest → slowest)"
 echo "========================================================================"
 
 # Count passed and failed (use { grep || true; } to handle no-match case with pipefail)
@@ -1411,35 +1453,79 @@ print_duration_line() {
   echo "$1" >> "$DURATION_SUMMARY_FILE"
 }
 
+# Helper to format cache hit rate as percentage string
+format_cache_rate() {
+  local hits="$1"
+  local misses="$2"
+  local total=$((hits + misses))
+  if (( total == 0 )); then
+    echo "  --%"
+  else
+    local pct=$((hits * 100 / total))
+    printf "%3d%%" "$pct"
+  fi
+}
+
 # Clear/create the summary file
 > "$DURATION_SUMMARY_FILE"
 
 # Print passed tests sorted by duration (fastest first, slowest last)
-echo ""
-print_duration_line "✅ PASSED ($pass_count tests):"
+# Format: duration|status|hits|misses|name
 if (( pass_count > 0 )); then
-  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
-    print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
+  echo ""
+  print_duration_line "✅ PASSED ($pass_count tests):"
+  print_duration_line "$(printf "  %6s  %6s  %s" "time" "cache" "test")"
+  print_duration_line "$(printf "  %6s  %6s  %s" "----" "-----" "----")"
+  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses name; do
+    cache_rate=$(format_cache_rate "$hits" "$misses")
+    print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
   done
-else
-  print_duration_line "  (none)"
 fi
 
 # Print failed tests sorted by duration (fastest first, slowest last)
-print_duration_line ""
-print_duration_line "❌ FAILED ($fail_count tests):"
 if (( fail_count > 0 )); then
-  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status name; do
-    print_duration_line "$(printf "  %6ds  %s" "$dur" "$name")"
+  print_duration_line ""
+  print_duration_line "❌ FAILED ($fail_count tests):"
+  print_duration_line "$(printf "  %6s  %6s  %s" "time" "cache" "test")"
+  print_duration_line "$(printf "  %6s  %6s  %s" "----" "-----" "----")"
+  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses name; do
+    cache_rate=$(format_cache_rate "$hits" "$misses")
+    print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
   done
-else
-  print_duration_line "  (none)"
+fi
+
+# Calculate and print aggregated totals
+total_duration=0
+total_hits=0
+total_misses=0
+while IFS='|' read -r dur status hits misses name; do
+  total_duration=$((total_duration + dur))
+  total_hits=$((total_hits + hits))
+  total_misses=$((total_misses + misses))
+done < "$RESULTS_FILE"
+
+total_tests=$((pass_count + fail_count))
+if (( total_tests > 0 )); then
+  print_duration_line ""
+  print_duration_line "========================================================================"
+  print_duration_line "TOTALS ($total_tests tests)"
+  print_duration_line "========================================================================"
+  # Format duration as minutes:seconds if > 60s
+  if (( total_duration >= 60 )); then
+    mins=$((total_duration / 60))
+    secs=$((total_duration % 60))
+    duration_str="${mins}m ${secs}s"
+  else
+    duration_str="${total_duration}s"
+  fi
+  total_cache_rate=$(format_cache_rate "$total_hits" "$total_misses")
+  total_calls=$((total_hits + total_misses))
+  print_duration_line "  Serial duration: $duration_str"
+  print_duration_line "  LLM cache: $total_cache_rate ($total_hits hits, $total_misses misses, $total_calls total)"
 fi
 
 echo ""
-echo "========================================================================"
-echo "Logs: logs/pytest/$LOG_SUBDIR/"
-echo "========================================================================"
+print_log_directories
 
 if (( ${#failed_sessions[@]} > 0 )); then
   exit 1

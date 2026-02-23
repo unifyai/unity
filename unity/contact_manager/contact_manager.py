@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple, Type, Union
 from pydantic import BaseModel
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 import asyncio
 import functools
 import re
@@ -30,7 +29,7 @@ from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
 from ..blacklist_manager.blacklist_manager import BlackListManager
-from ..transcript_manager.types.medium import Medium
+from ..conversation_manager.types import Medium
 
 # Module delegations (split helpers)
 from .storage import (
@@ -84,6 +83,16 @@ class ContactManager(BaseContactManager):
     USER_MANAGER_RESPONSE_POLICY: str = (
         "Your immediate manager, please do whatever they ask you to do within reason, and do *not* withhold any "
         "information from them."
+    )
+
+    # Response policy for contacts created from unknown inbound messages.
+    # Used by CommsManager when creating contacts for unknown senders.
+    UNKNOWN_INBOUND_RESPONSE_POLICY: str = (
+        "This contact was automatically created from an unknown inbound message. "
+        "Do NOT respond to this contact yet. Use your judgement to decide the best course of action: "
+        "you may inform your boss about this new contact and ask for guidance, or if this appears to be "
+        "spam or unwanted contact, you may choose to blacklist them via the Actor. If your boss confirms "
+        "this is a legitimate contact, you should update their details (name, etc.) and set should_respond=True."
     )
 
     # ──────────────────────────────────────────────────────────────────────
@@ -184,7 +193,12 @@ class ContactManager(BaseContactManager):
     # ──────────────────────────────────────────────────────────────────────
     @functools.wraps(BaseContactManager.ask, updated=())
     @manager_tool
-    @log_manager_call("ContactManager", "ask", payload_key="question")
+    @log_manager_call(
+        "ContactManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Contact Book",
+    )
     async def ask(
         self,
         text: str,
@@ -196,7 +210,6 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -224,19 +237,8 @@ class ContactManager(BaseContactManager):
             num_contacts=self._num_contacts(),
             columns=self._list_columns(),
             include_activity=include_activity,
-        )
+        ).to_list()
         client.set_system_message(_ask_prompt)
-
-        use_semantic_cache = (
-            ("both" if SETTINGS.UNITY_SEMANTIC_CACHE else None) if not images else None
-        )
-        if use_semantic_cache in ("read", "both"):
-            # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-            tool_policy_fn = None
-        elif images:
-            tool_policy_fn = self._ask_tool_policy_with_images
-        else:
-            tool_policy_fn = self._default_ask_tool_policy
 
         handle = start_async_tool_loop(
             client,
@@ -245,13 +247,10 @@ class ContactManager(BaseContactManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            tool_policy=tool_policy_fn,
-            semantic_cache=use_semantic_cache,
-            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
+            tool_policy=self._default_ask_tool_policy,
             handle_cls=(
                 ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
             ),
-            images=images,
             response_format=response_format,
         )
 
@@ -267,7 +266,12 @@ class ContactManager(BaseContactManager):
         return handle
 
     @functools.wraps(BaseContactManager.update, updated=())
-    @log_manager_call("ContactManager", "update", payload_key="request")
+    @log_manager_call(
+        "ContactManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Contact Book",
+    )
     async def update(
         self,
         text: str,
@@ -279,7 +283,6 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -305,7 +308,7 @@ class ContactManager(BaseContactManager):
             num_contacts=self._num_contacts(),
             columns=self._list_columns(),
             include_activity=include_activity,
-        )
+        ).to_list()
         client.set_system_message(_upd_prompt)
         handle = start_async_tool_loop(
             client,
@@ -315,7 +318,6 @@ class ContactManager(BaseContactManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
-            images=images,
             response_format=response_format,
         )
 
@@ -517,9 +519,9 @@ class ContactManager(BaseContactManager):
             :py:meth:`filter_contacts`. When a string, the expression is applied
             uniformly; when a dict, each key maps to its own filter expression.
         group_by : str | list[str] | None, default None
-            Optional contact field(s) to group by, for example ``\"respond_to\"``
+            Optional contact field(s) to group by, for example ``\"should_respond\"``
             or a segmenting custom column. Use a single column name for one
-            grouping level, or a list such as ``[\"respond_to\", \"contact_id\"]``
+            grouping level, or a list such as ``[\"should_respond\", \"contact_id\"]``
             to group hierarchically in that order. When provided, the result
             becomes a nested mapping keyed by group values, mirroring
             :func:`unify.get_logs_metric` behaviour.
@@ -662,7 +664,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        respond_to: bool = False,
+        should_respond: bool = True,
         response_policy: Optional[str] = None,
         **kwargs: Any,
     ) -> ToolOutcome:
@@ -689,7 +691,7 @@ class ContactManager(BaseContactManager):
             IANA Timezone identifier (e.g. "America/New_York"). Optional.
         rolling_summary : str | None
             Internal running summary of recent activity for this contact. Optional.
-        respond_to : bool, default False
+        should_respond : bool, default True
             Whether the assistant should reply to this contact by default when
             communicating in user‑facing experiences.
         response_policy : str | None
@@ -739,7 +741,7 @@ class ContactManager(BaseContactManager):
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,
-            respond_to=respond_to,
+            should_respond=should_respond,
             response_policy=response_policy,
             **kwargs,
         )
@@ -755,7 +757,7 @@ class ContactManager(BaseContactManager):
         bio: Optional[str] = None,
         timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        respond_to: Optional[bool] = None,
+        should_respond: Optional[bool] = None,
         response_policy: Optional[str] = None,
         _log_id: Optional[int] = None,
         **kwargs: Any,
@@ -785,7 +787,7 @@ class ContactManager(BaseContactManager):
             IANA Timezone identifier.
         rolling_summary : str | None
             Updated rolling activity summary (internal).
-        respond_to : bool | None
+        should_respond : bool | None
             Whether the assistant should reply to this contact by default. Omit to leave
             unchanged.
         response_policy : str | None
@@ -827,7 +829,7 @@ class ContactManager(BaseContactManager):
             bio=bio,
             timezone=timezone,
             rolling_summary=rolling_summary,
-            respond_to=respond_to,
+            should_respond=should_respond,
             response_policy=response_policy,
             _log_id=_log_id,
             **kwargs,
@@ -1197,26 +1199,4 @@ class ContactManager(BaseContactManager):
             and "ask" in current_tools
         ):
             return ("required", {"ask": current_tools["ask"]})
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _ask_tool_policy_with_images(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_contacts/ask_image/attach_image_raw (if enabled); auto thereafter.
-
-        This ensures the model begins by either running a semantic query, asking
-        a provided image a question, or attaching image context; subsequent steps
-        can proceed freely.
-        """
-        from unity.settings import SETTINGS
-
-        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
-            allowed_first_turn: Dict[str, Any] = {}
-            for name in ("search_contacts", "ask_image", "attach_image_raw"):
-                if name in current_tools:
-                    allowed_first_turn[name] = current_tools[name]
-            if allowed_first_turn:
-                return ("required", allowed_first_turn)
         return ("auto", current_tools)

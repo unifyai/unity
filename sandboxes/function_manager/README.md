@@ -5,13 +5,13 @@ This folder contains an **interactive playground** for the `FunctionManager` com
 
 What is the `FunctionManager`?
 ------------------------------
-`FunctionManager` is an abstraction that serves as the agent's persistent memory for reusable Python functions. It stores function implementations, signatures, docstrings, and dependency information, making them searchable and retrievable through both semantic similarity and structured queries. This allows more advanced actors, like the `HierarchicalActor`, to discover and incorporate existing code into their execution plans.
+`FunctionManager` is an abstraction that serves as the agent's persistent memory for reusable Python functions. It stores function implementations, signatures, docstrings, and dependency information, making them searchable and retrievable through both semantic similarity and structured queries. This allows actors like the `CodeActActor` to discover and incorporate existing code into their execution plans.
 
 The manager provides comprehensive function lifecycle management with built-in security validation:
 
 * **`add_functions(implementations)`** – Validates, compiles, and stores one or more Python functions with security checks
 * **`list_functions()`** – Retrieves all stored functions with optional implementation details
-* **`search_functions_by_similarity(query)`** – Finds functions using semantic search via embeddings
+* **`search_functions(query)`** – Finds functions using semantic search via embeddings
 * **`search_functions(filter)`** – Performs structured filtering using Python expressions
 * **`delete_function(function_id)`** – Removes functions with optional dependency cascade deletion
 * **`get_precondition(function_name)`** – Retrieves stored preconditions for function execution
@@ -22,7 +22,7 @@ The `FunctionManager` includes robust security measures to ensure safe function 
 
 - **Dangerous Built-ins Blocking**: Prevents use of potentially harmful functions like `eval`, `exec`, `open`, `input`, etc.
 - **Function Isolation**: User-defined functions cannot directly call other user-defined functions to prevent complex dependencies
-- **Method Call Allowance**: Permits safe method calls on objects (e.g., `computer_primitives.*`, `call_handle.*`)
+- **Method Call Allowance**: Permits safe method calls on objects (e.g., `primitives.computer.*`, `call_handle.*`)
 - **AST-based Analysis**: Uses Abstract Syntax Tree parsing to analyze function calls and dependencies
 - **Sandbox Execution**: Functions are compiled and validated in isolated namespaces
 
@@ -141,10 +141,10 @@ def process_data(data: list) -> dict:
         result[key] = item.upper() if hasattr(item, 'upper') else item
     return result
 
-def make_api_call(computer_primitives, endpoint: str) -> dict:
+def make_api_call(endpoint: str) -> dict:
     """Function using action provider methods."""
-    # Method calls on computer_primitives are explicitly allowed
-    response = computer_primitives.get(endpoint)
+    # Method calls on primitives.computer are explicitly allowed
+    response = primitives.computer.get(endpoint)
     return response.json() if hasattr(response, 'json') else {}
 ```
 
@@ -168,7 +168,7 @@ def caller_function():
 - A dedicated Unify Request log file is also written to `.logs_unify_requests.txt`.
 
 ### Troubleshooting
-* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `UNIFY_BASE_URL`) are missing or invalid you may see HTTP errors.
+* **Unify backend access** – The sandbox will attempt to create contexts and logs in your configured Unify project. If your credentials (`UNIFY_KEY`, `ORCHESTRA_URL`) are missing or invalid you may see HTTP errors.
 * **Python file parsing** – When adding functions via `add <file>`, ensure the file contains valid Python syntax with functions starting at column 0 (no indentation).
 * **Function validation errors** – Functions that call dangerous built-ins or other user-defined functions will be rejected with specific error messages.
 * **Memory persistence** – Functions are stored persistently in the chosen project. Use `--overwrite` to start fresh if needed.

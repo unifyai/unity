@@ -19,7 +19,7 @@ from typing import Callable, Dict, Union, List, Optional
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
-from .types.medium import Medium
+from unity.conversation_manager.types import Medium
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
@@ -29,6 +29,7 @@ from ..common.prompt_helpers import (
     get_custom_columns,
     # New standardized composer utilities
     PromptSpec,
+    PromptParts,
     compose_system_prompt,
     two_table_reasoning_block as _two_table_reasoning_block,
     images_extras_for_transcripts as _images_extras_for_transcripts,
@@ -98,7 +99,7 @@ def build_ask_prompt(
     contact_columns: Union[Dict[str, str], List[dict], List[str]],
     *,
     include_activity: bool = True,
-) -> str:  # noqa: C901 – long, but flat
+) -> PromptParts:  # noqa: C901 – long, but flat
     """
     Build the system-prompt for :pyfunc:`TranscriptManager.ask`.
 
@@ -338,6 +339,7 @@ def build_simulated_method_prompt(
     finished, avoiding responses like "I'll process that now".
     """
     import json  # local import
+    from unity.common.context_dump import make_messages_safe_for_context_dump
 
     preamble = f"On this turn you are simulating the '{method}' method."
     if method.lower() == "ask":
@@ -369,7 +371,7 @@ def build_simulated_method_prompt(
     parts: list[str] = [preamble, behaviour, "", f"The user input is:\n{user_request}"]
     if parent_chat_context:
         parts.append(
-            f"\nCalling chat context:\n{json.dumps(parent_chat_context, indent=4)}",
+            f"\nCalling chat context:\n{json.dumps(make_messages_safe_for_context_dump(parent_chat_context), indent=4)}",
         )
 
     return "\n".join(parts)

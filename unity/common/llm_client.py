@@ -6,18 +6,12 @@ from typing import Any
 import unillm
 from pydantic import BaseModel
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from unity.settings import SETTINGS
 
 # Backward-compatible constant (now sourced from settings)
 DEFAULT_MODEL = SETTINGS.UNIFY_MODEL
-
-
-def get_cache_setting() -> bool | str:
-    """Return the cache setting from SETTINGS.
-
-    Backward-compatible wrapper. New code should use SETTINGS.UNIFY_CACHE directly.
-    """
-    return SETTINGS.UNIFY_CACHE
 
 
 def new_llm_client(
@@ -25,13 +19,15 @@ def new_llm_client(
     *,
     async_client: bool = True,
     stateful: bool = False,
+    origin: str | None = None,
     **kwargs: Any,
 ) -> "unillm.AsyncUnify | unillm.Unify":
     """
     Create a configured Unify client.
 
-    If model is not specified, uses UNIFY_MODEL from settings (default: gpt-5.2@openai).
-    Defaults to high reasoning_effort and priority service_tier where applicable.
+    If model is not specified, uses UNIFY_MODEL from settings (default: claude-4.6-opus@anthropic).
+    Defaults to low reasoning_effort and priority service_tier where applicable.
+    Caching is controlled by the UNILLM_CACHE env var (owned by unillm).
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
     """
@@ -39,16 +35,25 @@ def new_llm_client(
         model = SETTINGS.UNIFY_MODEL
 
     config = {
-        "cache": SETTINGS.UNIFY_CACHE,
-        "reasoning_effort": "high",
+        "reasoning_effort": "low",
         "service_tier": "priority",
         "stateful": stateful,
+        "origin": origin,
     }
     config.update(kwargs)
 
     if async_client:
-        return unillm.AsyncUnify(model, **config)
-    return unillm.Unify(model, **config)
+        client = unillm.AsyncUnify(model, **config)
+    else:
+        client = unillm.Unify(model, **config)
+
+    if origin:
+        icon = ICONS["llm_log_file"]
+        client.set_on_log_file(
+            lambda path, _o=origin: LOGGER.info(f"{icon} [{_o}] → {path}"),
+        )
+
+    return client
 
 
 def _make_openai_strict_json_schema_compatible(node: Any) -> None:

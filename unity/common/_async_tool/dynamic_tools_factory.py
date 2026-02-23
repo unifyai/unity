@@ -9,11 +9,7 @@ from contextlib import suppress
 from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
-from .images import (
-    append_images_with_source,
-)
-from .utils import maybe_await
-from unity.image_manager.types.image_refs import ImageRefs
+from .utils import get_handle_paused_state, maybe_await
 
 
 class DynamicToolFactory:
@@ -105,32 +101,6 @@ class DynamicToolFactory:
             pass
 
     @staticmethod
-    def _ensure_kwonly_param(to_wrapper, name: str, annotation, default=None) -> None:
-        """Ensure a keyword-only parameter exists on the wrapper's signature."""
-        with suppress(Exception):
-            import inspect as _inspect
-
-            sig = _inspect.signature(to_wrapper)
-            params = list(sig.parameters.values())
-            if any(p.name == name for p in params):
-                return
-            params.append(
-                _inspect.Parameter(
-                    name,
-                    kind=_inspect.Parameter.KEYWORD_ONLY,
-                    default=default,
-                    annotation=annotation,
-                ),
-            )
-            to_wrapper.__signature__ = _inspect.Signature(
-                parameters=params,
-                return_annotation=sig.return_annotation,
-            )
-            anns = dict(getattr(to_wrapper, "__annotations__", {}))
-            anns[name] = annotation
-            to_wrapper.__annotations__ = anns
-
-    @staticmethod
     def _discover_custom_public_methods(handle) -> dict[str, Callable]:
         """
         Return a mapping ``name → bound_method`` of *public* callables on *handle*:
@@ -216,21 +186,13 @@ class DynamicToolFactory:
         handle: Any,
     ) -> None:
         doc = (
-            f"Stop pending call {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+            f"Stop {tool_context.fn_name}({tool_context.arg_repr}), cancelling any pending work.\n\n"
+            "While any tools are still running you cannot end the conversation;\n"
+            "stop or wait for all in-flight tools to complete, then respond.\n\n"
             "Parameters\n"
             "----------\n"
             "reason : str | None\n"
-            "    Optional human‑readable reason for stopping the running tool call.\n"
-            "images : ImageRefs | None\n"
-            "    Optional image references to append at the time of this command (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
-            "Returns\n"
-            "-------\n"
-            "Dict[str, str]\n"
-            "    Status acknowledgement including the underlying call id.\n\n"
-            "Notes\n"
-            "-----\n"
-            "- Images are appended to the live images log immediately.\n"
-            "- The stop request is forwarded to the underlying handle when available."
+            "    Optional human-readable reason for stopping."
         )
 
         async def _stop(**_kw) -> Dict[str, str]:
@@ -242,18 +204,13 @@ class DynamicToolFactory:
                     _kw,
                     fallback_positional_keys=["reason"],
                 )
-            # Append any provided images into the live registry/log
-            try:
-                append_images_with_source(_kw.get("images"))
-            except Exception:
-                pass
             if not task.done():
                 task.cancel()  # kill the waiter coroutine
             self.tools_data.pop_task(task)
             return {
                 "status": "stopped",
                 "call_id": tool_context.call_id,
-                **{k: v for k, v in _kw.items() if k != "images"},
+                **_kw,
             }
 
         # Set fallback docstring first; _adopt_signature_and_annotations may override
@@ -262,8 +219,6 @@ class DynamicToolFactory:
         with suppress(Exception):
             if handle is not None and hasattr(handle, "stop"):
                 self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
-        # Ensure images kw-only param
-        self._ensure_kwonly_param(_stop, "images", Optional[ImageRefs], default=None)
         # Register after adopting signature/doc so factory falls back only when needed
         self._register_tool(
             func_name=f"stop_{tool_context.fn_name}_{tool_context.safe_call_id}",
@@ -284,9 +239,7 @@ class DynamicToolFactory:
             "content : str | None\n"
             "    Interjection text. When omitted, `message` may be used as a synonym.\n"
             "message : str | None\n"
-            "    Synonym for `content`. If both are provided, `content` takes precedence.\n"
-            "images : ImageRefs | None\n"
-            "    Optional image references to append at the time of this interjection (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
+            "    Synonym for `content`. If both are provided, `content` takes precedence.\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
@@ -304,39 +257,23 @@ class DynamicToolFactory:
                         _kw,
                         fallback_positional_keys=["content", "message"],
                     )
-                # Append any provided images into the live registry/log
-                try:
-                    append_images_with_source(_kw.get("images"))
-                except Exception:
-                    pass
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
-                    **{k: v for k, v in _kw.items() if k != "images"},
+                    **_kw,
                 }
 
             # Set fallback docstring first; _adopt_signature_and_annotations may override
             _interject.__doc__ = doc
-            # Expose the downstream handle's signature to the LLM and ensure common params
+            # Expose the downstream handle's signature to the LLM dynamically.
+            # Plumbing parameters like _parent_chat_context_cont are automatically hidden
+            # by method_to_schema (via the explicit hidden params list).
             with suppress(Exception):
                 if hasattr(handle, "interject"):
                     self._adopt_signature_and_annotations(
                         getattr(handle, "interject"),
                         _interject,
                     )
-            # Ensure `content` alias and `images` kw-only parameters exist
-            self._ensure_kwonly_param(
-                _interject,
-                "content",
-                Optional[str],
-                default=None,
-            )
-            self._ensure_kwonly_param(
-                _interject,
-                "images",
-                Optional[ImageRefs],
-                default=None,
-            )
 
         else:
 
@@ -344,16 +281,10 @@ class DynamicToolFactory:
                 *,
                 content: Optional[str] = None,
                 message: Optional[str] = None,
-                images: ImageRefs | None = None,
             ) -> Dict[str, str]:
                 # regular tool: push onto its private queue
                 actual = content if content is not None else (message or "")
                 await task_info.interject_queue.put(actual)
-                # Append any provided images into the live registry/log
-                try:
-                    append_images_with_source(images)
-                except Exception:
-                    pass
                 return {
                     "status": "interjected",
                     "call_id": tool_context.call_id,
@@ -368,51 +299,21 @@ class DynamicToolFactory:
             fallback_doc=doc,
             fn=_interject,
         )
-        with suppress(Exception):
-            import inspect as _inspect
-
-            _interject.__annotations__ = {
-                "content": Optional[str],
-                "message": Optional[str],
-                "images": Optional[ImageRefs],
-                "return": Dict[str, str],
-            }
-            _interject.__signature__ = _inspect.Signature(
-                parameters=[
-                    _inspect.Parameter(
-                        "content",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[str],
-                    ),
-                    _inspect.Parameter(
-                        "message",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[str],
-                    ),
-                    _inspect.Parameter(
-                        "images",
-                        kind=_inspect.Parameter.KEYWORD_ONLY,
-                        default=None,
-                        annotation=Optional[ImageRefs],
-                    ),
-                ],
-                return_annotation=Dict[str, str],
-            )
+        # Mark as supporting context propagation so schema generation can expose include_parent_chat_context_cont
+        _interject.__supports_context_propagation__ = True  # type: ignore[attr-defined]
 
     def _create_ask_tool(
         self,
         tool_context: _ToolContext,
         handle: Any,
-    ) -> None:
+    ) -> str | None:
         """
         Expose a synthetic helper to invoke the handle's `ask` method for inspection.
 
         Behaviour
         ---------
         - For nested async handles, returns the downstream handle so the loop can adopt
-          and await its result (consistent with base-tool passthrough behaviour).
+          and await its result (consistent with base-tool behaviour).
         - Otherwise returns the direct answer value from the handle.
         """
 
@@ -437,11 +338,15 @@ class DynamicToolFactory:
         with suppress(Exception):
             self._adopt_signature_and_annotations(getattr(handle, "ask"), _ask)
 
+        func_name = f"ask_{tool_context.fn_name}_{tool_context.safe_call_id}"
+
         self._register_tool(
-            func_name=f"ask_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            func_name=func_name,
             fallback_doc=_ask.__doc__,
             fn=_ask,
         )
+
+        return func_name
 
     def _create_clarify_tool(
         self,
@@ -454,20 +359,14 @@ class DynamicToolFactory:
             "Parameters\n"
             "----------\n"
             "answer : str\n"
-            "    The answer text.\n"
-            "images : ImageRefs | None\n"
-            "    Optional image references to append alongside this answer (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
+            "    The answer text.\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
             "    Status acknowledgement including the underlying call id.\n"
         )
 
-        async def _clarify(answer: str, images: ImageRefs | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
-            try:
-                append_images_with_source(images)
-            except Exception:
-                pass
+        async def _clarify(answer: str) -> Dict[str, str]:
             return {
                 "status": "clar_answer",
                 "call_id": tool_context.call_id,
@@ -707,8 +606,10 @@ class DynamicToolFactory:
             info.clar_down_queue = h_dn_q
 
         _call_id: str = info.call_id
-        # Create a sanitized version of the call_id for use in function names.
-        _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1]
+        # Compact, sanitized suffix of the call_id for use in function names.
+        # Capped at 8 chars to conserve the 64-char tool-name budget (OpenAI limit)
+        # while retaining enough uniqueness (~2.8 trillion combos for alphanumeric).
+        _safe_call_id: str = _call_id.replace("-", "_").split("_")[-1][-8:]
         _fn_name: str = info.name
         _arg_json: str = info.call_dict["function"]["arguments"]
         try:
@@ -724,6 +625,10 @@ class DynamicToolFactory:
             safe_call_id=_safe_call_id,
         )
 
+        # Track context opt-in for steering methods
+        # This determines whether include_parent_chat_context_cont is exposed in schema
+        _context_opted_in = getattr(info, "context_opted_in", True)
+
         self._create_stop_tool(
             create_tool_ctx,
             task,
@@ -736,13 +641,19 @@ class DynamicToolFactory:
                 info,
                 handle,
             )
+            # Mark with context opt-in status
+            interject_key = f"interject_{_fn_name}_{_safe_call_id}"
+            if interject_key in self.dynamic_tools:
+                self.dynamic_tools[interject_key].__context_opted_in__ = _context_opted_in  # type: ignore[attr-defined]
 
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx, handle)
 
         # Synthetic `ask` helper for LLM-accessible inspection
         if handle_available:
-            self._create_ask_tool(create_tool_ctx, handle)
+            result = self._create_ask_tool(create_tool_ctx, handle)
+            if result is not None:
+                self.tools_data._task_ask_keys[task] = result
 
         # Determine capability and current pause state; expose only one helper at a time
         cap_pause = (handle_available and hasattr(handle, "pause")) or (
@@ -752,14 +663,10 @@ class DynamicToolFactory:
             task_pause_event is not None
         )
 
-        paused_state = None
-        try:
-            # Prefer downstream handle's pause event if available
-            pev = getattr(handle, "_pause_event", None) if handle_available else None
-            if pev is not None and hasattr(pev, "is_set"):
-                paused_state = not pev.is_set()  # running ⇢ set, paused ⇢ cleared
-        except Exception:
-            pass
+        # Use shared helper to check handle's pause state first
+        paused_state = get_handle_paused_state(handle) if handle_available else None
+
+        # Fallback to task_pause_event if handle doesn't have _pause_event
         if (
             paused_state is None
             and task_pause_event is not None
@@ -790,9 +697,92 @@ class DynamicToolFactory:
         if handle_available:
             self._expose_public_methods(create_tool_ctx, handle)
 
+    def _create_ask_about_completed_tool(self) -> None:
+        """Expose a single dispatcher that lets the LLM ask follow-up questions
+        about any steerable inner tool that has already completed.
+
+        The dispatcher routes by ``tool_id`` (the original ``call_id``) to the
+        retained ``ask`` closure for that tool, which spins up a retrospective
+        inspection loop against the completed inner handle's transcript.
+        """
+        completed = self.tools_data._completed_askable_tools
+
+        # Build a dynamic docstring listing all askable completed tools.
+        # Annotate tools whose handle has an active background lifecycle
+        # (e.g. post-result storage review) so the LLM can distinguish
+        # them from truly dormant tools.
+        tool_lines = []
+        for cid, meta in completed.items():
+            args_str = meta["arg_repr"]
+            handle = meta.get("handle")
+            if handle is not None and hasattr(handle, "done") and not handle.done():
+                suffix = " [result returned — background skill storage in progress]"
+            else:
+                suffix = ""
+            tool_lines.append(
+                f'  - tool_id="{cid}": {meta["name"]}({args_str}){suffix}',
+            )
+        listing = "\n".join(tool_lines)
+
+        doc = (
+            "Ask a follow-up question about a completed tool to understand its "
+            "internal reasoning, intermediate steps, or any details not visible in "
+            "the outer transcript.\n\n"
+            "Available completed tools:\n"
+            f"{listing}\n\n"
+            "Parameters\n"
+            "----------\n"
+            "tool_id : str\n"
+            "    The tool_id of the completed tool to query (see listing above).\n"
+            "question : str\n"
+            "    The follow-up question to ask about the completed tool's execution."
+        )
+
+        # Capture references for closure
+        _completed = completed
+        _all_completed_names = self.tools_data._completed_tool_names
+
+        async def _ask_about_completed_tool(
+            tool_id: str,
+            question: str,
+            **_kw,
+        ):
+            entry = _completed.get(tool_id)
+            if entry is not None:
+                return await entry["ask_fn"](question=question, **_kw)
+
+            # Not askable — distinguish "exists but not steerable" from "doesn't exist"
+            tool_name = _all_completed_names.get(tool_id)
+            if tool_name is not None:
+                return (
+                    f"Cannot ask about tool_id={tool_id!r} ({tool_name}). "
+                    f"This tool completed successfully but was not steerable — "
+                    f"it executed as a direct function call with no inner "
+                    f"reasoning trajectory to inspect. Its result is already "
+                    f"visible in the outer transcript above."
+                )
+
+            available = list(_completed.keys())
+            return (
+                f"No tool found with tool_id={tool_id!r}. "
+                f"This ID does not match any completed tool call. "
+                f"Available tool_ids for retrospective inspection: {available}"
+            )
+
+        _ask_about_completed_tool.__doc__ = doc
+
+        self._register_tool(
+            func_name="ask_about_completed_tool",
+            fallback_doc=doc,
+            fn=_ask_about_completed_tool,
+        )
+
     def generate(self):
         for task in list(self.tools_data.pending):
             self._process_task(task)
         # Expose a single global `wait` helper when anything is in flight
         if self.tools_data.pending:
             self._create_wait_tool()
+        # Expose a single dispatcher for retrospective asking about completed tools
+        if self.tools_data._completed_askable_tools:
+            self._create_ask_about_completed_tool()

@@ -6,7 +6,7 @@ Global pytest configuration for Unity test suite.
 
 Sections:
   1. Imports and logging guard
-  2. Test stubs (Redis, BrowserWorker, DateTime)
+  2. Test stubs (Redis, ComputerWorker, DateTime)
   3. Singleton isolation
   4. Command-line options
   5. Custom logging helpers
@@ -23,7 +23,8 @@ import logging
 import os
 import random
 import re
-import threading
+
+import hashlib
 
 import httpx
 import pytest
@@ -42,18 +43,123 @@ if not _root_logger_early.handlers:
 
 from tests.helpers import PRECREATED_CONTEXTS, set_session_tags
 from tests.settings import SETTINGS
+from unity.session_details import DEFAULT_ASSISTANT_CONTEXT, DEFAULT_USER_CONTEXT
+
+
+# --------------------------------------------------------------------------- #
+# Orchestra availability check for requires_orchestra marker                   #
+# --------------------------------------------------------------------------- #
+def _check_orchestra_available() -> bool:
+    """Check if Orchestra server is reachable. Cached after first call."""
+    if hasattr(_check_orchestra_available, "_cached"):
+        return _check_orchestra_available._cached
+
+    orchestra_url = os.environ.get("ORCHESTRA_URL", "http://localhost:8000")
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            # Check a known endpoint - /v0/projects works and 404 on root is fine
+            resp = client.get(f"{orchestra_url}/v0/projects")
+            # 200 = success, 401/403 = auth required but server is up
+            _check_orchestra_available._cached = resp.status_code in (200, 401, 403)
+    except Exception:
+        _check_orchestra_available._cached = False
+
+    return _check_orchestra_available._cached
+
+
+def _derive_test_context(item: pytest.Item) -> str:
+    """
+    Derive a per-test Unify context path that is stable and unique.
+
+    Matches the intent of tests.helpers._TestContext.setup(), but runs early enough
+    (pytest_runtest_setup) to wrap fixture setup + teardown, preventing cross-test
+    interference when fixtures create/clear managers that delete contexts.
+    """
+    # Build "tests/<relpath-without-.py>/<func_name>" prefix
+    file_path = str(getattr(item, "fspath", "") or "")
+    parts = file_path.split(f"{os.sep}tests{os.sep}")
+    if len(parts) > 1:
+        rel_path = parts[1].replace(os.sep, "/")
+        if rel_path.endswith(".py"):
+            rel_path = rel_path[:-3]
+        test_path = f"tests/{rel_path}"
+    else:
+        # Fallback (should be rare): use nodeid as the "path"
+        test_path = "tests/unknown"
+
+    func_name = getattr(item, "originalname", None) or getattr(item, "name", "test")
+
+    # Parametrized tests: include a stable suffix so contexts don't collide
+    nodeid = getattr(item, "nodeid", "")
+    if "[" in nodeid:
+        normalized = _normalize_pytest_nodeid(nodeid)
+        if normalized is None:
+            normalized = hashlib.md5(nodeid.encode("utf-8")).hexdigest()[:8]
+        func_name = f"{func_name}/{normalized}"
+
+    # Mirror production hierarchy: .../{user_id}/{assistant_id}
+    return f"{test_path}/{func_name}/{DEFAULT_USER_CONTEXT}/{DEFAULT_ASSISTANT_CONTEXT}"
+
+
+def _set_unify_context_for_test(item: pytest.Item) -> None:
+    """Set a unique per-test Unify context early (before fixtures)."""
+    ctx = _derive_test_context(item)
+    setattr(item, "_unity_unify_test_ctx", ctx)
+
+    # Clean slate unless contexts are pre-created during collection.
+    skip_ctx_create = False
+    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
+        skip_ctx_create = ctx in PRECREATED_CONTEXTS
+    else:
+        try:
+            unify.delete_context(ctx)
+        except Exception:
+            pass
+
+    unify.set_context(ctx, relative=False, skip_create=skip_ctx_create)
+
+    # Ensure singleton registries don't leak across tests and that fixtures see
+    # the correct context for any context-derived subcontexts (e.g. FunctionManager).
+    try:
+        from unity.common.context_registry import ContextRegistry
+        from unity.manager_registry import ManagerRegistry
+        from unity.events.event_bus import EVENT_BUS
+
+        ManagerRegistry.clear()
+        ContextRegistry.clear()
+        EVENT_BUS.clear(delete_contexts=False)
+    except Exception:
+        pass
+
+
+def _unset_unify_context_for_test(item: pytest.Item) -> None:
+    """Unset (and optionally delete) the per-test Unify context after fixture teardown."""
+    ctx = getattr(item, "_unity_unify_test_ctx", None)
+    try:
+        if ctx and SETTINGS.UNIFY_DELETE_CONTEXT_ON_EXIT:
+            try:
+                unify.delete_context(ctx)
+            except Exception:
+                pass
+    finally:
+        try:
+            unify.unset_context()
+        except Exception:
+            pass
 
 
 def pytest_report_header(config):
     settings_str = [f"{k}={v}" for k, v in SETTINGS.model_dump().items()]
     return [
-        f"unify_base_url={os.environ.get('UNIFY_BASE_URL')}",
+        f"orchestra_url={os.environ.get('ORCHESTRA_URL')}",
+        f"unity_comms_url={os.environ.get('UNITY_COMMS_URL')}",
         f"unify_project={unify.active_project()}",
+        f"UNILLM_CACHE={os.environ.get('UNILLM_CACHE', 'not set')}",
     ] + settings_str
 
 
 # --------------------------------------------------------------------------- #
-# 2. Test stubs (Redis, BrowserWorker, DateTime)                              #
+# 2. Test stubs (ComputerWorker, DateTime)                                     #
 # --------------------------------------------------------------------------- #
 
 _FIXED_DATETIME = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
@@ -65,108 +171,67 @@ def static_now():
 
 
 @pytest.fixture(autouse=True)
-def stub_controller_deps(monkeypatch):
+def stub_external_deps(monkeypatch):
     """
-    This fixture automatically stubs heavy dependencies for the Controller tests,
-    namely Redis and the BrowserWorker. It runs for every test.
+    This fixture automatically stubs heavy external dependencies for tests.
+    It runs for every test.
     """
-
-    # --- Redis stub -----------------------------------------------------------
-    class _FakePubSub:
-        def __init__(self):
-            self._messages = []
-            self._thread = None
-
-        def subscribe(self, *args, **kwargs):
-            # Support both positional and keyword arguments
-            # Keyword args are channel_name=handler_function pairs
-            pass
-
-        def listen(self):
-            while self._messages:
-                yield self._messages.pop()
-            while True:
-                # Keep the loop alive without blocking
-                yield {"type": "noop"}
-
-        def get_message(self):
-            return None
-
-        def run_in_thread(self, daemon=True):
-            # Mock implementation that returns a fake thread with stop() method
-            class StoppableThread(threading.Thread):
-                def __init__(self, *args, **kwargs):
-                    super().__init__(*args, **kwargs)
-                    self._stop_flag = False
-
-                def stop(self):
-                    self._stop_flag = True
-
-            self._thread = StoppableThread(target=lambda: None, daemon=daemon)
-            return self._thread
-
-    class _FakeRedis:
-        def __init__(self, *a, **k):
-            self._pubsub = _FakePubSub()
-            self.published: list[tuple[str, str]] = []
-
-        def pubsub(self, **kwargs):
-            return self._pubsub
-
-        def publish(self, chan, msg):
-            self.published.append((chan, msg))
-
-    # Safely patch redis.Redis with our fake version
-    monkeypatch.setattr("redis.Redis", _FakeRedis)
-
-    # --- BrowserWorker stub ---------------------------------------------------
-    class _DummyWorker:
-        def __init__(self, *a, **k):
-            self.started = False
-            self.stopped = False
-
-        def start(self):
-            self.started = True
-
-        def stop(self):
-            self.stopped = True
-
-        def join(self, *a, **k):
-            pass
-
-    # Safely patch the BrowserWorker class where it's defined
-    monkeypatch.setattr(
-        "unity.controller.playwright_utils.worker.BrowserWorker",
-        _DummyWorker,
-    )
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
-    # Two sources of timestamps appear in LLM prompts:
-    # 1. prompt_helpers.now() -> string for "Current UTC time is..." footer
-    # 2. Event/Message timestamps -> datetime for "@ Friday, June 13, 2025..." in messages
-    # We stub both to the same fixed point in time for cache consistency.
+    # All timestamps in prompts come from prompt_helpers.now() which returns either:
+    # - A formatted string (as_string=True): "Friday, June 13, 2025 at 12:00 PM UTC"
+    # - A datetime object (as_string=False): for timestamp comparisons
+    #
+    # When UNITY_INCREMENTING_TIMESTAMPS is enabled (e.g., ConversationManager tests),
+    # datetime objects auto-increment by microseconds so last_snapshot < message.timestamp
+    # comparisons work correctly for **NEW** markers.
 
-    def _static_now(time_only: bool = False):
-        """Return a fixed timestamp string for prompt footers."""
+    from datetime import timedelta
+
+    _timestamp_counter = {"value": 0}
+
+    def _static_now(time_only: bool = False, as_string: bool = True):
+        """Return a fixed timestamp for testing."""
+        if SETTINGS.UNITY_INCREMENTING_TIMESTAMPS and not as_string:
+            # Return incrementing datetime for **NEW** marker comparisons
+            _timestamp_counter["value"] += 1
+            return _FIXED_DATETIME + timedelta(microseconds=_timestamp_counter["value"])
+
+        if not as_string:
+            return _FIXED_DATETIME
+
         label = "UTC"
-        return (
-            _FIXED_DATETIME.strftime("%H:%M:%S ") + label
-            if time_only
-            else _FIXED_DATETIME.strftime("%Y-%m-%d %H:%M:%S ") + label
-        )
+        if time_only:
+            return _FIXED_DATETIME.strftime("%I:%M %p ") + label
+        return _FIXED_DATETIME.strftime("%A, %B %d, %Y at %I:%M %p ") + label
 
-    # Patch prompt_helpers.now for prompt footers
+    # Patch prompt_helpers.now everywhere it's imported
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
-    monkeypatch.setattr("unity.guidance_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.secret_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.image_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.memory_manager.prompt_builders.now", _static_now)
     monkeypatch.setattr("unity.file_manager.prompt_builders.now", _static_now)
-
-    # Patch events._get_now for Event/Message timestamps in renderer output
+    monkeypatch.setattr("unity.conversation_manager.prompt_builders.now", _static_now)
+    monkeypatch.setattr("unity.conversation_manager.events.prompt_now", _static_now)
     monkeypatch.setattr(
-        "unity.conversation_manager.events._get_now",
-        lambda: _FIXED_DATETIME,
+        "unity.conversation_manager.domains.contact_index.prompt_now",
+        _static_now,
+    )
+    monkeypatch.setattr(
+        "unity.conversation_manager.domains.managers_utils.prompt_now",
+        _static_now,
+    )
+    monkeypatch.setattr(
+        "unity.conversation_manager.conversation_manager.prompt_now",
+        _static_now,
+    )
+
+    def _static_perf_counter() -> float:
+        return 1000.0
+
+    monkeypatch.setattr(
+        "unity.common._async_tool.time_context.perf_counter",
+        _static_perf_counter,
     )
 
 
@@ -184,6 +249,23 @@ def _clear_singletons_between_tests():
     yield
     ManagerRegistry.clear()  # Clear the registry after each test
     ContextRegistry.clear()  # Clear the context handler after each test
+
+
+@pytest.fixture(autouse=True)
+def _enable_eventbus_for_marked_tests(request):
+    """Enable EventBus publishing for tests marked with @pytest.mark.enable_eventbus.
+
+    By default, EventBus publishing is disabled during tests (via SETTINGS).
+    Tests that need to verify event publishing behavior opt-in via the marker.
+    """
+    from unity.events.event_bus import EventBus
+
+    if request.node.get_closest_marker("enable_eventbus"):
+        EventBus._publishing_enabled = True
+        yield
+        EventBus._publishing_enabled = SETTINGS.EVENTBUS_PUBLISHING_ENABLED
+    else:
+        yield
 
 
 # --------------------------------------------------------------------------- #
@@ -324,7 +406,9 @@ def pytest_sessionstart(session):
     # ------------------------------------------------------------------
 
     if os.environ.get("CI"):
-        unify.set_cache_backend("local_separate")
+        import unillm
+
+        unillm.set_cache_backend("local_separate")
 
     if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
         # Project and shared contexts already prepared externally (e.g., by
@@ -349,6 +433,13 @@ def pytest_sessionstart(session):
     except Exception:
         # Fallback to default project if UnityTests not available yet
         unity.init()
+
+    # ------------------------------------------------------------------
+    #  Configure EventBus publishing (disabled by default in tests)
+    # ------------------------------------------------------------------
+    from unity.events.event_bus import EventBus
+
+    EventBus._publishing_enabled = SETTINGS.EVENTBUS_PUBLISHING_ENABLED
 
     # ------------------------------------------------------------------
     #  Parse and store session-level test tags for duration logging
@@ -386,13 +477,42 @@ def pytest_sessionstart(session):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    # Write cache stats to a temp file for parallel_run.sh to consume
+    # The file is keyed by UNITY_TMUX_SESSION_ID env var (set by parallel_run.sh)
+    try:
+        import unillm
+
+        stats = unillm.get_cache_stats()
+        session_id = os.environ.get("UNITY_TMUX_SESSION_ID", "")
+        if session_id:
+            stats_file = f"/tmp/parallel_run_cache_{session_id}.txt"
+            with open(stats_file, "w") as f:
+                f.write(f"{stats.hits}|{stats.misses}\n")
+    except Exception:
+        pass  # Don't fail the test run if cache stats writing fails
+
     if SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_EXIT:
         unify.delete_project(unify.active_project())
 
 
+def pytest_unconfigure(config):
+    """Restore HOME and clean up the temporary test home directory."""
+    import shutil
+
+    test_home = os.environ.get("HOME", "")
+    if _original_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = _original_home
+    if test_home.startswith("/tmp/") and "unity_test_home_" in test_home:
+        shutil.rmtree(test_home, ignore_errors=True)
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    if SETTINGS.UNIFY_CACHE_STATS:
-        stats = unify.get_cache_stats()
+    if SETTINGS.UNITY_CACHE_STATS:
+        import unillm
+
+        stats = unillm.get_cache_stats()
         terminalreporter.section(
             f"Unify cache report | Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses} | Reads: {stats.reads} | Writes: {stats.writes}",
         )
@@ -403,7 +523,23 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 # --------------------------------------------------------------------------- #
 
 
+_original_home: str | None = None
+
+
 def pytest_configure(config):
+    # ------------------------------------------------------------------
+    # Isolate HOME so that tests never touch the real home directory.
+    # get_local_root() defaults to ~/Unity/Local, and the process cwd
+    # is set to the same path at startup.  By pointing HOME at a temp
+    # dir we keep Downloads/, .env, snapshots, etc. sandboxed.
+    # ------------------------------------------------------------------
+    import tempfile
+
+    global _original_home
+    _original_home = os.environ.get("HOME")
+    test_home = tempfile.mkdtemp(prefix="unity_test_home_")
+    os.environ["HOME"] = test_home
+
     config.addinivalue_line(
         "markers",
         "requires_real_unify: mark test as requiring the real unify implementation",
@@ -412,6 +548,14 @@ def pytest_configure(config):
         "markers",
         "eval: mark a test as a fuzzy evaluation test for English language APIs",
     )
+    config.addinivalue_line(
+        "markers",
+        "enable_eventbus: enable EventBus publishing for this test",
+    )
+    config.addinivalue_line(
+        "markers",
+        "requires_orchestra: mark test as requiring a running Orchestra server",
+    )
 
     # Required to disable explicit log level if set from pytest.ini or command line options
     if os.environ.get("UNITY_TESTS_CLI_LOGGING", "true").lower() == "false":
@@ -419,7 +563,7 @@ def pytest_configure(config):
         config.option.showcapture = "no"
         config.option.capture = "no"
 
-    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
+    config.stash[metadata_key]["Settings"] = SETTINGS.model_dump(mode="json")
 
     # ------------------------------------------------------------------ #
     # Prune non-pytest console handlers so only pytest live logs appear. #
@@ -443,8 +587,15 @@ def pytest_configure(config):
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
+# Skip tests marked with requires_orchestra when Orchestra is not available
 def pytest_runtest_setup(item):
     test_name_log_filter.set_test_name(item.nodeid)
+    _set_unify_context_for_test(item)
+
+    # Skip requires_orchestra tests if Orchestra is not running
+    if item.get_closest_marker("requires_orchestra"):
+        if not _check_orchestra_available():
+            pytest.skip("Orchestra server not available")
 
 
 def _normalize_pytest_nodeid(nodeid):
@@ -493,13 +644,16 @@ def pytest_runtest_call(item):
     setattr(target_obj, "_unity_pytest_nodeid", func_name)
 
 
-def pytest_runtest_teardown(item):
+def pytest_runtest_teardown(item, nextitem=None):
+    _unset_unify_context_for_test(item)
     test_name_log_filter.reset_test_name()
 
 
 def pytest_html_results_summary(prefix, summary, postfix):
-    if SETTINGS.UNIFY_CACHE_STATS:
-        stats = unify.get_cache_stats()
+    if SETTINGS.UNITY_CACHE_STATS:
+        import unillm
+
+        stats = unillm.get_cache_stats()
         prefix.extend(
             [
                 f"<h4>Unify Cache Stats Report:</h4>",

@@ -46,7 +46,6 @@ from unity.file_manager.file_parsers.utils.summary_compression import (
     generate_summary_with_compression,
 )
 
-
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_\\-]{2,}")
 
 
@@ -129,6 +128,7 @@ def extract_metadata_from_text_best_effort(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
+        origin="FileParser.extract_metadata",
     )
 
     budgets = [
@@ -318,6 +318,7 @@ def summarize_spreadsheet_profile_best_effort(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
+        origin="FileParser.generate_summary",
     )
 
     try:

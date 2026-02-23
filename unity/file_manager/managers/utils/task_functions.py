@@ -110,7 +110,8 @@ def execute_create_file_record(
     Create the FileRecord entry in the index.
 
     This task MUST run before any content/table ingestion. It registers
-    the file in the FileRecords index and returns the generated file_id.
+    the file in the FileRecords index and returns the generated file_id
+    and computed storage_id.
 
     Parameters
     ----------
@@ -126,7 +127,7 @@ def execute_create_file_record(
     Returns
     -------
     dict
-        {"file_id": int, "file_path": str}
+        {"file_id": int, "file_path": str, "storage_id": str}
 
     Raises
     ------
@@ -138,14 +139,12 @@ def execute_create_file_record(
     from .ingest_ops import get_file_id_from_path
     from unity.file_manager.types.file import FileRecord
 
+    dm = file_manager._data_manager
     logger.debug(f"[TaskFn] Creating file record for: {file_path}")
 
-    # Get file identity info (returns FileInfo Pydantic model)
-    info = file_manager.file_info(identifier=file_path)
-
     # Determine ingest settings from config
-    ingest_mode = config.ingest.mode
-    unified_label = config.ingest.unified_label if ingest_mode == "unified" else None
+    # storage_id from config (None means auto-assign using str(file_id))
+    config_storage_id = config.ingest.storage_id
     table_ingest = config.ingest.table_ingest
 
     # Best-effort: adapter-derived size/timestamps (never raises)
@@ -161,14 +160,33 @@ def execute_create_file_record(
         trace=getattr(parse_result, "trace", None),
     )
 
-    # Create the file record entry
+    # Get source_uri and source_provider from adapter/resolver
+    source_uri = None
+    source_provider = None
+    try:
+        resolve_to_uri = getattr(file_manager, "_resolve_to_uri", None)
+        if resolve_to_uri:
+            source_uri = resolve_to_uri(file_path)
+    except Exception:
+        pass
+    try:
+        adapter = getattr(file_manager, "_adapter", None)
+        source_provider = getattr(adapter, "name", None) or getattr(
+            file_manager,
+            "_fs_type",
+            None,
+        )
+    except Exception:
+        pass
+
+    # Create the file record entry with empty storage_id initially
+    # (will be updated with str(file_id) after we know file_id, unless config specifies one)
     entry = FileRecord.to_file_record_entry(
         file_path=file_path,
-        source_uri=info.source_uri,
-        source_provider=info.source_provider,
+        source_uri=source_uri,
+        source_provider=source_provider,
         parse_result=parse_result,
-        ingest_mode=ingest_mode,
-        unified_label=unified_label,
+        storage_id=config_storage_id or "",  # Empty means auto-assign
         table_ingest=table_ingest,
         file_size=sinfo.size_bytes,
         created_at=sinfo.created_at,
@@ -182,6 +200,7 @@ def execute_create_file_record(
 
     # Lookup the created file_id
     file_id = get_file_id_from_path(
+        data_manager=dm,
         index_context=file_manager._ctx,
         file_path=file_path,
     )
@@ -191,11 +210,27 @@ def execute_create_file_record(
             f"Failed to retrieve file_id after creating record for: {file_path}",
         )
 
-    logger.debug(f"[TaskFn] File record created: file_id={file_id}")
+    # Compute effective storage_id
+    # If config_storage_id is provided, use it; otherwise use str(file_id)
+    storage_id = config_storage_id if config_storage_id else str(file_id)
+
+    # Update the record with computed storage_id if we used auto-assign
+    if not config_storage_id:
+        dm = file_manager._data_manager
+        dm.update_rows(
+            context=file_manager._ctx,
+            updates={"storage_id": storage_id},
+            filter=f"file_id == {file_id}",
+        )
+
+    logger.debug(
+        f"[TaskFn] File record created: file_id={file_id}, storage_id={storage_id}",
+    )
 
     return {
         "file_id": file_id,
         "file_path": file_path,
+        "storage_id": storage_id,
         "created_file_record": created_file_record,
     }
 
@@ -248,11 +283,14 @@ def execute_ingest_content_chunk(
         On ingest failure. This halts the dependency chain - subsequent
         content chunks cannot be ingested.
     """
+    from .storage import ensure_file_context as _storage_ensure_file_context
     from .ingest_ops import (
         get_file_id_from_path,
+        get_storage_id_from_path,
         ingest_content_batch,
     )
 
+    dm = file_manager._data_manager
     logger.debug(
         f"[TaskFn] Ingesting content chunk {chunk_index + 1}/{total_chunks} "
         f"for {file_path} ({len(chunk_records)} rows)",
@@ -260,11 +298,21 @@ def execute_ingest_content_chunk(
 
     # Get file_id (should exist from file_record task)
     file_id = get_file_id_from_path(
+        data_manager=dm,
         index_context=file_manager._ctx,
         file_path=file_path,
     )
     if file_id is None:
         raise ValueError(f"File ID not found for {file_path}")
+
+    # Get storage_id from the file record
+    storage_id = get_storage_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    if not storage_id:
+        storage_id = str(file_id)
 
     if not chunk_records:
         logger.debug(
@@ -277,36 +325,49 @@ def execute_ingest_content_chunk(
             "context": "",
         }
 
-    # Determine destination context
-    dest_name = (
-        file_path
-        if config.ingest.mode == "per_file"
-        else (config.ingest.unified_label or "Unified")
-    )
-    context = file_manager._ctx_for_file(dest_name)
+    # Ensure the content context exists (on first chunk)
+    if chunk_index == 0:
+        try:
+            _storage_ensure_file_context(file_manager, storage_id=storage_id)
+        except Exception as e:
+            logger.warning(f"[TaskFn] Error ensuring content context: {e}")
+
+    # Determine destination context using storage_id
+    context = file_manager._ctx_for_file_content(storage_id)
+
+    # Determine if this is shared storage (storage_id != str(file_id))
+    is_shared_storage = storage_id != str(file_id)
 
     # Delete existing rows on first chunk only (if replace_existing)
     if chunk_index == 0 and config.ingest.replace_existing:
-        from .ops import delete_per_file_rows_by_filter as _ops_delete
+        from .ops import delete_file_content_rows
 
         try:
-            if config.ingest.mode == "per_file":
-                _ops_delete(file_manager, file_path=dest_name, filter_expr=None)
-            else:
-                # Unified: delete only this file's rows
-                _ops_delete(
+            if is_shared_storage:
+                # Shared storage: delete only this file's rows using filter
+                delete_file_content_rows(
                     file_manager,
-                    file_path=dest_name,
+                    storage_id=storage_id,
                     filter_expr=f"file_id == {file_id}",
+                )
+            else:
+                # Per-file storage: delete all rows
+                delete_file_content_rows(
+                    file_manager,
+                    storage_id=storage_id,
+                    filter_expr=None,
                 )
         except Exception as e:
             logger.warning(f"[TaskFn] Failed to delete existing rows: {e}")
 
-    # Ingest the batch
+    # Ingest the batch via DataManager
     inserted_ids = ingest_content_batch(
+        data_manager=dm,
         context=context,
         rows=chunk_records,
         file_id=file_id,
+        add_to_all_context=file_manager.include_in_multi_assistant_table,
+        infer_untyped_fields=config.ingest.infer_untyped_fields,
     )
 
     logger.debug(
@@ -374,7 +435,9 @@ def execute_embed_content_chunk(
     but does NOT halt the pipeline.
     """
     from .embed_ops import embed_content_batch, get_embedding_specs_for_file
+    from .ingest_ops import get_storage_id_from_path, get_file_id_from_path
 
+    dm = file_manager._data_manager
     logger.debug(
         f"[TaskFn] Embedding content chunk {chunk_index + 1}/{total_chunks} "
         f"for {file_path} ({len(inserted_ids)} ids)",
@@ -400,13 +463,32 @@ def execute_embed_content_chunk(
             "embedded_count": 0,
         }
 
-    # Determine context
-    dest_name = (
-        file_path
-        if config.ingest.mode == "per_file"
-        else (config.ingest.unified_label or "Unified")
+    # Get file_id and storage_id for context resolution
+    file_id = get_file_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
     )
-    context = file_manager._ctx_for_file(dest_name)
+    storage_id = get_storage_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    if not storage_id and file_id is not None:
+        storage_id = str(file_id)
+
+    # Determine context using storage_id
+    if storage_id:
+        context = file_manager._ctx_for_file_content(storage_id)
+    else:
+        # Fallback (should not happen)
+        logger.warning(f"[TaskFn] No storage_id found for {file_path}")
+        return {
+            "chunk_index": chunk_index,
+            "success": False,
+            "columns_embedded": {},
+            "embedded_count": 0,
+        }
 
     # Embed the batch
     results = embed_content_batch(
@@ -490,19 +572,35 @@ def execute_ingest_table_chunk(
         On ingest failure. This halts dependent embed tasks for this table.
     """
     from .storage import ensure_file_table_context as _storage_ensure_file_table_context
-    from .ops import create_file_table as _ops_create_file_table
+    from .ops import batch_insert_file_table_rows as _batch_insert_file_table_rows
+    from .ingest_ops import (
+        get_file_id_from_path,
+        get_storage_id_from_path,
+        with_infer_untyped_fields,
+    )
 
+    dm = file_manager._data_manager
     logger.debug(
         f"[TaskFn] Ingesting table '{table_label}' chunk {chunk_index + 1}/{total_chunks} "
         f"for {file_path} ({len(chunk_rows)} rows)",
     )
 
-    # Determine destination file path (per_file or unified label)
-    dest_name = (
-        file_path
-        if config.ingest.mode == "per_file"
-        else (config.ingest.unified_label or "Unified")
+    # Get file_id and storage_id for context resolution
+    file_id = get_file_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
     )
+    storage_id = get_storage_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    if not storage_id and file_id is not None:
+        storage_id = str(file_id)
+
+    if not storage_id:
+        raise ValueError(f"No storage_id found for {file_path}")
 
     # Ensure the table context exists (on first chunk)
     if chunk_index == 0:
@@ -513,33 +611,31 @@ def execute_ingest_table_chunk(
                 table_label=table_label,
                 config=config,
             )
+            example = (
+                chunk_rows[0]
+                if chunk_rows and isinstance(chunk_rows[0], dict)
+                else None
+            )
             _storage_ensure_file_table_context(
                 file_manager,
-                file_path=dest_name,
+                storage_id=storage_id,
                 table=table_label,
                 columns=columns,
-                example_row=(
-                    chunk_rows[0]
-                    if chunk_rows and isinstance(chunk_rows[0], dict)
-                    else None
-                ),
+                example_row=example,
                 business_context=business_context,
             )
         except Exception as e:
             logger.warning(f"[TaskFn] Error ensuring table context: {e}")
 
-    # Get context path
-    context = file_manager._ctx_for_file_table(dest_name, table_label)
-
-    # Use the ops function to create table rows
-    inserted_ids = _ops_create_file_table(
+    # Get context path and insert rows directly (ensure already done on first chunk)
+    context = file_manager._ctx_for_file_table(storage_id, table_label)
+    inserted_ids = _batch_insert_file_table_rows(
         file_manager,
-        file_path=dest_name,
+        storage_id=storage_id,
         table=table_label,
-        rows=chunk_rows,
-        columns=columns,
-        example_row=(
-            chunk_rows[0] if chunk_rows and isinstance(chunk_rows[0], dict) else None
+        rows=with_infer_untyped_fields(
+            chunk_rows,
+            enabled=config.ingest.infer_untyped_fields,
         ),
     )
 
@@ -609,7 +705,9 @@ def execute_embed_table_chunk(
     halt the pipeline.
     """
     from .embed_ops import embed_table_batch, get_embedding_specs_for_file
+    from .ingest_ops import get_file_id_from_path, get_storage_id_from_path
 
+    dm = file_manager._data_manager
     logger.debug(
         f"[TaskFn] Embedding table '{table_label}' chunk {chunk_index + 1}/{total_chunks} "
         f"for {file_path} ({len(inserted_ids)} ids)",
@@ -635,13 +733,32 @@ def execute_embed_table_chunk(
             "embedded_count": 0,
         }
 
-    # Get context
-    dest_name = (
-        file_path
-        if config.ingest.mode == "per_file"
-        else (config.ingest.unified_label or "Unified")
+    # Get file_id and storage_id for context resolution
+    file_id = get_file_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
     )
-    context = file_manager._ctx_for_file_table(dest_name, table_label)
+    storage_id = get_storage_id_from_path(
+        data_manager=dm,
+        index_context=file_manager._ctx,
+        file_path=file_path,
+    )
+    if not storage_id and file_id is not None:
+        storage_id = str(file_id)
+
+    if not storage_id:
+        logger.warning(f"[TaskFn] No storage_id found for {file_path}")
+        return {
+            "table_label": table_label,
+            "chunk_index": chunk_index,
+            "success": False,
+            "columns_embedded": {},
+            "embedded_count": 0,
+        }
+
+    # Get context using storage_id
+    context = file_manager._ctx_for_file_table(storage_id, table_label)
 
     # Embed the batch
     results = embed_table_batch(

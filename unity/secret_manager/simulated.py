@@ -10,6 +10,7 @@ import unillm
 from .base import BaseSecretManager
 from .types import Secret
 from ..common.llm_client import new_llm_client
+from ..common.context_dump import make_messages_safe_for_context_dump
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.simulated import (
@@ -22,15 +23,11 @@ from ..common.simulated import (
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
-from ..constants import LOGGER
+from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 
-class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedSecretHandle(SimulatedHandleMixin, SteerableToolHandle):
     """Minimal LLM-backed handle used by SimulatedSecretManager.ask / update."""
 
     def __init__(
@@ -44,6 +41,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ) -> None:
         self._llm = llm
         self._initial = initial_text
@@ -75,7 +73,9 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -90,6 +90,8 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         # Async cancellation signal to break clarification waits
         self._cancel_event: asyncio.Event = asyncio.Event()
 
+        self._init_completion_gate(hold_completion)
+
     async def result(self):
         if self._cancelled:
             raise asyncio.CancelledError()
@@ -102,7 +104,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             if self._needs_clar and self._clar_down_q is not None:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -130,7 +132,7 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
                         pass
                     try:
                         LOGGER.info(
-                            f"💬 [{self._log_label}] Clarification answer received",
+                            f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
                         )
                     except Exception:
                         pass
@@ -161,15 +163,36 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             return self._answer, self._messages
         return self._answer
 
-    def interject(self, message: str) -> str:
+    async def interject(
+        self,
+        message: str,
+        *,
+        _parent_chat_context_cont: list[dict] | None = None,
+    ) -> None:
+        """Interject a message into the in-flight handle.
+
+        Args:
+            message: The interjection message to inject.
+            _parent_chat_context_cont: Optional continuation of parent chat context.
+                Accepted for API parity with real handles but not currently used.
+        """
         if self._cancelled:
-            return "Interaction stopped."
+            return
         self._log_interject(message)
         self._extra_msgs.append(message)
-        return "Acknowledged."
 
-    def stop(self, reason: str | None = None) -> str:
+    async def stop(
+        self,
+        reason: str | None = None,
+        **kwargs,
+    ) -> None:
+        """Stop the in-flight handle.
+
+        Args:
+            reason: Optional reason for stopping.
+        """
         self._log_stop(reason)
+        self._open_completion_gate()
         self._cancelled = True
         try:
             self._cancel_event.set()
@@ -179,7 +202,6 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             self._done.set()
         except Exception:
             pass
-        return "Stopped." if reason is None else f"Stopped: {reason}"
 
     async def pause(self) -> str:
         if self._paused:
@@ -200,16 +222,21 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
+        """Block until a clarification arrives, or forever if not requested."""
+        if not getattr(self, "_needs_clar", False):
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
-                return {"message": msg}
+                return {
+                    "type": "clarification",
+                    "call_id": "unknown",
+                    "tool_name": "unknown",
+                    "question": msg,
+                }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -230,7 +257,19 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             tools[self.pause.__name__] = self.pause
         return tools
 
-    async def ask(self, question: str) -> "SteerableToolHandle":
+    async def ask(
+        self,
+        question: str,
+        *,
+        _parent_chat_context: list[dict] | None = None,
+    ) -> "SteerableToolHandle":
+        """Ask a follow-up question about the current operation.
+
+        Args:
+            question: The question to ask.
+            parent_chat_context: Optional parent chat context for the inspection loop.
+                Accepted for API parity with real handles but not currently used.
+        """
         follow_up_prompt = build_followup_prompt(
             question=question,
             initial_instruction=self._initial,
@@ -264,22 +303,25 @@ class SimulatedSecretManager(BaseSecretManager):
         self,
         description: str = "simulate secret storage and actions (no real database)",
         *,
-        log_events: bool = False,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
+        # Accept but ignore extra parameters for compatibility
+        **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
-        self._log_events = log_events
         self._simulation_guidance = simulation_guidance
+        self._hold_completion = hold_completion
 
         # Shared, stateful async LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, origin="SimulatedSecretManager")
 
         # Mirror the real manager's tool exposure using reflection helper
         ask_tools = mirror_secret_manager_tools("ask")
         upd_tools = mirror_secret_manager_tools("update")
 
-        ask_msg = build_ask_prompt(tools=ask_tools)
-        upd_msg = build_update_prompt(tools=upd_tools)
+        ask_msg = build_ask_prompt(tools=ask_tools).flatten()
+        upd_msg = build_update_prompt(tools=upd_tools).flatten()
 
         # Seed the LLM with a combined system message describing behaviour
         self._llm.set_system_message(
@@ -311,8 +353,8 @@ class SimulatedSecretManager(BaseSecretManager):
                 "_description",
                 "simulate secret storage and actions (no real database)",
             ),
-            log_events=getattr(self, "_log_events", False),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+            hold_completion=getattr(self, "_hold_completion", False),
         )
         if sched:
             label, cid, t0 = sched
@@ -329,11 +371,7 @@ class SimulatedSecretManager(BaseSecretManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedSecretManager.ask",
@@ -341,23 +379,13 @@ class SimulatedSecretManager(BaseSecretManager):
             {"text": text, "requests_clarification": _requests_clarification},
         )
 
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "ask",
-                phase="incoming",
-                question=text,
-            )
-
         # Build the simulated instruction (no real tools will run)
         instruction = (
             "Simulate the behaviour of SecretManager.ask for the following user message. "
             "Never reveal any raw secret values; always refer to placeholders like ${name}.\n\n"
             f"User message: {text}\n\n"
             + (
-                f"Parent context: {json.dumps(_parent_chat_context)}\n\n"
+                f"Parent context: {json.dumps(make_messages_safe_for_context_dump(_parent_chat_context))}\n\n"
                 if _parent_chat_context
                 else ""
             )
@@ -373,84 +401,26 @@ class SimulatedSecretManager(BaseSecretManager):
             response_format=response_format,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(handle, call_id, "SecretManager", "ask")
-
         return handle
 
     async def from_placeholder(self, text: str) -> str:
         """Simulate resolving ${name} placeholders to opaque values (no LLM)."""
-        call_id = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "from_placeholder",
-                phase="incoming",
-                query=text,
-            )
-        except Exception:
-            pass
-
         import re
 
         def _repl(m: "re.Match[str]") -> str:
             name = m.group(1)
             return f"<value:{name}>"
 
-        result = re.sub(r"\$\{([^}]+)\}", _repl, text)
-
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "from_placeholder",
-                    phase="outgoing",
-                    status="resolved",
-                )
-        except Exception:
-            pass
-
-        return result
+        return re.sub(r"\$\{([^}]+)\}", _repl, text)
 
     async def to_placeholder(self, text: str) -> str:
         """Simulate redacting known raw values back to ${name} placeholders (no LLM)."""
-        call_id = None
-        try:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "to_placeholder",
-                phase="incoming",
-                info="start",
-            )
-        except Exception:
-            pass
-
         result = text
-        replaced: list[str] = []
         for name in self._list_secret_keys():
             token = f"<value:{name}>"
             placeholder = f"${{{name}}}"
             if token in result:
                 result = result.replace(token, placeholder)
-                replaced.append(name)
-
-        try:
-            if call_id is not None:
-                await publish_manager_method_event(
-                    call_id,
-                    "SecretManager",
-                    "to_placeholder",
-                    phase="outgoing",
-                    status="converted",
-                    names=replaced,
-                )
-        except Exception:
-            pass
 
         return result
 
@@ -465,11 +435,7 @@ class SimulatedSecretManager(BaseSecretManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedSecretManager.update",
@@ -477,22 +443,12 @@ class SimulatedSecretManager(BaseSecretManager):
             {"text": text, "requests_clarification": _requests_clarification},
         )
 
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "SecretManager",
-                "update",
-                phase="incoming",
-                request=text,
-            )
-
         instruction = (
             "Simulate the behaviour of SecretManager.update for the following request. "
             "Never reveal raw secret values; reference secrets via ${name}.\n\n"
             f"User request: {text}\n\n"
             + (
-                f"Parent context: {json.dumps(_parent_chat_context)}\n\n"
+                f"Parent context: {json.dumps(make_messages_safe_for_context_dump(_parent_chat_context))}\n\n"
                 if _parent_chat_context
                 else ""
             )
@@ -506,15 +462,8 @@ class SimulatedSecretManager(BaseSecretManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             response_format=response_format,
+            hold_completion=self._hold_completion,
         )
-
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "SecretManager",
-                "update",
-            )
 
         return handle
 

@@ -31,7 +31,7 @@ dependencies = [
     "pydantic-core>=2.0.0",
     "pygments>=2.19.2",
     "python-dotenv>=1.0.0",
-    "redis>=7.0.0",
+
     "requests>=2.31.0",
     "textual>=0.40.0",
     "textual-dev>=1.2.0",
@@ -60,15 +60,21 @@ dependencies = [
     # Screen sharing annotation
     "scikit-image>=0.25.2",
     "pillow>=11.3.0",
+
+    # Telemetry (OTel metrics → GCP Managed Prometheus)
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-gcp-monitoring>=1.9.0a0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
+    "pytest-asyncio>=0.24.0",
     "pytest-xdist>=3.6.1",
     "pytest-html>=4.1.1",
     "autoflake>=2.3.1",
-    "black>=25.9.0",
+    "black==26.1.0",
     "hypothesis>=6.135.29",
     "viztracer>=1.0.4",
     "pytest-dotenv>=0.5.2",

@@ -479,6 +479,11 @@ def backfill_rows(
     offset = 0
     while needed > 0:
         batch_size = needed
+        # Use deterministic sorting by unique_id_field to ensure consistent ordering
+        # across test runs. Without explicit sorting, results depend on log_event.id
+        # which can vary between sessions even for identically-seeded data.
+        sorting = {unique_id_field: "descending"} if unique_id_field else None
+
         if allowed_fields is not None:
             # Ensure we can deduplicate
             from_fields = list(
@@ -496,6 +501,7 @@ def backfill_rows(
                 offset=offset,
                 limit=batch_size,
                 from_fields=from_fields,
+                sorting=sorting,
             )
         else:
             try:
@@ -505,6 +511,7 @@ def backfill_rows(
                     offset=offset,
                     limit=batch_size,
                     exclude_fields=list_private_fields(context),
+                    sorting=sorting,
                 )
             except Exception as e:
                 # If the context does not exist yet (common in tests where tables are

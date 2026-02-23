@@ -1,16 +1,16 @@
 # Use Python 3.12 slim image as base
 FROM python:3.12-slim
 
-# Accept build argument for UNIFY_KEY
+# Accept build arguments
 ARG UNIFY_KEY
 ARG GITHUB_TOKEN
+ARG BRANCH=main
 
 # Set working directory
 WORKDIR /app
 
-# Virtual devices and remote browser setup
+# Build environment setup
 ENV DEBIAN_FRONTEND=noninteractive
-ENV DISPLAY=:99
 
 # Install all system dependencies from shared script (full production set)
 COPY scripts/install-system-deps.sh /tmp/
@@ -20,37 +20,6 @@ RUN chmod +x /tmp/install-system-deps.sh && /tmp/install-system-deps.sh && rm /t
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
-# noVNC static files
-RUN mkdir -p /opt/novnc && \
-    wget https://github.com/novnc/noVNC/archive/refs/heads/master.zip && \
-    unzip master.zip && \
-    mv noVNC-master/* /opt/novnc && \
-    rm -rf master.zip noVNC-master
-COPY desktop/novnc/custom.html /opt/novnc/custom.html
-
-# Dependencies for virtual camera (currently disabled)
-# RUN apt-get update && apt-get install -y \
-#     gstreamer1.0-tools \
-#     gstreamer1.0-plugins-base \
-#     gstreamer1.0-plugins-good \
-#     gstreamer1.0-plugins-bad \
-#     gstreamer1.0-plugins-ugly \
-#     gstreamer1.0-libav \
-#     gstreamer1.0-pipewire \
-#     gstreamer1.0-libcamera \
-#     python3-gi \
-#     gir1.2-gtk-3.0 \
-#     libgirepository1.0-dev \
-#     libcairo2-dev \
-#     pkg-config \
-#     build-essential \
-#     cmake \
-#     v4l-utils \
-#     libspa-0.2-modules \
-#     libcamera-tools \
-#     gir1.2-gst-plugins-base-1.0 \
-#     gir1.2-gstreamer-1.0 \
-#     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js & npm for agent-service
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -70,31 +39,45 @@ RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "htt
 # Install PyTorch CPU-only first (smaller and faster for containers)
 RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Install Python dependencies using uv (system-wide, no virtual environment)
+# Clone unify and unillm repos (no PyPI releases; pyproject.toml references ../unify and ../unillm)
+# Branch logic mirrors CI: main→main, otherwise→staging
+# This ensures staging deployments get staging branches (with latest fixes)
+RUN DEP_BRANCH=$([ "$BRANCH" = "main" ] && echo "main" || echo "staging") && \
+    git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unify.git /unify && \
+    git clone --depth 1 --branch $DEP_BRANCH https://github.com/unifyai/unillm.git /unillm
+
+# Copy source and install unity with all dependencies
+COPY . /app
 RUN uv pip install --system --no-cache .
+
+# Clone magnitude fork (agent-service's package.json references ../magnitude via file: deps)
+# Must come after COPY so it isn't overwritten by the gitignored local magnitude/ directory
+RUN git clone --depth 1 --branch unity-modifications https://github.com/unifyai/magnitude.git /app/magnitude
 
 # Remove git credentials from config after install (security best practice)
 RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".insteadOf
 
-# Copy all application files
-COPY . /app
+# Ensure entrypoint script is executable
+RUN chmod +x /app/entrypoint.sh || true
 
-# Ensure desktop scripts are executable
-RUN chmod +x /app/desktop/desktop.sh /app/desktop/display.sh /app/desktop/device.sh /app/desktop/update_vnc_password.sh /app/desktop/startup.sh /app/entrypoint.sh || true
+# Build magnitude packages (agent-service imports from their dist/ which is a build artifact).
+# --ignore-scripts skips the root postinstall (turbo run build) which requires bun.
+# The committed lockfile only resolves platform-specific optional deps (sharp, baml, etc.)
+# for the OS it was generated on, so we delete it and let npm resolve for the target platform.
+WORKDIR /app/magnitude
+RUN rm -f package-lock.json && npm install --ignore-scripts
+RUN cd packages/magnitude-extract && npx tsup
+RUN cd packages/magnitude-core && npx baml-cli generate && npx pkgroll
 
 # Build agent-service
 WORKDIR /app/agent-service
 RUN npm ci
 WORKDIR /app
 
-# Build codesandbox-service
-WORKDIR /app/codesandbox-service
-RUN npm ci
-WORKDIR /app
-
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV UNIFY_KEY=${UNIFY_KEY}
+
 RUN install -m 0755 /app/scripts/sandbox-dpkg /usr/local/bin/sandbox-dpkg
 
 # Download the turn detector model files
@@ -110,8 +93,17 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
+# Logging: Unity emoji logs to terminal, unify/unillm quiet (file traces only)
+ENV UNITY_TERMINAL_LOG=true
+ENV UNIFY_TERMINAL_LOG=false
+ENV UNILLM_TERMINAL_LOG=false
+ENV UNITY_LOG_DIR=/var/log/unity
+ENV UNIFY_LOG_DIR=/var/log/unify
+ENV UNILLM_LOG_DIR=/var/log/unillm
+
 # Expose the ports that the applications use
-EXPOSE 8000 6379 6080
+# 8000: conversation manager, 3000: agent-service (Magnitude)
+EXPOSE 8000 3000
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]

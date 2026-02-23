@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from ..manager_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 
+# Supported function languages
+FunctionLanguage = Literal["python", "bash", "zsh", "sh", "powershell"]
 
-class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
+# State modes for Python function execution
+StateMode = Literal["stateful", "read_only", "stateless"]
+
+
+class BaseFunctionManager(BaseStateManager):
     """
     Public contract for a function catalogue that stores and retrieves
-    user‑supplied Python functions and their metadata.
+    user‑supplied functions and their metadata.
 
     Overview
     --------
@@ -42,8 +47,10 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         *,
         implementations: Union[str, List[str]],
+        language: FunctionLanguage = "python",
         preconditions: Optional[Dict[str, Dict]] = None,
         verify: Optional[Dict[str, bool]] = None,
+        raise_on_error: bool = True,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -53,17 +60,22 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         add_functions(
             *,
             implementations: str | list[str],
+            language: Literal["python", "bash", "zsh", "sh", "powershell"] = "python",
             preconditions: dict[str, dict] | None = None,
             verify: dict[str, bool] | None = None,
+            raise_on_error: bool = True,
         ) -> dict[str, str]
 
         Parameters
         ----------
         implementations : str | list[str]
-            One or more full Python function source strings. Each string must
+            One or more function source strings. For Python, each string must
             contain exactly one top‑level ``def`` (or ``async def``) starting at
-            column 0. The implementation may call built‑ins and object methods
-            but must not call other user‑defined functions in the same batch.
+            column 0. For shell languages, the script should include metadata
+            comments at the top (see Notes).
+        language : Literal["python", "bash", "zsh", "sh", "powershell"], default ``"python"``
+            The language/interpreter for the function(s). All implementations
+            in a single call must be the same language.
         preconditions : dict[str, dict] | None, default ``None``
             Optional mapping from function name → precondition payload. The
             payload is stored as the ``precondition`` field on the corresponding
@@ -73,6 +85,10 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Optional mapping from function name → verification requirement.
             If a function name is present and mapped to ``True`` (default) or ``False``,
             it sets the ``verify`` field on the ``Function`` record.
+        raise_on_error : bool, default ``True``
+            If ``True``, raises ``ValueError`` when any function fails to add
+            (parse error, validation error, etc.). If ``False``, errors are
+            returned in the result dictionary instead of raising.
 
         Returns
         -------
@@ -80,12 +96,27 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Mapping of function name to status string, e.g.
             ``{"my_func": "added"}`` or ``{"my_func": "error: <message>"}``.
 
+        Raises
+        ------
+        ValueError
+            If ``raise_on_error=True`` and any function fails to add. The
+            exception message contains the failed function names and errors.
+
         Notes
         -----
+        - For Python functions: implementations are validated via AST parsing
+          and executed to extract signatures and docstrings automatically.
+        - For shell functions (bash, zsh, sh, powershell): metadata is extracted
+          from comments at the top of the script using these patterns::
+
+              # @name: my_function
+              # @args: (input_file output_file --verbose)
+              # @description: Brief description of what the function does
+
+          The ``@name`` comment is required for shell functions. ``@args`` and
+          ``@description`` are optional.
         - Implementations should persist records that conform to the
-          ``Function`` model (including ``name``, ``function_id``, ``argspec``,
-          ``docstring``, ``implementation``, ``calls``, ``embedding_text`` and
-          ``precondition``) and ensure that failures for one function do not
+          ``Function`` model and ensure that failures for one function do not
           prevent other valid functions in the same batch from being added.
         """
 
@@ -94,16 +125,16 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         *,
         include_implementations: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Return a mapping of function name to function metadata.
 
-        Signature
-        ---------
-        list_functions(
-            *,
-            include_implementations: bool = False,
-        ) -> dict[str, dict[str, Any]]
+        Each record conforms to the ``Function`` schema and includes a
+        ``guidance_ids`` field — a list of identifiers for related guidance
+        entries that describe compositional workflows using these functions.
 
         Parameters
         ----------
@@ -111,15 +142,37 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             When ``True``, values include the full source code in the
             ``implementation`` field. When ``False``, implementations may be
             omitted to reduce payload size.
+        _return_callable : bool, default ``False``
+            When ``True``, return Python callables instead of metadata dicts.
+            Implementations SHOULD inject the resulting callables (and any of their
+            transitive dependencies) into the provided ``_namespace``.
+        _namespace : dict[str, Any] | None, default ``None``
+            Target namespace dict for dependency injection when
+            ``_return_callable=True``. Required when ``_return_callable=True``.
+        _also_return_metadata : bool, default ``False``
+            When ``True`` (and only valid with ``_return_callable=True``), return a
+            dict containing both callables and metadata:
+            ``{"callables": <...>, "metadata": <...>}``.
 
         Returns
         -------
-        dict[str, Function]
-            Mapping of function name → record conforming to the
-            ``Function`` schema. Implementations MAY return actual Pydantic
-            ``Function`` instances or JSON‑serialisable dicts matching that
-            schema. When ``include_implementations=False``, the
-            ``implementation`` field may be omitted.
+        dict[str, Function] | dict[str, Callable[..., Any]] | dict[str, Any]
+            - When ``_return_callable=False``: mapping of function name → record
+              conforming to the ``Function`` schema (as dicts or Function objects).
+              When ``include_implementations=False``, the ``implementation`` field
+              may be omitted.
+            - When ``_return_callable=True``: mapping of function name → callable.
+              Callables MAY be in-process functions or proxy callables for functions
+              that must execute in an isolated virtual environment (implementation‑defined).
+            - When ``_also_return_metadata=True``: a dict with keys ``callables`` and
+              ``metadata`` containing the two corresponding mappings.
+
+        Raises
+        ------
+        ValueError
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
+        ValueError
+            If ``_also_return_metadata=True`` but ``_return_callable`` is ``False``.
         """
 
     @abstractmethod
@@ -176,67 +229,93 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
-    def search_functions(
+    def filter_functions(
         self,
         *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
         """
-        Filter stored function metadata using a Python‑expression.
+        Filter stored function metadata using a Python expression.
 
-        Signature
-        ---------
-        search_functions(
-            *,
-            filter: str | None = None,
-            offset: int = 0,
-            limit: int = 100,
-        ) -> list[dict[str, Any]]
+        Each result conforms to the ``Function`` schema and includes a
+        ``guidance_ids`` field — a list of identifiers for related guidance
+        entries that describe compositional workflows using these functions.
 
         Parameters
         ----------
         filter : str | None, default ``None``
             A boolean expression evaluated per row with fields of the
             ``Function`` model in scope (e.g. ``name``, ``argspec``,
-            ``docstring``, ``calls``). When ``None``, returns all rows subject
+            ``docstring``, ``depends_on``). When ``None``, returns all rows subject
             to pagination.
         offset : int, default ``0``
             Zero‑based index of the first result to return.
         limit : int, default ``100``
             Maximum number of results to return. Must be <= 1000.
+        include_implementations : bool, default ``True``
+            When ``True``, results include the full source code in the
+            ``implementation`` field. When ``False``, implementations are
+            omitted to reduce payload size.
+        _return_callable : bool, default ``False``
+            When ``True``, return Python callables instead of metadata dicts.
+            Implementations SHOULD inject the resulting callables (and any of their
+            transitive dependencies) into the provided ``_namespace``.
+        _namespace : dict[str, Any] | None, default ``None``
+            Target namespace dict for dependency injection when
+            ``_return_callable=True``. Required when ``_return_callable=True``.
+        _also_return_metadata : bool, default ``False``
+            When ``True`` (and only valid with ``_return_callable=True``), return a
+            dict containing both callables and metadata:
+            ``{"callables": [...], "metadata": [...]}``.
 
         Returns
         -------
-        list[Function]
-            A list of records conforming to the ``Function`` schema. An
-            implementation may return actual ``Function`` instances or
-            JSON‑serialisable dicts matching the model.
+        list[Function] | list[Callable[..., Any]] | dict[str, Any]
+            - When ``_return_callable=False``: list of records conforming to the
+              ``Function`` schema (as dicts or Function objects). When
+              ``include_implementations=False``, the ``implementation`` field
+              is omitted.
+            - When ``_return_callable=True``: list of callables corresponding to the
+              returned records.
+            - When ``_also_return_metadata=True``: a dict with keys ``callables`` and
+              ``metadata`` containing the two corresponding lists.
+
+        Raises
+        ------
+        ValueError
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
+        ValueError
+            If ``_also_return_metadata=True`` but ``_return_callable`` is ``False``.
 
         Examples
         --------
-        >>> mgr.search_functions(filter="'price' in docstring and 'sum' in calls")
-        >>> mgr.search_functions(filter="name.startswith('get_')")
+        >>> mgr.filter_functions(filter="'price' in docstring and 'sum' in depends_on")
+        >>> mgr.filter_functions(filter="name.startswith('get_')")
         """
 
     @abstractmethod
-    def search_functions_by_similarity(
+    def search_functions(
         self,
         *,
         query: str,
         n: int = 5,
+        include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search for functions by semantic similarity to a natural‑language query.
 
-        Signature
-        ---------
-        search_functions_by_similarity(
-            *,
-            query: str,
-            n: int = 5,
-        ) -> list[dict[str, Any]]
+        Each result conforms to the ``Function`` schema and includes a
+        ``guidance_ids`` field — a list of identifiers for related guidance
+        entries that describe compositional workflows using these functions.
 
         Parameters
         ----------
@@ -244,21 +323,178 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             Natural‑language text describing the desired function(s).
         n : int, default ``5``
             Number of similar results to return.
+        include_implementations : bool, default ``True``
+            When ``True``, results include the full source code in the
+            ``implementation`` field. When ``False``, implementations are
+            omitted to reduce payload size.
+        _return_callable : bool, default ``False``
+            When ``True``, return Python callables instead of metadata dicts.
+            Implementations SHOULD inject the resulting callables (and any of their
+            transitive dependencies) into the provided ``_namespace``.
+        _namespace : dict[str, Any] | None, default ``None``
+            Target namespace dict for dependency injection when
+            ``_return_callable=True``. Required when ``_return_callable=True``.
+        _also_return_metadata : bool, default ``False``
+            When ``True`` (and only valid with ``_return_callable=True``), return a
+            dict containing both callables and metadata:
+            ``{"callables": [...], "metadata": [...]}``.
 
         Returns
         -------
-        list[dict[str, Any]]
-            Up to ``n`` results ordered by similarity. Each element SHOULD
-            include the fields of the ``Function`` model (as a record or a
-            dict matching the schema) and MAY include an additional ``score``
-            field (``float``) representing the similarity (lower distance or
-            higher similarity depending on implementation).
+        list[dict[str, Any]] | list[Callable[..., Any]] | dict[str, Any]
+            - When ``_return_callable=False``: up to ``n`` results ordered by similarity.
+              Each element SHOULD include the fields of the ``Function`` model and MAY
+              include an additional ``score`` field (``float``) representing similarity.
+              When ``include_implementations=False``, the ``implementation`` field
+              is omitted.
+            - When ``_return_callable=True``: list of callables corresponding to the
+              returned records.
+            - When ``_also_return_metadata=True``: a dict with keys ``callables`` and
+              ``metadata`` containing the two corresponding lists.
+
+        Raises
+        ------
+        ValueError
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
+        ValueError
+            If ``_also_return_metadata=True`` but ``_return_callable`` is ``False``.
+        """
+
+    @abstractmethod
+    async def execute_function(
+        self,
+        *,
+        function_name: str,
+        call_kwargs: Optional[Dict[str, Any]] = None,
+        target_venv_id: Optional[int] = ...,
+        state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+        session_id: int = 0,
+        venv_pool: Optional[Any] = None,
+        shell_pool: Optional[Any] = None,
+        extra_namespaces: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a stored function by name with optional venv and state mode overrides.
+
+        Signature
+        ---------
+        execute_function(
+            *,
+            function_name: str,
+            call_kwargs: dict[str, Any] | None = None,
+            target_venv_id: int | None = USE_FUNCTION_DEFAULT,
+            state_mode: Literal["stateful", "read_only", "stateless"] = "stateless",
+            session_id: int = 0,
+            venv_pool: VenvPool | None = None,
+            shell_pool: ShellPool | None = None,
+            extra_namespaces: dict[str, Any] | None = None,
+        ) -> dict[str, Any]
+
+        Parameters
+        ----------
+        function_name : str
+            Name of the function to execute (must exist in the function table).
+        call_kwargs : dict[str, Any] | None, default ``None``
+            Keyword arguments to pass to the function. For Python functions, these
+            are passed as keyword arguments. For shell functions, they may be converted
+            to positional arguments or environment variables depending on the argspec.
+        target_venv_id : int | None, default ``USE_FUNCTION_DEFAULT``
+            Override the execution environment (Python functions only):
+            - ``USE_FUNCTION_DEFAULT`` (``...``): Use the function's stored ``venv_id``
+              from the function table. This is the default behavior.
+            - ``None``: Execute in the default Python environment (no custom venv).
+            - ``int``: Execute in this specific venv_id, regardless of what's
+              stored in the function table.
+
+            This allows running simple/compatible functions in a different venv
+            than they were originally associated with. The caller is responsible
+            for ensuring the target venv has the required packages.
+            Ignored for shell functions.
+        state_mode : Literal["stateful", "read_only", "stateless"], default ``"stateless"``
+            Controls how global state is handled during execution:
+            - ``"stateless"``: Executes with fresh globals/no inherited state.
+              Every execution starts with a clean environment. This is the default
+              for backward compatibility and is useful for pure functions that should
+              not depend on or affect session state.
+            - ``"stateful"``: Uses a persistent globals dict (in-process) or subprocess
+              connection (venv). Variables and state from previous executions persist.
+              Enables Jupyter-notebook-style incremental development. Requires
+              ``venv_pool`` for venv functions, ``shell_pool`` for shell functions.
+              For in-process Python functions (no venv), state is stored internally.
+            - ``"read_only"``: Reads the current state from the persistent session
+              but executes in a fresh environment. Changes are not persisted.
+              Useful for "what-if" exploration. Requires the appropriate pool for
+              venv/shell functions.
+
+            All three modes are supported for both in-process (no venv) and
+            subprocess (venv) Python function execution.
+        session_id : int, default ``0``
+            The session ID within the execution environment. Multiple sessions allow
+            independent stateful execution contexts. Each session has its own process
+            and state, enabling concurrent "notebook panes" with isolated state.
+            Only applies to ``state_mode="stateful"`` or ``state_mode="read_only"``.
+        venv_pool : VenvPool | None, default ``None``
+            The VenvPool instance for stateful Python execution. Required when
+            ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
+            is Python with a venv. If not provided for these modes, an error is raised.
+        shell_pool : ShellPool | None, default ``None``
+            The ShellPool instance for stateful shell execution. Required when
+            ``state_mode="stateful"`` or ``state_mode="read_only"`` and the function
+            is a shell script. If not provided for these modes, an error is raised.
+        extra_namespaces : dict[str, Any] | None, default ``None``
+            Named objects to inject into the function's execution namespace.
+            For in-process Python execution, all entries are injected into the
+            globals dict. For venv/subprocess execution, ``"primitives"`` and
+            ``"primitives"`` entries are bridged via RPC; other entries
+            are only available in-process.
+
+        Returns
+        -------
+        dict[str, Any]
+            Execution result with keys:
+            - ``result``: The return value (Python) or exit code (shell).
+            - ``error``: Error message if execution failed, ``None`` otherwise.
+            - ``stdout``: Captured stdout from the function.
+            - ``stderr``: Captured stderr from the function.
+
+        Raises
+        ------
+        ValueError
+            If the function does not exist or has no implementation.
+        ValueError
+            If state_mode requires a pool but none is provided.
+
+        Examples
+        --------
+        >>> # Execute Python function statefully
+        >>> result = await fm.execute_function(
+        ...     function_name="my_func",
+        ...     call_kwargs={"x": 1},
+        ...     state_mode="stateful",
+        ...     venv_pool=venv_pool,
+        ... )
+
+        >>> # Execute shell function statefully
+        >>> result = await fm.execute_function(
+        ...     function_name="my_shell_func",
+        ...     state_mode="stateful",
+        ...     shell_pool=shell_pool,
+        ... )
+
+        >>> # Execute with extra namespaces (e.g. sub-agent environment)
+        >>> result = await fm.execute_function(
+        ...     function_name="my_func",
+        ...     extra_namespaces={"primitives": prims, "sub_agents": agent_env},
+        ... )
         """
 
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
 
+
+# Sentinel for "use the function's default venv_id"
+USE_FUNCTION_DEFAULT = ...
 
 # Attach centralised docstring
 BaseFunctionManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

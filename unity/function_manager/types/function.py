@@ -1,13 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
 
 class Function(BaseModel):
     """
-    Represents a single Python function stored in the FunctionManager.
+    Represents a function stored in the FunctionManager.
 
-    Functions can be either user-defined (with implementation source code) or
-    primitives (action methods from state managers with no stored implementation).
+    Functions can be written in multiple languages (Python, Bash, Zsh, Sh, PowerShell)
+    and can be either user-defined (with implementation source code) or primitives
+    (action methods from state managers with no stored implementation).
     """
 
     function_id: Optional[int] = Field(
@@ -17,10 +18,21 @@ class Function(BaseModel):
             "Auto-assigned for user functions, explicit stable IDs for primitives."
         ),
     )
+    language: Literal["python", "bash", "zsh", "sh", "powershell"] = Field(
+        "python",
+        description=(
+            "The language/interpreter for this function. "
+            "Defaults to 'python' for backward compatibility."
+        ),
+    )
     name: str = Field(..., description="The name of the function.")
     argspec: str = Field(
         ...,
-        description="The function's signature, e.g., '(x: int, y: int) -> int'.",
+        description=(
+            "The function's signature. Format varies by language: "
+            "Python: '(x: int, y: int) -> int'. "
+            "Shell: '(input_file output_file --verbose)' or positional description."
+        ),
     )
     docstring: str = Field("", description="The docstring of the function.")
     implementation: Optional[str] = Field(
@@ -30,9 +42,21 @@ class Function(BaseModel):
             "None for primitives (implementation lives in Python class)."
         ),
     )
-    calls: List[str] = Field(
+    depends_on: List[str] = Field(
         [],
-        description="A list of other functions called by this function.",
+        description=(
+            "Functions this function depends on.  Both bare and dotted names "
+            "are auto-detected from the AST at storage time (see "
+            "dependency_analysis.py) and injected into the execution namespace "
+            "at runtime (see FunctionManager._inject_dependencies).\n\n"
+            "Bare names (e.g. 'helper') refer to other compositional functions "
+            "whose implementations are exec'd into the namespace.\n\n"
+            "Dotted names (e.g. 'primitives.contacts.ask', 'primitives.actor.act') refer "
+            "to environment-provided namespaces.  The root segment (e.g. "
+            "'actor', 'primitives') is resolved via "
+            "registry.construct_sandbox_root() which constructs a fresh "
+            "instance of the appropriate class on demand."
+        ),
     )
     embedding_text: str = Field(
         ...,
@@ -82,9 +106,21 @@ class Function(BaseModel):
     venv_id: Optional[int] = Field(
         None,
         description=(
-            "Optional reference to a VirtualEnv.venv_id specifying which virtual "
-            "environment to use when executing this function. If None, the function "
-            "runs in the project's default environment."
+            "Optional reference to a VirtualEnv.venv_id specifying which Python virtual "
+            "environment to use when executing this function. Only applicable when "
+            "language='python'. Ignored for other languages. If None, the function "
+            "runs in the project's default Python environment."
+        ),
+    )
+
+    windows_os_required: bool = Field(
+        False,
+        description=(
+            "Whether this function requires execution on a Windows OS. "
+            "When True and the assistant has desktop_mode='windows', "
+            "execution routes to the remote Windows VM. "
+            "Typically used for functions that depend on Windows-only libraries "
+            "like xlwings or other COM automation tools."
         ),
     )
 

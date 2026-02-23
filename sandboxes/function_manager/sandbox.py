@@ -314,7 +314,7 @@ async def _main_async() -> None:
                     print(
                         f"Searching for functions similar to: '{query}' (showing top {n} results)...",
                     )
-                    results = fm.search_functions_by_similarity(query=query, n=n)
+                    results = fm.search_functions(query=query, n=n)
                     if not results:
                         print("No similar functions found.")
                         continue

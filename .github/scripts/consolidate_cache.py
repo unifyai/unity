@@ -18,8 +18,15 @@ def _read_nonempty_lines(path: Path) -> List[str]:
     if not path.exists() or not path.is_file():
         return []
     with path.open("r", encoding="utf-8") as f:
-        # Keep original line endings; skip whitespace-only lines
-        return [line for line in f.readlines() if line.strip()]
+        lines = []
+        for line in f.readlines():
+            if line.strip():
+                # Ensure each line ends with newline to prevent concatenation
+                # when merging files (last line of a file may lack trailing \n)
+                if not line.endswith("\n"):
+                    line = line + "\n"
+                lines.append(line)
+        return lines
 
 
 def _merge_unique_preserve_order(*sequences: List[str]) -> List[str]:
