@@ -50,8 +50,8 @@ ICONS = {
     "sms_sent": "📱",
     "email_received": "📧",
     "email_sent": "📧",
-    "unify_message_received": "💌",
-    "unify_message_sent": "💌",
+    "unify_message_received": "💬",
+    "unify_message_sent": "💬",
     "comms_outbound": "📤",
     # ── Voice / utterance ───────────────────────────────────────────────
     "inbound_utterance": "🎤",
