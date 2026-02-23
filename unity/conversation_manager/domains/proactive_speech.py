@@ -54,7 +54,7 @@ class ProactiveSpeech:
         """Decides whether to speak proactively based on the conversation history."""
         try:
             client = new_llm_client(
-                debug_marker="ConversationManager.proactive_speech",
+                origin="ConversationManager.proactive_speech",
             )
             client.set_response_format(ProactiveDecision)
             response = await client.generate(

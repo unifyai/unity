@@ -329,7 +329,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         # Shared, *stateful* **asynchronous** LLM (reusing common client)
         self._llm = new_llm_client(
             stateful=True,
-            debug_marker="SimulatedTranscriptManager",
+            origin="SimulatedTranscriptManager",
         )
         # Minimal in-memory simulation store for programmatic helpers
         self._sim_next_message_id: int = 1
