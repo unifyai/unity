@@ -84,6 +84,7 @@ ICONS = {
     "shutdown": "🏁",
     "call_status": "📞",
     # ── LLM brain ───────────────────────────────────────────────────────
+    "llm_log_file": "📝",
     "llm_thinking": "🔄",
     "llm_response": "🤖",
     "llm_completed": "✅",
