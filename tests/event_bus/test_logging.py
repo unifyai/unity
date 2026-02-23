@@ -578,7 +578,7 @@ async def test_result_lineage_set_during_body():
         await mgr.process("lineage-test")
 
     assert hasattr(mgr, "_inner_lineage")
-    assert "StubManager.process" in mgr._inner_lineage
+    assert any("StubManager.process" in s for s in mgr._inner_lineage)
 
 
 @pytest.mark.asyncio
@@ -666,7 +666,9 @@ async def test_result_inherits_parent_lineage():
         ]
         assert incoming
         hierarchy = incoming[0].payload.get("hierarchy", [])
-        assert hierarchy == ["OuterManager.act", "StubManager.process"]
+        assert len(hierarchy) == 2
+        assert hierarchy[0] == "OuterManager.act"
+        assert re.match(r"StubManager\.process\([0-9a-f]{4}\)$", hierarchy[1])
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
@@ -725,8 +727,10 @@ async def test_result_outgoing_hierarchy_not_polluted_by_inner_lineage():
     assert (
         incoming_hierarchy == outgoing_hierarchy
     ), f"Hierarchy mismatch: incoming={incoming_hierarchy}, outgoing={outgoing_hierarchy}"
-    assert incoming_hierarchy == ["StubManager.pollute"]
-    assert outgoing_hierarchy == ["StubManager.pollute"]
+    assert len(incoming_hierarchy) == 1
+    assert re.match(r"StubManager\.pollute\([0-9a-f]{4}\)$", incoming_hierarchy[0])
+    assert len(outgoing_hierarchy) == 1
+    assert re.match(r"StubManager\.pollute\([0-9a-f]{4}\)$", outgoing_hierarchy[0])
 
 
 @pytest.mark.asyncio
@@ -751,7 +755,10 @@ async def test_result_incoming_hierarchy_not_doubled():
     ]
     assert incoming
     hierarchy = incoming[0].payload.get("hierarchy", [])
-    assert hierarchy == ["StubManager.process"], f"Hierarchy doubled: {hierarchy}"
+    assert len(hierarchy) == 1 and re.match(
+        r"StubManager\.process\([0-9a-f]{4}\)$",
+        hierarchy[0],
+    ), f"Hierarchy wrong: {hierarchy}"
 
 
 def _extract_suffix(hierarchy_label: str) -> str | None:
