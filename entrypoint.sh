@@ -43,8 +43,9 @@ mkdir -p /var/log/unity /var/log/unify /var/log/unillm
 
 # Start agent-service on port 3000 (for web automation via Magnitude)
 echo "Starting agent-service..."
-npx ts-node /app/agent-service/src/index.ts &
+cd /app/agent-service && npx ts-node src/index.ts &
 AGENT_PID=$!
+cd /app
 echo "Agent-service started with PID: $AGENT_PID"
 
 # Start the main application

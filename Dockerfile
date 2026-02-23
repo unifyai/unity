@@ -60,6 +60,14 @@ RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".instea
 # Ensure entrypoint script is executable
 RUN chmod +x /app/entrypoint.sh || true
 
+# Build magnitude packages (agent-service imports from their dist/ which is a build artifact).
+# --ignore-scripts skips the root postinstall (turbo run build) which requires bun.
+# Build extract first since core depends on it.
+WORKDIR /app/magnitude
+RUN npm install --ignore-scripts
+RUN cd packages/magnitude-extract && npx tsup
+RUN cd packages/magnitude-core && npm run build
+
 # Build agent-service
 WORKDIR /app/agent-service
 RUN npm ci
