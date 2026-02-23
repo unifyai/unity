@@ -54,7 +54,7 @@ from unity.conversation_manager.tracing import (
 )
 from unity.session_details import SESSION_DETAILS
 from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS
+from unity.common.hierarchical_logger import DEFAULT_ICON, ICONS, is_event_visible
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FastBrainLogger — mirrors the async tool loop's LoopLogger format so all
@@ -80,46 +80,56 @@ class FastBrainLogger:
     def label(self) -> str:
         return self._label
 
-    def _emit(self, icon: str, msg: str) -> None:
-        LOGGER.info(f"{icon} [{self._label}] {msg}")
+    def _emit(self, event_type: str, msg: str) -> None:
+        if not is_event_visible(event_type):
+            return
+        LOGGER.info(
+            f"{ICONS[event_type]} [{self._label}] {msg}",
+            extra={"_category_checked": True},
+        )
 
-    def _emit_debug(self, icon: str, msg: str) -> None:
-        LOGGER.debug(f"{icon} [{self._label}] {msg}")
+    def _emit_debug(self, event_type: str, msg: str) -> None:
+        if not is_event_visible(event_type):
+            return
+        LOGGER.debug(
+            f"{ICONS[event_type]} [{self._label}] {msg}",
+            extra={"_category_checked": True},
+        )
 
     # ── typed helpers ────────────────────────────────────────────────────
 
     def llm_thinking(self, reason: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["llm_thinking"], f"LLM thinking… reason={reason}{extra}")
+        self._emit("llm_thinking", f"LLM thinking… reason={reason}{extra}")
 
     def llm_completed(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["llm_completed"],
+            "llm_completed",
             f"Generation completed{_id(generation_id)}{extra}",
         )
 
     def llm_cancelled(self, generation_id: str = "", **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["llm_cancelled"],
+            "llm_cancelled",
             f"Generation cancelled{_id(generation_id)}{extra}",
         )
 
     def llm_error(self, error: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["llm_error"], f"Generation error: {error}{extra}")
+        self._emit("llm_error", f"Generation error: {error}{extra}")
 
     def user_speech(self, text: str) -> None:
-        self._emit(ICONS["user_speech"], _trunc(text))
+        self._emit("user_speech", _trunc(text))
 
     def user_state(self, new_state: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["user_state"], f"User state: {new_state}{extra}")
+        self._emit("user_state", f"User state: {new_state}{extra}")
 
     def assistant_speech(self, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit(ICONS["assistant_speech"], f"{_trunc(text)}{extra}")
+        self._emit("assistant_speech", f"{_trunc(text)}{extra}")
 
     def guidance_received(
         self,
@@ -130,7 +140,7 @@ class FastBrainLogger:
     ) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["guidance_received"],
+            "guidance_received",
             f"Guidance from {source}: speak={should_speak} {_trunc(content)}{extra}",
         )
 
@@ -142,20 +152,20 @@ class FastBrainLogger:
     ) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["guidance_applied"],
+            "guidance_applied",
             f"Applied guidance {guidance_id} source={source}{extra}",
         )
 
     def guidance_buffered(self, guidance_id: str, count: int) -> None:
         self._emit(
-            ICONS["guidance_buffered"],
+            "guidance_buffered",
             f"Buffered guidance {guidance_id} (total={count})",
         )
 
     def guidance_say(self, guidance_id: str, text: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
         self._emit(
-            ICONS["guidance_say"],
+            "guidance_say",
             f"Speaking guidance {guidance_id}: {_trunc(text)}{extra}",
         )
 
@@ -163,94 +173,97 @@ class FastBrainLogger:
 
     def proactive_debounce(self, seconds: float) -> None:
         self._emit(
-            ICONS["proactive_debounce"],
+            "proactive_debounce",
             f"Proactive speech debounce {seconds}s",
         )
 
     def proactive_decision(self, should_speak: bool, delay: float) -> None:
         self._emit(
-            ICONS["proactive_decision"],
+            "proactive_decision",
             f"Proactive decision: should_speak={should_speak}, delay={delay}s",
         )
 
     def proactive_deferred(self, reason: str) -> None:
-        self._emit(ICONS["proactive_deferred"], f"Proactive deferred: {reason}")
+        self._emit("proactive_deferred", f"Proactive deferred: {reason}")
 
     def proactive_dormant(self) -> None:
         self._emit(
-            ICONS["proactive_dormant"],
+            "proactive_dormant",
             "Proactive dormant until next utterance",
         )
 
     def proactive_speaking(self, delay: float, content: str) -> None:
         self._emit(
-            ICONS["proactive_speaking"],
+            "proactive_speaking",
             f"Proactive speaking in {delay}s: {_trunc(content)}",
         )
 
     def proactive_published(self, guidance_id: str, content: str) -> None:
         self._emit(
-            ICONS["proactive_published"],
+            "proactive_published",
             f"Proactive spoke guidance_id={guidance_id}: {_trunc(content)}",
         )
 
     def proactive_cancelled(self) -> None:
-        self._emit_debug(ICONS["proactive_cancelled"], "Proactive speech cancelled")
+        self._emit_debug("proactive_cancelled", "Proactive speech cancelled")
 
     def proactive_error(self, error: str) -> None:
+        if not is_event_visible("proactive_error"):
+            return
         LOGGER.error(
             f"{ICONS['proactive_error']} [{self._label}] Proactive error: {error}",
+            extra={"_category_checked": True},
         )
 
-    def call_status(self, event_type: str) -> None:
-        self._emit(ICONS["call_status"], event_type)
+    def call_status(self, event_name: str) -> None:
+        self._emit("call_status", event_name)
 
     def session_start(self, msg: str = "Session starting") -> None:
-        self._emit(ICONS["session_start"], msg)
+        self._emit("session_start", msg)
 
     def session_end(self, msg: str = "Session ended") -> None:
-        self._emit(ICONS["session_end"], msg)
+        self._emit("session_end", msg)
 
     def session_ready(self, msg: str = "Session ready") -> None:
-        self._emit(ICONS["session_ready"], msg)
+        self._emit("session_ready", msg)
 
     def participant_comms(self, text: str) -> None:
-        self._emit(ICONS["participant_comms"], _trunc(text))
+        self._emit("participant_comms", _trunc(text))
 
     def boss_event(self, text: str) -> None:
-        self._emit(ICONS["boss_event"], _trunc(text))
+        self._emit("boss_event", _trunc(text))
 
     def ipc_inbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit_debug(ICONS["ipc_inbound"], f"IPC recv {channel}{extra}")
+        self._emit_debug("ipc_inbound", f"IPC recv {channel}{extra}")
 
     def ipc_outbound(self, channel: str, **kv: object) -> None:
         extra = _kv_suffix(kv)
-        self._emit_debug(ICONS["ipc_outbound"], f"IPC send {channel}{extra}")
+        self._emit_debug("ipc_outbound", f"IPC send {channel}{extra}")
 
     def ipc_error(self, msg: str) -> None:
-        self._emit_debug(ICONS["ipc_error"], msg)
+        self._emit_debug("ipc_error", msg)
 
     def screenshot(self, msg: str) -> None:
-        self._emit(ICONS["screenshot"], msg)
+        self._emit("screenshot", msg)
 
     def config(self, msg: str) -> None:
-        self._emit_debug(ICONS["config"], msg)
+        self._emit_debug("config", msg)
 
     def dispatch(self, msg: str) -> None:
-        self._emit_debug(ICONS["dispatch"], msg)
+        self._emit_debug("dispatch", msg)
 
     def info(self, msg: str) -> None:
-        self._emit(ICONS["info"], msg)
+        self._emit("info", msg)
 
     def warning(self, msg: str) -> None:
-        self._emit(ICONS["warning"], msg)
+        self._emit("warning", msg)
 
     def error(self, msg: str) -> None:
-        self._emit(ICONS["error"], msg)
+        self._emit("error", msg)
 
     def shutdown(self, msg: str) -> None:
-        self._emit(ICONS["shutdown"], msg)
+        self._emit("shutdown", msg)
 
 
 def _kv_suffix(kv: dict[str, object]) -> str:

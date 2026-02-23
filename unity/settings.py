@@ -126,6 +126,12 @@ class ProductionSettings(BaseSettings):
     # Terminal Logging
     # ─────────────────────────────────────────────────────────────────────────
     UNITY_TERMINAL_LOG: bool = True
+    # Comma-separated log category names to show on the terminal.
+    # Empty string = default set (brain,speech,proactive,comms,guidance,actor).
+    # Set to "all" to show everything, or list specific categories:
+    #   brain, speech, proactive, comms, guidance, actor,
+    #   lifecycle, ipc, infra, bus, livekit
+    UNITY_LOG_CATEGORIES: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
