@@ -62,11 +62,11 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     activate_project,
+    configure_sandbox_logging,
     speak as _speak,
     _wait_for_tts_end as _wait_tts_end,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 LG = logging.getLogger("memory_manager_sandbox")
 
 
@@ -251,6 +251,12 @@ async def _main_async() -> None:
 
     # Unify context
     activate_project(args.project_name, args.overwrite)
+
+    configure_sandbox_logging(
+        log_file=".logs_memory_sandbox.txt",
+        tcp_port=-1,
+    )
+    LG.setLevel(logging.INFO)
 
     # ─────────────────── project version handling ────────────────────
     if args.project_version != -1:

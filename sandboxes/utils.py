@@ -1289,6 +1289,25 @@ def configure_sandbox_logging(
             "Pass --log_in_terminal to also stream logs here.",
         )
 
+    # The unity LOGGER (unity.logger) has propagate=False and its own terminal
+    # StreamHandler added at import time.  Strip that handler so the sandbox
+    # terminal stays clean, then mirror root's handlers onto LOGGER so that
+    # file / TCP routing works for unity.* log records.
+    try:
+        from unity.logger import LOGGER as _unity_logger
+
+        for _h in list(_unity_logger.handlers):
+            if isinstance(_h, _logging.StreamHandler) and getattr(
+                _h,
+                "_unity_terminal",
+                False,
+            ):
+                _unity_logger.removeHandler(_h)
+        for _h in root_logger.handlers:
+            _unity_logger.addHandler(_h)
+    except ImportError:
+        pass
+
 
 # ===========================================================================
 # Minimal, cross-sandbox input / interrupt helpers
