@@ -443,7 +443,9 @@ async def entrypoint(ctx: JobContext) -> None:
             if captured_any:
                 content = screenshot_history.build_visual_context_content()
                 if content:
-                    chat_ctx.add_message(role="user", content=content)
+                    msg = chat_ctx.add_message(role="user", content=content)
+                    chat_ctx.items.pop()
+                    chat_ctx.items.insert(-1, msg)
         except Exception as e:
             print(f"[llm_node] screenshot capture error (non-fatal): {e}")
 
