@@ -61,10 +61,11 @@ RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".instea
 RUN chmod +x /app/entrypoint.sh || true
 
 # Build magnitude packages (agent-service imports from their dist/ which is a build artifact).
-# --ignore-scripts skips the root postinstall (turbo run build) which requires bun.
-# Build extract first since core depends on it.
+# --ignore-scripts skips the root postinstall (turbo run build) which requires bun,
+# but also prevents @boundaryml/baml from setting up its native binary.
+# Explicitly install the linux-x64 native binding afterwards.
 WORKDIR /app/magnitude
-RUN npm install --ignore-scripts
+RUN npm install --ignore-scripts && npm install @boundaryml/baml-linux-x64-gnu --no-save
 RUN cd packages/magnitude-extract && npx tsup
 RUN cd packages/magnitude-core && npm run build
 
