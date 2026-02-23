@@ -42,16 +42,17 @@ trap cleanup SIGTERM SIGINT
 mkdir -p /var/log/unity /var/log/unify /var/log/unillm
 
 # Start agent-service on port 3000 (for web automation via Magnitude)
-echo "Starting agent-service..."
-npx ts-node /app/agent-service/src/index.ts &
+echo "⬥ Starting agent-service..."
+cd /app/agent-service && npx ts-node src/index.ts &
 AGENT_PID=$!
-echo "Agent-service started with PID: $AGENT_PID"
+cd /app
+echo "⬥ Agent-service started with PID: $AGENT_PID"
 
 # Start the main application
-echo "Starting convo manager..."
+echo "⬥ Starting convo manager..."
 python3 unity/conversation_manager/main.py &
 MAIN_PID=$!
-echo "Main application started with PID: $MAIN_PID"
+echo "⬥ Main application started with PID: $MAIN_PID"
 
 # Wait for main process
 wait $MAIN_PID

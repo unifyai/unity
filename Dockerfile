@@ -60,6 +60,15 @@ RUN git config --global --unset url."https://${GITHUB_TOKEN}@github.com/".instea
 # Ensure entrypoint script is executable
 RUN chmod +x /app/entrypoint.sh || true
 
+# Build magnitude packages (agent-service imports from their dist/ which is a build artifact).
+# --ignore-scripts skips the root postinstall (turbo run build) which requires bun.
+# The committed lockfile only resolves platform-specific optional deps (sharp, baml, etc.)
+# for the OS it was generated on, so we delete it and let npm resolve for the target platform.
+WORKDIR /app/magnitude
+RUN rm -f package-lock.json && npm install --ignore-scripts
+RUN cd packages/magnitude-extract && npx tsup
+RUN cd packages/magnitude-core && npx baml-cli generate && npx pkgroll
+
 # Build agent-service
 WORKDIR /app/agent-service
 RUN npm ci

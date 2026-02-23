@@ -48,7 +48,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         # One shared, *stateful* LLM for the simulation
         self._llm = new_llm_client(
             stateful=True,
-            debug_marker="SimulatedFunctionManager",
+            origin="SimulatedFunctionManager",
         )
 
         self._rebuild_system_message()

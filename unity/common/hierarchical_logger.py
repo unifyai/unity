@@ -33,7 +33,7 @@ SESSION_LINEAGE: ContextVar[list[str]] = ContextVar("SESSION_LINEAGE", default=[
 # should hardcode emoji characters in log calls.
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEFAULT_ICON = "▪"
+DEFAULT_ICON = "⬥"
 
 ICONS = {
     # ── Communication events ────────────────────────────────────────────
@@ -50,8 +50,8 @@ ICONS = {
     "sms_sent": "📱",
     "email_received": "📧",
     "email_sent": "📧",
-    "unify_message_received": "💌",
-    "unify_message_sent": "💌",
+    "unify_message_received": "💬",
+    "unify_message_sent": "💬",
     "comms_outbound": "📤",
     # ── Voice / utterance ───────────────────────────────────────────────
     "inbound_utterance": "🎤",
@@ -84,6 +84,7 @@ ICONS = {
     "shutdown": "🏁",
     "call_status": "📞",
     # ── LLM brain ───────────────────────────────────────────────────────
+    "llm_log_file": "📝",
     "llm_thinking": "🔄",
     "llm_response": "🤖",
     "llm_completed": "✅",
@@ -135,7 +136,7 @@ ICONS = {
     "screenshot": "📸",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
-    "ping": "💓",
+    "ping": "🏓",
     "summarize": "📑",
     "config": "📋",
     "dispatch": "🚀",

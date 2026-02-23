@@ -326,7 +326,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         # One shared, memory-retaining LLM (reuse common client for fast init/clear)
         self._llm = new_llm_client(
             stateful=True,
-            debug_marker="SimulatedKnowledgeManager",
+            origin="SimulatedKnowledgeManager",
         )
         # Mirror the real knowledge manager's tool exposure for prompts
         ref_tools = mirror_knowledge_manager_tools("refactor")

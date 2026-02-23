@@ -366,12 +366,22 @@ LOGGER.propagate = False
 
 
 class _MillisFormatter(logging.Formatter):
-    """Formatter that prepends ``HH:MM:SS.mmm`` to each log line."""
+    """Formatter that prepends ``HH:MM:SS.mmm`` to each log line.
+
+    Messages that don't already start with a non-ASCII character (i.e. an
+    emoji icon from the hierarchical logger) are auto-prefixed with ``⬥``
+    so every terminal line has a consistent visual anchor.
+    """
+
+    _DEFAULT_ICON = "⬥"
 
     def format(self, record: logging.LogRecord) -> str:
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc).astimezone()
         ts = dt.strftime("%H:%M:%S") + f".{int(dt.microsecond / 1000):03d}"
-        return f"{ts} {record.getMessage()}"
+        msg = record.getMessage()
+        if msg and ord(msg[0]) < 128:
+            msg = f"{self._DEFAULT_ICON} {msg}"
+        return f"{ts} {msg}"
 
 
 if SETTINGS.UNITY_TERMINAL_LOG:

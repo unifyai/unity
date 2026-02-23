@@ -127,7 +127,7 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
             )
 
         # Build classification client
-        cls_client = new_llm_client(debug_marker="ReadOnlyAskGuard.classify")
+        cls_client = new_llm_client(origin="ReadOnlyAskGuard.classify")
 
         # Derive a concise label so the LLM knows which manager/method this is
         label = "ask"

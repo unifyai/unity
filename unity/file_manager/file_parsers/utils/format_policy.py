@@ -128,7 +128,7 @@ def extract_metadata_from_text_best_effort(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
-        debug_marker="FileParser.extract_metadata",
+        origin="FileParser.extract_metadata",
     )
 
     budgets = [
@@ -318,7 +318,7 @@ def summarize_spreadsheet_profile_best_effort(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
-        debug_marker="FileParser.generate_summary",
+        origin="FileParser.generate_summary",
     )
 
     try:

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import asyncio
 import logging
 import json
 from typing import AsyncIterable
+
+os.environ["UNITY_TERMINAL_LOG"] = "true"
 
 from dotenv import load_dotenv
 
@@ -36,8 +39,6 @@ from unity.conversation_manager.events import *
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
 from unity.conversation_manager.tracing import content_trace_id
 from unity.session_details import SESSION_DETAILS
-from unity.logger import LOGGER
-from unity.common.hierarchical_logger import DEFAULT_ICON
 
 # Shared helpers
 import unillm
@@ -110,6 +111,12 @@ class Assistant(Agent):
         while not self.call_received:
             await asyncio.sleep(0.1)
         _log.call_status("call_received")
+
+        await self._capture_screenshots_for_llm(chat_ctx)
+
+        asyncio.create_task(
+            event_broker.publish("app:comms:fast_brain_generating", "{}"),
+        )
 
         _log.llm_thinking(reason="llm_node_start")
         async for chunk in super().llm_node(chat_ctx, tools, model_settings):
@@ -214,9 +221,6 @@ async def entrypoint(ctx: JobContext) -> None:
             source_id=source_id,
             queued_speech=len(_queued_speech),
         )
-        asyncio.create_task(
-            event_broker.publish("app:comms:fast_brain_generating", "{}"),
-        )
         maybe_result = session.generate_reply(
             allow_interruptions=allow_interruptions,
         )
@@ -302,12 +306,8 @@ async def entrypoint(ctx: JobContext) -> None:
         filepath = generate_screenshot_path(entry)
         screenshot_history.add(entry, filepath)
         _inject_visual_context_sts()
-        _publish_screenshot(entry, filepath)
-
-    async def _capture_and_handle_assistant_screenshot(utterance: str) -> None:
-        entry = await capture_assistant_screenshot(utterance, fb_logger=_log)
-        if entry:
-            _handle_screenshot(entry)
+        if entry.source != "assistant":
+            _publish_screenshot(entry, filepath)
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
@@ -351,10 +351,6 @@ async def entrypoint(ctx: JobContext) -> None:
                         source="webcam",
                     ),
                 )
-            if assistant_screen_share_active:
-                asyncio.create_task(
-                    _capture_and_handle_assistant_screenshot(text),
-                )
         else:
             event = assistant_utterance_event(contact, content=text)
 
@@ -387,7 +383,6 @@ async def entrypoint(ctx: JobContext) -> None:
         demo_mode=SETTINGS.DEMO_MODE,
     ).flatten()
     _log.config(f"System prompt ({len(system)} chars)")
-    LOGGER.debug(f"{DEFAULT_ICON} {system}")
 
     agent = Assistant(
         contact=contact,
@@ -395,6 +390,64 @@ async def entrypoint(ctx: JobContext) -> None:
         instructions=system,
         outbound=outbound,
     )
+
+    async def _capture_screenshots_for_llm(chat_ctx) -> None:
+        """Capture fresh screenshots and inject into the LLM's chat_ctx copy.
+
+        The LiveKit pipeline passes a copy of the chat context to llm_node.
+        _handle_screenshot updates the live session context (for IPC and
+        subsequent turns), but the copy is stale.  After capturing we inject
+        directly into the chat_ctx parameter so the current LLM call sees it.
+        """
+        try:
+            from datetime import datetime, timezone
+
+            captured_any = False
+            utterance = ""
+            is_user_turn = False
+            if chat_ctx.items:
+                last = chat_ctx.items[-1]
+                utterance = getattr(last, "text_content", None) or ""
+                is_user_turn = getattr(last, "role", None) == "user"
+
+            if screen_capture._latest_frame_data is not None:
+                b64 = screen_capture.capture_screenshot()
+                if b64:
+                    _handle_screenshot(
+                        ScreenshotEntry(
+                            b64=b64,
+                            utterance=utterance,
+                            timestamp=datetime.now(timezone.utc),
+                            source="user",
+                        ),
+                    )
+                    captured_any = True
+            if webcam_capture._latest_frame_data is not None:
+                b64 = webcam_capture.capture_screenshot()
+                if b64:
+                    _handle_screenshot(
+                        ScreenshotEntry(
+                            b64=b64,
+                            utterance=utterance,
+                            timestamp=datetime.now(timezone.utc),
+                            source="webcam",
+                        ),
+                    )
+                    captured_any = True
+            if assistant_screen_share_active and is_user_turn:
+                entry = await capture_assistant_screenshot(utterance)
+                if entry:
+                    _handle_screenshot(entry)
+                    captured_any = True
+
+            if captured_any:
+                content = screenshot_history.build_visual_context_content()
+                if content:
+                    chat_ctx.add_message(role="user", content=content)
+        except Exception as e:
+            print(f"[llm_node] screenshot capture error (non-fatal): {e}")
+
+    agent._capture_screenshots_for_llm = _capture_screenshots_for_llm
 
     # publish call started (shared helper)
     await publish_call_started(contact, channel)

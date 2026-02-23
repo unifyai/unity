@@ -358,7 +358,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         super().__init__()
 
         # One shared, *stateful* LLM for *everything*
-        self._llm = new_llm_client(stateful=True, debug_marker="SimulatedTaskScheduler")
+        self._llm = new_llm_client(stateful=True, origin="SimulatedTaskScheduler")
         # Build tool lists programmatically so prompts match the exposed surface.
         # Register them via add_tools so that the inherited update()/ask() methods
         # can retrieve them at runtime via self.get_tools("update"/"ask").
