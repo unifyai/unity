@@ -35,16 +35,24 @@ __all__ = [
 class LoopConfig:
     def __init__(self, loop_id, lineage, parent_lineage):
         self._loop_id = loop_id if loop_id is not None else short_id()
-        self._lineage = (
-            list(lineage) if lineage is not None else [*parent_lineage, self._loop_id]
-        )
-        # Human-friendly label composed from lineage, with a short per-loop suffix.
         # Consume _PENDING_LOOP_SUFFIX if a decorator/boundary set one for us;
-        # otherwise generate a fresh random suffix as before.
-        _base = "->".join(self._lineage) if self._lineage else (self._loop_id or "")
+        # otherwise generate a fresh random suffix.
         _pending = _PENDING_LOOP_SUFFIX.get(None)
         _suffix = _pending if _pending else token_hex(2)
-        self._label = f"{_base}({_suffix})"
+        # Embed the suffix into the leaf segment so the hierarchy array is
+        # self-describing for unique parent-child linking (every segment
+        # carries per-invocation identity).
+        if lineage is not None:
+            self._lineage = list(lineage)
+            if self._lineage:
+                self._lineage[-1] = f"{self._lineage[-1]}({_suffix})"
+        else:
+            self._lineage = [*parent_lineage, f"{self._loop_id}({_suffix})"]
+        # hierarchy_label is now trivially derived — no separate suffix logic.
+        # TODO: remove hierarchy_label from payloads once frontend migrates.
+        self._label = (
+            "->".join(self._lineage) if self._lineage else f"{self._loop_id}({_suffix})"
+        )
 
     @property
     def loop_id(self):

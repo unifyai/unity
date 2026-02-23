@@ -24,8 +24,10 @@ class ToolLoopPayload(BaseModel):
         default_factory=list,
         description="Lineage of nested loops",
     )
+    # TODO: remove hierarchy_label once frontend migrates to hierarchy-only
+    # tree building -- it is now trivially "->".join(hierarchy).
     hierarchy_label: str = Field(
         default="",
-        description="Human-readable hierarchy label",
+        description="Human-readable hierarchy label (deprecated: derivable from hierarchy)",
     )
     origin: Optional[str] = Field(default=None, description="Origin identifier")
