@@ -128,6 +128,8 @@ async def _main_async() -> None:
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
         log_file=".logs_fm_sandbox.txt",
+        tcp_port=args.log_tcp_port,
+        http_tcp_port=args.http_log_tcp_port,
     )
     LG.setLevel(logging.INFO)
 

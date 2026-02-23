@@ -413,25 +413,11 @@ async def _main_async() -> None:
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
         log_file=".logs_conversation_sandbox.txt",
-        tcp_port=getattr(args, "log_tcp_port", 0) or 0,
-        http_tcp_port=getattr(args, "http_log_tcp_port", 0) or 0,
+        tcp_port=args.log_tcp_port,
+        http_tcp_port=args.http_log_tcp_port,
         unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
     )
     LG.setLevel(logging.DEBUG if args.debug else logging.INFO)
-
-    from unity.logger import LOGGER as _UNITY_LOGGER
-
-    class _ExcludeSDKNoise(logging.Filter):
-        _PREFIXES = ("unify", "unillm", "PIL")
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            return not any((record.name or "").startswith(p) for p in self._PREFIXES)
-
-    for _h in logging.getLogger().handlers:
-        if isinstance(_h, logging.FileHandler):
-            _h.addFilter(_ExcludeSDKNoise())
-            _UNITY_LOGGER.addHandler(_h)
-            break
     try:
         LG.info(
             "Sandbox starting pid=%s project=%s gui=%s",

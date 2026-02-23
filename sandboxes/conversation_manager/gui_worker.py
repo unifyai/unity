@@ -791,22 +791,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             unify_requests_log_file=None,
         )
         LG.setLevel(logging.INFO)
-
-        from unity.logger import LOGGER as _UNITY_LOGGER
-
-        class _ExcludeSDKNoise(logging.Filter):
-            _PREFIXES = ("unify", "unillm", "PIL")
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                return not any(
-                    (record.name or "").startswith(p) for p in self._PREFIXES
-                )
-
-        for _h in logging.getLogger().handlers:
-            if isinstance(_h, logging.FileHandler):
-                _h.addFilter(_ExcludeSDKNoise())
-                _UNITY_LOGGER.addHandler(_h)
-                break
         try:
             import os as _os
 
