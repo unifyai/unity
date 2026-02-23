@@ -97,9 +97,6 @@ Meet interaction events (Unify Meet session simulation):
   user_webcam_stop [reason]                User disables their webcam
   user_remote_control_start [reason]       User takes remote control of the assistant's desktop
   user_remote_control_stop [reason]        User releases remote control
-
-Steering (only while active):
-  /pause, /resume, /i <content>, /ask <q>, /stop [reason], /help
 """.strip(
     "\n",
 )
@@ -222,19 +219,7 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
             args=trimmed[3:].strip(),
         )
 
-    # 3) Steering commands — only when active
-    if trimmed.startswith("/"):
-        if not active:
-            return ParsedCommand(
-                kind="unknown",
-                raw=raw,
-                name="steering",
-                error="(no active conversation) Steering commands only available during conversations.",
-            )
-        # Keep the raw slash-command intact; the router will dispatch.
-        return ParsedCommand(kind="steering", raw=raw, name="steering", args=trimmed)
-
-    # 4) Event commands
+    # 3) Event commands
     if lower.startswith("msg "):
         return ParsedCommand(
             kind="event",

@@ -36,7 +36,6 @@ from unity.conversation_manager.events import (
 )
 from sandboxes.conversation_manager.io_gate import gated_input
 from sandboxes.conversation_manager.scenario_generator import ScenarioGenerator
-from sandboxes.conversation_manager.steering import SteeringController, is_active
 from sandboxes.conversation_manager.config_manager import (
     ConfigurationManager,
     ActorConfig,
@@ -117,14 +116,17 @@ class CommandRouter:
             bool(getattr(st, "in_call", False)) if in_call is None else bool(in_call)
         )
 
-        active_now = is_active(self.cm, st)
+        try:
+            h = getattr(self.cm, "active_ask_handle", None)
+            active_now = h is not None and not h.done()
+        except Exception:
+            active_now = False
         cmd: ParsedCommand = parse_command(
             text=raw,
             in_call=in_call_now,
             active=active_now,
         )
 
-        # Keep a minimal chat history for steering context.
         if cmd.kind not in {"unknown", "help"} and (raw or "").strip():
             try:
                 self.chat_history.append({"role": "user", "content": raw.strip()})
@@ -201,18 +203,6 @@ class CommandRouter:
         # Event / utterance
         if cmd.kind in {"event", "utterance"}:
             return await self._handle_event(cmd)
-
-        # Steering
-        if cmd.kind == "steering":
-            ctrl = SteeringController(
-                cm=self.cm,
-                state=st,
-                publisher=self.publisher,
-                chat_history=self.chat_history,
-                args=self.args,
-            )
-            out = await ctrl.handle(cmd.args)
-            return RouterResult(lines=[out] if out else [])
 
         return RouterResult(lines=[f"⚠️ Unhandled command kind: {cmd.kind}"])
 
@@ -567,14 +557,6 @@ class CommandRouter:
     async def _handle_event(self, cmd: ParsedCommand) -> RouterResult:
         st = self.state
         st.last_event_published_at = asyncio.get_running_loop().time()
-
-        # Queue events while paused.
-        if getattr(st, "paused", False):
-            try:
-                st.queued_events.append(cmd)
-            except Exception:
-                pass
-            return RouterResult(lines=[f"⏸️ Queued while paused: {cmd.name}"])
 
         if cmd.kind == "utterance":
             await self.publisher.publish_phone_utterance(cmd.args)

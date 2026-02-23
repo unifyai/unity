@@ -13,11 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sandboxes.conversation_manager.command_router import CommandRouter, repl_prompt
-from sandboxes.conversation_manager.commands import HELP_TEXT, ParsedCommand
+from sandboxes.conversation_manager.commands import HELP_TEXT
 from sandboxes.conversation_manager.event_publisher import EventPublisher
 from sandboxes.conversation_manager.io_gate import gated_input
-from sandboxes.utils import steering_controls_hint
-from sandboxes.conversation_manager.steering import is_active
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -26,11 +24,7 @@ LG = logging.getLogger("conversation_manager_sandbox")
 class SandboxState:
     chat_history: list[dict] = field(default_factory=list)
     in_call: bool = False
-    brain_run_in_flight: bool = False
-    paused: bool = False
     last_event_published_at: float = 0.0
-    queued_events: list[ParsedCommand] = field(default_factory=list)
-    _steering_hint_visible: bool = False
     live_voice_session: object = None
 
     @property
@@ -41,20 +35,14 @@ class SandboxState:
         """Reset sandbox-local state (CM state reset is handled separately)."""
         self.chat_history.clear()
         self.in_call = False
-        self.brain_run_in_flight = False
-        self.paused = False
         self.last_event_published_at = 0.0
-        self.queued_events.clear()
-        self._steering_hint_visible = False
         self.live_voice_session = None
 
 
 def get_prompt(state: SandboxState) -> str:
-    if state.paused:
-        return "paused> "
     if state.in_call:
         return "call> "
-    return "cm> "
+    return "> "
 
 
 def _print_welcome(*, args: Any) -> None:
@@ -126,20 +114,6 @@ async def run_repl(*, args: Any, state: SandboxState | None = None) -> None:
             )
             for ln in res.lines:
                 print(ln)
-            # Steering hint: print when we transition into an active state.
-            try:
-                active_now = is_active(cm, st) if cm is not None else False
-                if active_now and not st._steering_hint_visible:
-                    print(
-                        steering_controls_hint(
-                            voice_enabled=bool(getattr(args, "voice", False)),
-                        ),
-                    )
-                    st._steering_hint_visible = True
-                if (not active_now) and st._steering_hint_visible:
-                    st._steering_hint_visible = False
-            except Exception:
-                pass
             if res.should_exit:
                 return
         except (EOFError, KeyboardInterrupt):

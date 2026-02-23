@@ -59,7 +59,6 @@ class EventPublisher:
             self.cm.contact_index.set_fallback_contacts([contact])
         except Exception:
             pass
-        self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
         await self.cm.event_broker.publish(topic, event.to_json())
 
@@ -128,7 +127,6 @@ class EventPublisher:
         )
         self.state.live_voice_session = session
         self.state.in_call = True
-        self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
 
         browser_line = (
@@ -191,7 +189,6 @@ class EventPublisher:
         await stop_session(cm=self.cm, session=session)
         self.state.live_voice_session = None
         self.state.in_call = False
-        self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
 
         return ["📞 Live voice call ended. Room and subprocess cleaned up."]

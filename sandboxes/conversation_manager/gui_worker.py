@@ -210,26 +210,18 @@ def _filter_kwargs_for_callable(fn: Any, kwargs: dict[str, Any]) -> dict[str, An
 class WorkerSandboxState:
     """
     Minimal sandbox state needed by `CommandRouter` + `subscribe_to_responses`.
-
-    UI-specific state (e.g. "steering hint visible") is intentionally omitted.
     """
 
     chat_history: list[dict] = field(default_factory=list)
     in_call: bool = False
-    brain_run_in_flight: bool = False
-    paused: bool = False
     last_event_published_at: float = 0.0
-    queued_events: list[Any] = field(default_factory=list)
     awaiting_config_choice: bool = False
     pending_clarification: bool = False
 
     def reset_ephemeral(self) -> None:
         self.chat_history.clear()
         self.in_call = False
-        self.brain_run_in_flight = False
-        self.paused = False
         self.last_event_published_at = 0.0
-        self.queued_events.clear()
         self.awaiting_config_choice = False
         self.pending_clarification = False
 
@@ -754,7 +746,7 @@ async def _state_broadcaster(
     last: tuple[bool, bool, bool] | None = None
     while not stop_event.is_set():
         try:
-            active = bool(getattr(state, "brain_run_in_flight", False))
+            active = False
             in_call = bool(getattr(state, "in_call", False))
             pending = bool(getattr(state, "pending_clarification", False))
             cur = (active, in_call, pending)

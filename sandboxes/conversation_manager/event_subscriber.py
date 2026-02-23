@@ -323,29 +323,6 @@ async def subscribe_to_responses(
                                         last_progress_hint_at = now
                         except Exception:
                             pass
-                        # Best-effort timeout-based completion.
-                        #
-                        # IMPORTANT: never auto-clear while an Actor handle is in-flight.
-                        # Actor runs can legitimately be "quiet" for a while (long tool calls),
-                        # and steering must remain available in REPL during that time.
-                        try:
-                            if getattr(
-                                sandbox_state,
-                                "brain_run_in_flight",
-                                False,
-                            ) and (not actor_in_flight_ids):
-                                last = float(
-                                    getattr(
-                                        sandbox_state,
-                                        "last_event_published_at",
-                                        0.0,
-                                    )
-                                    or 0.0,
-                                )
-                                if last and (time.monotonic() - last) > idle_grace_s:
-                                    sandbox_state.brain_run_in_flight = False
-                        except Exception:
-                            pass
                         continue
 
                     try:
@@ -677,37 +654,12 @@ async def subscribe_to_responses(
                     except Exception:
                         pass
 
-                    # Update REPL steering availability.
-                    #
-                    # In REPL mode, steering commands (/ask, /i, /pause, ...) rely on
-                    # `sandbox_state.brain_run_in_flight` when CM does not expose a
-                    # stable `active_ask_handle` for the current Actor run.
-                    #
-                    # Key requirement: keep steering enabled for the *entire* duration
-                    # of an in-flight Actor handle, even if other events (e.g. CallGuidance)
-                    # are emitted in between.
-                    try:
-                        if actor_in_flight_ids:
-                            sandbox_state.brain_run_in_flight = True
-                        elif isinstance(event, ActorResult):
-                            sandbox_state.brain_run_in_flight = False
-                    except Exception:
-                        pass
-
                     rendered = _format_outbound_event(
                         event,
                         sandbox_state=sandbox_state,
                     )
                     if rendered is None:
                         continue
-
-                    # Mark brain run complete on user-facing outbound (unless an Actor
-                    # handle is still in-flight).
-                    try:
-                        if not actor_in_flight_ids:
-                            sandbox_state.brain_run_in_flight = False
-                    except Exception:
-                        pass
 
                     # Optional TTS for phone-call assistant utterances.
                     if voice_enabled and (
