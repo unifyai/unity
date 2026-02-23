@@ -75,13 +75,13 @@ Display commands:
   agent_logs [N]      Show last N lines of sandbox-started agent-service logs (default: 80)
 
 Inbound event simulation:
-  message <msg>                 Simulate incoming Unify message
-  sms <msg>                     Simulate incoming SMS
+  msg <content>                 Simulate incoming Unify message
+  sms <content>                 Simulate incoming SMS
   email <subject> | <body>      Simulate incoming email
   call                          Start phone call (simulated, or live via LiveKit with --live-voice)
-  say <text>                    Phone utterance (during a simulated call)
+  say <content>                 Phone utterance (during a simulated call)
   sayv                          Record voice, transcribe, and send as a phone utterance (requires --voice)
-  sayv <text>                   Send <text> as a phone utterance (convenience; no recording)
+  sayv <content>                Send <content> as a phone utterance (convenience; no recording)
   end_call                      End active phone call
 
 Scenario seeding (idle-only):
@@ -99,7 +99,7 @@ Meet interaction events (Unify Meet session simulation):
   user_remote_control_stop [reason]        User releases remote control
 
 Steering (only while active):
-  /pause, /resume, /i <msg>, /ask <q>, /stop [reason], /help
+  /pause, /resume, /i <content>, /ask <q>, /stop [reason], /help
 """.strip(
     "\n",
 )
@@ -235,12 +235,12 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         return ParsedCommand(kind="steering", raw=raw, name="steering", args=trimmed)
 
     # 4) Event commands
-    if lower.startswith("message "):
+    if lower.startswith("msg "):
         return ParsedCommand(
             kind="event",
             raw=raw,
             name="message",
-            args=trimmed[8:].strip(),
+            args=trimmed[4:].strip(),
         )
     if lower.startswith("sms "):
         return ParsedCommand(
