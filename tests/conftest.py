@@ -517,11 +517,17 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             f"Unify cache report | Hits ({stats.get_percentage_of_cache_hits():.2f}%): {stats.hits} | Misses ({stats.get_percentage_of_cache_misses():.2f}%): {stats.misses} | Reads: {stats.reads} | Writes: {stats.writes}",
         )
 
+    total = sum(cost for _, cost in _session_costs)
+    terminalreporter.write_sep("=", f"UNILLM Provider Cost Summary: ${total:.6g}")
+
 
 # --------------------------------------------------------------------------- #
 # 7. Test run hooks                                                           #
 # --------------------------------------------------------------------------- #
 
+from unillm.cost_tracker import capture_costs
+
+_session_costs: list[tuple[str, float]] = []
 
 _original_home: str | None = None
 
@@ -619,6 +625,7 @@ def _normalize_pytest_nodeid(nodeid):
     return normalized[:24]
 
 
+@pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
     import types
 
@@ -642,6 +649,34 @@ def pytest_runtest_call(item):
         func_name = f"{func_name}/{normalized_id}"
 
     setattr(target_obj, "_unity_pytest_nodeid", func_name)
+
+    with capture_costs() as events:
+        yield
+    item._unillm_cost_events = events
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if call.when == "call":
+        events = getattr(item, "_unillm_cost_events", [])
+        total = sum(e.provider_cost for e in events)
+        report._unillm_cost = total
+        _session_costs.append((report.nodeid, total))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_report_teststatus(report, config):
+    outcome = yield
+    if report.when == "call":
+        result = outcome.get_result()
+        if result and len(result) >= 3:
+            category, shortletter, verbose = result
+            cost = getattr(report, "_unillm_cost", 0.0)
+            if isinstance(verbose, str):
+                verbose = f"{verbose} [${cost:.6g}]"
+            outcome.force_result((category, shortletter, verbose))
 
 
 def pytest_runtest_teardown(item, nextitem=None):
