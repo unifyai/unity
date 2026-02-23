@@ -13,6 +13,7 @@ This module is intentionally compact and covers the highest-signal behaviors:
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -110,7 +111,15 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
             and e.payload.get("method") == "execute_code"
         ]
         assert sorted([e.payload.get("phase") for e in mm]) == ["incoming", "outgoing"]
-        assert mm[0].payload.get("hierarchy") == ["CodeActActor.act", "execute_code"]
+        _h = mm[0].payload.get("hierarchy")
+        assert (
+            len(_h) == 2
+            and _h[0] == "CodeActActor.act"
+            and re.match(
+                r"execute_code\([0-9a-f]{4}\)$",
+                _h[1],
+            )
+        )
         assert "execute_code(" in str(mm[0].payload.get("hierarchy_label"))
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
@@ -228,10 +237,9 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
             and e.payload.get("method") == "execute_function"
         ]
         assert sorted([e.payload.get("phase") for e in mm]) == ["incoming", "outgoing"]
-        assert mm[0].payload.get("hierarchy") == [
-            "CodeActActor.act",
-            "execute_function(greet)",
-        ]
+        _h = mm[0].payload.get("hierarchy")
+        assert len(_h) == 2 and _h[0] == "CodeActActor.act"
+        assert re.match(r"execute_function\(greet\)\([0-9a-f]{4}\)$", _h[1])
         assert "execute_function(greet)(" in str(mm[0].payload.get("hierarchy_label"))
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
@@ -275,10 +283,9 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
         ]
         assert len(outgoing) == 1
         assert outgoing[0].payload.get("status") == "error"
-        assert outgoing[0].payload.get("hierarchy") == [
-            "CodeActActor.act",
-            "execute_function(fail_fn)",
-        ]
+        _h = outgoing[0].payload.get("hierarchy")
+        assert len(_h) == 2 and _h[0] == "CodeActActor.act"
+        assert re.match(r"execute_function\(fail_fn\)\([0-9a-f]{4}\)$", _h[1])
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
@@ -318,10 +325,8 @@ async def test_execute_function_propagates_lineage_to_nested_manager():
         assert _get(out, "error") is None, f"Unexpected error: {_get(out, 'error')}"
         # The lineage captured inside the sandbox should include execute_function.
         captured = _get(out, "result")
-        assert captured == [
-            "CodeActActor.act",
-            "execute_function(my_func)",
-        ]
+        assert len(captured) == 2 and captured[0] == "CodeActActor.act"
+        assert re.match(r"execute_function\(my_func\)\([0-9a-f]{4}\)$", captured[1])
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
@@ -400,12 +405,12 @@ async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy
             and e.payload.get("phase") in ("incoming", "outgoing")
         ]
         assert {e.payload.get("phase") for e in ask_events} == {"incoming", "outgoing"}
-        assert ask_events[0].payload.get("hierarchy") == [
-            "CodeActActor.act",
-            "execute_code",
-            "send_meeting_invite",
-            "UnitStateManager.ask",
-        ]
+        _h = ask_events[0].payload.get("hierarchy")
+        assert len(_h) == 4
+        assert _h[0] == "CodeActActor.act"
+        assert re.match(r"execute_code\([0-9a-f]{4}\)$", _h[1])
+        assert re.match(r"send_meeting_invite\([0-9a-f]{4}\)$", _h[2])
+        assert re.match(r"UnitStateManager\.ask\([0-9a-f]{4}\)$", _h[3])
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
@@ -471,14 +476,18 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
         assert len(ask_events) == 2
 
         hierarchies = [e.payload.get("hierarchy", []) for e in ask_events]
-        f1_hierarchy = [h for h in hierarchies if "f1" in h]
-        f2_hierarchy = [h for h in hierarchies if "f2" in h]
+        f1_hierarchy = [h for h in hierarchies if any("f1" in seg for seg in h)]
+        f2_hierarchy = [h for h in hierarchies if any("f2" in seg for seg in h)]
         assert len(f1_hierarchy) == 1, f"Expected one f1 hierarchy, got {f1_hierarchy}"
         assert len(f2_hierarchy) == 1, f"Expected one f2 hierarchy, got {f2_hierarchy}"
 
         # f1's hierarchy must NOT contain f2, and vice versa.
-        assert "f2" not in f1_hierarchy[0], f"f1 hierarchy leaked f2: {f1_hierarchy[0]}"
-        assert "f1" not in f2_hierarchy[0], f"f2 hierarchy leaked f1: {f2_hierarchy[0]}"
+        assert not any(
+            "f2" in seg for seg in f1_hierarchy[0]
+        ), f"f1 hierarchy leaked f2: {f1_hierarchy[0]}"
+        assert not any(
+            "f1" in seg for seg in f2_hierarchy[0]
+        ), f"f2 hierarchy leaked f1: {f2_hierarchy[0]}"
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
