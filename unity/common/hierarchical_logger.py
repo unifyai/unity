@@ -136,7 +136,7 @@ ICONS = {
     "screenshot": "📸",
     # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
-    "ping": "💓",
+    "ping": "🏓",
     "summarize": "📑",
     "config": "📋",
     "dispatch": "🚀",
