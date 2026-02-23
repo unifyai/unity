@@ -33,7 +33,7 @@ SESSION_LINEAGE: ContextVar[list[str]] = ContextVar("SESSION_LINEAGE", default=[
 # should hardcode emoji characters in log calls.
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEFAULT_ICON = "▪"
+DEFAULT_ICON = "⬥"
 
 ICONS = {
     # ── Communication events ────────────────────────────────────────────
