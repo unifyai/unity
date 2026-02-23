@@ -657,9 +657,7 @@ async def _main_async() -> None:
                 ):
                     await _attempt_agent_service_recovery()
 
-            vr = await asyncio.to_thread(
-                cfg_mgr.validate_config,
-                selected,
+            _validate_kwargs = dict(
                 agent_server_url=getattr(
                     args,
                     "agent_server_url",
@@ -667,8 +665,25 @@ async def _main_async() -> None:
                 ),
                 require_agent_service_running=(not bool(getattr(args, "gui", False))),
             )
+            vr = await asyncio.to_thread(
+                cfg_mgr.validate_config,
+                selected,
+                **_validate_kwargs,
+            )
             if vr.ok:
                 break
+
+            # Auto-recover: if agent-service is down, try starting it before
+            # falling through to the interactive error prompt.
+            if not bool(getattr(args, "gui", False)) and _should_offer_agent_help():
+                await _attempt_agent_service_recovery()
+                vr = await asyncio.to_thread(
+                    cfg_mgr.validate_config,
+                    selected,
+                    **_validate_kwargs,
+                )
+                if vr.ok:
+                    break
 
             print("❌ Configuration Error")
             print("═══════════════════════════════════════════════════════════")
