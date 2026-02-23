@@ -214,6 +214,7 @@ class WorkerSandboxState:
 
     chat_history: list[dict] = field(default_factory=list)
     in_call: bool = False
+    in_meet: bool = False
     last_event_published_at: float = 0.0
     awaiting_config_choice: bool = False
     pending_clarification: bool = False
@@ -221,6 +222,7 @@ class WorkerSandboxState:
     def reset_ephemeral(self) -> None:
         self.chat_history.clear()
         self.in_call = False
+        self.in_meet = False
         self.last_event_published_at = 0.0
         self.awaiting_config_choice = False
         self.pending_clarification = False

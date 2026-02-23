@@ -20,9 +20,13 @@ from unity.conversation_manager.events import (
     EmailReceived,
     Event,
     InboundPhoneUtterance,
+    InboundUnifyMeetUtterance,
     PhoneCallEnded,
     PhoneCallStarted,
     SMSReceived,
+    UnifyMeetEnded,
+    UnifyMeetReceived,
+    UnifyMeetStarted,
     UnifyMessageReceived,
 )
 
@@ -93,6 +97,25 @@ class EventPublisher:
         self.state.in_call = False
         contact = get_simulated_user_contact()
         await self.publish_event(PhoneCallEnded(contact=contact))
+
+    async def publish_meet_start(self) -> None:
+        self.state.in_meet = True
+        contact = get_simulated_user_contact()
+        await self.publish_event(
+            UnifyMeetReceived(contact=contact, room_name="sandbox-meet"),
+        )
+        await self.publish_event(UnifyMeetStarted(contact=contact))
+
+    async def publish_meet_utterance(self, text: str) -> None:
+        contact = get_simulated_user_contact()
+        await self.publish_event(
+            InboundUnifyMeetUtterance(contact=contact, content=text),
+        )
+
+    async def publish_meet_end(self) -> None:
+        self.state.in_meet = False
+        contact = get_simulated_user_contact()
+        await self.publish_event(UnifyMeetEnded(contact=contact))
 
     async def publish_meet_interaction_event(
         self,
