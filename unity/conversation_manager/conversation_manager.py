@@ -624,7 +624,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         selected_meta["run_id"] = run_id
         selected_meta["dropped_requests"] = str(dropped_requests)
 
-        self._session_logger.info(
+        self._session_logger.debug(
             "llm_thinking",
             (
                 f"Dispatching slow-brain run_id={run_id} "
@@ -651,7 +651,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         request_id = trace_meta.get("request_id", "")
         origin_event_id = trace_meta.get("origin_event_id", "")
         origin_event_name = trace_meta.get("origin_event_name", "")
-        self._session_logger.info(
+        self._session_logger.debug(
             "llm_thinking",
             (
                 f"Slow-brain run started run_id={run_id} "
@@ -790,7 +790,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )
 
         # Log LLM thinking start
-        self._session_logger.log_llm_thinking(f"mode={self.mode}")
+        self._session_logger.log_llm_thinking()
 
         # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
@@ -882,8 +882,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     event_json,
                 )
 
-        # Log LLM response
-        self._session_logger.log_llm_response(
+        self._session_logger.debug(
+            "llm_response",
             (
                 f"run_id={run_id} thoughts: {thoughts[:100]}..."
                 if len(thoughts) > 100
@@ -916,10 +916,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
         if result.tool_name == "wait":
             delay = (result.tool_args or {}).get("delay")
+            self._session_logger.info("wait", "Waiting...")
             if delay is not None:
                 await self.request_llm_run(delay=delay)
 
-        self._session_logger.info(
+        self._session_logger.debug(
             "llm_response",
             (
                 f"Slow-brain run completed run_id={run_id} "
