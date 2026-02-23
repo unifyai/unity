@@ -23,6 +23,7 @@ from unity.conversation_manager.events import (
     PhoneCallEnded,
     PhoneCallStarted,
     SMSReceived,
+    UnifyMessageReceived,
 )
 
 if TYPE_CHECKING:
@@ -61,6 +62,12 @@ class EventPublisher:
         self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
         await self.cm.event_broker.publish(topic, event.to_json())
+
+    async def publish_unify_message(self, message: str) -> None:
+        contact = get_simulated_user_contact()
+        await self.publish_event(
+            UnifyMessageReceived(contact=contact, content=message),
+        )
 
     async def publish_sms(self, message: str) -> None:
         contact = get_simulated_user_contact()

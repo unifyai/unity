@@ -580,6 +580,9 @@ class CommandRouter:
             await self.publisher.publish_phone_utterance(cmd.args)
             return RouterResult(lines=[])
 
+        if cmd.name == "message":
+            await self.publisher.publish_unify_message(cmd.args)
+            return RouterResult(lines=[])
         if cmd.name == "sms":
             await self.publisher.publish_sms(cmd.args)
             return RouterResult(lines=[])

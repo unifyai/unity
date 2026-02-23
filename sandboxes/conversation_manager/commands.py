@@ -75,6 +75,7 @@ Display commands:
   agent_logs [N]      Show last N lines of sandbox-started agent-service logs (default: 80)
 
 Inbound event simulation:
+  message <msg>                 Simulate incoming Unify message
   sms <msg>                     Simulate incoming SMS
   email <subject> | <body>      Simulate incoming email
   call                          Start phone call (simulated, or live via LiveKit with --live-voice)
@@ -234,6 +235,13 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         return ParsedCommand(kind="steering", raw=raw, name="steering", args=trimmed)
 
     # 4) Event commands
+    if lower.startswith("message "):
+        return ParsedCommand(
+            kind="event",
+            raw=raw,
+            name="message",
+            args=trimmed[8:].strip(),
+        )
     if lower.startswith("sms "):
         return ParsedCommand(
             kind="event",
