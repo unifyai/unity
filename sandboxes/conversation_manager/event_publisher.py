@@ -124,16 +124,10 @@ class EventPublisher:
         self.state.brain_run_in_flight = True
         self.state.last_event_published_at = time.monotonic()
 
-        clipboard_ok = getattr(session, "clipboard_ok", False)
-        clipboard_line = (
-            "  Token copied to clipboard!"
-            if clipboard_ok
-            else "  (Could not copy token to clipboard.)"
-        )
         browser_line = (
-            "  Opened LiveKit playground in your browser."
+            "  Playground opened in your browser (auto-connecting)."
             if getattr(session, "browser_opened", False)
-            else "  (Could not open browser automatically.)"
+            else "  (Could not open browser — open the URL below manually.)"
         )
 
         waited = float(getattr(session, "ready_wait_seconds", 0.0) or 0.0)
@@ -142,19 +136,21 @@ class EventPublisher:
         if bool(getattr(session, "ready", False)):
             readiness_line = (
                 f"✅ Voice agent ready ({waited:.1f}s; signal: {source}). "
-                "You can speak immediately after connecting."
+                "You can speak immediately."
             )
         elif bool(getattr(session, "agent_joined_room", False)):
             readiness_line = (
                 f"⏳ Agent joined room but CM is still waiting for "
                 f"`UnifyMeetStarted` ({waited:.1f}s / {timeout:.1f}s). "
-                "Connect now and wait for the greeting before speaking."
+                "Wait for the greeting before speaking."
             )
         else:
             readiness_line = (
                 f"⏳ Voice agent still booting ({waited:.1f}s / {timeout:.1f}s). "
-                "Connect now; audio starts once initialization completes."
+                "Audio starts once initialization completes."
             )
+
+        playground_url = getattr(session, "playground_url", "") or ""
 
         return [
             "",
@@ -162,16 +158,8 @@ class EventPublisher:
             "",
             readiness_line,
             "",
-            "Connect via the LiveKit Agents Playground:",
-            "  1. Open  https://agents-playground.livekit.io",
-            '  2. Click the "Manual" tab',
-            f"  3. Paste URL:  {session.livekit_url}",
-            f"  4. Paste Token (from clipboard or {session.connection_file})",
-            '  5. Click "Connect"',
-            "",
             browser_line,
-            clipboard_line,
-            f"  Connection details saved to: {session.connection_file}",
+            f"  URL: {playground_url}",
             "",
             f"  Room:      {session.room_name}",
             f"  Agent log: {session.log_file}",
