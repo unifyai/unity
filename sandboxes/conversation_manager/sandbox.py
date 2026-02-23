@@ -376,6 +376,7 @@ async def _main_async() -> None:
     args = parser.parse_args()
     os.environ.setdefault("UNITY_SANDBOX_LAUNCH_CWD", str(Path.cwd().resolve()))
     os.environ.setdefault("UNITY_TERMINAL_LOG", "false")
+    os.environ.setdefault("UNILLM_TERMINAL_LOG", "false")
     unillm_log_dir = _enable_unillm_boundary_logging()
 
     # Best-effort sink for computer activity lines (used by sandbox-only wrappers).
@@ -417,6 +418,20 @@ async def _main_async() -> None:
         unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
     )
     LG.setLevel(logging.DEBUG if args.debug else logging.INFO)
+
+    from unity.logger import LOGGER as _UNITY_LOGGER
+
+    class _ExcludeSDKNoise(logging.Filter):
+        _PREFIXES = ("unify", "unillm", "PIL")
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            return not any((record.name or "").startswith(p) for p in self._PREFIXES)
+
+    for _h in logging.getLogger().handlers:
+        if isinstance(_h, logging.FileHandler):
+            _h.addFilter(_ExcludeSDKNoise())
+            _UNITY_LOGGER.addHandler(_h)
+            break
     try:
         LG.info(
             "Sandbox starting pid=%s project=%s gui=%s",
