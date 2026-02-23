@@ -98,6 +98,7 @@ class ContextRegistry:
         from unity.function_manager.function_manager import FunctionManager
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
+        from unity.environment_manager.environment_manager import EnvironmentManager
 
         return [
             ContactManager,
@@ -111,6 +112,7 @@ class ContextRegistry:
             FunctionManager,
             BlackListManager,
             DataManager,
+            EnvironmentManager,
         ]
 
     @classmethod
