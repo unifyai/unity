@@ -767,10 +767,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 "screen_share",
                 f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
             )
-        self._session_logger.debug(
-            "state_update",
-            f"State prompt:\n{brain_spec.state_prompt}",
-        )
         input_message = brain_spec.state_message()
         system_prompt = brain_spec.system_prompt
 
