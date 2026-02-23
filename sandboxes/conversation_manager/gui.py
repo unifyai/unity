@@ -25,7 +25,6 @@ from sandboxes.conversation_manager.state_snapshot import (
     save_snapshot,
 )
 from sandboxes.conversation_manager.trace_display import TraceDisplay
-from sandboxes.utils import steering_controls_hint
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -157,7 +156,6 @@ if _TEXTUAL_AVAILABLE:
                     with Vertical(id="left"):
                         yield from self.compose_left()
                     with Vertical(id="right"):
-                        yield Label("", id="steering_hint")
                         yield _make_rich_log(
                             id="responses",
                             wrap=True,
@@ -166,7 +164,7 @@ if _TEXTUAL_AVAILABLE:
                         )
                 with Horizontal(id="cmd_row"):
                     yield Input(
-                        placeholder="Commands: sms, email, call, say, end_call, us, /pause, /i, /ask, /stop",
+                        placeholder="Commands: msg, sms, email, call, say, end_call, us",
                         id="command_input",
                     )
                     yield Button("Send", id="submit_command")
@@ -174,28 +172,6 @@ if _TEXTUAL_AVAILABLE:
 
         def compose_left(self) -> ComposeResult:  # overridden
             yield Label("Not implemented")
-
-        def on_mount(self) -> None:
-            # Periodic update of steering hint visibility.
-            self.set_interval(0.25, self._refresh_hint)
-
-        def _refresh_hint(self) -> None:
-            app = self.app  # type: ignore[attr-defined]
-            rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
-            hint = self.query_one("#steering_hint", Label)
-            active = bool(getattr(rt.state, "active", False))
-            hint.update(
-                (
-                    steering_controls_hint(
-                        pending_clarification=bool(
-                            getattr(rt.state, "pending_clarification", False),
-                        ),
-                        voice_enabled=bool(getattr(rt.args, "voice", False)),
-                    )
-                    if active
-                    else ""
-                ),
-            )
 
         async def _route_raw(self, raw: str) -> None:
             raw = (raw or "").strip()
@@ -334,7 +310,6 @@ if _TEXTUAL_AVAILABLE:
                             yield Button("Toggle Trace Panel", id="btn_toggle_trace")
                             yield Button("Quit", id="btn_quit")
                         with Vertical(id="right_tabs"):
-                            yield Label("", id="steering_hint")
                             with TabbedContent(id="tabs"):
                                 with TabPane("Event Tree", id="tab_tree"):
                                     yield Tree("ConversationManager", id="event_tree")
@@ -421,8 +396,6 @@ if _TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
 
-                # Periodic refresh of hint + computer panel.
-                self.set_interval(0.25, self._refresh_hint)
                 self.set_interval(1.5, self._refresh_computer_status)
 
                 self._refresh_header_banner()
@@ -578,36 +551,6 @@ if _TEXTUAL_AVAILABLE:
                     )
                     header = self.query_one(Header)
                     header.sub_title = f"actor={actor_type} | managers={mgrs} | computer={backend_mode}"
-                except Exception:
-                    pass
-
-            def _refresh_hint(self) -> None:
-                app = self.app  # type: ignore[attr-defined]
-                rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
-                hint = self.query_one("#steering_hint", Label)
-                active = bool(getattr(rt.state, "active", False))
-                try:
-                    new_txt = (
-                        steering_controls_hint(
-                            pending_clarification=bool(
-                                getattr(rt.state, "pending_clarification", False),
-                            ),
-                            voice_enabled=bool(getattr(rt.args, "voice", False)),
-                        )
-                        if active
-                        else ""
-                    )
-                except Exception:
-                    new_txt = ""
-                # Avoid re-rendering if unchanged.
-                try:
-                    if str(new_txt) == str(rt.last_hint_text):
-                        return
-                    rt.last_hint_text = str(new_txt)
-                except Exception:
-                    pass
-                try:
-                    hint.update(str(new_txt or ""))
                 except Exception:
                     pass
 
@@ -1047,7 +990,6 @@ if _TEXTUAL_AVAILABLE:
         #left { width: 45%; padding: 1; }
         #right { width: 55%; padding: 1; }
         #responses { height: 1fr; border: round $surface; }
-        #steering_hint { height: auto; color: $text-muted; }
         #cmd_row { height: auto; }
         #command_input { width: 1fr; }
         """
