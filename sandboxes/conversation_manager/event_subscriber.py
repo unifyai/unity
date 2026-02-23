@@ -169,6 +169,8 @@ def _format_outbound_event(event: Event, *, sandbox_state: object) -> Optional[s
         return header
     if isinstance(event, OutboundPhoneUtterance):
         return f"[Assistant → User • Phone] {event.content}"
+    if isinstance(event, OutboundUnifyMeetUtterance):
+        return f"[Assistant → User • Unify Meet] {event.content}"
     if isinstance(event, UnifyMeetStarted):
         return "🎙️ Live voice ready — you can start speaking."
     if isinstance(event, UnifyMeetEnded):
