@@ -1492,7 +1492,8 @@ if (( pass_count > 0 )); then
   print_duration_line "$(printf "  %6s  %6s  %10s  %s" "----" "-----" "----" "----")"
   { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses cost name; do
     cache_rate=$(format_cache_rate "$hits" "$misses")
-    print_duration_line "$(printf "  %5ds  %6s  %10s  %s" "$dur" "$cache_rate" "\$${cost}" "$name")"
+    formatted_cost=$(printf '$%.6f' "$cost")
+    print_duration_line "$(printf "  %5ds  %6s  %10s  %s" "$dur" "$cache_rate" "$formatted_cost" "$name")"
   done
 fi
 
@@ -1504,7 +1505,8 @@ if (( fail_count > 0 )); then
   print_duration_line "$(printf "  %6s  %6s  %10s  %s" "----" "-----" "----" "----")"
   { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses cost name; do
     cache_rate=$(format_cache_rate "$hits" "$misses")
-    print_duration_line "$(printf "  %5ds  %6s  %10s  %s" "$dur" "$cache_rate" "\$${cost}" "$name")"
+    formatted_cost=$(printf '$%.6f' "$cost")
+    print_duration_line "$(printf "  %5ds  %6s  %10s  %s" "$dur" "$cache_rate" "$formatted_cost" "$name")"
   done
 fi
 
