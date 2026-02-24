@@ -247,7 +247,10 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
             from unity.session_details import SESSION_DETAILS
 
             if SESSION_DETAILS.assistant.desktop_url:
-                return SESSION_DETAILS.assistant.desktop_url.rstrip("/") + "/api"
+                from urllib.parse import urlparse
+
+                parsed = urlparse(SESSION_DETAILS.assistant.desktop_url)
+                return f"{parsed.scheme}://{parsed.netloc}/api"
         except Exception:
             pass
         return DEFAULT_AGENT_SERVER_URL

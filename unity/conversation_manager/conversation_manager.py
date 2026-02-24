@@ -259,11 +259,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         import aiohttp
         from datetime import datetime, timezone
 
-        desktop_url = SESSION_DETAILS.assistant.desktop_url
-        if desktop_url:
-            base_url = desktop_url.rstrip("/") + "/api"
-        else:
-            base_url = "http://localhost:3000"
+        from unity.conversation_manager.medium_scripts.common import (
+            _resolve_agent_service_url,
+        )
+
+        base_url = _resolve_agent_service_url()
         try:
             auth_key = SESSION_DETAILS.unify_key
             headers = {"authorization": f"Bearer {auth_key}"}
@@ -275,9 +275,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status >= 400:
+                        body = await resp.text()
                         self._session_logger.warning(
                             "screenshot_capture",
-                            f"Screenshot capture failed: HTTP {resp.status}",
+                            f"Screenshot capture failed: HTTP {resp.status} "
+                            f"url={base_url}/screenshot body={body[:200]}",
                         )
                         return
                     data = await resp.json()
@@ -305,7 +307,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception as e:
             self._session_logger.warning(
                 "screenshot_capture",
-                f"Screenshot capture error: {e}",
+                f"Screenshot capture error: {type(e).__name__}: {e} "
+                f"url={base_url}/screenshot",
             )
 
     def peek_screenshot_buffer(self) -> list[ScreenshotEntry]:
