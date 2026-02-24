@@ -5370,7 +5370,6 @@ if __name__ == "__main__":
                     "cwd": cwd,
                     "timeout": 3600000,  # 1 hour
                     "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
-                    "user_session": True,  # Run in interactive user session for COM/Excel
                 },
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=3660),
