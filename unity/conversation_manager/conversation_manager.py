@@ -257,38 +257,81 @@ class ConversationManager(metaclass=SingletonABCMeta):
         the slow brain can align visual context with spoken instructions.
         """
         import aiohttp
+        import time as _time
         from datetime import datetime, timezone
 
         from unity.conversation_manager.medium_scripts.common import (
             _resolve_agent_service_url,
+            _ensure_jpeg,
         )
 
         base_url = _resolve_agent_service_url()
+        url = f"{base_url}/screenshot"
+        t_start = _time.monotonic()
+        phases: dict[str, float] = {}
+
+        trace_cfg = aiohttp.TraceConfig()
+
+        async def on_dns_start(session, ctx, params):
+            phases["dns_start"] = _time.monotonic()
+
+        async def on_dns_end(session, ctx, params):
+            phases["dns_ms"] = (
+                _time.monotonic() - phases.get("dns_start", t_start)
+            ) * 1000
+
+        async def on_conn_start(session, ctx, params):
+            phases["conn_start"] = _time.monotonic()
+
+        async def on_conn_end(session, ctx, params):
+            phases["conn_ms"] = (
+                _time.monotonic() - phases.get("conn_start", t_start)
+            ) * 1000
+
+        async def on_req_start(session, ctx, params):
+            phases["req_start"] = _time.monotonic()
+
+        async def on_req_end(session, ctx, params):
+            phases["first_byte_ms"] = (
+                _time.monotonic() - phases.get("req_start", t_start)
+            ) * 1000
+
+        trace_cfg.on_dns_resolvehost_start.append(on_dns_start)
+        trace_cfg.on_dns_resolvehost_end.append(on_dns_end)
+        trace_cfg.on_connection_create_start.append(on_conn_start)
+        trace_cfg.on_connection_create_end.append(on_conn_end)
+        trace_cfg.on_request_start.append(on_req_start)
+        trace_cfg.on_request_end.append(on_req_end)
+
         try:
             auth_key = SESSION_DETAILS.unify_key
             headers = {"authorization": f"Bearer {auth_key}"}
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trace_configs=[trace_cfg]) as session:
                 async with session.post(
-                    f"{base_url}/screenshot",
+                    url,
                     json={},
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status >= 400:
                         body = await resp.text()
+                        total_ms = (_time.monotonic() - t_start) * 1000
                         self._session_logger.warning(
                             "screenshot_capture",
                             f"Screenshot capture failed: HTTP {resp.status} "
-                            f"url={base_url}/screenshot body={body[:200]}",
+                            f"url={url} total={total_ms:.0f}ms "
+                            f"dns={phases.get('dns_ms', 0):.0f}ms "
+                            f"conn={phases.get('conn_ms', 0):.0f}ms "
+                            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                            f"body={body[:200]}",
                         )
                         return
+                    t_before_read = _time.monotonic()
                     data = await resp.json()
+                    read_ms = (_time.monotonic() - t_before_read) * 1000
+                    total_ms = (_time.monotonic() - t_start) * 1000
                     b64 = data.get("screenshot")
                     if b64:
-                        from unity.conversation_manager.medium_scripts.common import (
-                            _ensure_jpeg,
-                        )
-
                         b64 = _ensure_jpeg(b64)
                         self._screenshot_buffer.append(
                             ScreenshotEntry(
@@ -302,13 +345,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                         self._session_logger.debug(
                             "screenshot_capture",
                             f"Buffered screenshot #{len(self._screenshot_buffer)} "
+                            f"url={url} total={total_ms:.0f}ms "
+                            f"dns={phases.get('dns_ms', 0):.0f}ms "
+                            f"conn={phases.get('conn_ms', 0):.0f}ms "
+                            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                            f"body_read={read_ms:.0f}ms "
                             f"for utterance: {user_utterance[:60]}...",
                         )
         except Exception as e:
+            total_ms = (_time.monotonic() - t_start) * 1000
             self._session_logger.warning(
                 "screenshot_capture",
                 f"Screenshot capture error: {type(e).__name__}: {e} "
-                f"url={base_url}/screenshot",
+                f"url={url} total={total_ms:.0f}ms "
+                f"dns={phases.get('dns_ms', 0):.0f}ms "
+                f"conn={phases.get('conn_ms', 0):.0f}ms "
+                f"first_byte={phases.get('first_byte_ms', 0):.0f}ms",
             )
 
     def peek_screenshot_buffer(self) -> list[ScreenshotEntry]:

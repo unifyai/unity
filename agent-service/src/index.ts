@@ -515,6 +515,8 @@ app.post('/start', async (req: Request, res: Response) => {
   }
 
   const sessionId = randomUUID();
+  const t0 = Date.now();
+  console.log(`[start] BEGIN mode=${mode} sessionId=${sessionId}`);
   try {
     let agent: BrowserAgent;
     if (mode === "desktop") {
@@ -524,6 +526,7 @@ app.post('/start', async (req: Request, res: Response) => {
     } else {
       agent = await startBrowser(headless ?? false);
     }
+    console.log(`[start] agent_created=${Date.now() - t0}ms mode=${mode}`);
 
     activeSessions.set(sessionId, {
       agent,
@@ -533,8 +536,10 @@ app.post('/start', async (req: Request, res: Response) => {
       actHistory: [],
     });
 
+    console.log(`[start] DONE mode=${mode} sessionId=${sessionId} total=${Date.now() - t0}ms active_sessions=${activeSessions.size}`);
     res.json({ status: 'started', sessionId });
   } catch (err) {
+    console.error(`[start] ERROR mode=${mode} after ${Date.now() - t0}ms:`, err);
     handleAgentError(err, res);
   }
 });
@@ -658,15 +663,30 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   }
 });
 
+let _screenshotInFlight = 0;
+
 app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
   const { sessionId } = req.body;
+  _screenshotInFlight++;
+  const t0 = Date.now();
+  console.log(`[screenshot] START session=${sessionId} mode=${activeSessions.get(sessionId)?.mode} in_flight=${_screenshotInFlight}`);
   try {
     const session = activeSessions.get(sessionId)!;
     const harness = session.agent.require(BrowserConnector).getHarness();
+    const tHarness = Date.now();
+    console.log(`[screenshot] harness_acquired=${tHarness - t0}ms`);
     const image = await harness.screenshot();
+    const tCapture = Date.now();
+    console.log(`[screenshot] playwright_capture=${tCapture - tHarness}ms`);
     const base64Image = await image.toBase64();
+    const tEncode = Date.now();
+    console.log(`[screenshot] base64_encode=${tEncode - tCapture}ms b64_len=${base64Image.length} total=${tEncode - t0}ms`);
     res.json({ screenshot: base64Image });
+    _screenshotInFlight--;
+    console.log(`[screenshot] DONE total=${Date.now() - t0}ms in_flight=${_screenshotInFlight}`);
   } catch (err) {
+    _screenshotInFlight--;
+    console.error(`[screenshot] ERROR after ${Date.now() - t0}ms in_flight=${_screenshotInFlight}:`, err);
     handleAgentError(err, res, 'screenshot_failed');
   }
 });
