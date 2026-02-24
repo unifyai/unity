@@ -13,7 +13,7 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import multer from 'multer';
 import { jsonSchemaToZod } from './jsonSchemaToZod';
 
@@ -612,7 +612,6 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
           "--disable-blink-features=AutomationControlled",
           "--disable-features=IsolateOrigins,site-per-process",
           '--auto-select-desktop-capture-source="Entire screen"',
-          "--start-minimized",
         ],
         downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
         tracesDir: defaultBrowserPaths.tracesDir || undefined,
@@ -631,6 +630,7 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
       }
     });
     agent.context.setDefaultNavigationTimeout(90000);
+    execSync('xdotool getactivewindow windowminimize');
     console.log("✅ Web-VM BrowserAgent started successfully.");
     return agent;
   } catch (err) {
