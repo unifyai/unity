@@ -498,7 +498,7 @@ def pytest_sessionfinish(session, exitstatus):
             total_cost = sum(cost for _, cost in _session_costs)
             cost_file = f"/tmp/parallel_run_cost_{session_id}.txt"
             with open(cost_file, "w") as f:
-                f.write(f"{total_cost}\n")
+                f.write(f"{total_cost:.6g}\n")
     except Exception:
         pass
 
