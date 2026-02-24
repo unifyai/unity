@@ -417,7 +417,7 @@ class _ActorRunner:
                - ``"primitives.contacts"`` — all contacts methods
                - ``"primitives.contacts.ask"`` — just contacts.ask
                - ``"primitives.computer"`` — all computer methods
-               - ``"primitives.computer.act"`` — just computer.act
+               - ``"primitives.computer.desktop.act"`` — just desktop.act
                - ``"primitives.actor"`` — actor delegation
                - ``"alpha"`` — a specific stored function
 

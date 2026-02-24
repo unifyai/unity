@@ -318,16 +318,9 @@ python start.py
 # Start the agent service
 npx ts-node agent-service/src/index.ts
 
-# The Actor uses desktop mode by default (agent_mode="desktop")
-```
-
-**Web Mode** (browser-only):
-
-```bash
-# Start the agent service
-npx ts-node agent-service/src/index.ts
-
-# Use agent_mode="web" for browser-only automation
+# Two interfaces:
+#   primitives.computer.desktop.*             -- singleton desktop control (mouse/keyboard)
+#   primitives.computer.web.new_session(...)  -- factory for browser sessions (visible or headless)
 ```
 
 ### Pre-commit Hooks

@@ -1,9 +1,9 @@
 """
 ConversationManager sandbox support for the Docker-based virtual desktop.
 
-When `agent_mode == "desktop"`, the sandbox needs a full Linux virtual desktop
-(TigerVNC + XFCE4 + noVNC) plus the Magnitude agent-service, all bundled
-inside a Docker container built from ``desktop/Dockerfile``.
+The Docker container provides the virtual desktop (Xvfb + Fluxbox + x11vnc +
+noVNC) plus the Magnitude agent-service for desktop and web-vm sessions.  The
+container is always started; a separate local agent-service handles web mode.
 
 This module mirrors the pattern in ``agent_service_bootstrap.py``:
 - Structured result types with progress callbacks

@@ -341,6 +341,10 @@ def test_computer_env_function_ids_match_collect_primitives():
     tools = env.get_tools()
 
     for fq_name, meta in tools.items():
+        # Factory tools (e.g., web.new_session) don't map to ComputerPrimitives
+        # methods -- only desktop.* tools do.
+        if not fq_name.startswith("primitives.computer.desktop."):
+            continue
         method_name = fq_name.split(".")[-1]
         prim_name = f"primitives.computer.{method_name}"
         assert prim_name in collected, (
