@@ -955,6 +955,7 @@ def _ensure_jpeg(b64: str) -> str:
 async def capture_assistant_screenshot(
     utterance: str,
     fb_logger: FastBrainLogger | None = None,
+    agent_service_url: str | None = None,
 ) -> "ScreenshotEntry | None":
     """Capture the assistant's desktop via HTTP POST.
 
@@ -967,7 +968,7 @@ async def capture_assistant_screenshot(
     from unity.session_details import SESSION_DETAILS
     from unity.conversation_manager.types.screenshot import ScreenshotEntry
 
-    base_url = _resolve_agent_service_url()
+    base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
     try:
         headers = {"authorization": f"Bearer {auth_key}"}

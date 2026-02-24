@@ -299,6 +299,7 @@ class CallGuidance(Event):
     response_text: str = ""
     should_speak: bool = False
     source: str = ""
+    agent_service_url: str = ""
 
 
 @dataclass
