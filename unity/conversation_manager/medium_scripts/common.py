@@ -963,6 +963,7 @@ async def capture_assistant_screenshot(
     desktop URL is configured.
     """
     import aiohttp
+    import time as _time
 
     from datetime import datetime, timezone
     from unity.session_details import SESSION_DETAILS
@@ -970,30 +971,87 @@ async def capture_assistant_screenshot(
 
     base_url = agent_service_url or _resolve_agent_service_url()
     auth_key = SESSION_DETAILS.unify_key
+    url = f"{base_url}/screenshot"
+
+    def _log(msg: str) -> None:
+        if fb_logger:
+            fb_logger.screenshot(msg)
+        else:
+            LOGGER.warning(msg)
+
+    t_start = _time.monotonic()
+
+    # Phase-level tracing via aiohttp TraceConfig
+    phases: dict[str, float] = {}
+
+    trace_cfg = aiohttp.TraceConfig()
+
+    async def on_dns_start(session, ctx, params):
+        phases["dns_start"] = _time.monotonic()
+
+    async def on_dns_end(session, ctx, params):
+        phases["dns_ms"] = (_time.monotonic() - phases.get("dns_start", t_start)) * 1000
+
+    async def on_conn_start(session, ctx, params):
+        phases["conn_start"] = _time.monotonic()
+
+    async def on_conn_end(session, ctx, params):
+        phases["conn_ms"] = (
+            _time.monotonic() - phases.get("conn_start", t_start)
+        ) * 1000
+
+    async def on_req_start(session, ctx, params):
+        phases["req_start"] = _time.monotonic()
+
+    async def on_req_end(session, ctx, params):
+        phases["first_byte_ms"] = (
+            _time.monotonic() - phases.get("req_start", t_start)
+        ) * 1000
+
+    trace_cfg.on_dns_resolvehost_start.append(on_dns_start)
+    trace_cfg.on_dns_resolvehost_end.append(on_dns_end)
+    trace_cfg.on_connection_create_start.append(on_conn_start)
+    trace_cfg.on_connection_create_end.append(on_conn_end)
+    trace_cfg.on_request_start.append(on_req_start)
+    trace_cfg.on_request_end.append(on_req_end)
+
     try:
         headers = {"authorization": f"Bearer {auth_key}"}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trace_configs=[trace_cfg]) as session:
             async with session.post(
-                f"{base_url}/screenshot",
+                url,
                 json={},
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status >= 400:
                     body = await resp.text()
-                    msg = (
+                    total_ms = (_time.monotonic() - t_start) * 1000
+                    _log(
                         f"Assistant screenshot failed: HTTP {resp.status} "
-                        f"url={base_url}/screenshot body={body[:200]}"
+                        f"url={url} total={total_ms:.0f}ms "
+                        f"dns={phases.get('dns_ms', 0):.0f}ms "
+                        f"conn={phases.get('conn_ms', 0):.0f}ms "
+                        f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                        f"body={body[:200]}",
                     )
-                    if fb_logger:
-                        fb_logger.screenshot(msg)
-                    else:
-                        LOGGER.warning(msg)
                     return None
+                t_before_read = _time.monotonic()
                 data = await resp.json()
+                read_ms = (_time.monotonic() - t_before_read) * 1000
+                total_ms = (_time.monotonic() - t_start) * 1000
                 b64 = data.get("screenshot")
                 if b64:
                     b64 = _ensure_jpeg(b64)
+                    _log(
+                        f"Assistant screenshot OK: url={url} "
+                        f"total={total_ms:.0f}ms "
+                        f"dns={phases.get('dns_ms', 0):.0f}ms "
+                        f"conn={phases.get('conn_ms', 0):.0f}ms "
+                        f"first_byte={phases.get('first_byte_ms', 0):.0f}ms "
+                        f"body_read={read_ms:.0f}ms "
+                        f"b64_len={len(b64)}",
+                    )
                     return ScreenshotEntry(
                         b64=b64,
                         utterance=utterance,
@@ -1001,14 +1059,14 @@ async def capture_assistant_screenshot(
                         source="assistant",
                     )
     except Exception as e:
-        msg = (
+        total_ms = (_time.monotonic() - t_start) * 1000
+        _log(
             f"Assistant screenshot error: {type(e).__name__}: {e} "
-            f"url={base_url}/screenshot"
+            f"url={url} total={total_ms:.0f}ms "
+            f"dns={phases.get('dns_ms', 0):.0f}ms "
+            f"conn={phases.get('conn_ms', 0):.0f}ms "
+            f"first_byte={phases.get('first_byte_ms', 0):.0f}ms",
         )
-        if fb_logger:
-            fb_logger.screenshot(msg)
-        else:
-            LOGGER.warning(msg)
     return None
 
 
