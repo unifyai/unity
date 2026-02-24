@@ -491,6 +491,17 @@ def pytest_sessionfinish(session, exitstatus):
     except Exception:
         pass  # Don't fail the test run if cache stats writing fails
 
+    # Write LLM provider cost to a temp file for parallel_run.sh to consume
+    try:
+        session_id = os.environ.get("UNITY_TMUX_SESSION_ID", "")
+        if session_id:
+            total_cost = sum(cost for _, cost in _session_costs)
+            cost_file = f"/tmp/parallel_run_cost_{session_id}.txt"
+            with open(cost_file, "w") as f:
+                f.write(f"{total_cost}\n")
+    except Exception:
+        pass
+
     if SETTINGS.UNIFY_TESTS_DELETE_PROJ_ON_EXIT:
         unify.delete_project(unify.active_project())
 
