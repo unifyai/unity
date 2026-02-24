@@ -145,155 +145,6 @@ function executeCommand(command: string, cwd: string, timeout: number, shellMode
   });
 }
 
-// Execute command in interactive user session (for COM automation like Excel)
-async function executeCommandInUserSession(
-  command: string,
-  cwd: string,
-  timeout: number,
-  execId: string
-): Promise<ExecResult> {
-  const startTime = Date.now();
-  const taskName = `unity_exec_${execId}`;
-  const scriptFile = path.join(LOCAL_ROOT, `_script_${execId}.ps1`);
-  const resultFile = path.join(LOCAL_ROOT, `_result_${execId}.json`);
-
-  // Escape single quotes for PowerShell
-  const escapedCwd = cwd.replace(/\\/g, '\\\\').replace(/'/g, "''");
-  const escapedCommand = command.replace(/'/g, "''");
-  const escapedResultFile = resultFile.replace(/\\/g, '\\\\');
-
-  // PowerShell script that executes command and saves results to JSON
-  const scriptContent = `
-$ErrorActionPreference = 'Continue'
-$startTime = Get-Date
-$stdout = ''
-$stderr = ''
-$exitCode = 0
-
-try {
-    Set-Location -Path '${escapedCwd}'
-    $output = Invoke-Expression '${escapedCommand}' 2>&1
-    $stdout = ($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "\`n"
-    $stderr = ($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "\`n"
-} catch {
-    $stderr = $_.Exception.Message
-    $exitCode = 1
-}
-
-$duration = ((Get-Date) - $startTime).TotalMilliseconds
-
-$resultJson = @{
-    exitCode = $exitCode
-    stdout = $stdout
-    stderr = $stderr
-    duration = [int]$duration
-} | ConvertTo-Json
-
-# Write without BOM (Out-File adds BOM which breaks JSON.parse in Node.js)
-[System.IO.File]::WriteAllText('${escapedResultFile}', $resultJson, [System.Text.UTF8Encoding]::new($false))
-`;
-
-  await writeFileWithEncoding(scriptFile, scriptContent, 'text');
-
-  const escapedScriptFile = scriptFile.replace(/\\/g, '\\\\');
-
-  // PowerShell script to create and run scheduled task in user session
-  const createTaskScript = `
-$taskName = '${taskName}'
-$scriptPath = '${escapedScriptFile}'
-
-# Get the currently logged-in user
-$loggedInUser = (Get-WmiObject -Class Win32_ComputerSystem).UserName
-
-if (-not $loggedInUser) {
-    Write-Error 'No user logged in'
-    exit 1
-}
-
-Write-Host "Running task as user: $loggedInUser"
-
-# Create scheduled task action (hidden window)
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \`"$scriptPath\`""
-
-# Create principal for interactive user session
-$principal = New-ScheduledTaskPrincipal -UserId $loggedInUser -LogonType Interactive -RunLevel Highest
-
-# Register and run the task
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
-Start-ScheduledTask -TaskName $taskName
-
-# Wait for task to complete
-$maxWait = ${timeout}
-$waited = 0
-while ($waited -lt $maxWait) {
-    Start-Sleep -Milliseconds 500
-    $waited += 500
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($task.State -eq 'Ready') {
-        break
-    }
-}
-
-# Cleanup task
-Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-`;
-
-  return new Promise((resolve) => {
-    const proc = spawn(createTaskScript, [], {
-      shell: 'powershell.exe',
-      cwd: LOCAL_ROOT,
-      timeout,
-    });
-
-    let createStdout = '';
-    let createStderr = '';
-
-    proc.stdout.on('data', (data) => {
-      createStdout += data.toString();
-    });
-
-    proc.stderr.on('data', (data) => {
-      createStderr += data.toString();
-    });
-
-    proc.on('close', async () => {
-      let result: ExecResult = {
-        exitCode: 1,
-        stdout: createStdout,
-        stderr: createStderr || 'Task execution failed',
-        duration: Date.now() - startTime,
-      };
-
-      // Wait a moment for result file to be written
-      await new Promise(r => setTimeout(r, 1000));
-
-      try {
-        const resultJson = await fs.promises.readFile(resultFile, 'utf-8');
-        const parsed = JSON.parse(resultJson);
-        result = {
-          exitCode: parsed.exitCode ?? 0,
-          stdout: parsed.stdout ?? '',
-          stderr: parsed.stderr ?? '',
-          duration: parsed.duration ?? (Date.now() - startTime),
-        };
-      } catch (e) {
-        result.stderr += `\nFailed to read result file: ${e}`;
-      }
-
-      // Cleanup temp files
-      try {
-        await fs.promises.unlink(scriptFile);
-      } catch (_e) { /* ignore */ }
-      try {
-        await fs.promises.unlink(resultFile);
-      } catch (_e) { /* ignore */ }
-
-      resolve(result);
-    });
-  });
-}
-
 function getDefaultBrowserPaths() {
   const downloadsPath = path.join(LOCAL_ROOT, 'Downloads');
   const tracesDir = path.join(LOCAL_ROOT, 'Traces');
@@ -1023,9 +874,8 @@ app.post('/resume', isAgentReady, async (req: Request, res: Response) => {
 });
 
 // --- /exec endpoint: Execute shell commands (use /files first to upload files) ---
-// Pass user_session=true for commands that need interactive session (Excel, COM automation)
 app.post('/exec', async (req: Request, res: Response) => {
-  const { command, cwd, timeout, shell_mode, user_session } = req.body;
+  const { command, cwd, timeout, shell_mode } = req.body;
   const execId = randomUUID().slice(0, 8);
 
   if (!command || typeof command !== 'string') {
@@ -1040,16 +890,8 @@ app.post('/exec', async (req: Request, res: Response) => {
     const resolvedWorkDir = path.resolve(workDir);
     await ensureDir(resolvedWorkDir);
 
-    let result: ExecResult;
-
-    // Use user_session=true for commands that need interactive session (Excel, COM, etc.)
-    if (user_session === true && process.platform === 'win32') {
-      console.log(`[exec] Running in USER SESSION: ${command} (cwd: ${resolvedWorkDir}, execId: ${execId})`);
-      result = await executeCommandInUserSession(command, resolvedWorkDir, execTimeout, execId);
-    } else {
-      console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
-      result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
-    }
+    console.log(`[exec] Running command: ${command} (cwd: ${resolvedWorkDir}, timeout: ${execTimeout}ms, shell: ${shellMode}, execId: ${execId})`);
+    const result = await executeCommand(command, resolvedWorkDir, execTimeout, shellMode);
 
     res.json({
       status: result.exitCode === 0 ? 'success' : 'error',
@@ -1059,7 +901,6 @@ app.post('/exec', async (req: Request, res: Response) => {
       duration: result.duration,
       cwd: resolvedWorkDir,
       execId,
-      userSession: user_session === true,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
