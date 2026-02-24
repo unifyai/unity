@@ -91,9 +91,9 @@ report_completed_sessions() {
         local base="${current_name#p ✅ }"
         echo "  - p ✅ $base"
         _mark_reported "$sid"
-        # Record duration and cache stats for sorted output
+        # Record duration, cache stats, and cost for sorted output
         if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
-          local start_time end_time duration hits misses
+          local start_time end_time duration hits misses cost
           start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
           if [[ -n "$start_time" ]]; then
             end_time=$(date +%s)
@@ -106,7 +106,14 @@ report_completed_sessions() {
               IFS='|' read -r hits misses < "$stats_file" 2>/dev/null || true
               rm -f "$stats_file"
             fi
-            echo "$duration|pass|$hits|$misses|$base" >> "$RESULTS_FILE"
+            # Read LLM provider cost from temp file (written by inner script)
+            cost="0"
+            local cost_file="/tmp/parallel_run_cost_${sid}.txt"
+            if [[ -f "$cost_file" ]]; then
+              cost=$(cat "$cost_file" 2>/dev/null | tr -d '[:space:]')
+              rm -f "$cost_file"
+            fi
+            echo "$duration|pass|$hits|$misses|$cost|$base" >> "$RESULTS_FILE"
           fi
         fi
         ;;
@@ -114,9 +121,9 @@ report_completed_sessions() {
         local base="${current_name#f ❌ }"
         echo "  - f ❌ $base"
         _mark_reported "$sid"
-        # Record duration and cache stats for sorted output
+        # Record duration, cache stats, and cost for sorted output
         if [[ -n "${START_TIMES_FILE:-}" && -f "$START_TIMES_FILE" ]]; then
-          local start_time end_time duration hits misses
+          local start_time end_time duration hits misses cost
           start_time=$(grep "^$sid " "$START_TIMES_FILE" 2>/dev/null | cut -d' ' -f2)
           if [[ -n "$start_time" ]]; then
             end_time=$(date +%s)
@@ -129,7 +136,14 @@ report_completed_sessions() {
               IFS='|' read -r hits misses < "$stats_file" 2>/dev/null || true
               rm -f "$stats_file"
             fi
-            echo "$duration|fail|$hits|$misses|$base" >> "$RESULTS_FILE"
+            # Read LLM provider cost from temp file
+            cost="0"
+            local cost_file="/tmp/parallel_run_cost_${sid}.txt"
+            if [[ -f "$cost_file" ]]; then
+              cost=$(cat "$cost_file" 2>/dev/null | tr -d '[:space:]')
+              rm -f "$cost_file"
+            fi
+            echo "$duration|fail|$hits|$misses|$cost|$base" >> "$RESULTS_FILE"
           fi
         fi
         ;;
@@ -1433,10 +1447,10 @@ if ! is_random_projects_mode && is_env_truthy "UNIFY_TESTS_DELETE_PROJ_ON_EXIT";
   delete_shared_project "exit"
 fi
 
-# Print test stats (duration and cache) sorted fastest to slowest
+# Print test stats (duration, cache, and cost) sorted fastest to slowest
 echo ""
 echo "========================================================================"
-echo "TEST STATS: DURATION & CACHE (fastest → slowest)"
+echo "TEST STATS: DURATION, CACHE & COST (fastest → slowest)"
 echo "========================================================================"
 
 # Count passed and failed (use { grep || true; } to handle no-match case with pipefail)
@@ -1470,15 +1484,16 @@ format_cache_rate() {
 > "$DURATION_SUMMARY_FILE"
 
 # Print passed tests sorted by duration (fastest first, slowest last)
-# Format: duration|status|hits|misses|name
+# Format: duration|status|hits|misses|cost|name
 if (( pass_count > 0 )); then
   echo ""
   print_duration_line "✅ PASSED ($pass_count tests):"
-  print_duration_line "$(printf "  %6s  %6s  %s" "time" "cache" "test")"
-  print_duration_line "$(printf "  %6s  %6s  %s" "----" "-----" "----")"
-  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses name; do
+  print_duration_line "$(printf "  %6s  %6s  %10s  %s" "time" "cache" "cost" "test")"
+  print_duration_line "$(printf "  %6s  %6s  %10s  %s" "----" "-----" "----" "----")"
+  { grep '|pass|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses cost name; do
     cache_rate=$(format_cache_rate "$hits" "$misses")
-    print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
+    formatted_cost=$(printf '$%.6f' "$cost")
+    print_duration_line "$(printf "  %5ds  %6s  %10s  %s" "$dur" "$cache_rate" "$formatted_cost" "$name")"
   done
 fi
 
@@ -1486,11 +1501,12 @@ fi
 if (( fail_count > 0 )); then
   print_duration_line ""
   print_duration_line "❌ FAILED ($fail_count tests):"
-  print_duration_line "$(printf "  %6s  %6s  %s" "time" "cache" "test")"
-  print_duration_line "$(printf "  %6s  %6s  %s" "----" "-----" "----")"
-  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses name; do
+  print_duration_line "$(printf "  %6s  %6s  %10s  %s" "time" "cache" "cost" "test")"
+  print_duration_line "$(printf "  %6s  %6s  %10s  %s" "----" "-----" "----" "----")"
+  { grep '|fail|' "$RESULTS_FILE" || true; } | sort -t'|' -k1 -n | while IFS='|' read -r dur status hits misses cost name; do
     cache_rate=$(format_cache_rate "$hits" "$misses")
-    print_duration_line "$(printf "  %5ds  %6s  %s" "$dur" "$cache_rate" "$name")"
+    formatted_cost=$(printf '$%.6f' "$cost")
+    print_duration_line "$(printf "  %5ds  %6s  %10s  %s" "$dur" "$cache_rate" "$formatted_cost" "$name")"
   done
 fi
 
@@ -1498,10 +1514,12 @@ fi
 total_duration=0
 total_hits=0
 total_misses=0
-while IFS='|' read -r dur status hits misses name; do
+total_cost="0"
+while IFS='|' read -r dur status hits misses cost name; do
   total_duration=$((total_duration + dur))
   total_hits=$((total_hits + hits))
   total_misses=$((total_misses + misses))
+  total_cost=$(awk "BEGIN {printf \"%.6g\", $total_cost + $cost}")
 done < "$RESULTS_FILE"
 
 total_tests=$((pass_count + fail_count))
@@ -1522,6 +1540,7 @@ if (( total_tests > 0 )); then
   total_calls=$((total_hits + total_misses))
   print_duration_line "  Serial duration: $duration_str"
   print_duration_line "  LLM cache: $total_cache_rate ($total_hits hits, $total_misses misses, $total_calls total)"
+  print_duration_line "  LLM cost: \$$total_cost"
 fi
 
 echo ""
