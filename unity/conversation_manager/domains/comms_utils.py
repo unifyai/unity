@@ -149,7 +149,7 @@ async def upload_unify_attachment(
     import aiohttp
     from io import BytesIO
 
-    comms_url = SETTINGS.conversation.COMMS_URL
+    adapters_url = SETTINGS.conversation.ADAPTERS_URL
 
     LOGGER.debug(
         f"{ICONS['comms_outbound']} Uploading unify attachment: {filename} ({len(file_content)} bytes)",
@@ -167,7 +167,7 @@ async def upload_unify_attachment(
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{comms_url}/unify/attachment",
+            f"{adapters_url}/unify/attachment",
             headers=headers,
             data=form_data,
         ) as response:

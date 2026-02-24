@@ -33,6 +33,7 @@ class ConversationSettings(BaseSettings):
     FAST_BRAIN_CONTEXT_WINDOW: int = 50
     IMPL: str = "real"
     COMMS_URL: str = Field(default="", validation_alias="UNITY_COMMS_URL")
+    ADAPTERS_URL: str = Field(default="", validation_alias="UNITY_ADAPTERS_URL")
     JOB_NAME: str = ""
     CONTACT_ID: str = "1"
     BLACKLIST_CHECKS_ENABLED: bool = False

@@ -165,6 +165,7 @@ class TestUploadUnifyAttachment:
         comms_app_url = (
             "https://unity-comms-app-staging-262420637606.us-central1.run.app"
         )
+        adapters_url = "https://unity-adapters-staging-ky4ja5fxna-uc.a.run.app"
 
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
@@ -177,6 +178,7 @@ class TestUploadUnifyAttachment:
         ):
             mock_session_details.assistant.id = "test-assistant"
             mock_settings.conversation.COMMS_URL = comms_app_url
+            mock_settings.conversation.ADAPTERS_URL = adapters_url
 
             await comms_utils.upload_unify_attachment(
                 file_content=b"content",
@@ -184,11 +186,12 @@ class TestUploadUnifyAttachment:
             )
 
             posted_url = mock_session.post.call_args[0][0]
-            assert not posted_url.startswith(comms_app_url), (
-                f"upload_unify_attachment incorrectly posts to COMMS_URL "
-                f"({comms_app_url}). The /unify/attachment endpoint lives on "
-                f"the adapters service, not the comms-app. Got: {posted_url}"
+            assert posted_url.startswith(adapters_url), (
+                f"upload_unify_attachment must post to ADAPTERS_URL "
+                f"({adapters_url}), not COMMS_URL ({comms_app_url}). "
+                f"Got: {posted_url}"
             )
+            assert posted_url == f"{adapters_url}/unify/attachment"
 
 
 class TestSendUnifyMessage:
