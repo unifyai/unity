@@ -975,15 +975,14 @@ class ToolSurfaceRegistry:
 
         method_names = ComputerPrimitives._PRIMITIVE_METHODS
 
-        lines = ["### Computer Primitives (`primitives.computer`)\n"]
+        lines = ["### Computer Method Reference\n"]
         lines.append(
-            "Web and desktop control capabilities for browser automation "
-            "and UI interaction.\n",
+            "These methods are available on `primitives.computer.desktop.*` "
+            "(singleton desktop) and on session handles returned by "
+            "`primitives.computer.web.new_session()`.\n",
         )
 
         for method_name in method_names:
-            # Dynamic methods live on ComputerBackend; static methods on
-            # ComputerPrimitives itself.
             if hasattr(ComputerBackend, method_name):
                 source_cls = ComputerBackend
             else:
@@ -1047,14 +1046,13 @@ class ToolSurfaceRegistry:
         """
         method = getattr(cls, method_name, None)
 
-        # Special case: ComputerPrimitives dynamic methods don't exist on the class
-        # Get their docstrings from the backend class instead
+        # ComputerPrimitives methods live on the backend/session, not on the
+        # class itself.  Look up docstrings from the ComputerBackend ABC.
         if method is None and class_name == "ComputerPrimitives":
-            if method_name in cls._DYNAMIC_METHODS:
-                # Import backend class to get docstrings
-                from unity.function_manager.computer_backends import MagnitudeBackend
+            if method_name in cls._PRIMITIVE_METHODS:
+                from unity.function_manager.computer_backends import ComputerBackend
 
-                backend_method = getattr(MagnitudeBackend, method_name, None)
+                backend_method = getattr(ComputerBackend, method_name, None)
                 if backend_method:
                     docstring = inspect.getdoc(backend_method) or ""
                     try:

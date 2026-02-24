@@ -386,7 +386,7 @@ interface ActHistoryEntry {
 
 interface SessionInfo {
   agent: BrowserAgent;
-  mode: 'web' | 'desktop';
+  mode: 'web' | 'desktop' | 'web-vm';
   createdAt: Date;
   lastAccessed: Date;
   actHistory: ActHistoryEntry[];
@@ -602,14 +602,51 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
   }
 }
 
+const startBrowserOnVm = async (): Promise<BrowserAgent> => {
+  try {
+    const agent = await startBrowserAgent({
+      url: "https://www.duckduckgo.com/",
+      browser: { launchOptions: {
+        headless: false,
+        args: [
+          "--disable-blink-features=AutomationControlled",
+          "--disable-features=IsolateOrigins,site-per-process",
+          '--auto-select-desktop-capture-source="Entire screen"',
+          "--start-minimized",
+        ],
+        downloadsPath: defaultBrowserPaths.downloadsPath || undefined,
+        tracesDir: defaultBrowserPaths.tracesDir || undefined,
+      }},
+      narrate: true,
+      llm: {
+        provider: 'openai-generic',
+        options: {
+          model: 'claude-4.6-opus@anthropic',
+          baseUrl: `${process.env.UNITY_COMMS_URL}/unillm`,
+          headers: {
+            'Authorization': `Bearer ${process.env.UNIFY_KEY}`,
+          },
+          temperature: 0.2,
+        }
+      }
+    });
+    agent.context.setDefaultNavigationTimeout(90000);
+    console.log("✅ Web-VM BrowserAgent started successfully.");
+    return agent;
+  } catch (err) {
+    console.error("❌ Failed to start Web-VM BrowserAgent:", err);
+    throw err;
+  }
+}
+
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
   const { headless, mode } = req.body;
-  if (!mode || (mode !== "desktop" && mode !== "web")) {
+  if (!mode || !['desktop', 'web', 'web-vm'].includes(mode)) {
     return res.status(400).json({
       error: 'bad_request',
       message:
-        'Mode is required and must be either "desktop" or "web".',
+        'Mode is required and must be "desktop", "web", or "web-vm".',
     });
   }
 
@@ -632,6 +669,8 @@ app.post('/start', async (req: Request, res: Response) => {
     let agent: BrowserAgent;
     if (mode === "desktop") {
       agent = await startDesktop();
+    } else if (mode === "web-vm") {
+      agent = await startBrowserOnVm();
     } else {
       agent = await startBrowser(headless ?? false);
     }

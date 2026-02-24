@@ -1605,13 +1605,14 @@ class CodeActActor(BaseCodeActActor):
         )
 
     def _get_computer_tools(self) -> Dict[str, Callable]:
-        """Extracts computer-related methods from the ComputerPrimitives."""
+        """Extracts computer-related methods from the desktop namespace."""
         if not self._computer_primitives:
             return {}
+        desktop = self._computer_primitives.desktop
         return {
-            "navigate": self._computer_primitives.navigate,
-            "act": self._computer_primitives.act,
-            "observe": self._computer_primitives.observe,
+            "navigate": desktop.navigate,
+            "act": desktop.act,
+            "observe": desktop.observe,
         }
 
     def _get_extra_ask_tools(self) -> Dict[str, Callable] | None:
@@ -1619,7 +1620,7 @@ class CodeActActor(BaseCodeActActor):
         if self._computer_primitives is None:
             return None
 
-        computer_query = self._computer_primitives.query
+        computer_query = self._computer_primitives.desktop.query
 
         async def ask_computer_progress(
             question: str,
@@ -1628,7 +1629,7 @@ class CodeActActor(BaseCodeActActor):
         ) -> str:
             """Inspect the in-flight computer action loop via browser-agent memory.
 
-            Use this to check progress/state of ongoing ``primitives.computer.act(...)``
+            Use this to check progress/state of ongoing ``session.act(...)``
             work when the inspected transcript lacks enough detail (for example,
             placeholders or terse summaries). This is memory/history introspection,
             not a fresh page read and not a way to trigger new actions.

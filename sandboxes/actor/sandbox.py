@@ -108,9 +108,8 @@ def _create_actor(args) -> BaseActor:
             )
 
             cp = ComputerPrimitives(
-                headless=args.headless,
-                agent_server_url=args.agent_url,
                 computer_mode="magnitude",
+                agent_server_url=args.agent_url,
             )
             return CodeActActor(
                 environments=[

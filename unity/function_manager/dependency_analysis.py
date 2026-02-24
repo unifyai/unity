@@ -93,7 +93,7 @@ class DependencyVisitor(ast.NodeVisitor):
             elif func_name in self._assignment_map:
                 called_name = self._assignment_map[func_name]
 
-        # Dotted call -> primitives.contacts.ask(), primitives.computer.act(), etc.
+        # Dotted call -> primitives.contacts.ask(), primitives.computer.web.new_session(), etc.
         elif isinstance(func_node, ast.Attribute) and self.environment_namespaces:
             dotted = self._resolve_dotted_name(func_node)
             if dotted:

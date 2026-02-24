@@ -8,12 +8,18 @@ from unity.function_manager.primitives import ComputerPrimitives
 
 @pytest.fixture
 def mock_computer_primitives():
-    """Fixture to create a mock ComputerPrimitives for testing."""
+    """Fixture to create a mock ComputerPrimitives for testing.
+
+    Returns a mock with ``desktop`` sub-namespace matching the real API.
+    """
+    desktop_ns = MagicMock()
+    desktop_ns.navigate = AsyncMock(return_value="navigated")
+    desktop_ns.act = AsyncMock(return_value="acted")
+    desktop_ns.observe = AsyncMock(return_value={"data": "observed_data"})
+    desktop_ns.get_screenshot = AsyncMock(return_value=MagicMock())
+
     mock_provider = MagicMock(spec=ComputerPrimitives)
-    # Mock the correct method names (navigate, act, observe)
-    mock_provider.navigate = AsyncMock(return_value="navigated")
-    mock_provider.act = AsyncMock(return_value="acted")
-    mock_provider.observe = AsyncMock(return_value={"data": "observed_data"})
+    mock_provider.desktop = desktop_ns
     return mock_provider
 
 
