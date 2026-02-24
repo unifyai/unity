@@ -532,7 +532,7 @@ async def entrypoint(ctx: agents.JobContext):
                     )
                     captured_any = True
             if assistant_screen_share_active and is_user_turn:
-                entry = await capture_assistant_screenshot(utterance)
+                entry = await capture_assistant_screenshot(utterance, fb_logger=_log)
                 if entry:
                     _handle_screenshot(entry)
                     captured_any = True

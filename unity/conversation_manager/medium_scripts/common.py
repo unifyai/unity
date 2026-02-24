@@ -980,11 +980,14 @@ async def capture_assistant_screenshot(
             ) as resp:
                 if resp.status >= 400:
                     body = await resp.text()
+                    msg = (
+                        f"Assistant screenshot failed: HTTP {resp.status} "
+                        f"url={base_url}/screenshot body={body[:200]}"
+                    )
                     if fb_logger:
-                        fb_logger.screenshot(
-                            f"Assistant screenshot failed: HTTP {resp.status} "
-                            f"url={base_url}/screenshot body={body[:200]}",
-                        )
+                        fb_logger.screenshot(msg)
+                    else:
+                        LOGGER.warning(msg)
                     return None
                 data = await resp.json()
                 b64 = data.get("screenshot")
@@ -997,11 +1000,14 @@ async def capture_assistant_screenshot(
                         source="assistant",
                     )
     except Exception as e:
+        msg = (
+            f"Assistant screenshot error: {type(e).__name__}: {e} "
+            f"url={base_url}/screenshot"
+        )
         if fb_logger:
-            fb_logger.screenshot(
-                f"Assistant screenshot error: {type(e).__name__}: {e} "
-                f"url={base_url}/screenshot",
-            )
+            fb_logger.screenshot(msg)
+        else:
+            LOGGER.warning(msg)
     return None
 
 

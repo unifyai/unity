@@ -1259,9 +1259,16 @@ async def _(
 
                 cp = ManagerRegistry.get_instance(ComputerPrimitives)
                 if cp is not None:
-                    await cp.backend.get_session("desktop")
-            except Exception:
-                pass
+                    session = await cp.backend.get_session("desktop")
+                    cm._session_logger.info(
+                        "screenshot_capture",
+                        f"Desktop session ready: {session._session_id}",
+                    )
+            except Exception as e:
+                cm._session_logger.warning(
+                    "screenshot_capture",
+                    f"Failed to create desktop session: {type(e).__name__}: {e}",
+                )
 
         asyncio.ensure_future(_ensure_desktop_session())
 
