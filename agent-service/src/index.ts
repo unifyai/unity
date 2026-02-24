@@ -630,7 +630,11 @@ const startBrowserOnVm = async (): Promise<BrowserAgent> => {
       }
     });
     agent.context.setDefaultNavigationTimeout(90000);
-    execSync('xdotool getactivewindow windowminimize');
+    if (process.platform === 'win32') {
+      execSync('powershell -Command "(Add-Type -MemberDefinition \'[DllImport(\\\"user32.dll\\\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); [DllImport(\\\"user32.dll\\\")] public static extern IntPtr GetForegroundWindow();\' -Name Win -Namespace Native -PassThru)::ShowWindow([Native.Win]::GetForegroundWindow(), 6)"');
+    } else {
+      execSync('xdotool getactivewindow windowminimize');
+    }
     console.log("✅ Web-VM BrowserAgent started successfully.");
     return agent;
   } catch (err) {
