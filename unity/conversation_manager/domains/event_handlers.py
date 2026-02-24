@@ -211,11 +211,16 @@ async def _(
     # The fast brain starts with all flags as False and relies on guidance delivery,
     # so any state that was already active needs to be pushed now.
     if cm.assistant_screen_share_active and cm.call_manager._socket_server:
+        from unity.conversation_manager.medium_scripts.common import (
+            _resolve_agent_service_url,
+        )
+
         guidance_text = _MEET_FAST_BRAIN_GUIDANCE[AssistantScreenShareStarted]
         guidance_event = CallGuidance(
             contact=contact,
             content=guidance_text,
             source="meet_interaction",
+            agent_service_url=_resolve_agent_service_url(),
         )
         await cm.call_manager._socket_server.queue_for_clients(
             "app:call:call_guidance",
@@ -1234,10 +1239,15 @@ async def _(
                     f"reason={event_name}"
                 ),
             )
+            from unity.conversation_manager.medium_scripts.common import (
+                _resolve_agent_service_url,
+            )
+
             guidance_event = CallGuidance(
                 contact=contact,
                 content=fast_brain_text,
                 source="meet_interaction",
+                agent_service_url=_resolve_agent_service_url(),
             )
             await cm.event_broker.publish(
                 "app:call:call_guidance",

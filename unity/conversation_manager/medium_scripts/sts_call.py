@@ -269,6 +269,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # -- Screenshot state --
     screenshot_history = ScreenshotHistory()
     assistant_screen_share_active = False
+    _agent_service_url: str | None = None
 
     def _inject_visual_context_sts() -> None:
         """Fire-and-forget: rebuild and push visual context to the Realtime API."""
@@ -435,7 +436,11 @@ async def entrypoint(ctx: JobContext) -> None:
                     )
                     captured_any = True
             if assistant_screen_share_active and is_user_turn:
-                entry = await capture_assistant_screenshot(utterance, fb_logger=_log)
+                entry = await capture_assistant_screenshot(
+                    utterance,
+                    fb_logger=_log,
+                    agent_service_url=_agent_service_url,
+                )
                 if entry:
                     _handle_screenshot(entry)
                     captured_any = True
@@ -534,7 +539,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     def on_guidance(data: dict) -> None:
         """Handle guidance from conversation manager."""
-        nonlocal assistant_screen_share_active
+        nonlocal assistant_screen_share_active, _agent_service_url
         payload = data.get("payload") or data
         content = payload.get("content", "")
         # Track screen share state from meet interaction guidance.
@@ -542,6 +547,8 @@ async def entrypoint(ctx: JobContext) -> None:
             low = content.lower()
             if "screen sharing is now on" in low:
                 assistant_screen_share_active = True
+                if payload.get("agent_service_url"):
+                    _agent_service_url = payload["agent_service_url"]
             elif "screen sharing is now off" in low:
                 assistant_screen_share_active = False
                 screenshot_history.clear(source="assistant")
