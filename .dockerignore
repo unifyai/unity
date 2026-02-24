@@ -1,7 +1,3 @@
-# Redis database files
-dump.rdb
-*.rdb
-
 # Python cache
 __pycache__/
 *.py[cod]

@@ -17,10 +17,11 @@ VALID_MANAGER_ALIASES: frozenset[str] = frozenset(
         "transcripts",
         "knowledge",
         "secrets",
-        "guidance",
         "web",
         "data",
         "files",
+        "computer",
+        "actor",
     },
 )
 

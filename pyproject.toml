@@ -31,7 +31,6 @@ dependencies = [
     "pydantic-core>=2.0.0",
     "pygments>=2.19.2",
     "python-dotenv>=1.0.0",
-    "redis>=7.0.0",
     "requests>=2.31.0",
     "textual>=0.40.0",
     "textual-dev>=1.2.0",
@@ -39,27 +38,29 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     "unifyai",
     "unillm",
-
     # Virtual devices and remote browser setup
     "websockify>=0.13.0",
     "sounddevice>=0.5.3",
     "soundfile>=0.13.1",
     "numpy>=2.3.4",
     "opencv-python>=4.11.0.86",
-
     # Document parsing
     "langchain>=0.3.27",
     "tiktoken>=0.11.0",
     "docling>=2.49.0",
     "spacy>=3.8.7",
     "en-core-web-sm",
-
     # Web search
     "tavily-python>=0.7.12",
-
     # Screen sharing annotation
     "scikit-image>=0.25.2",
     "pillow>=11.3.0",
+    # Telemetry (OTel metrics → GCP Managed Prometheus)
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-gcp-monitoring>=1.9.0a0",
+    "pymupdf>=1.27.1",
+    "openpyxl>=3.1.5",
 ]
 
 [dependency-groups]

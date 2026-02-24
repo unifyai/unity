@@ -29,12 +29,13 @@ from .types.message import Message
 from .types.exchange import Exchange
 from ..common.llm_client import new_llm_client
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedTranscriptHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     A very small, LLM-backed handle used by SimulatedTranscriptManager.ask.
     """
@@ -80,7 +81,9 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -113,7 +116,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -142,7 +145,9 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 
@@ -268,14 +273,9 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -287,10 +287,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -322,6 +319,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         contact_manager: Any = None,
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._log_events = log_events
         self._hold_completion = hold_completion
@@ -329,7 +327,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         self._simulation_guidance = simulation_guidance
 
         # Shared, *stateful* **asynchronous** LLM (reusing common client)
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            origin="SimulatedTranscriptManager",
+        )
         # Minimal in-memory simulation store for programmatic helpers
         self._sim_next_message_id: int = 1
         self._sim_next_exchange_id: int = 1
@@ -708,6 +709,20 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             },
         }
 
+    def update_message_images(
+        self,
+        message_id: int,
+        images: list[dict],
+    ) -> None:
+        """Simulated: attach images to an in-memory message by message_id."""
+        from unity.image_manager.types import AnnotatedImageRefs
+
+        parsed = AnnotatedImageRefs.model_validate(images)
+        for i, msg in enumerate(self._sim_messages):
+            if msg.message_id == message_id:
+                self._sim_messages[i] = msg.model_copy(update={"images": parsed})
+                return
+
     def get_exchange_metadata(self, exchange_id: int) -> Exchange:
         """
         Simulated fetch of exchange metadata from in-memory exchanges.
@@ -790,9 +805,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> int:
+    ) -> tuple[int, int]:
         """
         Start a new exchange, assign a fresh id, log the first message, and upsert metadata.
+
+        Returns (exchange_id, message_id).
         """
         sched = maybe_tool_log_scheduled(
             "SimulatedTranscriptManager.log_first_message_in_new_exchange",
@@ -819,7 +836,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         # Log first message
         payload["exchange_id"] = new_exid
         # Let log_messages validate and store
-        self.log_messages(payload, synchronous=True)
+        logged_msgs = self.log_messages(payload, synchronous=True)
+        tm_message_id = logged_msgs[0].message_id if logged_msgs else -1
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(
@@ -829,7 +847,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
                 {"exchange_id": new_exid},
                 t0,
             )
-        return new_exid
+        return new_exid, tm_message_id
 
     @functools.wraps(BaseTranscriptManager.filter_exchanges, updated=())
     def filter_exchanges(

@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock
 
 from unity.actor.code_act_actor import CodeActActor
 
@@ -13,10 +12,7 @@ async def test_clarification_flow():
     clarification_up_q = asyncio.Queue()
     clarification_down_q = asyncio.Queue()
 
-    planner = CodeActActor(headless=True, computer_mode="mock")
-    planner._computer_primitives.navigate = AsyncMock(return_value=None)
-    planner._computer_primitives.act = AsyncMock(return_value="Action completed")
-    planner._computer_primitives.observe = AsyncMock(return_value="Page content")
+    planner = CodeActActor()
 
     active_task = None
     try:

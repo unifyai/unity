@@ -6,7 +6,6 @@ import inspect
 import json
 import traceback
 import uuid
-from datetime import datetime, timezone
 from secrets import token_hex as _token_hex
 import logging
 from typing import (
@@ -14,8 +13,10 @@ from typing import (
     Callable,
     Awaitable,
     Dict,
+    NamedTuple,
     Optional,
     Type,
+    Union,
     TYPE_CHECKING,
 )
 from pydantic import BaseModel
@@ -23,32 +24,30 @@ from pydantic import BaseModel
 from unity.actor.base import BaseCodeActActor
 from unity.actor.execution import (
     ExecutionResult,
+    PackageOverlay,
     PythonExecutionSession,
     SessionExecutor,
     SessionKey,
+    _CURRENT_ENVIRONMENTS,
+    _CURRENT_PACKAGE_OVERLAY,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
     _validate_execution_params,
 )
 from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
-    ChatContextPropagation,
     SteerableToolHandle,
     start_async_tool_loop,
 )
 from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.llm_client import new_llm_client
+from unity.common.llm_helpers import methods_to_tool_dict
+from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
 from unity.events.manager_event_logging import log_manager_call
-from unity.image_manager.types.image_refs import ImageRefs
-from unity.image_manager.types.raw_image_ref import RawImageRef
-from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
-from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
-from unity.common.hierarchical_logger import (
-    build_hierarchy_label,
-    log_boundary_event,
-)
+from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
+from unity.common.hierarchical_logger import log_boundary_event
 from unity.events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -57,7 +56,104 @@ from unity.events.manager_event_logging import (
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
+    from unity.guidance_manager.guidance_manager import GuidanceManager
     from unillm.types import PromptCacheParam
+
+
+# ---------------------------------------------------------------------------
+# Tool-policy type alias and sentinel
+# ---------------------------------------------------------------------------
+
+ToolPolicyFn = Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]]
+"""Signature for a tool-policy callback.
+
+Receives ``(step_index, tools_dict)`` and returns ``(tool_choice_mode,
+filtered_tools_dict)`` where *tool_choice_mode* is ``"auto"`` or
+``"required"``.
+"""
+
+_USE_DEFAULT: object = object()
+"""Sentinel indicating 'use the built-in discovery-first tool policy'."""
+
+
+def _default_tool_policy(
+    has_fm_tools: bool,
+    has_gm_tools: bool,
+    filter_tools: Callable[[Dict[str, Any]], Dict[str, Any]],
+) -> ToolPolicyFn:
+    """Build the default *discovery-first* tool policy.
+
+    Until **both** a ``FunctionManager_*`` and a ``GuidanceManager_*`` tool
+    have been called at least once, the LLM is restricted to only those
+    discovery tools (with ``tool_choice="required"``).  Once both gates are
+    satisfied the full (statically-filtered) tool set is returned with
+    ``"auto"`` mode.
+
+    When only one of the two manager tool families is present, that single
+    family acts as the sole gate.  When neither is present the policy is a
+    no-op pass-through.
+
+    Parameters
+    ----------
+    has_fm_tools:
+        Whether the base tool set contains any ``FunctionManager_*`` tools.
+    has_gm_tools:
+        Whether the base tool set contains any ``GuidanceManager_*`` tools.
+    filter_tools:
+        The static-filter callable (``_filter_tools``) that enforces
+        ``can_compose`` / ``can_store`` / ``can_spawn_sub_agents``.
+    """
+
+    def _policy(
+        step: int,
+        tools: Dict[str, Any],
+        called_tools: list[str],
+    ) -> tuple[str, Dict[str, Any]]:
+        filtered = filter_tools(tools)
+
+        fm_satisfied = (not has_fm_tools) or any(
+            t.startswith("FunctionManager_") for t in called_tools
+        )
+        gm_satisfied = (not has_gm_tools) or any(
+            t.startswith("GuidanceManager_") for t in called_tools
+        )
+
+        if fm_satisfied and gm_satisfied:
+            return "auto", filtered
+
+        # Expose only the unsatisfied gate(s) and require a call.
+        gated: Dict[str, Any] = {}
+        if not fm_satisfied:
+            gated.update(
+                {
+                    k: v
+                    for k, v in filtered.items()
+                    if isinstance(k, str) and k.startswith("FunctionManager_")
+                },
+            )
+        if not gm_satisfied:
+            gated.update(
+                {
+                    k: v
+                    for k, v in filtered.items()
+                    if isinstance(k, str) and k.startswith("GuidanceManager_")
+                },
+            )
+        return ("required", gated) if gated else ("auto", filtered)
+
+    return _policy
+
+
+# ---------------------------------------------------------------------------
+# Resolved session tuple returned by _resolve_session
+# ---------------------------------------------------------------------------
+
+
+class _ResolvedSession(NamedTuple):
+    language: str
+    venv_id: Optional[int]
+    session_id: Optional[int]
+    error: Optional[Dict[str, Any]]  # validation error dict, or None
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +210,7 @@ class _CodeActEntrypointHandle(SteerableToolHandle):  # type: ignore[abstract-me
     """Execute a FunctionManager entrypoint function without invoking the CodeAct LLM loop.
 
     TaskScheduler delegates task execution to an actor via:
-    `actor.act(task_description, entrypoint=<function_id>, persist=False)`.
+    `primitives.actor.act(task_description, entrypoint=<function_id>, persist=False)`.
 
     When an `entrypoint` is provided, CodeActActor resolves the function by id,
     injects it into the sandbox namespace, and executes it in an asyncio task.
@@ -240,51 +336,79 @@ def _start_storage_check_loop(
     *,
     trajectory: list[dict],
     ask_tools: dict,
+    completed_tool_metadata: dict | None = None,
     actor: "CodeActActor",
     original_result: str,
 ) -> "AsyncToolLoopHandle | None":
-    """Start a loop that reviews a completed trajectory for reusable functions.
+    """Start a loop that reviews a completed trajectory for reusable knowledge.
 
-    Returns the loop handle so the caller can steer and await it, or
-    ``None`` when there is no ``FunctionManager`` configured.
+    The loop maintains two complementary stores:
+
+    * **FunctionManager** — stores the *what*: concrete, reusable function
+      implementations (the building blocks).
+    * **GuidanceManager** — stores the *how*: high-level guidance on
+      composing multiple functions together to accomplish broader tasks
+      (the recipes / playbooks).
+
+    Both stores are required. Returns ``None`` when either manager is
+    missing.
     """
     fm = actor.function_manager
-    if fm is None:
+    gm = actor.guidance_manager
+    if fm is None or gm is None:
         return None
 
-    # ── Build sandbox-free FunctionManager tools ──────────────────────
+    # ── FunctionManager tools ─────────────────────────────────────────
 
     async def FunctionManager_search_functions(
         query: str,
         n: int = 5,
+        include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Any:
-        """Search for existing stored functions by semantic similarity."""
         return fm.search_functions(
             query=query,
             n=n,
-            include_implementations=True,
+            include_implementations=include_implementations,
         )
+
+    FunctionManager_search_functions.__doc__ = (
+        BaseFunctionManager.search_functions.__doc__
+    )
 
     async def FunctionManager_filter_functions(
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        include_implementations: bool = True,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Any:
-        """Filter existing stored functions using a filter expression."""
         return fm.filter_functions(
             filter=filter,
             offset=offset,
             limit=limit,
-            include_implementations=True,
+            include_implementations=include_implementations,
         )
+
+    FunctionManager_filter_functions.__doc__ = (
+        BaseFunctionManager.filter_functions.__doc__
+    )
 
     async def FunctionManager_list_functions(
         include_implementations: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Any:
-        """List all stored functions."""
         return fm.list_functions(
             include_implementations=include_implementations,
         )
+
+    FunctionManager_list_functions.__doc__ = BaseFunctionManager.list_functions.__doc__
 
     async def FunctionManager_add_functions(
         implementations: str | list[str],
@@ -292,27 +416,24 @@ def _start_storage_check_loop(
         language: str = "python",
         overwrite: bool = False,
     ) -> Any:
-        """Store new reusable functions, or update existing ones by name.
-
-        When ``overwrite=True`` and a function with the same name already
-        exists, its implementation is replaced with the new one.
-        """
         return fm.add_functions(
             implementations=implementations,
             language=language,
             overwrite=bool(overwrite),
         )
 
+    FunctionManager_add_functions.__doc__ = BaseFunctionManager.add_functions.__doc__
+
     async def FunctionManager_delete_functions(
         function_ids: list[int],
     ) -> Any:
-        """Delete functions by their IDs.
-
-        Use this to remove obsolete, redundant, or superseded functions
-        from the store. Obtain ``function_id`` values from the results
-        of search, filter, or list calls.
-        """
         return fm.delete_function(function_id=function_ids)
+
+    FunctionManager_delete_functions.__doc__ = (
+        BaseFunctionManager.delete_function.__doc__
+    )
+
+    # ── GuidanceManager tools (bound methods, no wrappers needed) ────
 
     tools: Dict[str, Callable] = {
         "FunctionManager_search_functions": FunctionManager_search_functions,
@@ -320,24 +441,64 @@ def _start_storage_check_loop(
         "FunctionManager_list_functions": FunctionManager_list_functions,
         "FunctionManager_add_functions": FunctionManager_add_functions,
         "FunctionManager_delete_functions": FunctionManager_delete_functions,
+        **methods_to_tool_dict(
+            gm.search,
+            gm.filter,
+            gm.add_guidance,
+            gm.update_guidance,
+            gm.delete_guidance,
+            include_class_name=True,
+        ),
     }
 
     # ── Wire ask_about_completed_tool from snapshot ───────────────────
 
+    # Classify completed tools into storage-active (background skill
+    # review in progress) vs dormant (fully finished).
+    _meta = completed_tool_metadata or {}
+    storage_active_lines: list[str] = []
+    storage_active_handles: Dict[str, Any] = {}
+    dormant_lines: list[str] = []
+    for name, fn in ask_tools.items():
+        # Try to find the metadata entry for this ask tool.
+        entry = None
+        for _cid, _m in _meta.items():
+            if _m.get("ask_fn") is fn:
+                entry = _m
+                break
+        handle = entry.get("handle") if entry else None
+        if handle is not None and hasattr(handle, "done") and not handle.done():
+            storage_active_lines.append(f"- `{name}` [storage-active]")
+            storage_active_handles[name] = handle
+        else:
+            dormant_lines.append(f"- `{name}`")
+
     if ask_tools:
-        completed_info: list[str] = []
-        for name, fn in ask_tools.items():
-            completed_info.append(f"- `{name}`")
+
+        # Build categorized docstring for the tool.
+        doc_sections: list[str] = [
+            "Ask a follow-up question about a completed tool from the "
+            "trajectory to inspect its internal reasoning or results.",
+        ]
+        if storage_active_lines:
+            doc_sections.append(
+                "\nStorage-active tools (background skill review in progress):\n"
+                + "\n".join(storage_active_lines)
+                + "\n\nThese tools have completed their primary task but are "
+                "currently reviewing their execution for reusable skills. "
+                "You can ask what they have stored or are considering.",
+            )
+        if dormant_lines:
+            doc_sections.append(
+                "\nCompleted tools (dormant):\n" + "\n".join(dormant_lines),
+            )
+
+        _ask_doc = "\n".join(doc_sections)
 
         async def ask_about_completed_tool(
             tool_name: str,
             question: str,
         ) -> str:
-            """Ask a follow-up question about a completed tool from the trajectory.
-
-            Use this to inspect the internal reasoning or detailed results of
-            any tool that ran during the completed execution.
-            """
             fn = ask_tools.get(tool_name)
             if fn is None:
                 return (
@@ -353,44 +514,277 @@ def _start_storage_check_loop(
                 return str(result)
             return str(handle)
 
+        ask_about_completed_tool.__doc__ = _ask_doc
         tools["ask_about_completed_tool"] = ask_about_completed_tool
+
+    # ── Wire steering tools for storage-active inner handles ──────────
+
+    if storage_active_handles:
+        _sa_handles = storage_active_handles
+        _sa_listing = "\n".join(storage_active_lines)
+
+        def _resolve_handle(tool_name: str) -> tuple[Any | None, str | None]:
+            h = _sa_handles.get(tool_name)
+            if h is None:
+                avail = list(_sa_handles.keys())
+                return None, (
+                    f"Tool '{tool_name}' not found or no longer storage-active. "
+                    f"Available: {avail}"
+                )
+            if hasattr(h, "done") and h.done():
+                return None, (
+                    f"Tool '{tool_name}' has already finished its storage review."
+                )
+            return h, None
+
+        async def stop_inner_storage(tool_name: str, reason: str) -> str:
+            """Stop an inner storage loop, preventing it from storing anything further.
+
+            Use this when you have determined that the inner agent's storage
+            would be redundant (e.g. you are storing a comprehensive function
+            that already covers the inner agent's scope).
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.stop(reason=reason)
+            return f"Stopped inner storage for '{tool_name}': {reason}"
+
+        stop_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        async def interject_inner_storage(tool_name: str, message: str) -> str:
+            """Inject a directive into an inner storage loop's conversation.
+
+            Use this to provide context that should influence the inner
+            loop's storage decisions (e.g. "The parent is storing a
+            comprehensive function — only store yours if it is genuinely
+            independent and reusable in isolation").
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.interject(message)
+            return f"Interjected into inner storage for '{tool_name}'."
+
+        interject_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        async def pause_inner_storage(tool_name: str) -> str:
+            """Temporarily pause an inner storage loop.
+
+            Use this to halt an inner loop while you make decisions,
+            then resume it with ``resume_inner_storage``. The inner loop
+            will not proceed until resumed (or until its timeout expires).
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.pause()
+            return f"Paused inner storage for '{tool_name}'."
+
+        pause_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        async def resume_inner_storage(tool_name: str) -> str:
+            """Resume a previously paused inner storage loop.
+
+            Call this after ``pause_inner_storage`` to let the inner
+            loop continue its skill review.
+            """
+            h, err = _resolve_handle(tool_name)
+            if err:
+                return err
+            await h.resume()
+            return f"Resumed inner storage for '{tool_name}'."
+
+        resume_inner_storage.__doc__ += f"\n\nStorage-active tools:\n{_sa_listing}"
+
+        tools["stop_inner_storage"] = stop_inner_storage
+        tools["interject_inner_storage"] = interject_inner_storage
+        tools["pause_inner_storage"] = pause_inner_storage
+        tools["resume_inner_storage"] = resume_inner_storage
 
     # ── Build prompt ──────────────────────────────────────────────────
 
     trajectory_json = json.dumps(trajectory, indent=2, default=str)
 
+    # Build optional section about inner storage loops.
+    inner_storage_section = ""
+    if storage_active_lines:
+        inner_storage_section = (
+            "## Inner Storage Loops\n\n"
+            "Some inner tools from this trajectory are currently running "
+            "their own background skill-review loops:\n\n"
+            + "\n".join(storage_active_lines)
+            + "\n\n"
+            "These inner loops may be storing functions independently at a "
+            "finer granularity. You can:\n"
+            "- Query them via `ask_about_completed_tool`\n"
+            "- Inject directives via `interject_inner_storage`\n"
+            "- Stop them via `stop_inner_storage`\n"
+            "- Pause/resume them via `pause_inner_storage` / "
+            "`resume_inner_storage`\n\n"
+            "Use these to coordinate storage decisions (e.g. stop an inner "
+            "loop that would store something redundant, or interject context "
+            "about what you plan to store at the higher level).\n\n"
+        )
+
     system_prompt = (
-        "You are a function librarian. A CodeActActor has just completed a task. "
-        "Your job is to review the execution trajectory and maintain the function "
-        "library: store valuable new functions, improve existing ones, merge "
-        "redundant entries, and remove obsolete ones.\n\n"
+        "You are a skill librarian. A CodeActActor has just completed a task. "
+        "Your job is to review the execution trajectory and decide whether "
+        "anything is worth persisting for future reuse. Often nothing is — "
+        "that is perfectly fine.\n\n"
         "## Completed Trajectory\n\n"
         f"{trajectory_json}\n\n"
         "## Final Result\n\n"
         f"{original_result}\n\n"
-        "## Instructions\n\n"
-        "1. Review the trajectory for any Python functions that were composed "
-        "and executed during the task.\n"
-        "2. Search the existing function store "
-        "(via `FunctionManager_search_functions`) to understand what already "
-        "exists.\n"
-        "3. Decide what actions (if any) would improve the library. You can:\n"
-        "   - **Add** a genuinely new, reusable function "
+        f"{inner_storage_section}"
+        "## What Can Be Stored\n\n"
+        "Any code that executed successfully in `execute_code` during "
+        "this trajectory can be stored as a function. Environment-provided "
+        "namespaces (`primitives`, `primitives.computer`, `primitives.actor`) and "
+        "other stored functions referenced in the code are automatically "
+        "detected from the source and injected at runtime — you do not "
+        "need to add imports or worry about whether these names will be "
+        "available when the function runs later. Focus on whether a "
+        "pattern is *worth* reusing, not whether it is *technically "
+        "executable* in isolation.\n\n"
+        "### Wrapping to bake in configuration\n\n"
+        "Stored functions should NOT be verbatim copies of code blocks "
+        "from the trajectory. During execution, the agent discovered the "
+        "right combination of parameters, tool selections, and strategies "
+        "through reasoning — that configuration knowledge is the valuable "
+        "part. A stored function should **bake in** the hard-won "
+        "configuration as fixed values and **expose** only the parts "
+        "that genuinely vary between uses (typically the task-specific "
+        "input). This produces a function that future callers can use "
+        "without rediscovering the right setup.\n\n"
+        "For example, if the trajectory contained:\n\n"
+        "```python\n"
+        "handle = await primitives.actor.act(\n"
+        '    request="Find Alice\'s work email",\n'
+        '    guidelines="Check all contact fields including notes and metadata. ....",\n'
+        '    prompt_functions=["primitives.contacts.ask"],\n'
+        "    discovery_scope=\"'contacts' in docstring\",\n"
+        ")\n"
+        "result = await handle.result()\n"
+        "```\n\n"
+        "Do NOT store this verbatim (every parameter hardcoded). Instead, "
+        "wrap it into a reusable function that bakes in the configuration "
+        "and exposes only the task:\n\n"
+        "```python\n"
+        "async def research_contact_info(request: str):\n"
+        '    """Delegate contact research to a scoped sub-agent with curated tools."""\n'
+        "    handle = await primitives.actor.act(\n"
+        "        request=request,\n"
+        '        guidelines="Check all contact fields including notes and metadata. ....",\n'
+        '        prompt_functions=["primitives.contacts.ask"],\n'
+        "        discovery_scope=\"'contacts' in docstring\",\n"
+        "    )\n"
+        "    return await handle.result()\n"
+        "```\n\n"
+        "Now `research_contact_info` captures the curated agent setup and "
+        "any future caller only needs to provide the request. The same "
+        "principle applies to any code pattern — whenever some parameters "
+        "represent reusable configuration and others represent per-call "
+        "input, wrap to bake in the former and expose the latter.\n\n"
+        "## Two Stores\n\n"
+        "You have access to two complementary stores:\n\n"
+        "### Function Store — the *what*\n\n"
+        "The FunctionManager stores concrete, reusable function "
+        "implementations — the building blocks. Each entry is a "
+        "single callable with a clear name, docstring, and implementation.\n\n"
+        "Actions:\n"
+        "- **Add** a genuinely new, reusable function "
         "(`FunctionManager_add_functions`).\n"
-        "   - **Update** an existing function with a better implementation "
+        "- **Update** an existing function with a better implementation "
         "(`FunctionManager_add_functions` with `overwrite=True`).\n"
-        "   - **Merge** two or more overlapping functions into a single, "
-        "more general one: add the merged version, then delete the old "
-        "entries (`FunctionManager_delete_functions`).\n"
-        "   - **Delete** functions that are now redundant or superseded "
+        "- **Merge** overlapping functions into one general-purpose function: "
+        "add the merged version, then delete the old entries "
         "(`FunctionManager_delete_functions`).\n"
-        "4. Prefer a clean, non-redundant library over a large one. Merging "
-        "two similar functions into one general-purpose function is better "
-        "than keeping both.\n"
-        "5. Do NOT store trivial one-liners, test scaffolding, or functions "
-        "that are too specific to this particular task to be reusable.\n"
-        "6. When done (or if there is nothing worth changing), respond with a "
-        "brief summary of what you did (or that nothing was needed)."
+        "- **Delete** functions that are redundant or superseded "
+        "(`FunctionManager_delete_functions`).\n\n"
+        "Do NOT store trivial one-liners, test scaffolding, or functions "
+        "that are too task-specific to be reusable.\n\n"
+        "### Guidance Store — the *how*\n\n"
+        "The GuidanceManager stores procedural how-to entries: "
+        "step-by-step instructions, standard operating procedures, "
+        "software usage walkthroughs, and strategies for composing "
+        "multiple functions together to accomplish broader tasks. "
+        "Think of guidance entries as recipes or playbooks — they "
+        "describe the procedure, decision points, and caveats, "
+        "rather than containing executable code.\n\n"
+        "In this storage-review context, guidance is most relevant "
+        "when the trajectory reveals a non-obvious multi-step "
+        "composition strategy that would be hard to rediscover. "
+        "A single function call, a linear sequence of obvious steps, "
+        "or a workflow fully explained by the individual function "
+        "docstrings does NOT need guidance.\n\n"
+        "Actions:\n"
+        "- **Add** guidance for a genuinely non-trivial compositional "
+        "workflow (`GuidanceManager_add_guidance`). Include `function_ids` "
+        "to cross-reference the concrete functions it describes.\n"
+        "- **Update** existing guidance that is incomplete or "
+        "superseded (`GuidanceManager_update_guidance`).\n"
+        "- **Delete** guidance that is obsolete or redundant "
+        "(`GuidanceManager_delete_guidance`).\n\n"
+        "Do NOT duplicate information that already lives in a "
+        "function's docstring. Do NOT create guidance for simple or "
+        "self-explanatory workflows.\n\n"
+        "### Relationship between the two stores\n\n"
+        "| Aspect | FunctionManager | GuidanceManager |\n"
+        "|--------|----------------|----------------|\n"
+        "| Granularity | Single callable | Multi-step workflow |\n"
+        "| Content | Executable implementation | Natural-language recipe |\n"
+        "| Analogy | A tool's docstring | A prompt that references tools |\n\n"
+        "When a trajectory reveals both a useful function AND a non-trivial "
+        "workflow that uses it, store the function first, then create a "
+        "guidance entry referencing it via `function_ids`.\n\n"
+        "## Sub-Agent Delegation Patterns\n\n"
+        "Calls to `primitives.actor.act(...)` in the trajectory are especially "
+        "high-value storage candidates because they represent **pre-configured "
+        "specialist agents**. Each `primitives.actor.act` invocation encodes a curated "
+        "combination of `prompt_functions` (which tools the sub-agent sees), "
+        "`guidelines` (how it should reason and compose those tools), "
+        "`discovery_scope` (what it can find via search), and permission "
+        "flags — together these define a specialist that can handle a "
+        "particular *class* of tasks, not just the single task it was "
+        "originally invoked for.\n\n"
+        "### When to store\n\n"
+        "Not every `primitives.actor.act` call is worth storing. Use this spectrum:\n\n"
+        "- **Low value** — broad, unscoped delegation: all state managers "
+        "in `prompt_functions`, generic or no `guidelines`, no "
+        "`discovery_scope`, trivial `request`. This is just a passthrough "
+        "that any future agent could reconstruct trivially.\n"
+        "- **High value** — curated specialist: a carefully selected set of "
+        "`prompt_functions`, detailed `guidelines` explaining how to compose "
+        "those specific tools, a narrowed `discovery_scope`, and a non-trivial "
+        "task that the sub-agent solved successfully. The configuration "
+        "required real reasoning to discover and would be hard to "
+        "rediscover from scratch.\n\n"
+        "The more curation and domain knowledge went into the `primitives.actor.act` "
+        "parameters, the more valuable it is to store.\n\n"
+        "### What to bake in vs expose\n\n"
+        "The parameters split naturally into two categories:\n\n"
+        "- **Bake in** (agent specification): `guidelines`, "
+        "`prompt_functions`, `discovery_scope`, `can_compose`, `can_store`, "
+        "`can_spawn_sub_agents`, `timeout` — these define *what kind of "
+        "specialist* this is and should be fixed in the stored function.\n"
+        "- **Expose** (task specification): `request` — this defines *what "
+        "to ask the specialist to do* and should be a parameter of the "
+        "stored function.\n\n"
+        "The result is a function that future callers can invoke with just "
+        "a `request` string, without needing to know anything about the "
+        "right tool selection, scoping, or behavioral guidelines.\n\n"
+        "## Instructions\n\n"
+        "1. Review the trajectory for reusable patterns.\n"
+        "2. Search the existing stores to understand what already exists "
+        "(use the search/filter tools for each store).\n"
+        "3. Decide what actions (if any) would improve the library. "
+        "Prefer a clean, non-redundant library over a large one. "
+        "Most trajectories will only warrant function changes, if "
+        "anything at all. Add guidance only when a multi-step "
+        "composition is genuinely non-obvious.\n"
+        "4. When done (or if there is nothing worth changing), respond "
+        "with a brief summary of what you did (or that nothing was needed)."
     )
 
     client = new_llm_client(
@@ -402,7 +796,10 @@ def _start_storage_check_loop(
 
     return start_async_tool_loop(
         client=client,
-        message="Review the trajectory and store any reusable functions.",
+        message=(
+            "Review the trajectory and store any reusable functions "
+            "and compositional guidance."
+        ),
         tools=tools,
         loop_id="StorageCheck(CodeActActor.act)",
         max_steps=30,
@@ -418,12 +815,19 @@ class _StorageCheckHandle(SteerableToolHandle):
     * **task** -- the inner tool loop is running.  All steering methods
       forward to the inner handle.  Notifications from the inner handle
       are relayed to consumers.
-    * **storage** -- the task has completed.  A notification carrying the
-      original result has been emitted.  A second loop reviews the
-      trajectory for reusable skills.  Steering operates on the storage
-      loop.
+    * **storage** -- the task has completed.  ``result()`` has already
+      resolved with the original task result.  A second loop reviews the
+      trajectory for reusable skills.  The handle remains live: steering
+      methods (ask, interject, stop, pause, resume) operate on the
+      storage loop, and ``done()`` returns ``False``.
     * **done** -- both phases have completed (or were stopped/skipped).
-      ``result()`` resolves with the original task result.
+      ``done()`` returns ``True``.
+
+    ``result()`` resolves at the end of Phase 1 — callers get the task
+    result without waiting for storage.  ``done()`` reflects full
+    lifecycle completion (including storage).  This means nested actor
+    loops propagate results immediately while storage runs concurrently
+    in the background.
     """
 
     def __init__(
@@ -435,6 +839,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         self._inner = inner
         self._actor = actor
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
+        self._task_done_event = asyncio.Event()
         self._completion_event = asyncio.Event()
         self._original_result: Optional[str] = None
         self._storage_handle: Optional["AsyncToolLoopHandle"] = None
@@ -493,6 +898,7 @@ class _StorageCheckHandle(SteerableToolHandle):
 
             self._original_result = await self._inner.result()
             await self._cancel_relay()
+            self._task_done_event.set()
 
             if self._stopped:
                 return
@@ -517,46 +923,78 @@ class _StorageCheckHandle(SteerableToolHandle):
                 ask_tools = _get_ask()
             except Exception:
                 pass
-
-            # ── Transition: notify consumers ──────────────────────────
-            self._phase = "storage"
-            await self._notification_q.put(
-                {
-                    "type": "task_completed",
-                    "result": self._original_result,
-                    "message": (
-                        f"Task completed with result:\n\n"
-                        f"{self._original_result}\n\n"
-                        f"The agent is now reviewing its execution "
-                        f"trajectory to store reusable skills. This "
-                        f"handle will remain active until skill "
-                        f"consolidation finishes."
-                    ),
-                },
-            )
-
-            # ── Phase 2: storage check ────────────────────────────────
-            storage_handle = _start_storage_check_loop(
-                trajectory=trajectory,
-                ask_tools=ask_tools,
-                actor=self._actor,
-                original_result=str(self._original_result),
-            )
-
-            if storage_handle is None:
-                return
-
-            self._storage_handle = storage_handle
-            self._active_relay = asyncio.create_task(
-                self._relay_notifications_from(self._storage_handle),
-            )
-
+            completed_tool_metadata: dict = {}
             try:
-                await self._storage_handle.result()
+                _get_meta = getattr(
+                    self._inner._task,
+                    "get_completed_tool_metadata",
+                    lambda: {},
+                )
+                completed_tool_metadata = _get_meta()
             except Exception:
                 pass
 
-            await self._cancel_relay()
+            # ── Phase 2: storage check ────────────────────────────────
+            self._phase = "storage"
+
+            _sc_suffix = _token_hex(2)
+            _sc_call_id = new_call_id()
+            _sc_parent = TOOL_LOOP_LINEAGE.get([])
+            _sc_parent_lineage = (
+                list(_sc_parent) if isinstance(_sc_parent, list) else []
+            )
+            _sc_hierarchy = [
+                *_sc_parent_lineage,
+                f"StorageCheck({_sc_suffix})",
+            ]
+            _sc_lineage_token = TOOL_LOOP_LINEAGE.set(_sc_hierarchy)
+            _sc_suffix_token = _PENDING_LOOP_SUFFIX.set(_sc_suffix)
+
+            try:
+                await publish_manager_method_event(
+                    _sc_call_id,
+                    "CodeActActor",
+                    "StorageCheck",
+                    phase="incoming",
+                    display_label="Storing Reusable Skills",
+                    hierarchy=_sc_hierarchy,
+                )
+
+                storage_handle = _start_storage_check_loop(
+                    trajectory=trajectory,
+                    ask_tools=ask_tools,
+                    completed_tool_metadata=completed_tool_metadata,
+                    actor=self._actor,
+                    original_result=str(self._original_result),
+                )
+
+                if storage_handle is None:
+                    await publish_manager_method_event(
+                        _sc_call_id,
+                        "CodeActActor",
+                        "StorageCheck",
+                        phase="outgoing",
+                        display_label="Storing Reusable Skills",
+                        hierarchy=_sc_hierarchy,
+                    )
+                else:
+                    self._storage_handle = storage_handle
+                    try:
+                        await self._storage_handle.result()
+                    except Exception:
+                        pass
+
+                    await publish_manager_method_event(
+                        _sc_call_id,
+                        "CodeActActor",
+                        "StorageCheck",
+                        phase="outgoing",
+                        display_label="Storing Reusable Skills",
+                        hierarchy=_sc_hierarchy,
+                    )
+            finally:
+                _PENDING_LOOP_SUFFIX.reset(_sc_suffix_token)
+                TOOL_LOOP_LINEAGE.reset(_sc_lineage_token)
 
         except asyncio.CancelledError:
             pass
@@ -564,6 +1002,7 @@ class _StorageCheckHandle(SteerableToolHandle):
             pass
         finally:
             self._phase = "done"
+            self._task_done_event.set()
             self._completion_event.set()
 
     # ── Steering: phase-aware forwarding ──────────────────────────────
@@ -688,7 +1127,7 @@ class _StorageCheckHandle(SteerableToolHandle):
         return self._completion_event.is_set()
 
     async def result(self) -> str:
-        await self._completion_event.wait()
+        await self._task_done_event.wait()
         return self._original_result or ""
 
     # ── Events ────────────────────────────────────────────────────────
@@ -713,100 +1152,115 @@ class _StorageCheckHandle(SteerableToolHandle):
         return self._inner.get_history()
 
 
-def _build_sub_agent_environments(
+# ---------------------------------------------------------------------------
+# Code synthesis helpers for execute_function
+# ---------------------------------------------------------------------------
+
+
+def _synthesize_python_call(
     *,
-    environment: list[str],
-    parent_environments: Dict[str, "BaseEnvironment"],
-    function_manager: Optional["FunctionManager"],
-) -> list["BaseEnvironment"]:
-    """Build the environment list for an inner sub-agent.
+    function_name: str,
+    call_kwargs: Dict[str, Any],
+    function_manager: Optional["FunctionManager"] = None,
+) -> str:
+    """Build a Python code snippet that calls *function_name* with *call_kwargs*.
 
-    Resolves ``environment`` patterns against the parent's environments
-    and the FunctionManager, then constructs the minimal set of environments
-    for the inner actor.
+    This function only synthesises the **code string** — it does not handle
+    dependency injection.  Transitive dependencies (both bare compositional
+    functions and dotted environment namespaces like ``actor`` or
+    ``primitives``) are injected into the sandbox namespace *before* this
+    code runs, through a separate path:
 
-    Resolution order for each matched canonical name:
+    * When the LLM discovers a function via ``FunctionManager_search_functions``
+      (or filter/list), the FM's ``_inject_callables_for_functions`` calls
+      ``_inject_dependencies``, which resolves every entry in ``depends_on``
+      and places the result into the sandbox's ``global_state``.
+    * Environment namespaces (``actor``, ``primitives``, etc.) are also
+      already present in the sandbox if the CodeActActor was constructed
+      with the corresponding environments.
 
-    1. **Parent environment tool** — if the name appears in any parent
-       environment's ``get_tools()`` output, the function is "locally
-       available" and is passed through via the source environment.
-    2. **FunctionManager lookup** — if the name is NOT in any parent
-       environment, it is looked up in the FunctionManager by bare name
-       and wrapped in a ``FunctionStoreEnvironment``.
+    So by the time this synthesised code executes, all names the function
+    references — whether bare helpers or dotted environment calls — are
+    already available in scope.
+
+    Resolution order for the *function itself*:
+    1. Emit a plain call expression.  The sandbox namespace already contains
+       environment-injected callables and previously-discovered FM functions,
+       so this is the common-case fast path.
+    2. If the FunctionManager has a stored implementation, prepend it as a
+       preamble (defining the function) so the call works even in a fresh
+       stateless session where discovery hasn't run yet.
+
+    The call expression is always the **last expression** so that
+    ``PythonExecutionSession``'s REPL semantics return its value (including
+    steerable handles from primitives).
     """
-    from unity.actor.environments.base import resolve_directly_callable
-    from unity.actor.environments.function_store import FunctionStoreEnvironment
-    from unity.actor.environments.state_managers import StateManagerEnvironment
-    from unity.function_manager.primitives import Primitives, PrimitiveScope
+    kwargs_repr = repr(call_kwargs) if call_kwargs else "{}"
+    # Determine whether the function is async by inspecting the stored impl.
+    # Default to ``await`` — environment-injected callables (primitives,
+    # manager methods) are async, and ``await`` on a sync return value
+    # produces a clear ``TypeError`` rather than silently discarding a
+    # coroutine.
+    is_async = True
+    preamble = ""
 
-    if not environment:
-        return []
-
-    # ── Step 1: Build complete tool name → (namespace, metadata) mapping ──
-    all_env_tools: Dict[str, tuple[str, Any]] = {}
-    for ns, env in parent_environments.items():
-        for fq_name, meta in env.get_tools().items():
-            all_env_tools[fq_name] = (ns, meta)
-
-    # Also include bare FM function names (not in any env) for matching.
-    fm_only_names: set[str] = set()
     if function_manager is not None:
-        try:
-            fm_listing = function_manager.list_functions()
-            fm_only_names = {name for name in fm_listing if name not in all_env_tools}
-        except Exception:
-            pass
+        func_data = function_manager._get_function_data_by_name(name=function_name)
+        if func_data is None and getattr(
+            function_manager,
+            "_include_primitives",
+            False,
+        ):
+            func_data = function_manager._get_primitive_data_by_name(name=function_name)
 
-    all_known_names = set(all_env_tools.keys()) | fm_only_names
+        if func_data is not None:
+            impl = func_data.get("implementation")
+            if impl and isinstance(impl, str) and impl.strip():
+                is_async = "async def" in impl
+                # Strip @custom_function decorators (not available in sandbox).
+                from unity.function_manager.function_manager import (
+                    _strip_custom_function_decorators,
+                )
 
-    # ── Step 2: Resolve patterns to canonical names ──
-    matched_names = resolve_directly_callable(environment, all_known_names)
+                preamble = _strip_custom_function_decorators(impl) + "\n\n"
+            elif func_data.get("is_primitive"):
+                is_async = True
 
-    # ── Step 3: Bucket by source ──
-    primitive_methods: set[str] = set()
-    local_env_namespaces: set[str] = set()
-    fm_function_names: list[str] = []
+    call_expr = f"{'await ' if is_async else ''}{function_name}(**{kwargs_repr})"
+    return f"{preamble}{call_expr}"
 
-    for name in matched_names:
-        if name in all_env_tools:
-            env_ns, meta = all_env_tools[name]
-            if meta.function_context == "primitive":
-                primitive_methods.add(name)
-            else:
-                local_env_namespaces.add(env_ns)
-        else:
-            fm_function_names.append(name)
 
-    # ── Step 4: Build environments ──
-    envs: list["BaseEnvironment"] = []
+def _synthesize_shell_call(
+    *,
+    function_name: str,
+    call_kwargs: Dict[str, Any],
+    function_manager: Optional["FunctionManager"] = None,
+) -> str:
+    """Build a shell script that runs the stored function with *call_kwargs*.
 
-    if primitive_methods:
-        needed_managers: set[str] = set()
-        for fq in primitive_methods:
-            parts = fq.split(".")
-            if len(parts) >= 2:
-                needed_managers.add(parts[1])
-        scope = PrimitiveScope(scoped_managers=frozenset(needed_managers))
-        envs.append(
-            StateManagerEnvironment(
-                Primitives(primitive_scope=scope),
-                allowed_methods=primitive_methods,
-            ),
+    Shell functions must have a stored implementation in the FunctionManager.
+    ``call_kwargs`` are exported as environment variables before sourcing the
+    implementation.
+    """
+    impl: str | None = None
+    if function_manager is not None:
+        func_data = function_manager._get_function_data_by_name(name=function_name)
+        if func_data is not None:
+            impl = func_data.get("implementation")
+
+    if not impl or not isinstance(impl, str) or not impl.strip():
+        raise ValueError(
+            f"Shell function '{function_name}' has no stored implementation.",
         )
 
-    for ns in local_env_namespaces:
-        if ns in parent_environments:
-            envs.append(parent_environments[ns])
+    # Export kwargs as environment variables.
+    exports: list[str] = []
+    for k, v in (call_kwargs or {}).items():
+        escaped = str(v).replace("'", "'\\''")
+        exports.append(f"export {k}='{escaped}'")
 
-    if fm_function_names and function_manager is not None:
-        envs.append(
-            FunctionStoreEnvironment(
-                function_manager,
-                function_names=fm_function_names,
-            ),
-        )
-
-    return envs
+    parts = exports + [impl]
+    return "\n".join(parts)
 
 
 class CodeActActor(BaseCodeActActor):
@@ -817,38 +1271,40 @@ class CodeActActor(BaseCodeActActor):
 
     def __init__(
         self,
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        timeout: float = 1000,
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
+        *,
         environments: Optional[list["BaseEnvironment"]] = None,
         function_manager: Optional["FunctionManager"] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
         can_compose: bool = True,
-        can_store: bool = True,
-        can_spawn_sub_agents: bool = False,
-        storage_check_on_return: bool = False,
+        can_store: bool = False,
+        timeout: float = 3600,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
-        prompt_caching: Optional["PromptCacheParam"] = None,
+        prompt_caching: Optional["PromptCacheParam"] = ("system", "tools", "messages"),
+        tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
     ):
         """
         Initializes the CodeActActor.
 
         Args:
-            computer_primitives: Optional existing ComputerPrimitives instance to reuse.
-                           If provided, other computer-related params are ignored.
-            environments: Optional list of execution environments. If None, defaults to
-                [ComputerEnvironment, StateManagerEnvironment].
+            environments: List of execution environments to install. Each environment
+                injects a namespace into the sandbox (e.g. ``primitives``,
+                ``primitives.computer``, ``primitives.actor``). Pass ``None`` or ``[]``
+                for a bare actor with no environments.
             function_manager: Manages a library of reusable functions. Exposes read-only tools
                 (list_functions, search_functions, filter_functions) to the LLM.
                 The LLM can call these tools to discover and retrieve reusable function implementations.
-            agent_server_url: URL for the agent server. For desktop mode, pass the
-                external VM's URL.
-            can_spawn_sub_agents: When True, exposes a ``run_sub_agent`` tool that
-                lets the LLM spawn inner CodeActActors to work on focused sub-tasks.
+            guidance_manager: Manages high-level guidance entries that describe *how* to
+                compose functions together for tasks. Exposes read/write tools in the
+                post-completion storage check loop alongside FunctionManager tools.
+            can_compose: Whether the LLM can write and execute arbitrary code via
+                ``execute_code``. Set to False for function-execution-only mode.
+            can_store: Whether a post-completion review loop should run to
+                identify and store reusable functions and guidance from the
+                trajectory. Storage is always deferred to a dedicated second
+                loop after the main task completes — the main loop never
+                exposes storage tools.
+            timeout: Maximum seconds for the actor to complete.
             model: Optional LLM model identifier (e.g. "claude-4.5-opus@anthropic").
                 If None, uses SETTINGS.UNIFY_MODEL (default: "claude-4.5-opus@anthropic").
             preprocess_msgs: Optional callback to modify messages before each LLM call.
@@ -857,16 +1313,21 @@ class CodeActActor(BaseCodeActActor):
             prompt_caching: Optional list of cache targets (e.g. ["system", "messages"]).
                 Enables Anthropic prompt caching for the specified components to reduce
                 costs and latency. Valid values: "tools", "system", "messages".
+            tool_policy: Controls per-turn dynamic tool filtering and tool-choice mode.
+                - ``_USE_DEFAULT`` (default): uses the built-in "discovery-first"
+                  policy that requires both a FunctionManager and a GuidanceManager
+                  discovery call before unlocking the full tool set.
+                - A custom ``ToolPolicyFn`` callable: receives ``(step, tools)`` and
+                  returns ``(mode, filtered_tools)``.  Static filters (``can_compose``,
+                  ``can_store``, etc.) are always applied before the custom policy sees
+                  the tools.
+                - ``None``: no dynamic policy; only the static ``can_compose`` /
+                  ``can_store`` filters apply.
         """
         super().__init__(
             environments=environments,
-            computer_primitives=computer_primitives,
             function_manager=function_manager,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
+            guidance_manager=guidance_manager,
         )
 
         # Collect function_ids from all environments, split by context, and set
@@ -921,8 +1382,7 @@ class CodeActActor(BaseCodeActActor):
         self._timeout = timeout
         self.can_compose: bool = bool(can_compose)
         self.can_store: bool = bool(can_store)
-        self.can_spawn_sub_agents: bool = bool(can_spawn_sub_agents)
-        self.storage_check_on_return: bool = bool(storage_check_on_return)
+        self.tool_policy: Union[ToolPolicyFn, None, object] = tool_policy
         self._model = model
         self._preprocess_msgs = preprocess_msgs
         self._prompt_caching = prompt_caching
@@ -1073,15 +1533,111 @@ class CodeActActor(BaseCodeActActor):
             active_session_count=self._count_active_sessions_total(),
         )
 
+    def _resolve_session(
+        self,
+        *,
+        state_mode: str,
+        language: str,
+        session_id: int | None,
+        session_name: str | None,
+        venv_id: int | None,
+    ) -> _ResolvedSession:
+        """Resolve/allocate a session and validate execution params.
+
+        Handles the full session resolution flow used by both ``execute_code``
+        and ``execute_function``:
+
+        1. For stateful mode: resolve an existing session name, allocate a new
+           session id, or default to session 0.
+        2. Register session name aliases when both name and id are provided.
+        3. Validate the resulting execution parameters.
+
+        Returns a ``_ResolvedSession`` named tuple.  If ``error`` is not
+        ``None``, the caller should return it as the tool result immediately.
+        """
+        # Resolve / allocate sessions for stateful.
+        if state_mode == "stateful":
+            if session_name:
+                resolved = self._resolve_session_name(session_name)
+                if resolved is not None:
+                    language, venv_id, session_id = resolved
+                elif session_id is None:
+                    key = (
+                        str(language),
+                        int(venv_id) if venv_id is not None else None,
+                    )
+                    next_id = self._next_session_id.get(key, 1)
+                    session_id = next_id
+                    self._next_session_id[key] = next_id + 1
+                    self._register_session_name(
+                        name=session_name,
+                        language=str(language),
+                        venv_id=venv_id,
+                        session_id=int(session_id),
+                    )
+            elif session_id is None:
+                session_id = 0
+
+        # If name + id are both set but not registered yet, register alias.
+        if state_mode == "stateful" and session_name and session_id is not None:
+            if self._resolve_session_name(session_name) is None:
+                self._register_session_name(
+                    name=session_name,
+                    language=str(language),
+                    venv_id=venv_id,
+                    session_id=int(session_id),
+                )
+
+        # Validate.
+        err = self._validate_execution_params(
+            state_mode=state_mode,
+            session_id=session_id,
+            session_name=session_name,
+            language=str(language),
+            venv_id=venv_id,
+        )
+
+        return _ResolvedSession(
+            language=str(language),
+            venv_id=venv_id,
+            session_id=session_id,
+            error=err,
+        )
+
     def _get_computer_tools(self) -> Dict[str, Callable]:
-        """Extracts computer-related methods from the ComputerPrimitives."""
+        """Extracts computer-related methods from the desktop namespace."""
         if not self._computer_primitives:
             return {}
+        desktop = self._computer_primitives.desktop
         return {
-            "navigate": self._computer_primitives.navigate,
-            "act": self._computer_primitives.act,
-            "observe": self._computer_primitives.observe,
+            "navigate": desktop.navigate,
+            "act": desktop.act,
+            "observe": desktop.observe,
         }
+
+    def _get_extra_ask_tools(self) -> Dict[str, Callable] | None:
+        """Build domain-specific ask tools for handle.ask() inspection loops."""
+        if self._computer_primitives is None:
+            return None
+
+        computer_query = self._computer_primitives.desktop.query
+
+        async def ask_computer_progress(
+            question: str,
+            *,
+            _parent_chat_context: list[dict] | None = None,
+        ) -> str:
+            """Inspect the in-flight computer action loop via browser-agent memory.
+
+            Use this to check progress/state of ongoing ``session.act(...)``
+            work when the inspected transcript lacks enough detail (for example,
+            placeholders or terse summaries). This is memory/history introspection,
+            not a fresh page read and not a way to trigger new actions.
+            """
+            _ = _parent_chat_context
+            return await computer_query(question)
+
+        return {"ask_computer_progress": ask_computer_progress}
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
         """Builds the dictionary of tools available to the LLM."""
@@ -1108,8 +1664,10 @@ class CodeActActor(BaseCodeActActor):
             -----------
             - **language**: "python" | "bash" | "zsh" | "sh" | "powershell"
             - **state_mode**:
-              - "stateless": no session; clean execution; no persistence
-              - "stateful": persistent session; state accumulates
+              - "stateless": fresh execution; no persistence of intermediate variables.
+                Environment globals and FunctionManager-discovered functions are
+                always available.
+              - "stateful": persistent session; state accumulates across calls
               - "read_only": reads from an existing session but does not persist changes
             - **session_id/session_name**:
               - only meaningful for stateful/read_only
@@ -1164,6 +1722,17 @@ class CodeActActor(BaseCodeActActor):
                   answer = await handle.result()
                   print(f"Found: {answer}")
 
+            Decision guidance
+            -----------------
+            Prefer returning the handle when the operation is likely to be
+            long-running, externally dependent, or may require user steering
+            (status checks, corrections, pause/resume, or cancellation).
+            Prefer awaiting the result when you need that value immediately
+            for additional logic inside the same code block.
+            When the intent is neutral or ambiguous, default to returning
+            the handle so the outer loop preserves steering and progress
+            visibility.
+
             Output
             ------
             Returns either a dict or an ExecutionResult object with the following fields:
@@ -1183,11 +1752,6 @@ class CodeActActor(BaseCodeActActor):
             - **venv_id**: The virtual environment ID if applicable, otherwise None.
             - **session_created**: True if a new session was created by this call.
             - **duration_ms**: Execution duration in milliseconds.
-            - **computer_used**: True if computer primitives were invoked during execution.
-            - **computer_state** (optional): Only present when computer_used is True and a
-              computer environment is available. The textual metadata includes the URL
-              and any error details. A screenshot, when available, is returned as an
-              image block in the formatted tool output rather than embedded into JSON.
 
             For in-process Python execution with rich output, the result is wrapped in an
             ExecutionResult object (a Pydantic model implementing FormattedToolResult).
@@ -1206,7 +1770,6 @@ class CodeActActor(BaseCodeActActor):
                     "venv_id": venv_id,
                     "session_created": False,
                     "duration_ms": 0,
-                    "computer_used": False,
                 }
 
             # ──────────────────────────────────────────────────────────────
@@ -1217,8 +1780,7 @@ class CodeActActor(BaseCodeActActor):
             _call_id = new_call_id()
             _parent = TOOL_LOOP_LINEAGE.get([])
             _parent_lineage = list(_parent) if isinstance(_parent, list) else []
-            _hierarchy = [*_parent_lineage, "execute_code"]
-            _hierarchy_label = build_hierarchy_label(_hierarchy, _suffix)
+            _hierarchy = [*_parent_lineage, f"execute_code({_suffix})"]
             # Establish a boundary lineage frame so nested calls (e.g., FunctionManager-injected
             # functions calling state managers) keep a consistent parent->child chain.
             _lineage_token = TOOL_LOOP_LINEAGE.set(_hierarchy)
@@ -1230,12 +1792,12 @@ class CodeActActor(BaseCodeActActor):
                         "CodeActActor",
                         "execute_code",
                         hierarchy=_hierarchy,
-                        hierarchy_label=_hierarchy_label,
+                        display_label="Running Code",
                         **payload,
                     )
                 except Exception as e:
                     log_boundary_event(
-                        _hierarchy_label,
+                        "->".join(_hierarchy),
                         f"Warning: failed to publish event: {type(e).__name__}: {e}",
                         icon="⚠️",
                         level="warning",
@@ -1245,7 +1807,7 @@ class CodeActActor(BaseCodeActActor):
                 await _pub_safe(phase="incoming")
             except Exception:
                 pass
-            log_boundary_event(_hierarchy_label, "Executing code...", icon="🛠️")
+            log_boundary_event("->".join(_hierarchy), "Executing code...", icon="🛠️")
 
             out: dict[str, Any] | None = None
             tb_str: str | None = None
@@ -1254,53 +1816,20 @@ class CodeActActor(BaseCodeActActor):
             notification_q = _notification_up_q
             sandbox_id = None
             try:
-                # Resolve / allocate sessions for stateful.
-                if state_mode == "stateful":
-                    if session_name:
-                        resolved = self._resolve_session_name(session_name)
-                        if resolved is not None:
-                            language, venv_id, session_id = resolved
-                        elif session_id is None:
-                            # Allocate a new session id (reserve 0 for default sandbox).
-                            key = (
-                                str(language),
-                                int(venv_id) if venv_id is not None else None,
-                            )
-                            next_id = self._next_session_id.get(key, 1)
-                            session_id = next_id
-                            self._next_session_id[key] = next_id + 1
-                            self._register_session_name(
-                                name=session_name,
-                                language=str(language),
-                                venv_id=venv_id,
-                                session_id=int(session_id),
-                            )
-                    elif session_id is None:
-                        # Default stateful session for each language/venv is session_id=0.
-                        # This is especially important for Python because FunctionManager-injected
-                        # callables are available in the default/bound Python sandbox (session 0).
-                        session_id = 0
-
-                # If name + id are both set but not registered yet, register alias.
-                if state_mode == "stateful" and session_name and session_id is not None:
-                    if self._resolve_session_name(session_name) is None:
-                        self._register_session_name(
-                            name=session_name,
-                            language=str(language),
-                            venv_id=venv_id,
-                            session_id=int(session_id),
-                        )
-
-                # Validate.
-                err = self._validate_execution_params(
+                _rs = self._resolve_session(
                     state_mode=state_mode,
+                    language=str(language),
                     session_id=session_id,
                     session_name=session_name,
-                    language=str(language),
                     venv_id=venv_id,
                 )
-                if err is not None:
-                    out = err
+                language, venv_id, session_id = (
+                    _rs.language,
+                    _rs.venv_id,
+                    _rs.session_id,
+                )
+                if _rs.error is not None:
+                    out = _rs.error
                     return out
 
                 # Inject per-tool notification queue into bound sandbox so notify() works.
@@ -1314,29 +1843,12 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
 
-                if notification_q is not None and str(language) == "python":
-                    try:
-                        await notification_q.put(
-                            {
-                                "type": "execution_started",
-                                "message": "execution_started",
-                                "sandbox_id": sandbox_id,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                    except Exception:
-                        pass
-
                 # Execute via SessionExecutor. Route primitives if available in current sandbox.
                 primitives = None
                 computer_primitives = self._computer_primitives
                 try:
                     sb = _CURRENT_SANDBOX.get()
                     primitives = sb.global_state.get("primitives")
-                    computer_primitives = sb.global_state.get(
-                        "computer_primitives",
-                        computer_primitives,
-                    )
                 except Exception:
                     pass
 
@@ -1356,22 +1868,6 @@ class CodeActActor(BaseCodeActActor):
                         exec_exc = e
                         tb = traceback.format_exc()
                         tb_str = tb
-                        if notification_q is not None and str(language) == "python":
-                            try:
-                                await notification_q.put(
-                                    {
-                                        "type": "execution_error",
-                                        "message": "execution_error",
-                                        "sandbox_id": sandbox_id,
-                                        "error_kind": "exception",
-                                        "traceback_preview": tb[:2000],
-                                        "timestamp": datetime.now(
-                                            timezone.utc,
-                                        ).isoformat(),
-                                    },
-                                )
-                            except Exception:
-                                pass
                         out = {
                             "stdout": "",
                             "stderr": "",
@@ -1384,7 +1880,6 @@ class CodeActActor(BaseCodeActActor):
                             "venv_id": venv_id,
                             "session_created": False,
                             "duration_ms": 0,
-                            "computer_used": False,
                         }
                 finally:
                     _PARENT_CHAT_CONTEXT.reset(_pcc_token)
@@ -1399,42 +1894,6 @@ class CodeActActor(BaseCodeActActor):
                 else:
                     out["session_name"] = None
 
-                # Attach computer state for Python runs when computer primitives were used.
-                if (
-                    str(out.get("language")) == "python"
-                    and out.get("computer_used")
-                    and self._computer_primitives is not None
-                ):
-                    try:
-                        url = await self._computer_primitives.computer.get_current_url()
-                        screenshot_b64 = (
-                            await self._computer_primitives.computer.get_screenshot()
-                        )
-                        out["computer_state"] = {
-                            "url": url,
-                            "screenshot": screenshot_b64,
-                        }
-                    except Exception as e:
-                        out["computer_state"] = {"error": str(e)}
-
-                if notification_q is not None and str(language) == "python":
-                    try:
-                        _status = "ok" if not out.get("error") else "error"
-                        await notification_q.put(
-                            {
-                                "type": "execution_finished",
-                                "sandbox_id": sandbox_id,
-                                "status": _status,
-                                "message": f"execution_finished:{_status}",
-                                "stdout_len": len(out.get("stdout") or ""),
-                                "stderr_len": len(out.get("stderr") or ""),
-                                "computer_used": bool(out.get("computer_used")),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            },
-                        )
-                    except Exception:
-                        pass
-
                 # Wrap in-process Python results in ExecutionResult for proper LLM
                 # image formatting. In-process Python has stdout as List[OutputPart];
                 # venv/shell have strings.
@@ -1447,11 +1906,20 @@ class CodeActActor(BaseCodeActActor):
                 return out
             finally:
                 try:
-                    if out is not None and out.get("error"):
+                    _out_err = (
+                        (
+                            out.get("error")
+                            if isinstance(out, dict)
+                            else getattr(out, "error", None)
+                        )
+                        if out is not None
+                        else None
+                    )
+                    if _out_err:
                         await _pub_safe(
                             phase="outgoing",
                             status="error",
-                            error=str(out.get("error")),
+                            error=str(_out_err),
                             error_type=(
                                 type(exec_exc).__name__
                                 if exec_exc is not None
@@ -1468,165 +1936,274 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
 
+        # ───────────────────────── Package installation tool ────────────────── #
+
+        async def install_python_packages(
+            packages: list[str],
+        ) -> dict:
+            """Install Python packages into the current execution environment.
+
+            **CRITICAL**: You MUST use this tool whenever you need a Python
+            package that is not already available. Do NOT attempt to install
+            packages yourself via ``execute_code`` (e.g.
+            ``subprocess.run(["pip", "install", ...])``, ``!pip install``,
+            ``uv pip install``, or any other shell-based installation).  Direct
+            installs bypass the managed overlay and will leave residual
+            packages that pollute subsequent sessions.
+
+            Packages are installed into a temporary directory that is
+            automatically cleaned up when this task finishes.  They are
+            immediately importable in any subsequent ``execute_code`` Python
+            call for the remainder of this task, but they do **not** persist
+            beyond it.
+
+            Parameters
+            ----------
+            packages : list[str]
+                One or more package specifiers, using the same syntax accepted
+                by ``pip install`` / ``uv pip install``.  Examples:
+
+                - ``["pandas"]`` — latest version from PyPI
+                - ``["pandas==2.1.0"]`` — exact version pin
+                - ``["pandas>=2.0,<3.0"]`` — version range
+                - ``["pandas[sql]"]`` — with extras
+                - ``["requests", "beautifulsoup4"]`` — multiple packages
+                - ``["git+https://github.com/user/repo.git"]`` — from a Git repository
+                - ``["./some_wheel.whl"]`` — from a local file
+
+            Returns
+            -------
+            dict
+                - **success** (bool): Whether installation succeeded.
+                - **stdout** (str): Installer standard output.
+                - **stderr** (str): Installer standard error (contains
+                  resolution/download progress and any error messages).
+                - **packages** (list[str]): The specifiers that were requested.
+
+            Notes
+            -----
+            - If a requested package conflicts with a system dependency, the
+              system version takes precedence and the import will resolve to
+              the pre-installed version.  This is by design — the runtime
+              environment must remain stable.
+            - If installation fails, inspect ``stderr`` for resolution errors
+              and adjust your specifiers (e.g. relax a version constraint).
+            """
+            try:
+                sb = _CURRENT_SANDBOX.get()
+                overlay: PackageOverlay | None = sb.global_state.get(
+                    "__package_overlay__",
+                )
+            except Exception:
+                overlay = None
+
+            if overlay is None:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": (
+                        "Package installation is not available outside of an "
+                        "active act() session."
+                    ),
+                    "packages": list(packages),
+                }
+
+            return overlay.install(packages)
+
         tools: Dict[str, Callable[..., Awaitable[Any]]] = {
             "execute_code": execute_code,
+            "install_python_packages": install_python_packages,
         }
 
-        # Add FunctionManager tools (auto-inject callables into sandbox) if available.
-        #
-        # IMPORTANT:
-        # These tools are called via JSON tool calls (not inside Python). They return
-        # metadata to the LLM while injecting the matching function callables into the
-        # sandbox global namespace so they can be executed immediately in Python code.
+        # FunctionManager read tools: thin wrappers that inject callables
+        # into the sandbox and return only metadata to the LLM. Docstrings
+        # are inherited from the base class (the single source of truth).
         if self.function_manager:
 
             async def FunctionManager_search_functions(
                 query: str,
                 n: int = 5,
+                include_implementations: bool = True,
+                _return_callable: bool = False,
+                _namespace: Optional[Dict[str, Any]] = None,
+                _also_return_metadata: bool = False,
             ) -> Any:
-                """
-                Search for functions by semantic similarity to a natural-language query.
-
-                Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after searching.
-                """
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.search_functions(
                     query=query,
                     n=n,
-                    return_callable=True,
-                    namespace=_CURRENT_SANDBOX.get().global_state,
-                    also_return_metadata=True,
+                    include_implementations=include_implementations,
+                    _return_callable=True,
+                    _namespace=sb.global_state,
+                    _also_return_metadata=True,
                 )
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
+
+            FunctionManager_search_functions.__doc__ = (
+                BaseFunctionManager.search_functions.__doc__
+            )
 
             async def FunctionManager_filter_functions(
                 filter: Optional[str] = None,
                 offset: int = 0,
                 limit: int = 100,
+                include_implementations: bool = True,
+                _return_callable: bool = False,
+                _namespace: Optional[Dict[str, Any]] = None,
+                _also_return_metadata: bool = False,
             ) -> Any:
-                """
-                Filter functions using a Python-like filter expression.
-
-                Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after filtering.
-                """
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.filter_functions(
                     filter=filter,
                     offset=offset,
                     limit=limit,
-                    return_callable=True,
-                    namespace=_CURRENT_SANDBOX.get().global_state,
-                    also_return_metadata=True,
+                    include_implementations=include_implementations,
+                    _return_callable=True,
+                    _namespace=sb.global_state,
+                    _also_return_metadata=True,
                 )
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
+
+            FunctionManager_filter_functions.__doc__ = (
+                BaseFunctionManager.filter_functions.__doc__
+            )
 
             async def FunctionManager_list_functions(
                 include_implementations: bool = False,
+                _return_callable: bool = False,
+                _namespace: Optional[Dict[str, Any]] = None,
+                _also_return_metadata: bool = False,
             ) -> Any:
-                """
-                List available functions.
-
-                Functions are automatically injected into your Python sandbox namespace,
-                so you can execute them immediately after listing.
-                """
+                sb = _CURRENT_SANDBOX.get()
+                before = set(sb.global_state.keys())
                 result = self.function_manager.list_functions(
                     include_implementations=include_implementations,
-                    return_callable=True,
-                    namespace=_CURRENT_SANDBOX.get().global_state,
-                    also_return_metadata=True,
+                    _return_callable=True,
+                    _namespace=sb.global_state,
+                    _also_return_metadata=True,
                 )
+                new_keys = set(sb.global_state.keys()) - before
+                if new_keys:
+                    self._session_executor.register_fm_globals(
+                        {k: sb.global_state[k] for k in new_keys},
+                    )
                 return result["metadata"]
+
+            FunctionManager_list_functions.__doc__ = (
+                BaseFunctionManager.list_functions.__doc__
+            )
 
             tools["FunctionManager_search_functions"] = FunctionManager_search_functions
             tools["FunctionManager_filter_functions"] = FunctionManager_filter_functions
             tools["FunctionManager_list_functions"] = FunctionManager_list_functions
 
-            async def FunctionManager_add_functions(
-                implementations: str | list[str],
-                *,
-                language: str = "python",
-                overwrite: bool = False,
-                verify: Optional[dict[str, bool]] = None,
-                preconditions: Optional[dict[str, dict]] = None,
-            ) -> Any:
-                """
-                Add/store new functions into the FunctionManager.
+        # GuidanceManager tools: bound methods registered directly via
+        # methods_to_tool_dict (no custom wrappers needed — unlike FM, GM
+        # methods are plain CRUD with no sandbox injection side-effects).
+        if self.guidance_manager:
+            gm = self.guidance_manager
+            tools.update(
+                methods_to_tool_dict(
+                    gm.search,
+                    gm.filter,
+                    gm.add_guidance,
+                    gm.update_guidance,
+                    gm.delete_guidance,
+                    include_class_name=True,
+                ),
+            )
 
-                Notes
-                -----
-                - This tool is gated by CodeActActor's `can_store` flag (and can be disabled per-call).
-                - Prefer using existing functions (search first) before adding new ones.
-                """
-                fm = self.function_manager
-                if fm is None:
-                    raise RuntimeError(
-                        "FunctionManager is not configured on this actor.",
-                    )
-                return fm.add_functions(
-                    implementations=implementations,
-                    language=language,  # type: ignore[arg-type]
-                    overwrite=bool(overwrite),
-                    verify=(verify or {}),
-                    preconditions=(preconditions or {}),
-                )
-
-            tools["FunctionManager_add_functions"] = FunctionManager_add_functions
+        if self.function_manager:
 
             async def execute_function(
                 function_name: str,
                 call_kwargs: Optional[Dict[str, Any]] = None,
+                *,
+                language: str = "python",
+                state_mode: str = "stateless",
+                session_id: int | None = None,
+                session_name: str | None = None,
+                venv_id: int | None = None,
+                _notification_up_q: asyncio.Queue[dict] | None = None,
                 _parent_chat_context: list[dict] | None = None,
-                _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-                _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-            ) -> Dict[str, Any]:
+            ) -> Any:
                 """
-                Execute a stored function by name and return its result.
+                Execute a known function by name and return its result.
 
-                This is the preferred way to run a known, pre-stored function
-                without writing any code. The function is looked up in the
-                FunctionManager by exact name and executed directly.
+                This is the preferred way to run a known function without
+                writing any code.  The function is resolved from:
 
-                When to use this vs execute_code
-                ---------------------------------
-                - Use **execute_function** when you know the exact function name
-                  (from a prior search/list/filter call) and want to run it as-is.
-                  This is simpler, faster, and avoids the overhead of a code sandbox.
-                - Use **execute_code** when you need to compose multiple functions,
-                  transform data between calls, or write any custom logic.
+                1. The current sandbox namespace (environment-injected callables,
+                   previously discovered FunctionManager functions, etc.).
+                2. The FunctionManager store (by exact name lookup).
+                3. If neither matches, a ``NameError`` is raised naturally.
 
                 Workflow
                 -------
-                1. Discover functions via `FunctionManager_search_functions`,
-                   `FunctionManager_filter_functions`, or
-                   `FunctionManager_list_functions`.
+                1. Discover functions via ``FunctionManager_search_functions``,
+                   ``FunctionManager_filter_functions``, or
+                   ``FunctionManager_list_functions``.
                 2. Pick the best match by name.
-                3. Call `execute_function(function_name=..., call_kwargs=...)`.
+                3. Call ``execute_function(function_name=..., call_kwargs=...)``.
+
+                Key concepts
+                ------------
+                - **language**: ``"python"`` | ``"bash"`` | ``"zsh"`` | ``"sh"`` | ``"powershell"``
+                - **state_mode**:
+                  - ``"stateless"``: no session; clean execution; no persistence
+                  - ``"stateful"``: persistent session; state accumulates
+                  - ``"read_only"``: reads from an existing session but does not
+                    persist changes
+                - **session_id / session_name**: only meaningful for
+                  stateful / read_only (same semantics as ``execute_code``)
 
                 Parameters
                 ----------
                 function_name : str
-                    Exact name of the stored function to execute (as returned by
-                    the FunctionManager discovery tools).
+                    Exact name of the function to execute.
                 call_kwargs : dict, optional
-                    Keyword arguments to pass to the function. Omit or pass None /
-                    an empty dict for functions that take no arguments.
+                    Keyword arguments to pass to the function.
 
                 Returns
                 -------
-                dict
-                    A dict with:
-                    - **result**: The function's return value (any JSON-serializable type).
-                    - **error**: Traceback string if the function raised, else None.
-                    - **stdout**: Captured standard output (string).
-                    - **stderr**: Captured standard error (string).
+                dict | ExecutionResult
+                    Same shape as ``execute_code`` output (stdout, stderr, result,
+                    error, language, state_mode, session_id, session_name, venv_id,
+                    session_created, duration_ms).
                 """
-                fm = self.function_manager
-                if fm is None:
-                    raise RuntimeError(
-                        "FunctionManager is not configured on this actor.",
+                call_kwargs = call_kwargs or {}
+
+                # ── Synthesize the code string ────────────────────────────
+                code: str | None = None
+
+                if str(language) == "python":
+                    code = _synthesize_python_call(
+                        function_name=function_name,
+                        call_kwargs=call_kwargs,
+                        function_manager=self.function_manager,
+                    )
+                else:
+                    # Shell: look up the stored implementation and append it
+                    # with kwargs serialised as environment variables.
+                    code = _synthesize_shell_call(
+                        function_name=function_name,
+                        call_kwargs=call_kwargs,
+                        function_manager=self.function_manager,
                     )
 
-                # ── Lineage boundary (mirrors execute_code) ──────────────
+                # ── Lineage boundary ─────────────────────────────────────
                 _ef_suffix = _token_hex(2)
                 _ef_call_id = new_call_id()
                 _ef_parent = TOOL_LOOP_LINEAGE.get([])
@@ -1635,12 +2212,8 @@ class CodeActActor(BaseCodeActActor):
                 )
                 _ef_hierarchy = [
                     *_ef_parent_lineage,
-                    f"execute_function({function_name})",
+                    f"execute_function({function_name})({_ef_suffix})",
                 ]
-                _ef_hierarchy_label = build_hierarchy_label(
-                    _ef_hierarchy,
-                    _ef_suffix,
-                )
                 _ef_lineage_token = TOOL_LOOP_LINEAGE.set(_ef_hierarchy)
 
                 async def _ef_pub_safe(**payload: Any) -> None:
@@ -1650,12 +2223,12 @@ class CodeActActor(BaseCodeActActor):
                             "CodeActActor",
                             "execute_function",
                             hierarchy=_ef_hierarchy,
-                            hierarchy_label=_ef_hierarchy_label,
+                            display_label=f"Running: {function_name}",
                             **payload,
                         )
                     except Exception as e:
                         log_boundary_event(
-                            _ef_hierarchy_label,
+                            "->".join(_ef_hierarchy),
                             f"Warning: failed to publish event: {type(e).__name__}: {e}",
                             icon="⚠️",
                             level="warning",
@@ -1666,65 +2239,132 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
                 log_boundary_event(
-                    _ef_hierarchy_label,
+                    "->".join(_ef_hierarchy),
                     f"Executing function {function_name}...",
                     icon="🛠️",
                 )
 
-                # Collect all environment instances for namespace injection.
-                # When clarification queues are available, wrap instances
-                # with _ClarificationQueueInjector so that environment
-                # methods called from stored functions receive the queues
-                # (mirroring the sandbox's get_sandbox_instance() pattern).
-                extra_namespaces: Dict[str, Any] = {}
-                for ns, env in self.environments.items():
-                    try:
-                        instance = env.get_instance()
-                        if (
-                            _clarification_up_q is not None
-                            and instance is not None
-                        ):
-                            from unity.actor.environments.base import (
-                                _ClarificationQueueInjector,
-                            )
+                # ── Session resolution + execution (shared with execute_code) ──
+                out: dict[str, Any] | None = None
+                tb_str: str | None = None
+                exec_exc: Exception | None = None
 
-                            instance = _ClarificationQueueInjector(
-                                target=instance,
-                                clarification_up_q=_clarification_up_q,
-                                clarification_down_q=_clarification_down_q,
-                            )
-                        extra_namespaces[ns] = instance
-                    except Exception:
-                        pass
-
+                notification_q = _notification_up_q
+                sandbox_id = None
                 try:
-                    result = await fm.execute_function(
-                        function_name=function_name,
-                        call_kwargs=call_kwargs,
-                        extra_namespaces=extra_namespaces,
-                        venv_pool=self._venv_pool,
-                        shell_pool=self._shell_pool,
-                        state_mode="stateless",
-                        _parent_chat_context=_parent_chat_context,
+                    _rs = self._resolve_session(
+                        state_mode=state_mode,
+                        language=str(language),
+                        session_id=session_id,
+                        session_name=session_name,
+                        venv_id=venv_id,
                     )
-                except Exception as exc:
+                    language, venv_id, session_id = (
+                        _rs.language,
+                        _rs.venv_id,
+                        _rs.session_id,
+                    )
+                    if _rs.error is not None:
+                        out = _rs.error
+                        return out
+
+                    # Inject per-tool notification queue into bound sandbox.
                     try:
-                        await _ef_pub_safe(
-                            phase="outgoing",
-                            status="error",
-                            error=str(exc),
-                            error_type=type(exc).__name__,
+                        sb_for_notifs = _CURRENT_SANDBOX.get()
+                        sandbox_id = getattr(sb_for_notifs, "id", None)
+                        if notification_q is not None:
+                            sb_for_notifs.global_state["__notification_up_q__"] = (
+                                notification_q
+                            )
+                    except Exception:
+                        pass
+
+                    # Resolve primitives from current sandbox.
+                    primitives = None
+                    computer_primitives = self._computer_primitives
+                    try:
+                        sb = _CURRENT_SANDBOX.get()
+                        primitives = sb.global_state.get("primitives")
+                    except Exception:
+                        pass
+
+                    _pcc_token = _PARENT_CHAT_CONTEXT.set(_parent_chat_context)
+                    try:
+                        try:
+                            out = await self._session_executor.execute(
+                                code=code,
+                                language=str(language),  # type: ignore[arg-type]
+                                state_mode=state_mode,  # type: ignore[arg-type]
+                                session_id=session_id,
+                                venv_id=venv_id,
+                                primitives=primitives,
+                                computer_primitives=computer_primitives,
+                            )
+                        except Exception as e:
+                            exec_exc = e
+                            tb = traceback.format_exc()
+                            tb_str = tb
+                            out = {
+                                "stdout": "",
+                                "stderr": "",
+                                "result": None,
+                                "error": tb,
+                                "language": language,
+                                "state_mode": state_mode,
+                                "session_id": session_id,
+                                "session_name": session_name,
+                                "venv_id": venv_id,
+                                "session_created": False,
+                                "duration_ms": 0,
+                            }
+                    finally:
+                        _PARENT_CHAT_CONTEXT.reset(_pcc_token)
+
+                    # Enrich with session name.
+                    if out.get("session_id") is not None:
+                        out["session_name"] = self._get_session_name(
+                            language=str(out.get("language")),
+                            venv_id=out.get("venv_id"),
+                            session_id=int(out["session_id"]),
                         )
-                    except Exception:
-                        pass
-                    raise
-                else:
-                    try:
-                        await _ef_pub_safe(phase="outgoing", status="ok")
-                    except Exception:
-                        pass
-                    return result
+                    else:
+                        out["session_name"] = None
+
+                    # Wrap in-process Python results in ExecutionResult.
+                    if out.get("language") == "python" and isinstance(
+                        out.get("stdout"),
+                        list,
+                    ):
+                        out = ExecutionResult(**out)
+
+                    return out
                 finally:
+                    try:
+                        _out_err = (
+                            (
+                                out.get("error")
+                                if isinstance(out, dict)
+                                else getattr(out, "error", None)
+                            )
+                            if out is not None
+                            else None
+                        )
+                        if _out_err:
+                            await _ef_pub_safe(
+                                phase="outgoing",
+                                status="error",
+                                error=str(_out_err),
+                                error_type=(
+                                    type(exec_exc).__name__
+                                    if exec_exc is not None
+                                    else "Error"
+                                ),
+                                traceback=(tb_str or "")[:2000],
+                            )
+                        else:
+                            await _ef_pub_safe(phase="outgoing", status="ok")
+                    except Exception:
+                        pass
                     try:
                         TOOL_LOOP_LINEAGE.reset(_ef_lineage_token)
                     except Exception:
@@ -2203,223 +2843,91 @@ class CodeActActor(BaseCodeActActor):
         tools["close_session"] = close_session
         tools["close_all_sessions"] = close_all_sessions
 
-        # ───────────────────────── Sub-agent delegation tool ─────────────── #
+        # ───────────────────── Package installation tool ───────────────── #
 
-        async def run_sub_agent(
-            task: str,
-            *,
-            prompt_functions: list[str] | None = None,
-            discovery_scope: str | None = None,
-            timeout: float | None = None,
-            can_compose: bool = True,
-            can_store: bool = False,
-            can_spawn_sub_agents: bool = False,
-            storage_check_on_return: bool = False,
-            _parent_chat_context: list[dict] | None = None,
-            _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-            _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        ) -> str:
+        async def install_python_packages(
+            packages: list[str],
+        ) -> Dict[str, Any]:
             """
-            Spawn a sub-agent to work on a focused sub-task.
+            Install Python packages into the current execution environment.
 
-            The sub-agent is an independent CodeActActor with its own sandbox,
-            prompt, and (optionally) a curated set of directly callable
-            functions.  It runs the given task to completion and returns the
-            final result as a string.
+            **You MUST use this tool whenever you need a Python package that is
+            not already available.**  Do NOT attempt to install packages via
+            ``execute_code`` (e.g. ``!pip install ...``, ``subprocess.run(["pip",
+            ...])``), ``uv pip install``, or any other shell-based method.
+            Doing so bypasses the managed overlay and will leave the
+            environment in an inconsistent state.
 
-            When to use
-            -----------
-            - The overall task decomposes naturally into independent sub-problems
-              that benefit from focused, isolated reasoning.
-            - A sub-task requires multi-step work that would clutter or distract
-              the main agent's context window.
-            - You want to isolate a sub-task's execution state (sessions,
-              variables) from the main agent's sandbox.
+            Accepts the full range of pip/uv package specifiers:
 
-            When NOT to use
-            ---------------
-            - The task is simple enough to handle directly with ``execute_code``.
-            - You need intermediate results from the sub-task to inform logic in
-              the same code block (use ``execute_code`` with stateful sessions).
-            - The sub-task is trivial (single tool call) — the overhead of a
-              sub-agent is not worth it.
+            - ``"pandas"`` (latest version)
+            - ``"pandas==2.1.0"`` (exact version)
+            - ``"pandas>=2.0,<3.0"`` (version range)
+            - ``"pandas[sql]"`` (extras)
+            - ``"git+https://github.com/user/repo.git"`` (VCS)
+            - ``"git+https://github.com/user/repo.git@branch"`` (VCS + ref)
+            - ``"./path/to/wheel.whl"`` (local file)
+
+            Installed packages become immediately importable in subsequent
+            ``execute_code`` Python calls within the same trajectory.
+
+            **Automatic cleanup**: all packages installed via this tool are
+            automatically removed when the current act() trajectory completes.
+            They do NOT persist across trajectories.  If a future trajectory
+            needs the same package, it must install it again.
 
             Parameters
             ----------
-            task : str
-                A clear, self-contained description of what the sub-agent should
-                accomplish. Be specific and include all necessary context, because
-                the sub-agent does **not** share the parent agent's conversation
-                history or session state.
-            prompt_functions : list[str], optional
-                Functions to place directly in the sub-agent's system prompt,
-                making them immediately callable without any discovery step.
-
-                Use this for the functions most critical to the sub-task —
-                the ones you actively want the sub-agent to reach for.
-                Because they appear directly in the prompt, they receive the
-                sub-agent's full attention and are the first tools it will
-                consider.
-
-                Prompt-injected functions are automatically excluded from the
-                sub-agent's FunctionManager search index, so they will not
-                appear as duplicate results during discovery.
-
-                Names use dotted-segment matching:
-
-                - ``"primitives"`` — all state manager primitives
-                - ``"primitives.contacts"`` — all contacts methods
-                - ``"primitives.contacts.ask"`` — just contacts.ask
-                - ``"alpha"`` — a specific stored function
-                - ``"my_service"`` — all methods from a custom environment
-                - ``"my_service.do_something"`` — a specific custom method
-
-                Any function you have seen (in your prompt, in search
-                results, or in your environment) can be listed here.
-                Functions not listed are still discoverable via
-                FunctionManager search (subject to ``discovery_scope``).
-
-                When omitted, the sub-agent receives no prompt-injected
-                functions and relies entirely on FunctionManager discovery.
-            discovery_scope : str, optional
-                A boolean filter expression that restricts which functions
-                the sub-agent can discover via FunctionManager
-                search/list/filter (e.g., ``"language == 'python'"`` or
-                ``"'data' in docstring"``).
-
-                The sub-agent automatically inherits the parent agent's
-                existing scope.  This parameter strictly narrows that
-                inherited scope further (ANDed with the parent's filter),
-                so the sub-agent's discoverable function library is always
-                a subset of the parent's.  Use this to keep the sub-agent
-                focused on only the functions relevant to its specific task.
-            timeout : float, optional
-                Maximum seconds for the sub-agent to complete. Defaults to half
-                the parent agent's timeout, capped at 300 seconds.
-            can_compose : bool, default True
-                Whether the sub-agent can write and execute arbitrary code via
-                ``execute_code``. Set to False to restrict the sub-agent to
-                only discovering and executing stored functions.
-            can_store : bool, default False
-                Whether the sub-agent can persist new functions to the
-                FunctionManager via ``FunctionManager_add_functions``.
-            can_spawn_sub_agents : bool, default False
-                Whether the sub-agent can itself spawn deeper sub-agents.
-                Use with caution to avoid excessive nesting.
-            storage_check_on_return : bool, default False
-                Whether a post-completion review loop should run to identify
-                and store reusable functions from the sub-agent's trajectory.
+            packages : list[str]
+                One or more package specifiers (see examples above).
 
             Returns
             -------
-            str
-                The sub-agent's final answer / result.
+            dict
+                - **success** (bool): True if installation succeeded.
+                - **stdout** (str): Installer standard output.
+                - **stderr** (str): Installer standard error (includes
+                  resolution details and any warnings).
+                - **packages** (list[str]): The specifiers that were requested.
             """
-            effective_timeout = (
-                timeout if timeout is not None else min(self._timeout / 2, 300)
-            )
+            overlay = _CURRENT_PACKAGE_OVERLAY.get()
+            if overlay is None:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": "No package overlay is bound for this trajectory.",
+                    "packages": packages,
+                }
+            return overlay.install(packages)
 
-            # ── Create a fresh FunctionManager for the sub-agent ──
-            # Always create a new instance so that the inner CodeActActor's
-            # __init__ (which sets exclusions via setters) does not mutate the
-            # parent's FM.  The discovery_scope is ANDed with the parent's
-            # existing scope, strictly narrowing it.
-            inner_fm = None
-            if self.function_manager is not None:
-                from unity.function_manager.function_manager import (
-                    FunctionManager as _FM,
-                )
-
-                parent_scope = self.function_manager.filter_scope
-                if discovery_scope and parent_scope:
-                    combined_scope = f"({parent_scope}) and ({discovery_scope})"
-                elif discovery_scope:
-                    combined_scope = discovery_scope
-                else:
-                    combined_scope = parent_scope
-
-                inner_fm = _FM(
-                    primitive_scope=self.function_manager.primitive_scope,
-                    filter_scope=combined_scope,
-                    exclude_primitive_ids=self.function_manager.exclude_primitive_ids,
-                    exclude_compositional_ids=self.function_manager.exclude_compositional_ids,
-                    include_primitives=self.function_manager._include_primitives,
-                )
-
-            # ── Build inner actor environments from prompt_functions patterns ──
-            if prompt_functions:
-                inner_envs = _build_sub_agent_environments(
-                    environment=prompt_functions,
-                    parent_environments=self.environments,
-                    function_manager=inner_fm,
-                )
-            else:
-                inner_envs = []
-
-            # ── Create inner CodeActActor ──
-            inner_actor = CodeActActor(
-                environments=inner_envs or [],
-                function_manager=inner_fm,
-                can_compose=bool(can_compose),
-                can_store=bool(can_store),
-                can_spawn_sub_agents=bool(can_spawn_sub_agents),
-                storage_check_on_return=bool(storage_check_on_return),
-                timeout=effective_timeout,
-                model=self._model,
-                preprocess_msgs=self._preprocess_msgs,
-                prompt_caching=self._prompt_caching,
-            )
-
-            try:
-                handle = await inner_actor.act(
-                    task,
-                    clarification_enabled=True,
-                    _parent_chat_context=_parent_chat_context,
-                    _clarification_up_q=_clarification_up_q,
-                    _clarification_down_q=_clarification_down_q,
-                )
-
-                try:
-                    result = await asyncio.wait_for(
-                        handle.result(),
-                        timeout=effective_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    await handle.stop("Sub-agent timed out")
-                    result = (
-                        f"Sub-agent timed out after {effective_timeout}s. "
-                        f"The sub-task may have been too broad or complex."
-                    )
-            finally:
-                await inner_actor.close()
-
-            return result
-
-        tools["run_sub_agent"] = run_sub_agent
+        tools["install_python_packages"] = install_python_packages
 
         return tools
 
     @functools.wraps(BaseCodeActActor.act, updated=())
-    @log_manager_call("CodeActActor", "act", payload_key="description")
+    @log_manager_call(
+        "CodeActActor",
+        "act",
+        payload_key="request",
+        display_label="Taking Action",
+    )
     async def act(
         self,
-        description: str | dict | list[str | dict],
+        request: str | dict | list[str | dict],
         *,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         persist: Optional[bool] = None,
         can_compose: Optional[bool] = None,
         can_store: Optional[bool] = None,
-        can_spawn_sub_agents: Optional[bool] = None,
-        storage_check_on_return: Optional[bool] = None,
         **kwargs,
     ) -> SteerableToolHandle:
         if not self._main_event_loop:
@@ -2429,21 +2937,6 @@ class CodeActActor(BaseCodeActActor):
             self.can_compose if can_compose is None else bool(can_compose)
         )
         effective_can_store = self.can_store if can_store is None else bool(can_store)
-        effective_can_spawn_sub_agents = (
-            self.can_spawn_sub_agents
-            if can_spawn_sub_agents is None
-            else bool(can_spawn_sub_agents)
-        )
-        effective_storage_check = (
-            self.storage_check_on_return
-            if storage_check_on_return is None
-            else bool(storage_check_on_return)
-        )
-        # storage_check_on_return only applies when both can_compose and can_store are True.
-        if effective_storage_check and (
-            not effective_can_compose or not effective_can_store
-        ):
-            effective_storage_check = False
 
         # can_compose=False requires a FunctionManager so the LLM has execute_function
         # and the discovery tools available. Without it there are no usable tools.
@@ -2474,23 +2967,34 @@ class CodeActActor(BaseCodeActActor):
         # Create per-call environments so clarification queues are not stored on shared actor environments.
         sandbox_envs: Dict[str, "BaseEnvironment"] = {}
         try:
+            from unity.actor.environments.base import (
+                _CompositeEnvironment as _CompositeEnv,
+            )
             from unity.actor.environments import (
                 ComputerEnvironment as _ComputerEnvironment,
                 StateManagerEnvironment as _StateManagerEnvironment,
             )
         except Exception:
+            _CompositeEnv = None  # type: ignore
             _ComputerEnvironment = None  # type: ignore
             _StateManagerEnvironment = None  # type: ignore
 
         for ns, env in self.environments.items():
             # Prefer explicit reconstruction for known env types.
             try:
+                if _CompositeEnv is not None and isinstance(env, _CompositeEnv):
+                    sandbox_envs[ns] = _CompositeEnv(
+                        env.sub_environments,
+                        clarification_up_q=clarification_up_q,
+                        clarification_down_q=clarification_down_q,
+                    )
+                    continue
                 if _ComputerEnvironment is not None and isinstance(
                     env,
                     _ComputerEnvironment,
                 ):
                     sandbox_envs[ns] = _ComputerEnvironment(
-                        env.get_instance(),
+                        env._computer_primitives,
                         clarification_up_q=clarification_up_q,
                         clarification_down_q=clarification_down_q,
                     )
@@ -2538,7 +3042,9 @@ class CodeActActor(BaseCodeActActor):
         )
         # Note: __notification_up_q__ is injected dynamically by execute_code
         # when it receives a _notification_up_q from the async tool loop.
+
         token = _CURRENT_SANDBOX.set(sandbox)
+        env_token = _CURRENT_ENVIRONMENTS.set(sandbox_envs)
 
         # Set agent context for depth tracking and handle access
         parent_ctx = _CURRENT_AGENT_CONTEXT.get()
@@ -2549,7 +3055,33 @@ class CodeActActor(BaseCodeActActor):
         )
         ctx_token = _CURRENT_AGENT_CONTEXT.set(new_ctx)
 
+        # Per-trajectory package overlay: lazily installs packages into a
+        # temporary directory on sys.path and cleans them up when act() ends.
+        # Created after AgentContext so it can use agent_id for directory naming,
+        # and after _CURRENT_PACKAGE_OVERLAY is readable so child overlays
+        # discover their parent's directory for hierarchical nesting.
+        pkg_overlay = PackageOverlay(agent_id=new_ctx.agent_id)
+        pkg_overlay_token = _CURRENT_PACKAGE_OVERLAY.set(pkg_overlay)
+
+        # Mutable ref populated after handle creation so _cleanup can deregister.
+        _registered_queue: list[asyncio.Queue | None] = [None]
+
         async def _cleanup() -> None:
+            if (
+                _registered_queue[0] is not None
+                and self._computer_primitives is not None
+            ):
+                self._computer_primitives.deregister_interject_queue(
+                    _registered_queue[0],
+                )
+            try:
+                pkg_overlay.cleanup()
+            except Exception:
+                pass
+            try:
+                _CURRENT_PACKAGE_OVERLAY.reset(pkg_overlay_token)
+            except Exception:
+                pass
             try:
                 # Best-effort cleanup
                 if hasattr(sandbox, "close") and callable(getattr(sandbox, "close")):
@@ -2558,6 +3090,10 @@ class CodeActActor(BaseCodeActActor):
                 pass
             try:
                 _CURRENT_SANDBOX.reset(token)
+            except Exception:
+                pass
+            try:
+                _CURRENT_ENVIRONMENTS.reset(env_token)
             except Exception:
                 pass
             try:
@@ -2585,9 +3121,9 @@ class CodeActActor(BaseCodeActActor):
 
                 out = fm.filter_functions(
                     filter=f"function_id == {entrypoint_id}",
-                    return_callable=True,
-                    namespace=sandbox.global_state,
-                    also_return_metadata=True,
+                    _return_callable=True,
+                    _namespace=sandbox.global_state,
+                    _also_return_metadata=True,
                 )
                 metadata = []
                 if isinstance(out, dict):
@@ -2621,109 +3157,122 @@ class CodeActActor(BaseCodeActActor):
             return entry_handle
 
         # Build the tool set for this call. When can_compose=False the LLM
-        # may only discover and execute stored functions -- no arbitrary code,
-        # no session management, no function persistence.
-        _code_and_session_tools = {
+        # may only discover and execute stored functions — no arbitrary code,
+        # no function persistence. Session tools are kept because
+        # execute_function supports the same session/state_mode semantics.
+        _compose_only_tools = {
             "execute_code",
-            "list_sessions",
-            "inspect_state",
-            "close_session",
-            "close_all_sessions",
+            "install_python_packages",
         }
 
         def _filter_tools(tool_dict: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply static per-call filters (can_compose, can_store, can_spawn_sub_agents)."""
+            """Apply static per-call filters (can_compose)."""
             out = dict(tool_dict)
             if not effective_can_compose:
-                for name in _code_and_session_tools:
+                for name in _compose_only_tools:
                     out.pop(name, None)
-                out.pop("FunctionManager_add_functions", None)
-            if not effective_can_store or effective_storage_check:
-                # Mask storage tools when storage is disabled outright, or
-                # when storage_check_on_return defers storage to the
-                # dedicated post-completion pass.
-                out.pop("FunctionManager_add_functions", None)
-            if not effective_can_spawn_sub_agents:
-                out.pop("run_sub_agent", None)
             return out
 
         base_tools = _filter_tools(self.get_tools("act"))
 
-        # When execute_code is masked (can_compose=False), strip the
-        # execute_code comparison from execute_function's docstring so the
+        # When execute_code is masked (can_compose=False), strip any
+        # execute_code references from execute_function's docstring so the
         # LLM has no awareness that a code sandbox exists.
         if "execute_function" in base_tools and "execute_code" not in base_tools:
             base_tools["execute_function"].__doc__ = (
-                "Execute a stored function by name and return its result.\n"
+                "Execute a known function by name and return its result.\n"
                 "\n"
-                "The function is looked up in the FunctionManager by exact name\n"
-                "and executed directly. Only functions discovered via the\n"
-                "FunctionManager discovery tools can be invoked.\n"
+                "The function is resolved from the sandbox namespace or looked up\n"
+                "in the FunctionManager by exact name. Functions discovered via the\n"
+                "FunctionManager discovery tools are automatically available.\n"
                 "\n"
                 "Workflow\n"
                 "-------\n"
-                "1. Discover functions via `FunctionManager_search_functions`,\n"
-                "   `FunctionManager_filter_functions`, or\n"
-                "   `FunctionManager_list_functions`.\n"
+                "1. Discover functions via ``FunctionManager_search_functions``,\n"
+                "   ``FunctionManager_filter_functions``, or\n"
+                "   ``FunctionManager_list_functions``.\n"
                 "2. Pick the best match by name.\n"
-                "3. Call `execute_function(function_name=..., call_kwargs=...)`.\n"
+                "3. Call ``execute_function(function_name=..., call_kwargs=...)``.\n"
+                "\n"
+                "Key concepts\n"
+                "------------\n"
+                '- **language**: ``"python"`` | ``"bash"`` | ``"zsh"`` | '
+                '``"sh"`` | ``"powershell"``\n'
+                "- **state_mode**:\n"
+                '  - ``"stateless"``: no session; clean execution; no persistence\n'
+                '  - ``"stateful"``: persistent session; state accumulates\n'
+                '  - ``"read_only"``: reads from an existing session but does not\n'
+                "    persist changes\n"
+                "- **session_id / session_name**: only meaningful for\n"
+                "  stateful / read_only\n"
                 "\n"
                 "Parameters\n"
                 "----------\n"
                 "function_name : str\n"
-                "    Exact name of the stored function to execute (as returned by\n"
-                "    the FunctionManager discovery tools).\n"
+                "    Exact name of the function to execute.\n"
                 "call_kwargs : dict, optional\n"
-                "    Keyword arguments to pass to the function. Omit or pass None /\n"
-                "    an empty dict for functions that take no arguments.\n"
+                "    Keyword arguments to pass to the function.\n"
+                'language : str, default ``"python"``\n'
+                "    Language of the function.\n"
+                'state_mode : str, default ``"stateless"``\n'
+                "    Execution state mode.\n"
+                "session_id : int | None\n"
+                "    Session ID for stateful/read_only modes.\n"
+                "session_name : str | None\n"
+                "    Human-friendly session alias.\n"
+                "venv_id : int | None\n"
+                "    Virtual environment ID (Python only).\n"
                 "\n"
                 "Returns\n"
                 "-------\n"
-                "dict\n"
-                "    A dict with:\n"
-                "    - **result**: The function's return value (any JSON-serializable type).\n"
-                "    - **error**: Traceback string if the function raised, else None.\n"
-                "    - **stdout**: Captured standard output (string).\n"
-                "    - **stderr**: Captured standard error (string).\n"
+                "dict | ExecutionResult\n"
+                "    Same shape as code execution output (stdout, stderr, result,\n"
+                "    error, language, state_mode, session_id, session_name, venv_id,\n"
+                "    session_created, duration_ms).\n"
             )
 
         system_prompt = build_code_act_prompt(
             environments=sandbox_envs,
             tools=base_tools,
-            storage_check_on_return=effective_storage_check,
+            can_store=effective_can_store,
+            guidelines=guidelines,
+            discovery_first_policy=self.tool_policy is _USE_DEFAULT,
         )
 
         # Tool policy controls which tools are visible per turn, and whether a
-        # tool call is required. Concerns:
-        # 1) Static filters (can_compose, can_store, storage_check_on_return) --
-        #    applied via _filter_tools.
-        # 2) Function-first: on the first model turn, require a FunctionManager
-        #    discovery call (search/filter/list) when those tools exist.
-        _has_fm_tools = any(
-            isinstance(k, str) and k.startswith("FunctionManager_")
-            for k in base_tools.keys()
-        )
+        # tool call is required.  The static _filter_tools (can_compose,
+        # can_store, can_spawn_sub_agents) is always applied regardless of
+        # the dynamic policy.
+        if self.tool_policy is None:
+            # No dynamic policy -- only static filtering on every turn.
+            def _static_only_policy(step: int, tools: Dict[str, Any]):
+                return "auto", _filter_tools(tools)
 
-        def _tool_policy(step: int, tools: Dict[str, Any]):
-            filtered = _filter_tools(tools)
+            tool_policy: Optional[ToolPolicyFn] = _static_only_policy
+        elif self.tool_policy is _USE_DEFAULT:
+            # Default discovery-first policy (both FM and GM gates).
+            _has_fm_tools = any(
+                isinstance(k, str) and k.startswith("FunctionManager_")
+                for k in base_tools.keys()
+            )
+            _has_gm_tools = any(
+                isinstance(k, str) and k.startswith("GuidanceManager_")
+                for k in base_tools.keys()
+            )
+            tool_policy = _default_tool_policy(
+                _has_fm_tools,
+                _has_gm_tools,
+                _filter_tools,
+            )
+        else:
+            # Custom caller-provided policy.  Wrap it so that _filter_tools
+            # is always applied first (static filters are never bypassed).
+            _user_policy = self.tool_policy
 
-            # Function-first: on the first model turn, require a FunctionManager call
-            # (search/filter/list) when those tools exist. This avoids the model skipping
-            # the function library and going straight to execution.
-            if step == 0 and _has_fm_tools:
-                fm_only = {
-                    k: v
-                    for k, v in filtered.items()
-                    if isinstance(k, str)
-                    and k.startswith("FunctionManager_")
-                    and k != "FunctionManager_add_functions"
-                }
-                if fm_only:
-                    return "required", fm_only
+            def _wrapped_policy(step: int, tools: Dict[str, Any]):
+                return _user_policy(step, _filter_tools(tools))
 
-            return "auto", filtered
-
-        tool_policy = _tool_policy
+            tool_policy = _wrapped_policy
 
         # Build an LLM client for this act() call
         client = new_llm_client(
@@ -2748,10 +3297,9 @@ class CodeActActor(BaseCodeActActor):
 
         handle = start_async_tool_loop(
             client,
-            description or initial_prompt,
+            request or initial_prompt,
             tools,
             loop_id=f"CodeActActor.act",
-            propagate_chat_context=ChatContextPropagation.ALWAYS,
             parent_chat_context=_parent_chat_context,
             interrupt_llm_with_interjections=True,
             log_steps=True,
@@ -2762,6 +3310,7 @@ class CodeActActor(BaseCodeActActor):
             persist=persist,
             preprocess_msgs=self._preprocess_msgs,
             prompt_caching=self._prompt_caching,
+            extra_ask_tools=self._get_extra_ask_tools(),
         )
 
         # Wrap result() to run cleanup when the loop finishes
@@ -2775,11 +3324,33 @@ class CodeActActor(BaseCodeActActor):
 
         handle.result = _result_with_cleanup  # type: ignore[assignment]
 
+        # Wrap pause()/resume() to propagate to the browser agent
+        if self._computer_primitives is not None:
+            _cp: ComputerPrimitives = self._computer_primitives
+            _original_pause = handle.pause
+            _original_resume = handle.resume
+
+            async def _pause_with_propagation(**kwargs: Any) -> None:
+                await _original_pause(**kwargs)
+                await _cp.pause()
+
+            async def _resume_with_propagation(**kwargs: Any) -> None:
+                await _cp.resume()
+                await _original_resume(**kwargs)
+
+            handle.pause = _pause_with_propagation  # type: ignore[assignment]
+            handle.resume = _resume_with_propagation  # type: ignore[assignment]
+
+            # Register the loop's interject queue so environmental state
+            # changes (e.g. user remote control) are broadcast to this actor.
+            _cp.register_interject_queue(handle._queue)
+            _registered_queue[0] = handle._queue
+
         # Update agent context with handle reference
         new_ctx.handle = handle
 
         # Wrap in StorageCheckHandle for post-completion function review.
-        if effective_storage_check:
+        if effective_can_store:
             handle = _StorageCheckHandle(inner=handle, actor=self)
 
         return handle
@@ -2803,5 +3374,6 @@ class CodeActActor(BaseCodeActActor):
         await self._venv_pool.close()
         await self._shell_pool.close()
 
-        if self._computer_primitives:
-            self._computer_primitives.computer.stop()
+        # The ComputerPrimitives backend is a process-wide singleton (one VM,
+        # one screen).  Individual actors must not tear it down — the process
+        # owns the lifecycle.

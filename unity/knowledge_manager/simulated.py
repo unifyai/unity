@@ -15,11 +15,6 @@ from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
 from ..common.simulated import (
     mirror_knowledge_manager_tools,
     SimulatedLineage,
@@ -31,13 +26,14 @@ from ..common.simulated import (
     maybe_tool_log_completed,
 )
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 from ..common.llm_client import new_llm_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedKnowledgeHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Handle returned by SimulatedKnowledgeManager.store / retrieve.
     """
@@ -86,7 +82,9 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -119,7 +117,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -148,7 +146,9 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 
@@ -274,14 +274,9 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -293,10 +288,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -319,19 +311,23 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         self,
         description: str = "nothing fixed, make up some imaginary scenario",
         *,
-        log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
-        self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
+        self._hold_completion = hold_completion
 
         # One shared, memory-retaining LLM (reuse common client for fast init/clear)
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            origin="SimulatedKnowledgeManager",
+        )
         # Mirror the real knowledge manager's tool exposure for prompts
         ref_tools = mirror_knowledge_manager_tools("refactor")
         upd_tools = mirror_knowledge_manager_tools("update")
@@ -414,31 +410,17 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
         """
         Simulated version of KnowledgeManager.refactor – no real DDL is run.
         The LLM simply invents a plausible migration plan and returns it.
         """
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedKnowledgeManager.refactor",
             "refactor",
             {"text": text if isinstance(text, str) else repr(text)},
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "KnowledgeManager",
-                "refactor",
-                phase="incoming",
-                command=text,
-            )
 
         instruction = build_simulated_method_prompt(
             "refactor",
@@ -456,14 +438,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             response_format=response_format,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "KnowledgeManager",
-                "refactor",
-            )
-
         return handle
 
     # ------------------------------------------------------------------ #
@@ -480,11 +454,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedKnowledgeManager.update",
@@ -494,16 +464,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "requests_clarification": _requests_clarification,
             },
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "KnowledgeManager",
-                "update",
-                phase="incoming",
-                request=text,
-            )
 
         instruction = build_simulated_method_prompt(
             "update",
@@ -527,14 +487,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             hold_completion=self._hold_completion,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "KnowledgeManager",
-                "update",
-            )
-
         return handle
 
     # ------------------------------------------------------------------ #
@@ -551,11 +503,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        log_events: bool = False,
     ) -> SteerableToolHandle:
-        should_log = self._log_events or log_events
-        call_id = None
-
         # Tool-style scheduled log (only when no parent lineage)
         maybe_tool_log_scheduled(
             "SimulatedKnowledgeManager.ask",
@@ -565,16 +513,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "requests_clarification": _requests_clarification,
             },
         )
-
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "KnowledgeManager",
-                "ask",
-                phase="incoming",
-                question=text,
-            )
 
         instruction = build_simulated_method_prompt(
             "retrieve",
@@ -593,14 +531,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             hold_completion=self._hold_completion,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "KnowledgeManager",
-                "ask",
-            )
-
         return handle
 
     @functools.wraps(BaseKnowledgeManager.clear, updated=())
@@ -618,7 +548,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
                 "_description",
                 "nothing fixed, make up some imaginary scenario",
             ),
-            log_events=getattr(self, "_log_events", False),
             rolling_summary_in_prompts=getattr(
                 self,
                 "_rolling_summary_in_prompts",

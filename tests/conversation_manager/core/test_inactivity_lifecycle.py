@@ -18,7 +18,7 @@ What This File Tests:
 2. **Activity reset**: Does receiving events reset the inactivity timer?
 3. **Ping keep-alive**: Does the ping mechanism keep idle containers alive?
 4. **Cleanup sequence**: Is cleanup called in the correct order on shutdown?
-5. **Job marking**: Is debug_logger.mark_job_done() called for live containers?
+5. **Job marking**: Is assistant_jobs.mark_job_done() called for live containers?
 6. **Event broker close**: Is the event broker properly closed on shutdown?
 
 Production Context (from INFRA.md):
@@ -332,7 +332,7 @@ class TestCleanupSequence:
         )
 
         with patch(
-            "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
         ) as mock_mark_done:
             await cm.cleanup()
 
@@ -367,7 +367,7 @@ class TestCleanupSequence:
         )
 
         with patch(
-            "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
         ) as mock_mark_done:
             await cm.cleanup()
 
@@ -404,7 +404,7 @@ class TestCleanupSequence:
         cm.call_manager.cleanup_call_proc = AsyncMock()
 
         with patch(
-            "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
         ):
             await cm.cleanup()
 
@@ -440,7 +440,7 @@ class TestCleanupSequence:
         assert not stop_event.is_set(), "Stop event should not be set initially"
 
         with patch(
-            "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
         ):
             await cm.cleanup()
 
@@ -651,19 +651,13 @@ class TestFullLifecycleIntegration:
         cm.store_chat_history = mock_store_chat_history
 
         with patch(
-            "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
             side_effect=lambda x: call_order.append("mark_job_done"),
         ):
-            with patch(
-                "unity.conversation_manager.domains.managers_utils.update_rolling_summaries",
-                new_callable=AsyncMock,
-                side_effect=lambda x: call_order.append("update_rolling_summaries"),
-            ):
-                await cm.cleanup()
+            await cm.cleanup()
 
         # Verify order
         expected_order = [
-            "update_rolling_summaries",
             "store_chat_history",
             "cleanup_call_proc",
             "mark_job_done",
@@ -712,7 +706,7 @@ class TestEdgeCases:
         )
 
         with patch(
-            "unity.conversation_manager.conversation_manager.debug_logger.mark_job_done",
+            "unity.conversation_manager.conversation_manager.assistant_jobs.mark_job_done",
         ) as mock_mark_done:
             # Should not raise
             await cm.cleanup()

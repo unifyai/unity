@@ -3,6 +3,10 @@ tests/conversation_manager/core/test_comms_utils.py
 =============================================================
 
 Unit tests for comms_utils functions, particularly attachment handling.
+
+Marked ``real_comms_functions`` to opt out of the universal comms stub
+in the parent conftest.  These tests call the real ``comms_utils``
+implementations with mocked dependencies (aiohttp, SESSION_DETAILS, etc.).
 """
 
 from __future__ import annotations
@@ -12,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from unity.conversation_manager.domains import comms_utils
+
+pytestmark = pytest.mark.real_comms_functions
 
 
 class TestUploadUnifyAttachment:

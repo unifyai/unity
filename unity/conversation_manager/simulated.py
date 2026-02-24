@@ -18,14 +18,14 @@ from ..common import SteerableToolHandle
 
 
 class SimulatedConversationManagerHandle(
-    BaseConversationManagerHandle,
     SimulatedHandleMixin,
+    BaseConversationManagerHandle,
 ):
     """
     Simulated conversation manager handle for testing and demos.
 
     Uses a stateful LLM to simulate conversation steering without
-    actual Redis pub/sub or real conversation state.
+    actual pub/sub or real conversation state.
     """
 
     def __init__(
@@ -48,7 +48,10 @@ class SimulatedConversationManagerHandle(
         self._simulation_guidance = simulation_guidance
 
         # A shared, stateful LLM for maintaining conversation context
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(
+            stateful=True,
+            origin="SimulatedConversationManager",
+        )
 
         # Initialize the system message for the stateful LLM
         system_msg = self._build_system_message()
@@ -135,7 +138,7 @@ class SimulatedConversationManagerHandle(
         if response_format:
             prompt += "\n**FORMAT INSTRUCTIONS:** Your response MUST be a JSON object that strictly conforms to the provided Pydantic model schema."
 
-        class _AnswerHandle(SteerableToolHandle, SimulatedHandleMixin):
+        class _AnswerHandle(SimulatedHandleMixin, SteerableToolHandle):
             def __init__(
                 inner_self,
                 stateful_llm: unillm.AsyncUnify,
@@ -178,12 +181,6 @@ class SimulatedConversationManagerHandle(
 
             async def ask(inner_self, *args, **kwargs):
                 return inner_self
-
-            async def next_clarification(inner_self) -> dict:
-                return {}
-
-            async def next_notification(inner_self) -> dict:
-                return {}
 
             async def answer_clarification(
                 inner_self,
@@ -265,12 +262,6 @@ class SimulatedConversationManagerHandle(
         while not self._stopped:
             await asyncio.sleep(0.1)
         return self._final_result
-
-    async def next_clarification(self) -> dict:
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         pass

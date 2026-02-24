@@ -902,13 +902,17 @@ async def test_ask_shows_pending_then_completed(initialized_cm):
         result=result2,
     )
 
-    # Verify the action history contains the ask action with completed status
-    # (since the async response should have arrived by now)
-    in_flight_actions = cm._cm.in_flight_actions
-    assert len(in_flight_actions) >= 1, "Should have at least one in-flight action"
+    # Verify the action history contains the ask action with completed status.
+    # The action may still be in-flight or may have already completed (moved to
+    # completed_actions) if the underlying actor finished during step_until_wait.
+    # Both are valid LLM paths — we just need the handle_actions history.
+    all_actions = {**cm._cm.in_flight_actions, **cm._cm.completed_actions}
+    assert (
+        len(all_actions) >= 1
+    ), "Should have at least one tracked action (in-flight or completed)"
 
     # Find the action and check its history
-    for handle_id, handle_data in in_flight_actions.items():
+    for handle_id, handle_data in all_actions.items():
         handle_actions = handle_data.get("handle_actions", [])
         ask_actions = [
             a

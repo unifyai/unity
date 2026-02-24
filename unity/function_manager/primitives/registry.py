@@ -38,13 +38,18 @@ class ManagerSpec:
     - Identity (alias, registry key, class path)
     - Method exclusions
     - Prompt metadata (domain, description, use_when, examples, priority)
-    For ComputerPrimitives, `is_state_manager=False` indicates it requires special
-    handling (dynamically-created methods, separate instantiation pattern).
+    - Sandbox namespace root (the top-level key in the sandbox's global_state)
     """
 
     manager_alias: str
     manager_registry_key: str
     primitive_class_path: str
+    # The top-level key under which this manager's methods appear in a
+    # CodeActActor sandbox's global_state.  All managers live under
+    # ``"primitives"`` (accessed as ``primitives.<alias>.<method>``).
+    # Used by construct_sandbox_root() to map dotted depends_on entries
+    # back to the class that provides them.
+    sandbox_root: str = "primitives"
     excluded_methods: frozenset[str] = field(default_factory=frozenset)
     priority: int = 99
     domain: str = ""
@@ -52,8 +57,6 @@ class ManagerSpec:
     use_when: str = ""
     examples: str = ""
     special_note: str | None = None
-    # Distinguishes state managers from special primitives like ComputerPrimitives
-    is_state_manager: bool = True
 
 
 # =============================================================================
@@ -144,25 +147,14 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         examples="Rarely used directly in plans",
     ),
     ManagerSpec(
-        manager_alias="guidance",
-        manager_registry_key="guidance",
-        primitive_class_path="unity.guidance_manager.guidance_manager.GuidanceManager",
-        excluded_methods=frozenset(),
-        priority=6,
-        domain="Function & Task Guidance",
-        description="Execution instructions, runbooks, how-to guides for functions/tasks",
-        use_when="Questions about HOW to execute something, operational runbooks, incident response procedures",
-        examples="'How do I handle DB failover?', 'Incident response for API outage?'",
-    ),
-    ManagerSpec(
         manager_alias="web",
         manager_registry_key="web_search",
         primitive_class_path="unity.web_searcher.web_searcher.WebSearcher",
         excluded_methods=frozenset(),
         priority=5,
         domain="Time-Sensitive & External Research",
-        description="External/public information and research (including general concepts/definitions), plus current events and 'today/latest/now' queries",
-        use_when="Questions answered from public/external knowledge (including definitions/concepts) or requiring up-to-date info: current events, weather, news",
+        description="Quick one-off internet queries against the public web (headlines, weather, definitions, current events). Not for gated sites, browser automation, or multi-step web workflows — use Tavily + SecretManager + ComputerPrimitives directly for those",
+        use_when="Fast, simple public-web lookups: current events, weather, news, definitions, stock prices, quick factual questions",
         examples="'What is the Eisenhower Matrix?', 'Weather in Berlin today?', 'Latest AI news?', 'Current stock price?'",
     ),
     ManagerSpec(
@@ -188,12 +180,9 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         use_when="Questions about specific files/documents, data operations, aggregations, visualizations",
         examples="'Parse the attached PDF', 'What's in document X?', 'Find files about Y'",
     ),
-    # ComputerPrimitives is NOT a state manager - it has dynamically-created methods
-    # and requires a separate instantiation pattern. It is included here for completeness
-    # but is_state_manager=False indicates it should not be processed like other managers.
     ManagerSpec(
         manager_alias="computer",
-        manager_registry_key="",  # No ManagerRegistry getter - instantiated directly
+        manager_registry_key="",  # No ManagerRegistry getter - singleton via metaclass
         primitive_class_path="unity.function_manager.primitives.runtime.ComputerPrimitives",
         excluded_methods=frozenset(),
         priority=10,
@@ -201,8 +190,17 @@ _MANAGER_SPECS: tuple[ManagerSpec, ...] = (
         description="Browser automation, web navigation, computer use actions, reasoning",
         use_when="Web automation, browser control, navigating websites, extracting web content",
         examples="'Navigate to example.com', 'Click the login button', 'Extract page content'",
-        special_note="ComputerPrimitives has dynamically-created methods. Access via primitives.computer, not indexed in FunctionManager.",
-        is_state_manager=False,  # <-- Key differentiator
+    ),
+    ManagerSpec(
+        manager_alias="actor",
+        manager_registry_key="",  # No ManagerRegistry getter - stateless, constructed directly
+        primitive_class_path="unity.actor.environments.actor._ActorRunner",
+        excluded_methods=frozenset(),
+        priority=11,
+        domain="Actor Delegation",
+        description="Spawn focused sub-actors for isolated multi-step sub-tasks",
+        use_when="Task decomposition, isolated reasoning, parallel sub-tasks, context isolation",
+        examples="'Delegate research to a sub-actor', 'Spawn an actor to handle data processing'",
     ),
 )
 
@@ -216,10 +214,44 @@ _CLASS_PATH_TO_ALIAS: Dict[str, str] = {
     spec.primitive_class_path: spec.manager_alias for spec in _MANAGER_SPECS
 }
 
-# State managers only (excludes ComputerPrimitives)
-_STATE_MANAGER_SPECS: tuple[ManagerSpec, ...] = tuple(
-    spec for spec in _MANAGER_SPECS if spec.is_state_manager
-)
+# sandbox_root -> [specs]: maps each sandbox namespace root to its manager specs.
+# Used by construct_sandbox_root() to materialise environment namespaces at
+# runtime.  The keys here must stay in sync with the env_namespaces frozenset
+# in FunctionManager.add_functions (the storage-time AST detection side).
+_SANDBOX_ROOTS: Dict[str, list[ManagerSpec]] = {}
+for _spec in _MANAGER_SPECS:
+    _SANDBOX_ROOTS.setdefault(_spec.sandbox_root, []).append(_spec)
+
+
+def construct_sandbox_root(
+    root_name: str,
+    *,
+    primitive_scope: Optional[PrimitiveScope] = None,
+) -> Optional[Any]:
+    """Construct a fresh root namespace object for a sandbox namespace key.
+
+    This is the factory used by ``FunctionManager._inject_dependencies``
+    to satisfy *dotted* entries in a stored function's ``depends_on`` list.
+    When a function declares a dependency like ``"primitives.actor.act"`` or
+    ``"primitives.contacts.ask"``, ``_inject_dependencies`` extracts the
+    root segment (``"primitives"``) and calls this function to obtain a
+    live ``Primitives`` instance that provides those methods.
+
+    The returned object is **stateless** — it does not require any ambient
+    ContextVars or parent actor state.  This is essential because stored
+    functions may be executed outside of a live ``CodeActActor`` sandbox
+    (e.g. by the storage-check loop's ``FunctionManager_add_functions``
+    tool or by a future caller that only has a FunctionManager).
+
+    Returns ``None`` when *root_name* does not match any known sandbox root.
+    """
+    specs = _SANDBOX_ROOTS.get(root_name)
+    if not specs:
+        return None
+
+    from unity.function_manager.primitives.runtime import Primitives
+
+    return Primitives(primitive_scope=primitive_scope)
 
 
 # =============================================================================
@@ -292,10 +324,6 @@ _EXAMPLE_GENERATORS: Dict[str, List[str]] = {
     ],
     "web": [
         "get_primitives_web_ask_example",
-    ],
-    "guidance": [
-        "get_primitives_guidance_ask_example",
-        "get_primitives_guidance_update_example",
     ],
     "secrets": [
         "get_primitives_secrets_ask_example",
@@ -416,7 +444,6 @@ class ToolSurfaceRegistry:
 
     # Class-level references to canonical data
     MANAGERS = _MANAGER_SPECS
-    STATE_MANAGERS = _STATE_MANAGER_SPECS
     ROUTING_GUIDANCE = _ROUTING_GUIDANCE
     EXAMPLE_GENERATORS = _EXAMPLE_GENERATORS
 
@@ -429,18 +456,15 @@ class ToolSurfaceRegistry:
         """
         Get manager specs for a given scope, sorted by priority.
 
-        Only returns state managers (is_state_manager=True). ComputerPrimitives
-        is excluded as it requires special handling.
-
         Args:
             primitive_scope: The scope defining which managers are exposed.
 
         Returns:
-            List of ManagerSpec for exposed state managers, sorted by priority.
+            List of ManagerSpec for exposed managers, sorted by priority.
         """
         specs = [
             spec
-            for spec in _STATE_MANAGER_SPECS
+            for spec in _MANAGER_SPECS
             if spec.manager_alias in primitive_scope.scoped_managers
         ]
         return sorted(specs, key=lambda s: s.priority)
@@ -517,10 +541,10 @@ class ToolSurfaceRegistry:
         # Combine common exclusions with per-manager exclusions
         exclude = _COMMON_EXCLUDED_METHODS | spec.excluded_methods
 
-        # Special case: ComputerPrimitives has dynamically-created methods
-        # that are added via setattr in __init__, so we can't discover them
-        # from the class itself. Use the class's _PRIMITIVE_METHODS constant.
-        if cls.__name__ == "ComputerPrimitives":
+        # Classes that declare _PRIMITIVE_METHODS explicitly (e.g. because
+        # methods are dynamically created or not discoverable via @abstractmethod)
+        # use that constant as the authoritative method list.
+        if hasattr(cls, "_PRIMITIVE_METHODS"):
             return sorted([m for m in cls._PRIMITIVE_METHODS if m not in exclude])
 
         methods = []
@@ -558,10 +582,6 @@ class ToolSurfaceRegistry:
         """
         names = []
         for alias in sorted(primitive_scope.scoped_managers):
-            spec = _MANAGER_BY_ALIAS.get(alias)
-            # Skip non-state managers (like ComputerPrimitives)
-            if spec and not spec.is_state_manager:
-                continue
             for method in self.primitive_methods(manager_alias=alias):
                 names.append(f"primitives.{alias}.{method}")
         return names
@@ -834,7 +854,6 @@ class ToolSurfaceRegistry:
             lines.append(
                 "5. **web** for current external information (weather, news, real-time data)",
             )
-            lines.append("6. **guidance** for execution instructions and runbooks")
             lines.append(
                 "7. **files** when dealing with specific documents or file-level operations",
             )
@@ -858,13 +877,22 @@ class ToolSurfaceRegistry:
         if len(specs) > 1:
             lines.append("\n**General Rules**:")
             lines.append(
-                "- All manager calls return a steerable handle; await `.result()` to get the final answer",
+                "- All manager calls return a steerable handle; default to returning the handle as the last expression so outer-loop steering/progress stays available. Await `.result()` only for immediate in-code composition",
+            )
+            lines.append(
+                "- Calls to `primitives.*` are nested tool loops; emit `notify({...})` before each call, and emit a concrete completion update when you await and continue with more steps",
+            )
+            lines.append(
+                "- Notification messages should be user-facing progress summaries, not low-level technical diagnostics",
             )
             lines.append(
                 "- If a manager asks for clarification, wait for the user response and answer via the handle's API",
             )
             lines.append(
                 "- Prefer `ask(...)` for read-only queries; only use `update(...)`/`execute(...)` when mutations are needed",
+            )
+            lines.append(
+                "- Don't call `ask(...)` before `update(...)`/`execute(...)` on the same manager to pre-check state; mutation methods already inspect existing records, so a preemptive read is duplicative",
             )
             lines.append(
                 "- When in doubt between managers, prefer the most specific domain match",
@@ -947,15 +975,14 @@ class ToolSurfaceRegistry:
 
         method_names = ComputerPrimitives._PRIMITIVE_METHODS
 
-        lines = ["### Computer Primitives (`computer_primitives`)\n"]
+        lines = ["### Computer Method Reference\n"]
         lines.append(
-            "Web and desktop control capabilities for browser automation "
-            "and UI interaction.\n",
+            "These methods are available on `primitives.computer.desktop.*` "
+            "(singleton desktop) and on session handles returned by "
+            "`primitives.computer.web.new_session()`.\n",
         )
 
         for method_name in method_names:
-            # Dynamic methods live on ComputerBackend; static methods on
-            # ComputerPrimitives itself.
             if hasattr(ComputerBackend, method_name):
                 source_cls = ComputerBackend
             else:
@@ -1019,14 +1046,13 @@ class ToolSurfaceRegistry:
         """
         method = getattr(cls, method_name, None)
 
-        # Special case: ComputerPrimitives dynamic methods don't exist on the class
-        # Get their docstrings from the backend class instead
+        # ComputerPrimitives methods live on the backend/session, not on the
+        # class itself.  Look up docstrings from the ComputerBackend ABC.
         if method is None and class_name == "ComputerPrimitives":
-            if method_name in cls._DYNAMIC_METHODS:
-                # Import backend class to get docstrings
-                from unity.function_manager.computer_backends import MagnitudeBackend
+            if method_name in cls._PRIMITIVE_METHODS:
+                from unity.function_manager.computer_backends import ComputerBackend
 
-                backend_method = getattr(MagnitudeBackend, method_name, None)
+                backend_method = getattr(ComputerBackend, method_name, None)
                 if backend_method:
                     docstring = inspect.getdoc(backend_method) or ""
                     try:
@@ -1115,7 +1141,7 @@ class ToolSurfaceRegistry:
 
         Args:
             primitive_scope: Optional scope to filter managers. If None, collects all
-                           state manager primitives (excludes ComputerPrimitives).
+                           primitives (state managers and ComputerPrimitives).
 
         Returns:
             Dict mapping qualified_name (e.g. "primitives.contacts.ask") to primitive
@@ -1125,11 +1151,11 @@ class ToolSurfaceRegistry:
 
         # Determine which specs to process
         if primitive_scope is None:
-            specs_to_process = _STATE_MANAGER_SPECS
+            specs_to_process = _MANAGER_SPECS
         else:
             specs_to_process = [
                 spec
-                for spec in _STATE_MANAGER_SPECS
+                for spec in _MANAGER_SPECS
                 if spec.manager_alias in primitive_scope.scoped_managers
             ]
 
@@ -1212,11 +1238,11 @@ class ToolSurfaceRegistry:
         Returns:
             Filter expression using OR clauses for string equality.
         """
-        # Collect class paths for scoped state managers
+        # Collect class paths for scoped managers
         class_paths = []
         for alias in primitive_scope.scoped_managers:
             spec = _MANAGER_BY_ALIAS.get(alias)
-            if spec and spec.is_state_manager:
+            if spec:
                 class_paths.append(spec.primitive_class_path)
 
         # Use OR clauses for string filtering (in [] syntax may not work for strings)
@@ -1271,7 +1297,7 @@ def get_primitive_sources() -> List[tuple[Type, List[str]]]:
     """
     registry = get_registry()
     result = []
-    for spec in _STATE_MANAGER_SPECS:
+    for spec in _MANAGER_SPECS:
         cls = registry._load_manager_class(spec.primitive_class_path)
         if cls is not None:
             methods = registry.primitive_methods(manager_alias=spec.manager_alias)

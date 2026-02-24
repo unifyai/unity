@@ -8,8 +8,10 @@ import unillm
 from typing import Callable, Optional, Any
 from .utils import maybe_await
 from ...logger import LOGGER
+from ...common.hierarchical_logger import DEFAULT_ICON
 from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
+from ..context_dump import make_messages_safe_for_context_dump
 
 
 @contextmanager
@@ -281,7 +283,7 @@ async def generate_with_preprocess(
         patched = preprocess_msgs(msgs_copy) or msgs_copy
     except Exception as exc:  # resilience – don't fail the loop
         LOGGER.error(
-            f"preprocess_msgs raised {exc!r}; using original messages.",
+            f"{DEFAULT_ICON} preprocess_msgs raised {exc!r}; using original messages.",
         )
         patched = msgs_copy
 
@@ -376,13 +378,15 @@ def chat_context_repr(
     Strategy – keep the original list untouched and attach the new
     messages as ``children`` of the *last* element.
     """
+    safe_parent_ctx = make_messages_safe_for_context_dump(parent_ctx)
+    safe_current_msgs = make_messages_safe_for_context_dump(current_msgs)
     ctx_block = [
-        {"role": m.get("role"), "content": m.get("content")} for m in current_msgs
+        {"role": m.get("role"), "content": m.get("content")} for m in safe_current_msgs
     ]
-    if not parent_ctx:
+    if not safe_parent_ctx:
         return ctx_block
 
-    combined = copy.deepcopy(parent_ctx)
+    combined = copy.deepcopy(safe_parent_ctx)
     combined[-1].setdefault("children", []).extend(ctx_block)
     return combined
 
@@ -434,6 +438,46 @@ def _normalise_kwargs_for_bound_method(bound_method, incoming_kw: dict) -> dict:
         # 4) Filter unknown keys unless **kwargs is accepted
         if not has_varkw:
             kw = {k: v for k, v in kw.items() if k in params}
+
+        # 5) Coerce values to match type annotations (best-effort).
+        #    LLMs sometimes pass all args as strings even when the signature
+        #    expects int, float, bool, or dict.  Annotations may be actual
+        #    types OR strings (when `from __future__ import annotations` is
+        #    in effect), so we check both forms.
+        import json as _json
+
+        for param_name, param in params.items():
+            if param_name not in kw or param_name == "self":
+                continue
+            annotation = param.annotation
+            if annotation is _inspect.Parameter.empty:
+                continue
+            val = kw[param_name]
+            try:
+                ann_str = annotation if isinstance(annotation, str) else ""
+                origin = getattr(annotation, "__origin__", None)
+
+                is_int = annotation is int or ann_str == "int"
+                is_float = annotation is float or ann_str == "float"
+                is_bool = annotation is bool or ann_str == "bool"
+                is_dict = (
+                    annotation is dict
+                    or ann_str == "dict"
+                    or ann_str.startswith("Dict[")
+                    or (origin is not None and origin is dict)
+                )
+
+                if is_int and isinstance(val, str):
+                    kw[param_name] = int(val)
+                elif is_float and isinstance(val, str):
+                    kw[param_name] = float(val)
+                elif is_bool and isinstance(val, str):
+                    kw[param_name] = val.lower() in ("true", "1", "yes")
+                elif is_dict and isinstance(val, str):
+                    kw[param_name] = _json.loads(val)
+            except (ValueError, _json.JSONDecodeError):
+                pass
+
         return kw
     except Exception:
         # Best-effort; return original
@@ -692,6 +736,7 @@ async def ensure_placeholders_for_pending(
     assistant_meta,
     client,
     msg_dispatcher,
+    time_ctx=None,
 ) -> list[str]:
     created: list[str] = []
     # Sort by call_idx to ensure deterministic placeholder ordering matching
@@ -727,10 +772,15 @@ async def ensure_placeholders_for_pending(
         if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
+        ph_content: dict = {"_placeholder": "pending"}
+        if time_ctx is not None:
+            with suppress(Exception):
+                ph_content["meta:started"] = time_ctx.offset_at(_inf.scheduled_time)
+
         placeholder = create_tool_call_message(
             name=_inf.name,
             call_id=_inf.call_id,
-            content=json.dumps({"_placeholder": "pending"}, indent=4),
+            content=json.dumps(ph_content, indent=4),
         )
         await insert_tool_message_after_assistant(
             assistant_meta,

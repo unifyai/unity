@@ -27,6 +27,7 @@ from typing import (
 )
 
 from unity.function_manager.primitives import ComputerPrimitives
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 from .capture import _stdout_parts, capture_sandbox_output
 from .types import TextPart
@@ -60,6 +61,11 @@ _CURRENT_SANDBOX: contextvars.ContextVar["PythonExecutionSession"] = (
 _PARENT_CHAT_CONTEXT: contextvars.ContextVar[list | None] = contextvars.ContextVar(
     "code_act_parent_chat_context",
     default=None,
+)
+
+_CURRENT_ENVIRONMENTS: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "code_act_current_environments",
+    default={},
 )
 
 
@@ -356,7 +362,6 @@ class PythonExecutionSession:
 
         self.id: str = str(uuid.uuid4())
         self._module_name: str = f"__sandbox_{self.id}__"
-        self._computer_used: bool = False
 
         # Register the sandbox globals as a proper module in sys.modules.
         _mod = types.ModuleType(self._module_name)
@@ -395,35 +400,6 @@ class PythonExecutionSession:
         if shell_pool is not None:
             self.global_state["__shell_pool__"] = shell_pool
 
-        class _UsageTrackingProxy:
-            def __init__(self, target: Any, on_use: Callable[[], None]):
-                self._target = target
-                self._on_use = on_use
-
-            def __getattr__(self, name: str) -> Any:
-                # Treat any access as potential "use" since callers may invoke nested objects
-                # like `computer_primitives.computer.get_screenshot()`.
-                self._on_use()
-                attr = getattr(self._target, name)
-                if callable(attr):
-
-                    async def _async_wrapper(*args, **kwargs):
-                        self._on_use()
-                        return await attr(*args, **kwargs)
-
-                    def _sync_wrapper(*args, **kwargs):
-                        self._on_use()
-                        return attr(*args, **kwargs)
-
-                    # Preserve sync vs async callable behavior.
-                    if asyncio.iscoroutinefunction(attr):
-                        return _async_wrapper
-                    return _sync_wrapper
-                return attr
-
-        def _mark_computer_used() -> None:
-            self._computer_used = True
-
         if environments:
             for namespace, env in environments.items():
                 try:
@@ -433,18 +409,21 @@ class PythonExecutionSession:
                         instance = env.get_sandbox_instance()
                     else:
                         instance = env.get_instance()
-                    if namespace == "computer_primitives":
-                        instance = _UsageTrackingProxy(instance, _mark_computer_used)
                     self.global_state[namespace] = instance
                 except Exception:
                     # Keep sandbox usable even if a non-critical environment fails to inject.
                     continue
 
-        # Backward-compat: allow direct injection when environments weren't provided.
-        if computer_primitives and "computer_primitives" not in self.global_state:
-            self.global_state["computer_primitives"] = _UsageTrackingProxy(
-                computer_primitives,
-                _mark_computer_used,
+        # Backward-compat: if computer_primitives was passed directly and no
+        # "primitives" namespace is present, inject a Primitives wrapper so
+        # primitives.computer.* calls work.
+        if computer_primitives and "primitives" not in self.global_state:
+            from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+            self.global_state["primitives"] = Primitives(
+                primitive_scope=PrimitiveScope(
+                    scoped_managers=frozenset({"computer"}),
+                ),
             )
 
     async def close(self) -> None:
@@ -462,7 +441,7 @@ class PythonExecutionSession:
         except Exception as e:
             try:
                 logger.warning(
-                    f"PythonExecutionSession.close() failed: {e}",
+                    f"{DEFAULT_ICON} PythonExecutionSession.close() failed: {e}",
                     exc_info=True,
                 )
             except Exception:
@@ -477,10 +456,7 @@ class PythonExecutionSession:
             stderr: list[OutputPart] - structured error output parts
             result: Any - return value of the last expression
             error: str | None - traceback if an exception occurred
-            computer_used: bool - whether computer primitives were accessed
         """
-        # Reset per-execution usage flags.
-        self._computer_used = False
         result = None
         error = None
 
@@ -493,8 +469,8 @@ class PythonExecutionSession:
                 # injected environment globals (common failure mode in LLM-generated code).
                 #
                 # We do this via an AST rewrite (not brittle string heuristics):
-                # rewrite any assignment targets named `primitives` / `computer_primitives`
-                # to `_primitives_local` / `_computer_primitives_local`.
+                # rewrite any assignment targets named `primitives`
+                # to `_primitives_local`.
                 #
                 # This preserves the injected globals for the rest of the session.
                 try:
@@ -502,7 +478,6 @@ class PythonExecutionSession:
                     class _ShadowingGuard(ast.NodeTransformer):
                         _REMAP = {
                             "primitives": "_primitives_local",
-                            "computer_primitives": "_computer_primitives_local",
                         }
 
                         def visit_Name(self, node: ast.Name) -> ast.AST:  # noqa: N802
@@ -671,7 +646,6 @@ class PythonExecutionSession:
             "stderr": stderr_parts,
             "result": result,
             "error": error,
-            "computer_used": self._computer_used,
         }
 
 
@@ -712,6 +686,15 @@ class SessionExecutor:
             PythonExecutionSession,
         ] = {}
         self._python_session_meta: Dict[Tuple[Optional[int], int], dict[str, str]] = {}
+
+        self._fm_globals: Dict[str, Any] = {}
+
+    def register_fm_globals(self, globals_dict: Dict[str, Any]) -> None:
+        self._fm_globals.update(globals_dict)
+
+    def _inject_fm_globals(self, sb: PythonExecutionSession) -> None:
+        if self._fm_globals:
+            sb.global_state.update(self._fm_globals)
 
     def has_python_session(
         self,
@@ -790,6 +773,7 @@ class SessionExecutor:
             if state_mode == "stateful" and venv_id is None and session_id == 0:
                 try:
                     sb0 = _CURRENT_SANDBOX.get()
+                    self._inject_fm_globals(sb0)
                     res = await sb0.execute(code)
                     return {
                         **res,
@@ -813,6 +797,7 @@ class SessionExecutor:
                     venv_pool=self._venv_pool,
                     shell_pool=self._shell_pool,
                 )
+                self._inject_fm_globals(sb)
                 try:
                     res = await sb.execute(code)
                 finally:
@@ -928,6 +913,7 @@ class SessionExecutor:
                         "last_used": now,
                     }
                 sb = self._python_sessions[key]
+                self._inject_fm_globals(sb)
                 res = await sb.execute(code)
                 meta = self._python_session_meta.get(key)
                 if meta is not None:
@@ -960,6 +946,7 @@ class SessionExecutor:
                 try:
                     # Shallow copy globals to allow read access while avoiding persistence.
                     sb.global_state.update(dict(base.global_state))
+                    self._inject_fm_globals(sb)
                     res = await sb.execute(code)
                 finally:
                     try:
@@ -1020,7 +1007,6 @@ class SessionExecutor:
                 "stderr": res.stderr,
                 "result": res.exit_code,
                 "error": res.error,
-                "computer_used": False,
                 "language": language,
                 "state_mode": state_mode,
                 "session_id": session_id,
@@ -1050,7 +1036,6 @@ class SessionExecutor:
                         "stderr": restore_res.stderr,
                         "result": restore_res.exit_code,
                         "error": restore_res.error,
-                        "computer_used": False,
                         "language": language,
                         "state_mode": state_mode,
                         "session_id": session_id,
@@ -1066,7 +1051,6 @@ class SessionExecutor:
                     "stderr": res.stderr,
                     "result": res.exit_code,
                     "error": res.error,
-                    "computer_used": False,
                     "language": language,
                     "state_mode": state_mode,
                     "session_id": session_id,
@@ -1139,7 +1123,6 @@ async def _execute_shell_stateless(
             "stderr": (stderr_b or b"").decode(errors="replace"),
             "result": int(proc.returncode or 0),
             "error": None,
-            "computer_used": False,
         }
     except Exception as e:
         return {
@@ -1147,5 +1130,4 @@ async def _execute_shell_stateless(
             "stderr": "",
             "result": None,
             "error": f"{type(e).__name__}: {e}",
-            "computer_used": False,
         }

@@ -28,23 +28,30 @@ class _DummyEnv:
     def get_prompt_context(self) -> str:
         return self._prompt_context
 
+    def get_tools(self) -> dict:
+        return {}
+
 
 def _real_envs_mixed() -> Mapping[str, Any]:
     """Real environments that produce self-contained prompt context."""
     from unity.function_manager.primitives import ComputerPrimitives
     from unity.actor.environments.computer import ComputerEnvironment
     from unity.actor.environments.state_managers import StateManagerEnvironment
+    from unity.actor.environments.base import _CompositeEnvironment
 
     cp = ComputerPrimitives(computer_mode="mock")
-    return {
-        "computer_primitives": ComputerEnvironment(cp),
-        "primitives": StateManagerEnvironment(),
-    }
+    composite = _CompositeEnvironment(
+        [
+            ComputerEnvironment(cp),
+            StateManagerEnvironment(),
+        ],
+    )
+    return {"primitives": composite}
 
 
 @pytest.mark.timeout(30)
 def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legacy_name():
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     try:
         prompt = build_code_act_prompt(
             environments=_real_envs_mixed(),
@@ -70,7 +77,7 @@ def test_code_act_prompt_has_primary_execute_code_and_session_tools_and_no_legac
 
 @pytest.mark.timeout(30)
 def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_and_mixed():
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
     try:
         prompt = build_code_act_prompt(
             environments=_real_envs_mixed(),
@@ -85,9 +92,9 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     assert '"language": "python"' in prompt
     assert '"name": "list_sessions"' in prompt or "list_sessions" in prompt
 
-    assert "Computer State Feedback" in prompt
+    assert "Viewing Computer State" in prompt
     # Computer method documentation (from environment's get_prompt_context)
-    assert "computer_primitives" in prompt.lower()
+    assert "primitives.computer" in prompt.lower()
     assert "navigate" in prompt
     assert "act" in prompt
     assert "observe" in prompt
@@ -95,13 +102,18 @@ def test_code_act_prompt_includes_diverse_examples_sessions_computer_primitives_
     # State-manager guidance + examples (primitives)
     assert "### State Manager Rules" in prompt
     assert "### Implementation Examples" in prompt
+    assert "return the handle as the last expression" in prompt
+    assert "immediate in-code composition" in prompt
+    assert "neutral or uncertain" in prompt.lower()
+    assert "default to returning the handle" in prompt.lower()
+    assert "Choose return-handle vs await based on task shape" in prompt
 
 
 @pytest.mark.timeout(30)
 def test_custom_environment_prompt_context_included():
     """Custom environments (not computer_primitives/primitives) should have their
     prompt context included in the generated prompt."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
 
     custom_marker = "### Custom Widget Tools\n- `widget.create(name)` — create a widget"
     envs: Mapping[str, Any] = {
@@ -122,7 +134,7 @@ def test_custom_environment_prompt_context_included():
 @pytest.mark.timeout(30)
 def test_multiple_custom_environments_all_included():
     """Multiple custom environments should each have their prompt context included."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
 
     marker_a = "### Alpha Environment\nAlpha-specific guidance for the LLM."
     marker_b = "### Beta Environment\nBeta-specific guidance for the LLM."
@@ -143,7 +155,7 @@ def test_multiple_custom_environments_all_included():
 @pytest.mark.timeout(30)
 def test_custom_environment_empty_prompt_context_excluded():
     """Custom environments returning empty prompt context should not inject noise."""
-    actor = CodeActActor(headless=True, computer_mode="mock")
+    actor = CodeActActor()
 
     envs: Mapping[str, Any] = {
         "empty_env": _DummyEnv(""),
@@ -171,7 +183,7 @@ def test_computer_environment_prompt_context_from_registry():
     context = env.get_prompt_context()
 
     assert context  # Non-empty
-    assert "computer_primitives" in context.lower()
+    assert "primitives.computer" in context.lower()
     # All dynamic methods should be documented
     assert "navigate" in context
     assert "act" in context

@@ -1,5 +1,5 @@
 .env
-.env.*
+.env.deprecated*
 *.env
 .sensitive_data
 application_default_credentials.json
@@ -47,3 +47,5 @@ logs/*
 logs/ci/*
 !logs/ci/.gitkeep
 .repairs_queries/
+# Self-hosted LiveKit Agents Playground (sandbox developer tooling)
+.livekit-playground/

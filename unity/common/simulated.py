@@ -6,6 +6,8 @@ import inspect
 import threading
 from typing import Any, Dict, List, Tuple
 
+from unity.common.hierarchical_logger import ICONS
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,15 +42,15 @@ class SimulatedLineage:
 
     @staticmethod
     def make_label(segment: str) -> str:
-        """Compose a nested label like '<outer...>->Segment(abcd)'."""
+        """Compose a nested label like '<outer(xxxx)>->Segment(abcd)'."""
         from secrets import token_hex  # noqa: WPS433
 
         try:
-            parts = SimulatedLineage.parent_lineage()
-            base = "->".join([*parts, segment]) if parts else segment
+            parts = SimulatedLineage.parent_lineage()  # already suffixed
         except Exception:
-            base = segment
-        return f"{base}({token_hex(2)})"
+            parts = []
+        suffixed = f"{segment}({token_hex(2)})"
+        return "->".join([*parts, suffixed]) if parts else suffixed
 
     @staticmethod
     def question_label(parent_label: str) -> str:
@@ -77,15 +79,20 @@ class SimulatedLineage:
     @staticmethod
     def make_label_with_suffix(segment: str, suffix: str) -> str:
         """
-        Compose '<outer...>->Segment(suffix)' using the provided suffix.
+        Compose '<outer(xxxx)>->Segment(abcd)' using the provided suffix.
+
+        Parent segments from TOOL_LOOP_LINEAGE are already suffixed;
+        only the leaf segment gets the suffix.
         """
+        from secrets import token_hex  # noqa: WPS433
+
         try:
-            parts = SimulatedLineage.parent_lineage()
-            base = "->".join([*parts, segment]) if parts else segment
+            parts = SimulatedLineage.parent_lineage()  # already suffixed
         except Exception:
-            base = segment
+            parts = []
         suf = str(suffix or "").strip()
-        return f"{base}({suf})" if suf else SimulatedLineage.make_label(segment)
+        suffixed = f"{segment}({suf})" if suf else f"{segment}({token_hex(2)})"
+        return "->".join([*parts, suffixed]) if parts else suffixed
 
     @staticmethod
     def preview(text: str, limit: int = PREVIEW_LIMIT) -> str:
@@ -97,21 +104,21 @@ class SimulatedLog:
     """Small wrapper for consistent iconised request/steering logs."""
 
     _ICONS = {
-        "ask": "❓",
+        "ask": ICONS["clarification"],
         "update": "📝",
         "execute": "🎬",
         "act": "🎬",
-        "interject": "💬",
-        "pause": "⏸️",
-        "resume": "▶️",
-        "stop": "🛑",
+        "interject": ICONS["interjection"],
+        "pause": ICONS["pause"],
+        "resume": ICONS["resume"],
+        "stop": ICONS["stop_requested"],
         # simulated-only convenience
-        "clar_req": "❓",
-        "clar_ans": "💬",
-        "notification": "🔔",
+        "clar_req": ICONS["clarification"],
+        "clar_ans": ICONS["interjection"],
+        "notification": ICONS["notification"],
         # session lifecycle
-        "session_start": "🚀",
-        "session_end": "🏁",
+        "session_start": ICONS["session_start"],
+        "session_end": ICONS["session_end"],
     }
     _VERBS = {
         "ask": "Ask requested",
@@ -138,7 +145,7 @@ class SimulatedLog:
         except Exception:
             return
         try:
-            icon = SimulatedLog._ICONS.get(kind, "ℹ️")
+            icon = SimulatedLog._ICONS.get(kind, ICONS.get("info", "ℹ️"))
             verb = SimulatedLog._VERBS.get(kind, "Requested")
             suffix = ""
             if kind in {"ask", "update", "act", "interject"}:
@@ -159,7 +166,9 @@ class SimulatedLog:
             return
         try:
             q = SimulatedLineage.preview(question)
-            LOGGER.info(f"❓ [{label}] Clarification requested: {q}")
+            LOGGER.info(
+                f"{ICONS['clarification']} [{label}] Clarification requested: {q}",
+            )
         except Exception:
             pass
 
@@ -172,7 +181,9 @@ class SimulatedLog:
             return
         try:
             a = SimulatedLineage.preview(answer)
-            LOGGER.info(f"💬 [{label}] Clarification answer received: {a}")
+            LOGGER.info(
+                f"{ICONS['interjection']} [{label}] Clarification answer received: {a}",
+            )
         except Exception:
             pass
 
@@ -185,7 +196,7 @@ class SimulatedLog:
             return
         try:
             m = SimulatedLineage.preview(message)
-            LOGGER.info(f"🔔 [{label}] Notification: {m}")
+            LOGGER.info(f"{ICONS['notification']} [{label}] Notification: {m}")
         except Exception:
             pass
 
@@ -209,7 +220,7 @@ def maybe_tool_log_scheduled(segment: str, method: str, args: dict):
         cid = SimulatedLineage.extract_suffix(label) or ""
         try:
             LOGGER.info(
-                f"🛠️ [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
+                f"{ICONS['info']} [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
             )
         except Exception:
             pass
@@ -233,7 +244,7 @@ def maybe_tool_log_scheduled_with_label(label: str, method: str, args: dict):
         cid = SimulatedLineage.extract_suffix(label) or ""
         try:
             LOGGER.info(
-                f"🛠️ [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
+                f"{ICONS['info']} [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
             )
         except Exception:
             pass
@@ -262,7 +273,7 @@ def maybe_tool_log_completed(
         dt = _time.perf_counter() - float(t0)
         try:
             LOGGER.info(
-                f"✅ [{label}] ToolCall Completed in {dt:.2f}s | result={_json.dumps(result)}",
+                f"{ICONS['completed']} [{label}] ToolCall Completed in {dt:.2f}s | result={_json.dumps(result)}",
             )
         except Exception:
             pass
@@ -302,7 +313,7 @@ async def simulated_llm_roundtrip(
 
     try:
         if LOGGER is not None:
-            LOGGER.info(f"🔄 [{label}] LLM simulating…")
+            LOGGER.info(f"{ICONS['llm_thinking']} [{label}] LLM simulating…")
     except Exception:
         pass
     t0 = _time.perf_counter()
@@ -326,12 +337,14 @@ async def simulated_llm_roundtrip(
     try:
         if LOGGER is not None:
             if SimulatedLineage.has_outer():
-                LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms")
+                LOGGER.info(f"{ICONS['completed']} [{label}] LLM replied in {dt_ms} ms")
             else:
                 _ans_preview = str(answer)
                 if len(_ans_preview) > 800:
                     _ans_preview = _ans_preview[:800] + "…"
-                LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms:\n{_ans_preview}")
+                LOGGER.info(
+                    f"{ICONS['completed']} [{label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
+                )
     except Exception:
         pass
 
@@ -385,6 +398,46 @@ class SimulatedHandleMixin:
 
     # Derived classes are expected to set: self._log_label : str
 
+    # ── Pause state proxy ────────────────────────────────────────────────
+
+    @property
+    def _pause_event(self):
+        """Proxy for pause state compatibility with ``get_handle_paused_state``.
+
+        Simulated manager handles track pause state via a ``_paused`` boolean
+        rather than a real ``threading.Event``.  This property exposes that
+        boolean through the ``is_set()`` interface that
+        ``get_handle_paused_state`` expects, following the async-tool-loop
+        convention (set = running, cleared = paused).
+
+        If a subclass stores a real ``threading.Event`` via the setter (e.g.
+        ``SimulatedActorHandle``), that object is returned directly.
+
+        Returns ``None`` when the handle has neither a stored event nor a
+        ``_paused`` attribute, causing ``get_handle_paused_state`` to return
+        ``None`` (unknown).
+        """
+        # A subclass wrote a real Event — return it as-is.
+        real = self.__dict__.get("_real_pause_event")
+        if real is not None:
+            return real
+
+        if not hasattr(self, "_paused"):
+            return None
+
+        handle = self
+
+        class _Proxy:
+            def is_set(self) -> bool:
+                return not handle._paused
+
+        return _Proxy()
+
+    @_pause_event.setter
+    def _pause_event(self, value):
+        """Allow subclasses to store a real ``threading.Event``."""
+        self.__dict__["_real_pause_event"] = value
+
     # ── Completion gate ──────────────────────────────────────────────────
     _completion_gate: "threading.Event | None" = None
 
@@ -432,6 +485,32 @@ class SimulatedHandleMixin:
         """
         self._open_completion_gate()
 
+    # ── Clarifications ───────────────────────────────────────────────────
+
+    async def next_clarification(self) -> dict:
+        """Block until cancelled — default for handles that don't use clarifications.
+
+        Handles that support clarifications (``_needs_clar=True``) override
+        this to block on their ``_clar_up_q`` instead.  The watcher's
+        ``asyncio.wait_for(..., timeout=30)`` handles the timeout naturally.
+        """
+        await asyncio.Event().wait()
+        return {}  # unreachable; satisfies return type
+
+    # ── Notifications ────────────────────────────────────────────────────
+
+    async def next_notification(self) -> dict:
+        """Block until cancelled — simulated handles don't emit notifications.
+
+        Callers (e.g. ``actor_watch_notifications``) wrap this in
+        ``asyncio.wait_for(..., timeout=N)`` which raises ``TimeoutError``
+        and re-checks ``handle.done()``.  This matches the real
+        ``SteerableToolLoopHandle`` behaviour where ``next_notification``
+        blocks on an ``asyncio.Queue.get()`` that may never receive an item.
+        """
+        await asyncio.Event().wait()
+        return {}  # unreachable; satisfies return type
+
     # ── Steering logs ────────────────────────────────────────────────────
 
     def _log_interject(self, message: str) -> None:
@@ -464,7 +543,7 @@ class SimulatedHandleMixin:
         try:
             suffix = f" – reason: {reason}" if reason else ""
             LOGGER.info(
-                f"🛑 [{getattr(self, '_log_label', 'handle')}] Stop requested{suffix}",
+                f"{ICONS['stop_requested']} [{getattr(self, '_log_label', 'handle')}] Stop requested{suffix}",
             )
         except Exception:
             pass
@@ -1082,59 +1161,3 @@ def mirror_web_searcher_tools() -> Dict[str, Any]:
         WebSearcher._map,
         include_class_name=False,
     )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GuidanceManager mirroring
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def mirror_guidance_manager_tools(kind: str) -> Dict[str, Any]:
-    """Build a tool-dict mirroring the real GuidanceManager's tools.
-
-    kind: "ask" or "update". Uses AST reflection of GuidanceManager.__init__
-    with a static fallback kept in sync with the concrete implementation.
-    """
-    from unity.common.llm_helpers import methods_to_tool_dict
-    from unity.guidance_manager.guidance_manager import GuidanceManager as GM
-
-    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
-
-    try:
-        pairs = _extract_owner_method_pairs(
-            GM,
-            target_attr,
-            self_external_map=None,
-            extra_class_names={"GuidanceManager": GM},
-        )
-        if pairs:
-            tools = _build_tool_dict(pairs)
-            if tools:
-                return tools
-    except Exception:
-        pass
-
-    # Fallback – keep aligned with GuidanceManager.__init__
-    if kind == "ask":
-        return methods_to_tool_dict(
-            GM._list_columns,
-            GM._filter,
-            GM._search,
-            GM._get_images_for_guidance,
-            GM._ask_image,
-            GM._attach_image_to_context,
-            GM._attach_guidance_images_to_context,
-            GM._get_functions_for_guidance,
-            GM._attach_functions_for_guidance_to_context,
-            include_class_name=False,
-        )
-    else:
-        return methods_to_tool_dict(
-            GM.ask,
-            GM._add_guidance,
-            GM._update_guidance,
-            GM._delete_guidance,
-            GM._create_custom_column,
-            GM._delete_custom_column,
-            include_class_name=False,
-        )

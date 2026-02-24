@@ -3,25 +3,52 @@
 unity_logs.py — View logs for a Unity GKE job.
 
 Usage:
-    python unity_logs.py --job <job_name> --namespace <namespace>
+    python unity_logs.py                       # auto-detect latest staging job
+    python unity_logs.py --job <job_name>      # explicit job, staging namespace
+    python unity_logs.py --namespace production # auto-detect latest production job
 
 Behaviour:
-    1. Queries the AssistantJobs Unify project to check if the job is running.
-    2. If running  → prints all existing logs AND streams new ones via kubectl -f.
-    3. If not running → prints historical logs (kubectl first, gcloud fallback).
+    1. If --job is omitted, resolves the caller's email from UNIFY_KEY and finds
+       the most recent job for that email in the AssistantJobs project.
+    2. Queries the AssistantJobs Unify project to check if the job is running.
+    3. If running  → prints all existing logs AND streams new ones via kubectl -f.
+    4. If not running → prints historical logs via gcloud.
 
 Environment:
+    UNIFY_KEY          Required for auto-detection (resolves caller identity).
     SHARED_UNIFY_KEY   Required. Shared API key for the AssistantJobs project.
 """
+
+import os
+import sys
+
+# The unify SDK reads ORCHESTRA_URL at import time, and .env sets it to
+# localhost for local development. This script needs the real backend, so
+# derive the URL from --namespace before importing anything else.
+_ORCHESTRA_URLS = {
+    "staging": "https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0",
+    "production": "https://api.unify.ai/v0",
+}
+
+
+def _parse_namespace_early() -> str:
+    for i, arg in enumerate(sys.argv):
+        if arg == "--namespace" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith("--namespace="):
+            return arg.split("=", 1)[1]
+    return "staging"
+
+
+os.environ["ORCHESTRA_URL"] = _ORCHESTRA_URLS[_parse_namespace_early()]
 
 from dotenv import load_dotenv
 
 load_dotenv()
 import argparse
-import os
 import shutil
 import subprocess
-import sys
+
 import unify
 
 # ─── Configuration ───────────────────────────────────────────────────────────
@@ -107,6 +134,48 @@ def ensure_gke_credentials():
         error("Failed to get GKE cluster credentials.")
         print("  Run ./setup_auth.sh to configure GCP authentication.")
         sys.exit(1)
+
+
+# ─── Job auto-detection ──────────────────────────────────────────────────────
+
+
+def resolve_latest_job(namespace: str) -> str:
+    """Resolve the most recent job for the current user in the given namespace.
+
+    Uses UNIFY_KEY to identify the caller, then queries AssistantJobs for
+    their most recent job whose name ends with ``-{namespace}``.
+    """
+    unify_key = os.environ.get("UNIFY_KEY")
+    if not unify_key:
+        error("UNIFY_KEY is required to auto-detect jobs.")
+        print("  Set it in .env or pass --job explicitly.")
+        sys.exit(1)
+
+    info("Resolving identity from UNIFY_KEY...")
+    user_info = unify.get_user_basic_info(api_key=unify_key)
+    email = user_info["email"]
+    info(f"Authenticated as {user_info['first']} {user_info['last']} ({email})")
+
+    info(f"Searching for latest '{namespace}' job...")
+    logs = unify.get_logs(
+        project="AssistantJobs",
+        context="startup_events",
+        filter=f"user_email == '{email}'",
+        api_key=SHARED_UNIFY_KEY,
+        limit=20,
+    )
+
+    suffix = f"-{namespace}"
+    for log in logs:
+        job_name = log.entries.get("job_name")
+        if job_name and job_name.endswith(suffix):
+            running = str(log.entries.get("running", "false")).lower() == "true"
+            status = f"{GREEN}running{NC}" if running else f"{YELLOW}completed{NC}"
+            success(f"Found job: {job_name} ({status})")
+            return job_name
+
+    error(f"No jobs found for {email} in namespace '{namespace}'.")
+    sys.exit(1)
 
 
 # ─── AssistantJobs query ─────────────────────────────────────────────────────
@@ -224,7 +293,6 @@ def _gcloud_logging_read(log_filter: str):
             log_filter,
             f"--project={GCP_PROJECT}",
             "--freshness=3650d",
-            "--limit=100000",
             "--format=value(textPayload)",
             "--order=asc",
         ],
@@ -256,28 +324,31 @@ def main():
     parser = argparse.ArgumentParser(
         description="View logs for a Unity GKE job.",
         epilog=(
-            "Finding the job name:\n"
-            "  1. Open the AssistantJobs project on https://console.unify.ai\n"
-            "  2. Look at the startup_events context\n"
-            "  3. Filter by assistant_id, user_name, or timestamp\n"
-            "  4. Copy the job_name field"
+            "When --job is omitted, the script auto-detects the latest job\n"
+            "by resolving your identity from UNIFY_KEY and searching\n"
+            "AssistantJobs for your most recent session.\n"
+            "\n"
+            "Examples:\n"
+            "  python unity_logs.py                        # latest staging job\n"
+            "  python unity_logs.py --namespace production  # latest production job\n"
+            "  python unity_logs.py --job unity-2026-02-10-17-30-53-staging"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--job",
-        required=True,
-        help="Name of the GKE job (e.g. unity-2026-02-10-17-30-53-staging)",
+        default=None,
+        help="Name of the GKE job. If omitted, auto-detects the latest job for your account.",
     )
     parser.add_argument(
         "--namespace",
-        required=True,
-        help="Kubernetes namespace (e.g. staging, production)",
+        default="staging",
+        help="Kubernetes namespace (default: staging)",
     )
     args = parser.parse_args()
 
-    job_name = args.job
     namespace = args.namespace
+    job_name = args.job or resolve_latest_job(namespace)
 
     check_prerequisites()
     ensure_gke_credentials()

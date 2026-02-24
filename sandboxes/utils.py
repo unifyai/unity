@@ -40,7 +40,6 @@ import aiohttp
 import logging
 import sys
 import time
-from datetime import datetime
 import wave
 from contextlib import contextmanager
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
@@ -1208,22 +1207,9 @@ def configure_sandbox_logging(
             _bh.setFormatter(_fmt)
             root_logger.addHandler(_bh)
             _actual = _srv._port
-            # Also write a full-session copy to a hidden, timestamped file in CWD
-            _ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            _hidden_name = f".logs_{_ts}.txt"
-            # Resolve the hidden full-session log path to absolute for printing
-            try:
-                _abs_hidden = os.path.abspath(_hidden_name)
-            except Exception:
-                _abs_hidden = _hidden_name
-
-            _fh_all = _logging.FileHandler(_abs_hidden, mode="w", encoding="utf-8")
-            _fh_all.setFormatter(_fmt)
-            root_logger.addHandler(_fh_all)
             print(
                 f"📡 Log stream on 127.0.0.1:{_actual} – connect via: nc 127.0.0.1 {_actual} (Ctrl-C to detach)",
             )
-            print(f"📝 Full session logs: {_abs_hidden}")
         except Exception as _exc:
             print(f"⚠️  Failed to start log TCP stream on port {tcp_port}: {_exc}")
 
@@ -1302,6 +1288,25 @@ def configure_sandbox_logging(
             f"To follow live with scrollback: less +F {_abs_main_log} (Ctrl-C to pause, F to resume, q to quit). "
             "Pass --log_in_terminal to also stream logs here.",
         )
+
+    # The unity LOGGER (unity.logger) has propagate=False and its own terminal
+    # StreamHandler added at import time.  Strip that handler so the sandbox
+    # terminal stays clean, then mirror root's handlers onto LOGGER so that
+    # file / TCP routing works for unity.* log records.
+    try:
+        from unity.logger import LOGGER as _unity_logger
+
+        for _h in list(_unity_logger.handlers):
+            if isinstance(_h, _logging.StreamHandler) and getattr(
+                _h,
+                "_unity_terminal",
+                False,
+            ):
+                _unity_logger.removeHandler(_h)
+        for _h in root_logger.handlers:
+            _unity_logger.addHandler(_h)
+    except ImportError:
+        pass
 
 
 # ===========================================================================

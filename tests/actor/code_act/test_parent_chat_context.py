@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel, Field
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.execution.session import PythonExecutionSession, _PARENT_CHAT_CONTEXT
@@ -21,10 +21,7 @@ async def test_code_act_initial_parent_chat_context_is_used():
     """CodeActActor should append _parent_chat_context before the first LLM turn."""
     SecretModel.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
+    actor = CodeActActor(timeout=60)
 
     parent_ctx = [
         {"role": "user", "content": "The secret number is 456."},
@@ -54,35 +51,29 @@ async def test_code_act_initial_parent_chat_context_is_used():
 @pytest.mark.timeout(300)
 async def test_execute_function_forwards_parent_chat_context():
     """Parent chat context should flow from the outer act() loop through the
-    execute_function tool closure into FunctionManager.execute_function.
+    execute_function tool into the sandbox via the _PARENT_CHAT_CONTEXT
+    ContextVar, just like execute_code.
 
     Scenario: two contacts named Lucy exist. The parent conversation
     mentions "Baker" as the surname, but the act() description just says
-    "Find Lucy's phone number." Without the parent context forwarded to
-    the inner primitive, the contacts lookup would be ambiguous.
+    "Find Lucy's phone number."  We inject a spy ContactManager into a
+    real Primitives instance and verify that _parent_chat_context arrives.
 
-    We verify the plumbing by asserting that fm.execute_function was
-    called with _parent_chat_context containing the disambiguation hint.
+    execute_function now synthesises code and routes through the same
+    SessionExecutor path as execute_code, so context forwarding is handled
+    by PythonExecutionSession's ContextForwardingProxy wrapping.
     """
-    _primitives_list = [
-        {
-            "function_id": 1,
-            "name": "primitives.contacts.ask",
-            "docstring": "Ask a question about contacts. Use for lookups, searches, etc.",
-            "is_primitive": True,
-        },
-    ]
+    spy = _SpyContactManager()
 
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": _primitives_list})
-    fm.filter_functions = MagicMock(return_value={"metadata": _primitives_list})
-    fm.list_functions = MagicMock(return_value={"metadata": _primitives_list})
-    fm.execute_function = AsyncMock(return_value="Lucy Baker: 555-0199")
+    prims = Primitives(
+        primitive_scope=PrimitiveScope(scoped_managers=frozenset({"contacts"})),
+    )
+    prims._managers["contacts"] = spy
+
+    env = StateManagerEnvironment(prims)
 
     actor = CodeActActor(
-        function_manager=fm,
-        headless=True,
-        computer_mode="mock",
+        environments=[env],
         timeout=60,
     )
 
@@ -104,14 +95,11 @@ async def test_execute_function_forwards_parent_chat_context():
         )
         await asyncio.wait_for(handle.result(), timeout=90)
 
-        fm.execute_function.assert_called_once()
-        call_kwargs = fm.execute_function.call_args.kwargs
-        assert "_parent_chat_context" in call_kwargs, (
-            "execute_function was not called with _parent_chat_context — "
-            "the CodeActActor closure needs to declare _parent_chat_context "
-            "in its signature and forward it to fm.execute_function()"
+        assert len(spy.ask_calls) > 0, "primitives.contacts.ask was never called"
+        assert spy.ask_calls[0]["_parent_chat_context"] is not None, (
+            "primitives.contacts.ask was called without _parent_chat_context — "
+            "execute_function needs to set _PARENT_CHAT_CONTEXT for the sandbox"
         )
-        assert call_kwargs["_parent_chat_context"] is not None
     finally:
         try:
             await actor.close()
@@ -190,8 +178,6 @@ async def test_execute_code_forwards_parent_chat_context():
 
     actor = CodeActActor(
         environments=[env],
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
 

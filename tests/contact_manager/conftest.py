@@ -189,8 +189,8 @@ def _setup_scenario(
     Note: ContactManager instantiation is inside the file lock because
     ContactManager.__init__ calls _sync_required_contacts(), which creates
     system contacts (id=0, id=1). Without the lock, parallel pytest sessions
-    can race and create duplicate contacts due to a TOCTOU vulnerability
-    in the application-level uniqueness check.
+    can race and hit backend uniqueness violations on email_address /
+    phone_number during concurrent provisioning.
     """
     ManagerRegistry.clear()
     ContextRegistry.clear()
@@ -210,8 +210,8 @@ def _setup_scenario(
 
     # Use file lock to coordinate ContactManager creation and seeding.
     # ContactManager.__init__ creates system contacts (assistant id=0, user id=1)
-    # via _sync_required_contacts(). This must be serialized to prevent duplicate
-    # contact creation when multiple pytest sessions start in parallel.
+    # via _sync_required_contacts(). This must be serialized to avoid racing
+    # on system contact provisioning when multiple pytest sessions start in parallel.
     with scenario_file_lock(lock_name):
         cm = ContactManager()
         id_mapping: Dict[str, int] = {}

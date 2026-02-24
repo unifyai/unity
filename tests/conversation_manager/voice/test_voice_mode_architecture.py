@@ -50,7 +50,7 @@ class TestVoiceCallFlowIntegration:
     Integration tests for voice call flows.
 
     These tests validate the event flow for both TTS and Realtime modes
-    using the in-memory event broker (no Redis required).
+    using the in-memory event broker.
     """
 
     @pytest.fixture
@@ -219,8 +219,9 @@ async def test_unify_llm_chat_returns_stream():
         UnifyLLM,
         UnifyLLMStream,
     )
+    from unity.settings import SETTINGS
 
-    llm_instance = UnifyLLM(model="gpt-5-nano@openai")
+    llm_instance = UnifyLLM(model=SETTINGS.conversation.FAST_BRAIN_MODEL)
 
     # Create a minimal chat context
     chat_ctx = llm.ChatContext()

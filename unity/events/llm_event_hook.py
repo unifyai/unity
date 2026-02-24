@@ -33,7 +33,7 @@ async def _update_cumulative_spend(billed_cost: float) -> None:
 
     This function atomically increments the cumulative_spend for the current
     assistant and month. The spend is stored in the Assistants project in
-    a context path like: {UserName}/{AssistantName}/Spending/Monthly
+    a context path like: {user_id}/{assistant_id}/Spending/Monthly
 
     The log is also mirrored to All/Spending/Monthly for cross-assistant
     and cross-user aggregation.
@@ -62,18 +62,16 @@ async def _update_cumulative_spend(billed_cost: float) -> None:
     # Calculate current month in user's timezone
     month = datetime.now(tz).strftime("%Y-%m")
 
-    # Get context path components
-    user_name = SESSION_DETAILS.user_context
-    assistant_name = SESSION_DETAILS.assistant_context
+    user_ctx = SESSION_DETAILS.user_context
+    assistant_ctx = SESSION_DETAILS.assistant_context
     assistant_id = None
     if SESSION_DETAILS.assistant_record:
         assistant_id = SESSION_DETAILS.assistant_record.get("agent_id")
 
-    # Skip if we don't have required identifiers
-    if not user_name or not assistant_name or not assistant_id:
+    if not user_ctx or not assistant_ctx or not assistant_id:
         return
 
-    context = f"{user_name}/{assistant_name}/Spending/Monthly"
+    context = f"{user_ctx}/{assistant_ctx}/Spending/Monthly"
 
     try:
         # Format billed_cost with fixed decimal notation (avoid scientific notation)

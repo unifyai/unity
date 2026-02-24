@@ -28,42 +28,23 @@ async def test_explicit_calls_visible_in_passive_chunk(
     monkeypatch,
 ):
     """A ConversationManager-originated explicit tool call should appear in the
-    transcript chunk handed to *update_knowledge* so the model can reason that
+    transcript chunk handed to *process_chunk* so the model can reason that
     the knowledge was already stored explicitly.
     """
 
     # ---------------------------------------------------------------
-    # 0.  Capture the transcript blob received by update_knowledge
+    # 0.  Capture the transcript blob received by process_chunk
     # ---------------------------------------------------------------
     captured: Dict[str, str] = {}
 
-    async def _stub_update_knowledge(self, transcript: str, *_, **__):  # noqa: D401
+    async def _stub_process_chunk(self, transcript: str, *_, **__):  # noqa: D401
         captured["transcript"] = transcript
         return "ok"
 
-    # Keep the other heavy update helpers lightweight as well
-    async def _noop(self, *_, **__):  # noqa: D401 – imperative helper
-        return "noop"
-
     monkeypatch.setattr(
         MemoryManager,
-        "update_knowledge",
-        _stub_update_knowledge,
-        raising=True,
-    )
-    monkeypatch.setattr(MemoryManager, "update_contacts", _noop, raising=True)
-    monkeypatch.setattr(MemoryManager, "update_tasks", _noop, raising=True)
-    monkeypatch.setattr(MemoryManager, "update_contact_bio", _noop, raising=True)
-    monkeypatch.setattr(
-        MemoryManager,
-        "update_contact_rolling_summary",
-        _noop,
-        raising=True,
-    )
-    monkeypatch.setattr(
-        MemoryManager,
-        "update_contact_response_policy",
-        _noop,
+        "process_chunk",
+        _stub_process_chunk,
         raising=True,
     )
 
@@ -105,11 +86,10 @@ async def test_explicit_calls_visible_in_passive_chunk(
     await asyncio.sleep(0.05)
 
     # ---------------------------------------------------------------
-    # 2.  Publish   ① one Message   +   ②/③ explicit ManagerMethod
+    # 2.  Publish one Message + explicit ManagerMethod events
     # ---------------------------------------------------------------
     base_ts = dt.datetime(2025, 1, 1, tzinfo=dt.UTC)
 
-    # (①) plain chat message
     msg = Message(
         medium=Medium.SMS_MESSAGE,
         sender_id=1,
@@ -120,7 +100,6 @@ async def test_explicit_calls_visible_in_passive_chunk(
     )
     await EVENT_BUS.publish(Event(type="Message", payload=msg))
 
-    # (②/③) explicit KnowledgeManager.update call triggered by ConversationManager
     call_id = new_call_id()
     await publish_manager_method_event(
         call_id,
@@ -139,7 +118,6 @@ async def test_explicit_calls_visible_in_passive_chunk(
         source="ConversationManager",
     )
 
-    # Ensure events hit backend queues
     EVENT_BUS.join_published()
 
     # ---------------------------------------------------------------
@@ -148,11 +126,11 @@ async def test_explicit_calls_visible_in_passive_chunk(
     await asyncio.sleep(0.2)
 
     # ---------------------------------------------------------------
-    # 4.  Assertions – update_knowledge was invoked once and its
+    # 4.  Assertions -- process_chunk was invoked once and its
     #     transcript blob contains the manager_method records.
     # ---------------------------------------------------------------
     blob = captured.get("transcript")
-    assert blob is not None, "update_knowledge should have been called once"
+    assert blob is not None, "process_chunk should have been called once"
     assert (
         '"kind": "manager_method"' in blob
     ), "ManagerMethod events must be included in the transcript chunk"

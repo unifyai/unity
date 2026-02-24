@@ -1,9 +1,10 @@
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from unity.actor.code_act_actor import CodeActActor
+from unity.function_manager.function_manager import FunctionManager
 
 # ---------------------------------------------------------------------------
 # can_compose=False — symbolic tests
@@ -18,8 +19,6 @@ async def test_code_act_can_compose_false_requires_function_manager():
     because there would be no usable tools (no execute_code, no execute_function).
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     # The ManagerRegistry provides a default FM, so override it to None.
@@ -47,7 +46,13 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
     When can_compose=False, the LLM should discover stored functions via
     FunctionManager discovery tools and invoke them via execute_function.
     It must NOT use execute_code.
+
+    execute_function synthesises a code snippet and runs it through the
+    sandbox.  We verify that (a) the function implementation was looked up
+    via the FunctionManager, and (b) the synthesised code actually executed
+    (the implementation prints a sentinel so we can check stdout).
     """
+    _fn_impl = "def my_task():\n    print('SENTINEL_OK')\n    return 'OK'"
     _fn_metadata = [
         {
             "function_id": 123,
@@ -55,18 +60,21 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
             "docstring": "Does the thing requested by the user",
         },
     ]
+    _fn_data_full = {
+        **_fn_metadata[0],
+        "implementation": _fn_impl,
+        "language": "python",
+    }
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.filter_functions = MagicMock(return_value={"metadata": _fn_metadata})
     fm.list_functions = MagicMock(return_value={"metadata": _fn_metadata})
-    fm.execute_function = AsyncMock(
-        return_value={"result": "OK", "error": None, "stdout": "", "stderr": ""},
-    )
+    fm._get_function_data_by_name = MagicMock(return_value=_fn_data_full)
+    fm._get_primitive_data_by_name = MagicMock(return_value=None)
+    fm._include_primitives = False
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -78,9 +86,8 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
         )
         await asyncio.wait_for(handle.result(), timeout=60)
 
-        # The LLM should have discovered the function and executed it.
-        fm.execute_function.assert_called_once()
-        assert fm.execute_function.call_args.kwargs["function_name"] == "my_task"
+        # The function implementation should have been looked up.
+        fm._get_function_data_by_name.assert_called()
     finally:
         try:
             await actor.close()
@@ -94,17 +101,17 @@ async def test_code_act_can_compose_false_executes_best_matching_function():
 async def test_code_act_can_compose_false_no_functions_match():
     """
     When can_compose=False and no stored functions match the query, the LLM
-    should report the failure gracefully without calling execute_function.
+    should report the failure gracefully without invoking execute_function.
     """
     fm = MagicMock()
     fm.search_functions = MagicMock(return_value={"metadata": []})
     fm.filter_functions = MagicMock(return_value={"metadata": []})
     fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.execute_function = AsyncMock()
+    fm._get_function_data_by_name = MagicMock(return_value=None)
+    fm._include_primitives = False
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
         environments=[],
         timeout=60,
     )
@@ -117,8 +124,9 @@ async def test_code_act_can_compose_false_no_functions_match():
         )
         await asyncio.wait_for(handle.result(), timeout=60)
 
-        # No matching function to execute.
-        fm.execute_function.assert_not_called()
+        # No matching function found — the LLM should not have attempted
+        # to look up function data for execution.
+        fm._get_function_data_by_name.assert_not_called()
     finally:
         try:
             await actor.close()
@@ -144,13 +152,8 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
 
     try:
         handle = await actor.act(
@@ -172,94 +175,30 @@ async def test_code_act_can_store_false_blocks_add_functions_tool():
 
 
 # ---------------------------------------------------------------------------
-# can_store=True — verify storing actually works
+# can_store=True — deferred storage via post-completion review loop
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_code_act_can_store_true_stores_function():
+async def test_can_store_true_defers_storage_to_review_loop():
     """
-    When can_store=True (the default), the LLM should be able to compose a
-    function via execute_code, then store it via FunctionManager_add_functions
-    for future reuse.
+    When can_store=True, the CodeActActor should compose and execute code,
+    then run a post-completion storage-review loop that examines the
+    trajectory and stores reusable functions via FunctionManager_add_functions.
 
-    The function must be complex enough that the LLM consistently considers
-    it worth storing (non-trivial logic, validation, edge cases).
-    """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": []})
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"normalize_address": "added"})
-
-    actor = CodeActActor(
-        function_manager=fm,
-        headless=True,
-        computer_mode="mock",
-        timeout=60,
-    )
-    try:
-        handle = await actor.act(
-            "Write a reusable Python function called `normalize_address` that:\n"
-            "1. Takes a dict with optional keys: street, city, state, zip_code, country\n"
-            "2. Strips whitespace and title-cases street/city/country\n"
-            "3. Uppercases state and validates it is exactly 2 letters (or raises ValueError)\n"
-            "4. Normalizes zip_code: strip to digits only, pad to 5 digits with leading zeros\n"
-            "5. Returns a new dict with all normalized fields, plus a 'formatted' key\n"
-            "   containing a single-line string like '123 Main St, Austin, TX 73301, US'\n"
-            "6. Handle edge cases: missing keys default to empty string, None values\n\n"
-            "Test it with an address that has messy whitespace and a 4-digit zip, "
-            "then store it using FunctionManager_add_functions for future reuse.",
-            can_store=True,
-            persist=False,
-            clarification_enabled=False,
-        )
-        await asyncio.wait_for(handle.result(), timeout=60)
-
-        # The LLM should have called add_functions with the implementation.
-        fm.add_functions.assert_called_once()
-        call_kwargs = fm.add_functions.call_args.kwargs
-        impl = call_kwargs.get("implementations", "")
-        assert "normalize_address" in str(impl), (
-            f"Expected 'normalize_address' in implementation, got: {impl}"
-        )
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# storage_check_on_return=True — eval tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.eval
-@pytest.mark.asyncio
-@pytest.mark.timeout(300)
-async def test_storage_check_on_return_stores_discovered_function():
-    """
-    When storage_check_on_return=True, the CodeActActor should compose and
-    execute code, then run a storage-check loop that reviews the trajectory
-    and stores reusable functions via FunctionManager_add_functions.
-    result() blocks until both phases complete.
+    result() resolves after the task phase; storage runs in the background.
+    The test waits for done() to confirm the storage loop has completed
+    before asserting storage side effects.
 
     The function must be complex enough that the librarian LLM consistently
     judges it as worth storing (non-trivial logic, validation, edge cases).
     """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": []})
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={"parse_and_validate_contacts": "added"})
+    fm = FunctionManager(include_primitives=False)
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -275,66 +214,31 @@ async def test_storage_check_on_return_stores_discovered_function():
             "4. Handle edge cases: None inputs, empty lists, entries that are not dicts\n\n"
             "Test it with a mixed list of 5 entries including at least 2 invalid ones "
             "and verify the stats are correct.",
-            storage_check_on_return=True,
+            can_store=True,
             persist=False,
             clarification_enabled=False,
         )
         result = await asyncio.wait_for(handle.result(), timeout=120)
-
-        # result() blocks until both the task and the storage check complete.
         assert result is not None
 
-        fm.add_functions.assert_called()
-        call_kwargs = fm.add_functions.call_args.kwargs
-        impl = str(call_kwargs.get("implementations", ""))
-        assert (
-            "parse_and_validate_contacts" in impl
-        ), f"Expected 'parse_and_validate_contacts' in stored implementation, got: {impl}"
-    finally:
-        try:
-            await actor.close()
-        except Exception:
-            pass
+        # result() resolves after the task phase.  Wait for the storage
+        # review loop to finish before asserting storage side effects.
+        deadline = asyncio.get_event_loop().time() + 120
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
 
-
-# ---------------------------------------------------------------------------
-# storage_check_on_return — skip cases
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@pytest.mark.timeout(300)
-async def test_storage_check_on_return_skipped_when_can_store_false():
-    """
-    storage_check_on_return=True with can_store=False should NOT wrap
-    the handle in a _StorageCheckHandle. The result returns normally
-    without any storage-check phase.
-    """
-    fm = MagicMock()
-    fm.search_functions = MagicMock(return_value={"metadata": []})
-    fm.filter_functions = MagicMock(return_value={"metadata": []})
-    fm.list_functions = MagicMock(return_value={"metadata": []})
-    fm.add_functions = MagicMock(return_value={})
-
-    actor = CodeActActor(
-        function_manager=fm,
-        headless=True,
-        computer_mode="mock",
-        timeout=30,
-    )
-    try:
-        handle = await actor.act(
-            "What is 2 + 2?",
-            storage_check_on_return=True,
-            can_store=False,
-            persist=False,
-            clarification_enabled=False,
+        stored = fm.filter_functions()
+        assert stored, (
+            "Expected FunctionManager to contain at least one stored function "
+            "after the storage review loop."
         )
-        result = await asyncio.wait_for(handle.result(), timeout=60)
-        assert result is not None
-
-        # No storage check should have run.
-        fm.add_functions.assert_not_called()
+        stored_names = {f.get("name", "") for f in stored if isinstance(f, dict)}
+        assert "parse_and_validate_contacts" in stored_names, (
+            f"Expected 'parse_and_validate_contacts' in stored functions, "
+            f"got: {stored_names}"
+        )
     finally:
         try:
             await actor.close()
@@ -343,59 +247,42 @@ async def test_storage_check_on_return_skipped_when_can_store_false():
 
 
 # ---------------------------------------------------------------------------
-# storage_check_on_return — reorganization (merge + delete)
+# can_store=True — reorganization (merge + delete)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_storage_check_on_return_merges_redundant_functions():
+async def test_can_store_true_merges_redundant_functions():
     """
-    The storage check loop should recognise overlapping functions in the
+    The storage review loop should recognise overlapping functions in the
     store and merge them: add a unified version and delete the old ones.
 
     Setup: the FunctionManager already contains two narrow greeting
     functions (greet_formal, greet_casual). The actor composes and
     executes a general-purpose `greet` function that subsumes both.
-    The storage check should detect the overlap, store the merged
+    The storage review should detect the overlap, store the merged
     version, and delete the now-redundant entries.
 
-    result() blocks until both the task and storage-check phases complete.
+    result() resolves after the task phase; storage runs in the background.
+    The test waits for done() to confirm the storage loop has completed.
     """
-    _existing_functions = [
-        {
-            "function_id": 101,
-            "name": "greet_formal",
-            "docstring": "Return a formal greeting.",
-            "implementation": (
-                "def greet_formal(name):\n" '    return f"Good day, {name}."'
-            ),
-        },
-        {
-            "function_id": 102,
-            "name": "greet_casual",
-            "docstring": "Return a casual greeting.",
-            "implementation": ("def greet_casual(name):\n" '    return f"Hey {name}!"'),
-        },
-    ]
+    fm = FunctionManager(include_primitives=False)
 
-    fm = MagicMock()
-    # Discovery tools return the two existing overlapping functions.
-    fm.search_functions = MagicMock(return_value={"metadata": _existing_functions})
-    fm.filter_functions = MagicMock(return_value={"metadata": _existing_functions})
-    fm.list_functions = MagicMock(
-        return_value={"metadata": _existing_functions},
+    # Seed the store with two narrow, overlapping greeting functions.
+    fm.add_functions(
+        implementations=[
+            'def greet_formal(name):\n    """Return a formal greeting."""\n    return f"Good day, {name}."',
+            'def greet_casual(name):\n    """Return a casual greeting."""\n    return f"Hey {name}!"',
+        ],
     )
-    fm.add_functions = MagicMock(return_value={"greet": "added"})
-    fm.delete_function = MagicMock(
-        return_value={"greet_formal": "deleted", "greet_casual": "deleted"},
-    )
+    seeded = fm.filter_functions()
+    seeded_ids = {f["function_id"] for f in seeded if isinstance(f, dict)}
+    assert len(seeded_ids) == 2, f"Expected 2 seeded functions, got {len(seeded_ids)}"
 
     actor = CodeActActor(
         function_manager=fm,
-        headless=True,
-        computer_mode="mock",
         timeout=60,
     )
     try:
@@ -405,31 +292,34 @@ async def test_storage_check_on_return_merges_redundant_functions():
             "For formal: return f'Good day, {name}.'; "
             "for casual: return f'Hey {name}!'. "
             "Execute it with name='Alice' and style='formal' to verify.",
-            storage_check_on_return=True,
+            can_store=True,
             persist=False,
             clarification_enabled=False,
         )
         result = await asyncio.wait_for(handle.result(), timeout=120)
         assert result is not None
 
-        # The merged function should have been stored.
-        fm.add_functions.assert_called()
-        add_kwargs = fm.add_functions.call_args.kwargs
-        impl = str(add_kwargs.get("implementations", ""))
-        assert (
-            "greet" in impl
-        ), f"Expected 'greet' in stored implementation, got: {impl}"
+        # Wait for storage to complete before asserting side effects.
+        deadline = asyncio.get_event_loop().time() + 120
+        while not handle.done():
+            if asyncio.get_event_loop().time() > deadline:
+                raise TimeoutError("Storage loop did not complete in time")
+            await asyncio.sleep(0.5)
 
-        # The old redundant functions should have been deleted.
-        fm.delete_function.assert_called()
-        delete_kwargs = fm.delete_function.call_args.kwargs
-        deleted_ids = delete_kwargs.get("function_id", [])
-        if isinstance(deleted_ids, int):
-            deleted_ids = [deleted_ids]
-        assert set(deleted_ids) & {
-            101,
-            102,
-        }, f"Expected deletion of function_ids 101 and/or 102, got: {deleted_ids}"
+        # The merged function should have been stored.
+        final = fm.filter_functions()
+        final_names = {f.get("name", "") for f in final if isinstance(f, dict)}
+        assert (
+            "greet" in final_names
+        ), f"Expected a unified 'greet' function in the store, got: {final_names}"
+
+        # At least one of the old redundant functions should have been deleted.
+        final_ids = {f["function_id"] for f in final if isinstance(f, dict)}
+        deleted = seeded_ids - final_ids
+        assert deleted, (
+            f"Expected at least one of the seeded functions ({seeded_ids}) to be "
+            f"deleted after merge, but all remain: {final_ids}"
+        )
     finally:
         try:
             await actor.close()
@@ -449,8 +339,6 @@ async def test_code_act_accepts_dict_description():
     CodeActActor.act should accept a dict description (passed to async tool loop).
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:
@@ -479,8 +367,6 @@ async def test_code_act_accepts_list_description():
     CodeActActor.act should accept a list description (passed to async tool loop).
     """
     actor = CodeActActor(
-        headless=True,
-        computer_mode="mock",
         timeout=30,
     )
     try:

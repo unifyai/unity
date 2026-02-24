@@ -23,7 +23,17 @@ class FileFormat(str, Enum):
     HTML = "html"
     XML = "xml"
     JSON = "json"
+    JPEG = "jpeg"
+    PNG = "png"
     UNKNOWN = "unknown"
+
+
+_IMAGE_FORMATS: frozenset[FileFormat] = frozenset({FileFormat.JPEG, FileFormat.PNG})
+
+
+def is_image_format(fmt: FileFormat) -> bool:
+    """Return True if *fmt* is a raster image handled by the vision path."""
+    return fmt in _IMAGE_FORMATS
 
 
 class MimeType(str, Enum):
@@ -44,6 +54,8 @@ class MimeType(str, Enum):
     APPLICATION_XLSX = (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    IMAGE_JPEG = "image/jpeg"
+    IMAGE_PNG = "image/png"
     APPLICATION_OCTET_STREAM = "application/octet-stream"
 
 
@@ -60,6 +72,9 @@ _EXT_TO_FORMAT: dict[str, FileFormat] = {
     ".htm": FileFormat.HTML,
     ".xml": FileFormat.XML,
     ".json": FileFormat.JSON,
+    ".jpg": FileFormat.JPEG,
+    ".jpeg": FileFormat.JPEG,
+    ".png": FileFormat.PNG,
 }
 
 _EXT_TO_MIME: dict[str, MimeType] = {
@@ -75,6 +90,9 @@ _EXT_TO_MIME: dict[str, MimeType] = {
     ".xml": MimeType.APPLICATION_XML,
     ".xls": MimeType.APPLICATION_XLS,
     ".xlsx": MimeType.APPLICATION_XLSX,
+    ".jpg": MimeType.IMAGE_JPEG,
+    ".jpeg": MimeType.IMAGE_JPEG,
+    ".png": MimeType.IMAGE_PNG,
 }
 
 

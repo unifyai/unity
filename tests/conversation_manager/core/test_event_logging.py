@@ -77,9 +77,7 @@ def _apply_comms_only_mocks(cm) -> None:
     (SMS, email, etc.) that we don't want to actually call during tests.
     """
     from unity.conversation_manager.domains import comms_utils
-    from unity.conversation_manager import debug_logger
-    from unity.conversation_manager.domains.event_handlers import EventHandler
-    from unity.conversation_manager.events import SummarizeContext
+    from unity.conversation_manager import assistant_jobs
 
     def _sync_mock_success(*args, **kwargs):
         return {"success": True}
@@ -95,11 +93,8 @@ def _apply_comms_only_mocks(cm) -> None:
     cm.call_manager.start_call = _async_mock_success
     cm.call_manager.start_unify_meet = _async_mock_success
     cm.schedule_proactive_speech = _async_mock_success
-    debug_logger.log_job_startup = _sync_mock_success
-    debug_logger.mark_job_done = _sync_mock_success
-    # NOTE: We do NOT mock managers_utils.publish_bus_events - we want events published
-    # NOTE: We do NOT mock managers_utils.log_message - that's TranscriptManager logging
-    EventHandler._registry[SummarizeContext] = _async_mock_success
+    assistant_jobs.log_job_startup = _sync_mock_success
+    assistant_jobs.mark_job_done = _sync_mock_success
 
 
 # Test contacts
@@ -137,9 +132,12 @@ async def cm_with_eventbus():
     from unity.conversation_manager import start_async, stop_async
     from unity.conversation_manager.domains import managers_utils
 
-    # Only Actor is simulated - avoids computer environment dependencies
+    # Actor is simulated to avoid computer environment dependencies.
+    # Contact/Transcript must be real for direct transcript context assertions.
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "3"
+    os.environ["UNITY_CONTACT_IMPL"] = "real"
+    os.environ["UNITY_TRANSCRIPT_IMPL"] = "real"
     os.environ["UNITY_MEMORY_ENABLED"] = "false"
     os.environ["UNITY_KNOWLEDGE_ENABLED"] = "false"
     os.environ["UNITY_GUIDANCE_ENABLED"] = "false"

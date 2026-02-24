@@ -307,6 +307,48 @@ class ScenarioBuilder:
             ],
         )
 
+        # E7: Carlos → Dan email about product launch, CC'ing Julia and Anne
+        carlos_id = _ID_BY_NAME["carlos"]
+        anne_id = _ID_BY_NAME["anne"]
+        t_launch = datetime(2025, 6, 2, 10, 0, tzinfo=timezone.utc)
+        self._log(
+            7,
+            "email",
+            [
+                (
+                    carlos_id,
+                    dan_id,
+                    t_launch,
+                    "Subject: Product launch event next Friday\n\n"
+                    "Hi Dan,\nJust confirming the product launch event is "
+                    "scheduled for next Friday at 3 PM in the main hall. "
+                    "Please make sure the demo stations are set up by noon.\n\n"
+                    "Best,\nCarlos",
+                ),
+                (
+                    dan_id,
+                    carlos_id,
+                    t_launch + timedelta(hours=1),
+                    "Thanks Carlos, noted. I'll have everything ready by noon. "
+                    "See you all on Friday!",
+                ),
+            ],
+            msg_metadata=[
+                {
+                    "email_id": "<launch-event-001@example.com>",
+                    "to": ["dan.turner@example.com"],
+                    "cc": ["julia.nguyen@example.com", "anne.fischer@example.com"],
+                    "bcc": [],
+                },
+                {
+                    "email_id_replied_to": "<launch-event-001@example.com>",
+                    "to": ["carlos.diaz@example.com"],
+                    "cc": ["julia.nguyen@example.com", "anne.fischer@example.com"],
+                    "bcc": [],
+                },
+            ],
+        )
+
     # --------------------------------------------------------------------- #
     def _seed_filler(self, exchanges: int = 20, msgs_per: int = 15) -> None:
         """Adds irrelevant chatter so filtering matters."""
@@ -350,10 +392,12 @@ class ScenarioBuilder:
         ex_id: int,
         medium: str,
         msgs: List[tuple[int, int, datetime, str]],
+        msg_metadata: List[dict | None] | None = None,
     ) -> None:
         # Build messages with explicit message_id for ordering
         messages = []
-        for s, r, ts, txt in msgs:
+        for i, (s, r, ts, txt) in enumerate(msgs):
+            meta = msg_metadata[i] if msg_metadata else None
             messages.append(
                 Message(
                     medium=medium,
@@ -363,6 +407,7 @@ class ScenarioBuilder:
                     content=txt,
                     exchange_id=ex_id,
                     message_id=self._message_counter,
+                    **({"metadata": meta} if meta else {}),
                 ),
             )
             self._message_counter += 1

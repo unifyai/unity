@@ -30,6 +30,7 @@ from unity.conversation_manager.events import (
     ActorNotification,
     ActorSessionResponse,
 )
+from unity.conversation_manager.types.mode import Mode
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -40,7 +41,7 @@ from unity.conversation_manager.events import (
 def mock_cm():
     """Minimal mock ConversationManager for unit-level tests."""
     cm = MagicMock()
-    cm.mode = "text"
+    cm.mode = Mode.TEXT
     cm.contact_index = ContactIndex()
     cm.in_flight_actions = {}
     cm.completed_actions = {}
@@ -75,7 +76,7 @@ def _make_fake_actor():
     """Create a mock Actor whose act() returns a controllable handle."""
     captured_kwargs: dict[str, Any] = {}
 
-    async def fake_act(description, **kwargs):
+    async def fake_act(request, **kwargs):
         captured_kwargs.update(kwargs)
         handle = MagicMock()
         handle.result = AsyncMock(return_value="done")
@@ -235,6 +236,33 @@ class TestActorNotificationHandler:
     async def test_notification_wakes_brain(self, mock_cm):
         """ActorNotification triggers an LLM run."""
         event = ActorNotification(handle_id=1, response="Working...")
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.request_llm_run.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_notification_wakes_slow_brain_in_voice_mode(self, mock_cm):
+        """In voice mode, ActorNotification wakes the slow brain (no separate
+        articulator path — the slow brain decides whether to send guidance)."""
+        mock_cm.mode = Mode.CALL
+        mock_cm.in_flight_actions = {
+            1: {"query": "Check something", "handle_actions": []},
+        }
+        event = ActorNotification(handle_id=1, response="Searching the web now.")
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.request_llm_run.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_notification_wakes_slow_brain_in_text_mode(self, mock_cm):
+        """In text mode, ActorNotification also wakes the slow brain."""
+        mock_cm.mode = Mode.TEXT
+        mock_cm.in_flight_actions = {
+            1: {"query": "Check something", "handle_actions": []},
+        }
+        event = ActorNotification(handle_id=1, response="Searching the web now.")
 
         await EventHandler.handle_event(event, mock_cm)
 

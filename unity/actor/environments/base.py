@@ -55,6 +55,54 @@ def resolve_directly_callable(
     return matched
 
 
+def build_filtered_method_docs(
+    allowed_methods: frozenset[str],
+    namespace: str = "primitives",
+) -> str:
+    """Build method-level documentation for only the specified fully-qualified methods.
+
+    Reusable across all environment types (state managers, computer, actor).
+    Uses the ``ToolSurfaceRegistry`` to introspect method signatures and
+    docstrings for each allowed method.
+    """
+    from unity.function_manager.primitives.registry import get_registry
+
+    registry = get_registry()
+
+    allowed_aliases: dict[str, list[str]] = {}
+    for fq in sorted(allowed_methods):
+        parts = fq.split(".")
+        if len(parts) != 3 or parts[0] != namespace:
+            continue
+        alias, method = parts[1], parts[2]
+        allowed_aliases.setdefault(alias, []).append(method)
+
+    if not allowed_aliases:
+        return ""
+
+    lines = ["### Method Reference\n"]
+    for alias in sorted(allowed_aliases):
+        spec = registry.get_manager_spec(alias)
+        mgr_cls = (
+            registry._load_manager_class(spec.primitive_class_path) if spec else None
+        )
+
+        lines.append(f"\n#### `{namespace}.{alias}`")
+        if spec:
+            lines.append(f"*{spec.domain}* — {spec.description}")
+
+        for method_name in sorted(allowed_aliases[alias]):
+            sig_str = registry._format_method_signature(mgr_cls, method_name)
+            full_doc = registry._extract_method_docstring(mgr_cls, method_name)
+            compact_doc = registry._extract_summary_and_params(full_doc)
+            lines.append(f"\n**`.{method_name}{sig_str}`**")
+            if compact_doc:
+                for doc_line in compact_doc.splitlines():
+                    lines.append(f"  {doc_line}")
+
+    return "\n".join(lines)
+
+
 class ToolMetadata(BaseModel):
     """Metadata describing a tool's behavior and safety characteristics.
 
@@ -239,7 +287,7 @@ class BaseEnvironment(ABC):
 
     @property
     def namespace(self) -> str:
-        """Global variable name injected into the sandbox (e.g. "computer_primitives")."""
+        """Global variable name injected into the sandbox (e.g. "primitives")."""
         return self._namespace
 
     def get_instance(self) -> Any:
@@ -289,3 +337,75 @@ class BaseEnvironment(ABC):
         Implementations should be best-effort and never raise; if state capture
         fails, return a structured error payload (e.g. `{"type": "...", "error": "..."}`).
         """
+
+
+class _CompositeEnvironment(BaseEnvironment):
+    """Merges multiple environments sharing the same namespace.
+
+    When several environments share the ``"primitives"`` namespace (e.g.
+    ``StateManagerEnvironment``, ``ComputerEnvironment``, ``ActorEnvironment``),
+    this wrapper aggregates their tool metadata and prompt context while
+    injecting a single ``Primitives`` instance into the sandbox.
+    """
+
+    def __init__(
+        self,
+        envs: List["BaseEnvironment"],
+        *,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> None:
+        self._envs = envs
+        primary = self._build_primary_instance(envs)
+        super().__init__(
+            instance=primary,
+            namespace=envs[0].namespace,
+            clarification_up_q=clarification_up_q,
+            clarification_down_q=clarification_down_q,
+        )
+
+    @staticmethod
+    def _build_primary_instance(envs: List["BaseEnvironment"]) -> Any:
+        """Return the broadest-scoped Primitives instance from sub-envs."""
+        from unity.function_manager.primitives import Primitives, PrimitiveScope
+
+        merged_managers: Set[str] = set()
+        for env in envs:
+            instance = env.get_instance()
+            if isinstance(instance, Primitives):
+                merged_managers |= instance.primitive_scope.scoped_managers
+
+        if merged_managers:
+            return Primitives(
+                primitive_scope=PrimitiveScope(
+                    scoped_managers=frozenset(merged_managers),
+                ),
+            )
+        # Fallback: first environment's instance.
+        return envs[0].get_instance()
+
+    @property
+    def sub_environments(self) -> List["BaseEnvironment"]:
+        """Expose wrapped environments for introspection."""
+        return list(self._envs)
+
+    def get_tools(self) -> Dict[str, ToolMetadata]:
+        merged: Dict[str, ToolMetadata] = {}
+        for env in self._envs:
+            merged.update(env.get_tools())
+        return merged
+
+    def get_prompt_context(self) -> str:
+        parts = [env.get_prompt_context() for env in self._envs]
+        return "\n\n".join(p for p in parts if p and p.strip())
+
+    async def capture_state(self) -> Dict[str, Any]:
+        states: List[Dict[str, Any]] = []
+        for env in self._envs:
+            try:
+                states.append(await env.capture_state())
+            except Exception:
+                pass
+        if len(states) == 1:
+            return states[0]
+        return {"type": "composite", "states": states}

@@ -69,6 +69,16 @@ class ActorFactory:
         """
         progress = progress_callback or (lambda _m: None)
 
+        # Configure manager IMPL selection for all modes (including simulated).
+        # Without this, ManagerRegistry defaults to "real" implementations,
+        # which require full Orchestra connectivity for system contact sync.
+        cls._apply_manager_impl_env(config.managers_mode)
+        # Ensure no stale singleton managers leak across sandbox restarts/switches.
+        try:
+            ManagerRegistry.clear()
+        except Exception:
+            pass
+
         if config.actor_type == "simulated":
             actor = SandboxSimulatedActor(
                 steps=None,
@@ -81,14 +91,6 @@ class ActorFactory:
                 primitives=None,
                 computer_primitives=None,
             )
-
-        # CodeAct configurations: configure manager implementations first.
-        cls._apply_manager_impl_env(config.managers_mode)
-        # Ensure no stale singleton managers leak across sandbox restarts/switches.
-        try:
-            ManagerRegistry.clear()
-        except Exception:
-            pass
 
         progress("[init] Loading configuration...")
         progress(f"✓ Actor selected: {config.actor_type}")
@@ -104,28 +106,12 @@ class ActorFactory:
             progress_callback=progress,
         )
 
-        # Keep `primitives.computer` consistent with the dedicated `computer_primitives`
-        # environment. This avoids accidentally creating two separate computer backends.
-        if computer_primitives is not None:
-            try:
-                primitives._computer = computer_primitives  # type: ignore[attr-defined]
-            except Exception:
-                pass
-
         envs = [StateManagerEnvironment(primitives)]
         if computer_primitives is not None:
             envs.append(ComputerEnvironment(computer_primitives))
 
-        # Pass explicit environments to avoid implicit computer dependencies.
         actor = CodeActActor(
             environments=envs,
-            computer_primitives=computer_primitives,
-            # If we passed computer_primitives, other computer params are ignored.
-            computer_mode=(
-                "mock" if config.computer_backend_mode == "mock" else "magnitude"
-            ),
-            agent_server_url=getattr(args, "agent_server_url", None),
-            headless=bool(getattr(args, "headless", False)),
         )
 
         return ActorFactoryResult(
@@ -189,25 +175,27 @@ class ActorFactory:
             return cp
 
         # real
-        agent_server_url = getattr(args, "agent_server_url", None)
+        container_url = getattr(args, "container_url", None) or getattr(
+            args,
+            "agent_server_url",
+            None,
+        )
+        local_url = getattr(args, "local_url", None)
         progress("[computer] Connecting to agent-service...")
         cp = ComputerPrimitives(
-            headless=bool(getattr(args, "headless", False)),
             computer_mode="magnitude",
-            agent_mode=getattr(args, "agent_mode", "web"),
-            agent_server_url=str(agent_server_url),
-            connect_now=True,
+            container_url=str(container_url) if container_url else None,
+            local_url=str(local_url) if local_url else None,
         )
         activity = ComputerActivity()
         setattr(args, "_computer_activity", activity)
-        # We only know "connected" if `connect_now` succeeded.
         activity.mark_connected_sync(True)
         install_computer_activity_hooks(
             computer_primitives=cp,
             activity=activity,
             emit_line=getattr(args, "_computer_log_sink", None),
         )
-        progress("✓ Computer ready (agent-service connected)")
+        progress("✓ Computer ready (backend initialized)")
         return cp
 
     @staticmethod

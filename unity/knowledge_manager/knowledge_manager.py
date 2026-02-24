@@ -11,6 +11,8 @@ if TYPE_CHECKING:
     from unity.data_manager.data_manager import DataManager
 
 import json
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.common.tool_outcome import ToolOutcome
 from unity.common.token_utils import count_tokens_per_utf_byte
 from unity.common import token_utils as _tok
@@ -358,7 +360,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ]
             return seeded
         except Exception as e:
-            print(f"Error in _maybe_build_show_all_seed: {e}")
+            LOGGER.error(f"{DEFAULT_ICON} Error in _maybe_build_show_all_seed: {e}")
             return None
 
     # Helpers #
@@ -447,7 +449,12 @@ class KnowledgeManager(BaseKnowledgeManager):
     # English-Text Command
 
     @functools.wraps(BaseKnowledgeManager.refactor, updated=())
-    @log_manager_call("KnowledgeManager", "refactor", payload_key="request")
+    @log_manager_call(
+        "KnowledgeManager",
+        "refactor",
+        payload_key="request",
+        display_label="Reorganizing Notes",
+    )
     async def refactor(
         self,
         text: str,
@@ -545,7 +552,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.update, updated=())
-    @log_manager_call("KnowledgeManager", "update", payload_key="request")
+    @log_manager_call(
+        "KnowledgeManager",
+        "update",
+        payload_key="request",
+        display_label="Updating Notes",
+    )
     async def update(
         self,
         text: str,
@@ -647,7 +659,12 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
     @manager_tool
-    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
+    @log_manager_call(
+        "KnowledgeManager",
+        "ask",
+        payload_key="question",
+        display_label="Checking Notes",
+    )
     async def ask(
         self,
         text: str,

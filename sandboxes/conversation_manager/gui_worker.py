@@ -20,22 +20,28 @@ Notes
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
+import os
 import queue as _queue
 import traceback as _traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
-from sandboxes.utils import configure_sandbox_logging
+from sandboxes.utils import activate_project, configure_sandbox_logging
 
 from sandboxes.conversation_manager.agent_service_bootstrap import (
-    try_auto_bootstrap_agent_service,
     try_start_agent_service_direct,
     free_agent_service_port,
+)
+from sandboxes.conversation_manager.desktop_bootstrap import (
+    try_start_desktop_direct,
+    try_auto_bootstrap_desktop,
+    stop_desktop_container,
 )
 from sandboxes.conversation_manager.cm_init import initialize_cm, shutdown_cm
 from sandboxes.conversation_manager.command_router import CommandRouter
@@ -52,13 +58,27 @@ from sandboxes.conversation_manager.ipc_protocol import (
     MessageType,
     create_message,
     parse_message,
-    serialize_event,
 )
-from unity.events.event_bus import EVENT_BUS, Event as BusEvent
+from unity.events.types.manager_method import ManagerMethodPayload
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
 _RESTART_EXIT_CODE = 23
+
+
+def _enable_unillm_boundary_logging() -> Path:
+    """Enable full UniLLM request/response file logging for the GUI worker."""
+    log_dir = Path(__file__).resolve().parents[2] / "logs" / "unillm"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["UNILLM_TERMINAL_LOG"] = "true"
+    os.environ["UNILLM_LOG_DIR"] = str(log_dir)
+    try:
+        from unillm.logger import configure_log_dir as _configure_log_dir
+
+        _configure_log_dir(str(log_dir))
+    except Exception:
+        pass
+    return log_dir
 
 
 def _simplify_execute_code_result(result: Any) -> dict[str, Any]:
@@ -147,7 +167,6 @@ def _simplify_execute_code_result(result: Any) -> dict[str, Any]:
         "session_name",
         "venv_id",
         "duration_ms",
-        "computer_used",
     ):
         try:
             v = d.get(k)
@@ -190,26 +209,20 @@ def _filter_kwargs_for_callable(fn: Any, kwargs: dict[str, Any]) -> dict[str, An
 class WorkerSandboxState:
     """
     Minimal sandbox state needed by `CommandRouter` + `subscribe_to_responses`.
-
-    UI-specific state (e.g. "steering hint visible") is intentionally omitted.
     """
 
     chat_history: list[dict] = field(default_factory=list)
     in_call: bool = False
-    brain_run_in_flight: bool = False
-    paused: bool = False
+    in_meet: bool = False
     last_event_published_at: float = 0.0
-    queued_events: list[Any] = field(default_factory=list)
     awaiting_config_choice: bool = False
     pending_clarification: bool = False
 
     def reset_ephemeral(self) -> None:
         self.chat_history.clear()
         self.in_call = False
-        self.brain_run_in_flight = False
-        self.paused = False
+        self.in_meet = False
         self.last_event_published_at = 0.0
-        self.queued_events.clear()
         self.awaiting_config_choice = False
         self.pending_clarification = False
 
@@ -445,7 +458,7 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
     if not hasattr(args, "headless"):
         setattr(args, "headless", False)
     if not hasattr(args, "agent_mode"):
-        setattr(args, "agent_mode", "web")
+        setattr(args, "agent_mode", "web-vm")
     if not hasattr(args, "real_comms"):
         setattr(args, "real_comms", False)
     if not hasattr(args, "auto_confirm"):
@@ -464,94 +477,33 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
     return args
 
 
-async def _subscribe_event_bus(*, sender: _Sender, stop_event: asyncio.Event) -> None:
-    """
-    Subscribe to selected EventBus event types and forward to the UI.
-
-    We forward `ManagerMethod` only (high-signal, low-volume).
-    """
-
-    import time as _time
-
-    async def _forward(evts: list[BusEvent], *, bus_type: str) -> None:
-        # ManagerMethod events are low-volume and high-signal; prefer delivery.
-        critical = bus_type == "ManagerMethod"
-        for e in evts:
-            try:
-                sender.send_event(
-                    channel=f"eventbus:{bus_type}",
-                    event=serialize_event(e),
-                    critical=critical,
-                )
-            except Exception:
-                continue
-
-    def _mk_async_callback(bus_type: str):
-        async def _cb(evts: list[BusEvent]) -> None:
-            await _forward(evts, bus_type=bus_type)
-
-        return _cb
-
-    # Wait for EventBus initialization.
-    #
-    # In this sandbox, `unity.init()` is performed as part of ConversationManager's
-    # manager initialization (inside its own initialization workflow). If we try to
-    # register callbacks too early, EVENT_BUS is still a proxy and will raise.
-    import time as _time
-
-    started_at = _time.monotonic()
-    while not stop_event.is_set():
+def _forward_manager_method_event(
+    *,
+    sender: _Sender,
+    call_id: str,
+    payload: ManagerMethodPayload,
+) -> None:
+    """Forward one ManagerMethod payload to the UI as an EventBus-style event."""
+    try:
+        event = {
+            "calling_id": str(call_id or ""),
+            "payload": payload.model_dump(mode="json"),
+        }
+        sender.send_event(
+            channel="eventbus:ManagerMethod",
+            event=event,
+            critical=True,
+        )
+    except Exception as exc:
         try:
-            if bool(EVENT_BUS):
-                break
+            LG.warning(
+                "[runtime] failed forwarding ManagerMethod %s (%s: %s)",
+                str(call_id or ""),
+                type(exc).__name__,
+                exc,
+            )
         except Exception:
             pass
-        # After a while, warn the UI but keep waiting; initialization can be slow
-        # on fresh environments.
-        if (_time.monotonic() - started_at) > 30.0:
-            try:
-                sender.send_error(
-                    "EventBus not initialized yet (still waiting). "
-                    "Trace/Event Tree panes will remain empty until it becomes available.",
-                    tb="",
-                )
-            except Exception:
-                pass
-            started_at = _time.monotonic()  # rate-limit warnings
-        await asyncio.sleep(0.15)
-
-    if stop_event.is_set():
-        return
-
-    # Register callbacks (retry until success or shutdown).
-    registered = False
-    while (not stop_event.is_set()) and (not registered):
-        try:
-            await EVENT_BUS.register_callback(
-                event_type="ManagerMethod",
-                callback=_mk_async_callback("ManagerMethod"),
-                every_n=1,
-            )
-            registered = True
-            try:
-                LG.info("[runtime] EventBus callbacks registered")
-            except Exception:
-                pass
-        except Exception as exc:
-            # If EventBus isn't available yet, keep the worker running; the UI will
-            # still show conversation lines and broker-derived logs.
-            try:
-                LG.warning(
-                    "[runtime] EventBus subscription not ready (%s: %s); retrying...",
-                    type(exc).__name__,
-                    exc,
-                )
-            except Exception:
-                pass
-            await asyncio.sleep(0.5)
-
-    # Keep task alive until shutdown.
-    await stop_event.wait()
 
 
 async def _computer_status_streamer(
@@ -795,7 +747,7 @@ async def _state_broadcaster(
     last: tuple[bool, bool, bool] | None = None
     while not stop_event.is_set():
         try:
-            active = bool(getattr(state, "brain_run_in_flight", False))
+            active = False
             in_call = bool(getattr(state, "in_call", False))
             pending = bool(getattr(state, "pending_clarification", False))
             cur = (active, in_call, pending)
@@ -819,6 +771,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         load_dotenv(override=True)
     except Exception:
         pass
+    unillm_log_dir = _enable_unillm_boundary_logging()
 
     # Ensure this process writes to the sandbox log file (append mode).
     try:
@@ -835,6 +788,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             import os as _os
 
             LG.info("[runtime] started pid=%s", _os.getpid())
+            LG.info("[runtime] LLM boundary logs: %s", str(unillm_log_dir))
         except Exception:
             LG.info("[runtime] started")
     except Exception:
@@ -842,52 +796,97 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
 
     args = _build_args_namespace(config=config, sender=sender)
     actor_cfg: ActorConfig = getattr(args, "_actor_config", ActorConfig())
+    try:
+        project_name = str(getattr(args, "project_name", "unity"))
+        overwrite = bool(getattr(args, "overwrite", False))
+        activate_project(project_name, overwrite)
+    except Exception as exc:
+        sender.send_error(
+            (
+                "Failed to activate project in GUI worker: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            tb=_traceback.format_exc(),
+        )
+        sender.send_worker_exit(restart=False, config=None)
+        return
     cfg_mgr = ConfigurationManager(
         project_name=str(getattr(args, "project_name", "unity")),
         project_root=Path(__file__).resolve().parents[2],
     )
 
-    # agent-service bootstrap (best-effort) for real computer interface.
+    # agent-service / desktop bootstrap (best-effort) for real computer interface.
     repo_root = Path(__file__).resolve().parents[2]
     agent_proc = None
+    desktop_container_id: Optional[str] = None
     try:
         if actor_cfg.actor_type == "codeact_real":
             from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
 
-            agent_server_url = (
+            container_url = (
                 getattr(args, "agent_server_url", None) or DEFAULT_AGENT_SERVER_URL
             )
-            # Always try to free the port first (only kills repo-owned agent-service).
-            try:
-                free_agent_service_port(
-                    repo_root=repo_root,
-                    agent_server_url=agent_server_url,
-                    progress=lambda m: sender.send_lines([str(m)]),
-                )
-            except Exception:
-                pass
-
+            local_url = getattr(args, "local_url", "http://localhost:3001")
             do_bootstrap = bool(getattr(args, "agent_service_bootstrap", False))
+
+            # 1) Container (desktop + web-vm)
             if do_bootstrap:
                 res = await asyncio.to_thread(
-                    try_auto_bootstrap_agent_service,
+                    try_auto_bootstrap_desktop,
                     repo_root=repo_root,
-                    agent_server_url=agent_server_url,
+                    agent_server_url=container_url,
                     progress=lambda m: sender.send_lines([str(m)]),
                 )
             else:
                 res = await asyncio.to_thread(
-                    try_start_agent_service_direct,
+                    try_start_desktop_direct,
                     repo_root=repo_root,
-                    agent_server_url=agent_server_url,
+                    agent_server_url=container_url,
                     progress=lambda m: sender.send_lines([str(m)]),
                 )
             if not res.ok:
                 sender.send_error(res.summary)
                 sender.send_worker_exit(restart=False, config=None)
                 return
-            agent_proc = res.process
-            setattr(args, "_agent_service_process", agent_proc)
+            desktop_container_id = res.container_id
+            setattr(args, "container_url", container_url)
+            sender.send_lines([f"[container] {res.summary}"])
+            try:
+                import webbrowser
+                from sandboxes.conversation_manager.desktop_bootstrap import (
+                    _desktop_novnc_url,
+                )
+
+                url = _desktop_novnc_url()
+                webbrowser.open(url)
+                sender.send_lines(
+                    [f"Opened assistant desktop in browser: {url}"],
+                )
+            except Exception:
+                pass
+
+            # 2) Local agent-service (web mode) -- best-effort
+            try:
+                free_agent_service_port(
+                    repo_root=repo_root,
+                    agent_server_url=local_url,
+                    progress=lambda m: sender.send_lines([str(m)]),
+                )
+                local_res = await asyncio.to_thread(
+                    try_start_agent_service_direct,
+                    repo_root=repo_root,
+                    agent_server_url=local_url,
+                    progress=lambda m: sender.send_lines([str(m)]),
+                )
+                if local_res.ok and local_res.process is not None:
+                    agent_proc = local_res.process
+                    setattr(args, "_agent_service_process", agent_proc)
+                    setattr(args, "local_url", local_url)
+                    sender.send_lines([f"[local-web] {local_res.summary}"])
+                else:
+                    sender.send_lines(["[local-web] Unavailable (web mode disabled)"])
+            except Exception:
+                sender.send_lines(["[local-web] Failed to start (web mode disabled)"])
     except Exception as exc:
         sender.send_error(
             f"agent-service bootstrap failed: {type(exc).__name__}: {exc}",
@@ -912,7 +911,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
 
     # Build command plumbing.
     state = WorkerSandboxState()
-    publisher = EventPublisher(cm=cm, state=state)
+    publisher = EventPublisher(cm=cm, state=state, args=args)
 
     # Create display components for logs/traces/event-tree.
     # These are populated by subscribe_to_responses and used by save_state.
@@ -939,6 +938,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
                 exec_fn = tools.get("execute_code")
             if callable(exec_fn):
 
+                @functools.wraps(exec_fn)
                 async def _wrapped_execute_code(*a: Any, **kw: Any) -> Any:
                     # Best-effort extraction of code for display.
                     code = ""
@@ -1026,12 +1026,12 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             trace_display=trace_display,
             event_tree_display=event_tree_display,
             log_aggregator=log_aggregator,
+            manager_method_callback=lambda call_id, payload: _forward_manager_method_event(
+                sender=sender,
+                call_id=call_id,
+                payload=payload,
+            ),
         ),
-    )
-
-    # Start EventBus stream.
-    event_bus_task = asyncio.create_task(
-        _subscribe_event_bus(sender=sender, stop_event=stop_event),
     )
 
     computer_task = asyncio.create_task(
@@ -1085,7 +1085,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             return
 
     _supervise("subscriber_task", subscriber_task)
-    _supervise("event_bus_task", event_bus_task)
     _supervise("computer_task", computer_task)
     _supervise("ipc_task", ipc_task)
     _supervise("state_task", state_task)
@@ -1097,7 +1096,7 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         await stop_event.wait()
     finally:
         # Stop background tasks.
-        for t in (ipc_task, subscriber_task, event_bus_task, computer_task, state_task):
+        for t in (ipc_task, subscriber_task, computer_task, state_task):
             try:
                 t.cancel()
             except Exception:
@@ -1105,7 +1104,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         await asyncio.gather(
             ipc_task,
             subscriber_task,
-            event_bus_task,
             computer_task,
             state_task,
             return_exceptions=True,
@@ -1117,16 +1115,18 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         except Exception:
             pass
 
-        # Terminate agent-service if we started it.
+        # Terminate agent-service / desktop container if we started it.
         try:
-            if agent_proc is not None:
+            if desktop_container_id is not None:
+                stop_desktop_container(progress=lambda _m: None)
+            elif agent_proc is not None:
                 _terminate_process_best_effort(agent_proc)
         except Exception:
             pass
 
-        # Best-effort: free port after shutdown (only repo agent-service).
+        # Best-effort: free port after shutdown (only for web mode local agent-service).
         try:
-            if actor_cfg.actor_type == "codeact_real":
+            if actor_cfg.actor_type == "codeact_real" and desktop_container_id is None:
                 from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
 
                 free_agent_service_port(

@@ -26,6 +26,7 @@ from unity.memory_manager.settings import MemorySettings
 from unity.secret_manager.settings import SecretSettings
 from unity.task_scheduler.settings import TaskSettings
 from unity.transcript_manager.settings import TranscriptSettings
+from unity.environment_manager.settings import EnvironmentSettings
 from unity.web_searcher.settings import WebSettings
 
 
@@ -44,6 +45,14 @@ class ProductionSettings(BaseSettings):
     All settings can be overridden via environment variables.
     Test settings (TestingSettings) inherit from this class.
     """
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Local Workspace
+    # ─────────────────────────────────────────────────────────────────────────
+    # Root directory for local file operations, CodeActActor working directory,
+    # virtual environments, and .env storage.  Defaults to ~/Unity/Local when
+    # empty.  Override via UNITY_LOCAL_ROOT env var.
+    UNITY_LOCAL_ROOT: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # Core LLM Settings
@@ -85,6 +94,16 @@ class ProductionSettings(BaseSettings):
     EVENTBUS_PUBLISHING_ENABLED: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
+    # EventBus Pub/Sub Streaming (Live Actions)
+    # ─────────────────────────────────────────────────────────────────────────
+    # When enabled, EventBus.publish() also streams ManagerMethod and ToolLoop
+    # events to the assistant's GCP Pub/Sub topic with thread="action_event".
+    # This enables real-time frontend rendering of the agent's activity tree
+    # without polling Orchestra. Requires GCP credentials and a provisioned
+    # Pub/Sub topic. Disabled by default; enable in production deployments.
+    EVENTBUS_PUBSUB_STREAMING: bool = False
+
+    # ─────────────────────────────────────────────────────────────────────────
     # OpenTelemetry Tracing
     # ─────────────────────────────────────────────────────────────────────────
     # Master switch for OTel tracing.
@@ -105,10 +124,14 @@ class ProductionSettings(BaseSettings):
     UNITY_OTEL_LOG_DIR: str = ""
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Terminal Logging
+    # ─────────────────────────────────────────────────────────────────────────
+    UNITY_TERMINAL_LOG: bool = True
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Debug Modes (performance overhead, development-only)
     # ─────────────────────────────────────────────────────────────────────────
-    ASYNCIO_DEBUG: bool = False
-    ASYNCIO_DEBUG_VERBOSE: bool = False
+    UNITY_ASYNCIO_DEBUG: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Test Infrastructure
@@ -131,6 +154,7 @@ class ProductionSettings(BaseSettings):
     FIRST_MUTATION_TOOL_IS_ASK: bool = False
     STAGING: bool = False
     DEMO_MODE: bool = False
+    DEMO_ID: int | None = None  # Demo assistant metadata ID (if DEMO_MODE is True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Manager Configuration
@@ -150,6 +174,7 @@ class ProductionSettings(BaseSettings):
     contact: ContactSettings = Field(default_factory=ContactSettings)
     conversation: ConversationSettings = Field(default_factory=ConversationSettings)
     data: DataSettings = Field(default_factory=DataSettings)
+    environment: EnvironmentSettings = Field(default_factory=EnvironmentSettings)
     file: FileSettings = Field(default_factory=FileSettings)
     function: FunctionSettings = Field(default_factory=FunctionSettings)
     guidance: GuidanceSettings = Field(default_factory=GuidanceSettings)
@@ -165,10 +190,11 @@ class ProductionSettings(BaseSettings):
     # Validators
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator(
-        "ASYNCIO_DEBUG",
-        "ASYNCIO_DEBUG_VERBOSE",
+        "UNITY_TERMINAL_LOG",
+        "UNITY_ASYNCIO_DEBUG",
         "DEMO_MODE",
         "EVENTBUS_PUBLISHING_ENABLED",
+        "EVENTBUS_PUBSUB_STREAMING",
         "PYTEST_LOG_TO_FILE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",

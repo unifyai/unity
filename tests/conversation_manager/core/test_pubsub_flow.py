@@ -899,27 +899,28 @@ class TestPingMechanismForIdleContainers:
         assert restored.kind == "keepalive"
 
 
-class TestDemoModePropagation:
+class TestDemoIdPropagation:
     """
-    Tests for demo mode flag propagation through the Pub/Sub startup flow.
+    Tests for demo_id propagation through the Pub/Sub startup flow.
 
-    Demo mode is passed from adapters → comms → Unity via the startup event.
-    When demo_mode=True, Unity should:
-    1. Include demo_mode in the StartupEvent published to the event broker
-    2. Set SETTINGS.DEMO_MODE = True before initializing managers
+    Demo mode is derived from demo_id: if demo_id is set, it's a demo session.
+    When demo_id is provided, Unity should:
+    1. Include demo_id in the StartupEvent published to the event broker
+    2. Set SETTINGS.DEMO_MODE = True and SETTINGS.DEMO_ID = demo_id
 
     This enables demo-specific behavior:
     - set_boss_details tool instead of act
     - Demo-specific prompts for voice and slow brain
     - Boss contact starts without details (learned during demo)
+    - Unity can fetch prospect metadata from Orchestra using demo_id
     """
 
     @pytest.mark.asyncio
-    async def test_startup_event_includes_demo_mode_true(self, event_broker):
+    async def test_startup_event_includes_demo_id(self, event_broker):
         """
-        Test that demo_mode=True is passed through to StartupEvent.
+        Test that demo_id is passed through to StartupEvent.
 
-        The comms layer passes demo_mode from the job data to the StartupEvent.
+        The comms layer passes demo_id from the job data to the StartupEvent.
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
@@ -953,7 +954,7 @@ class TestDemoModePropagation:
                     "voice_provider": "cartesia",
                     "voice_id": "test_voice",
                     "voice_mode": "tts",
-                    "demo_mode": True,  # Demo mode enabled
+                    "demo_id": 42,  # Demo ID set
                 }
                 message = create_pubsub_message("startup", startup_event)
 
@@ -973,22 +974,20 @@ class TestDemoModePropagation:
 
             assert received_event is not None, "StartupEvent not received"
             assert isinstance(received_event, StartupEvent)
-            assert received_event.demo_mode is True, (
-                "demo_mode should be True in StartupEvent. "
-                "Check that comms_manager.py extracts demo_mode from event data."
+            assert received_event.demo_id == 42, (
+                "demo_id should be 42 in StartupEvent. "
+                "Check that comms_manager.py extracts demo_id from event data."
             )
 
         finally:
             SESSION_DETAILS.assistant.id = original_id
 
     @pytest.mark.asyncio
-    async def test_startup_event_includes_demo_mode_false_by_default(
-        self, event_broker
-    ):
+    async def test_startup_event_demo_id_none_by_default(self, event_broker):
         """
-        Test that demo_mode defaults to False when not specified.
+        Test that demo_id defaults to None when not specified.
 
-        Regular assistants don't include demo_mode in their startup data.
+        Regular assistants don't include demo_id in their startup data.
         """
         from unity.conversation_manager.comms_manager import CommsManager
         from unity.conversation_manager.events import StartupEvent, Event
@@ -1006,7 +1005,7 @@ class TestDemoModePropagation:
             async with event_broker.pubsub() as pubsub:
                 await pubsub.psubscribe("app:comms:*")
 
-                # No demo_mode field - should default to False
+                # No demo_id field - should default to None
                 startup_event = {
                     "api_key": "test_key",
                     "assistant_id": "regular_test_123",
@@ -1043,29 +1042,32 @@ class TestDemoModePropagation:
             assert received_event is not None, "StartupEvent not received"
             assert isinstance(received_event, StartupEvent)
             assert (
-                received_event.demo_mode is False
-            ), "demo_mode should default to False for regular assistants."
+                received_event.demo_id is None
+            ), "demo_id should be None for regular assistants."
 
         finally:
             SESSION_DETAILS.assistant.id = original_id
 
     @pytest.mark.asyncio
-    async def test_demo_mode_sets_settings_on_startup_handler(self, event_broker):
+    async def test_demo_id_sets_settings_on_startup_handler(self, event_broker):
         """
-        Test that SETTINGS.DEMO_MODE is set when processing a demo startup event.
+        Test that SETTINGS.DEMO_MODE and SETTINGS.DEMO_ID are set when
+        processing a demo startup event with demo_id.
 
-        The EventHandler for StartupEvent should set SETTINGS.DEMO_MODE = True
-        before managers are initialized, so demo-specific logic takes effect.
+        The EventHandler for StartupEvent should set both settings before
+        managers are initialized, so demo-specific logic takes effect.
         """
         from unity.conversation_manager.events import StartupEvent
         from unity.settings import SETTINGS
 
         # Ensure demo mode starts as False
         original_demo_mode = SETTINGS.DEMO_MODE
+        original_demo_id = SETTINGS.DEMO_ID
         SETTINGS.DEMO_MODE = False
+        SETTINGS.DEMO_ID = None
 
         try:
-            # Create a StartupEvent with demo_mode=True
+            # Create a StartupEvent with demo_id set
             startup_event = StartupEvent(
                 api_key="test_key",
                 medium="startup",
@@ -1082,21 +1084,26 @@ class TestDemoModePropagation:
                 user_email="boss@test.com",
                 voice_id="test",
                 voice_mode="tts",
-                demo_mode=True,
+                demo_id=99,
             )
 
-            # Verify the event has demo_mode=True
-            assert startup_event.demo_mode is True
+            # Verify the event has demo_id set
+            assert startup_event.demo_id == 99
 
             # The actual SETTINGS update happens in the event handler
             # which requires a full ConversationManager. Here we just verify
             # the event carries the flag correctly and can be used to set SETTINGS.
-            if startup_event.demo_mode:
+            if startup_event.demo_id is not None:
                 SETTINGS.DEMO_MODE = True
+                SETTINGS.DEMO_ID = startup_event.demo_id
 
             assert (
                 SETTINGS.DEMO_MODE is True
             ), "SETTINGS.DEMO_MODE should be True after processing demo startup event"
+            assert (
+                SETTINGS.DEMO_ID == 99
+            ), "SETTINGS.DEMO_ID should be 99 after processing demo startup event"
 
         finally:
             SETTINGS.DEMO_MODE = original_demo_mode
+            SETTINGS.DEMO_ID = original_demo_id

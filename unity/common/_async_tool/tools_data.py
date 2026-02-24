@@ -2,8 +2,8 @@ import asyncio
 import inspect
 import json
 import traceback
-import time
 import dataclasses
+import time
 
 
 from typing import (
@@ -30,6 +30,7 @@ from .context_tracker import LoopContextState
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
     from .message_dispatcher import LoopMessageDispatcher
+    from .time_context import TimeContext
 
 
 # Sentinel for bare top-level handles (no label needed).
@@ -249,7 +250,15 @@ def compute_context_injection(
 
 
 class ToolsData:
-    def __init__(self, tools, *, client, logger: "LoopLogger"):
+    def __init__(
+        self,
+        tools,
+        *,
+        client,
+        logger: "LoopLogger",
+        time_ctx: "Optional[TimeContext]" = None,
+        extra_ask_tools: "Optional[Dict[str, Callable]]" = None,
+    ):
         self._client = client
         self._logger = logger
         self.normalized = normalise_tools(tools)
@@ -266,22 +275,30 @@ class ToolsData:
         self._completed_tool_names: Dict[str, str] = {}
         # Callback for refreshing dynamic helpers when a handle is adopted
         self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
+        # Time context for inline timing annotations on tool results
+        self._time_ctx: Optional["TimeContext"] = time_ctx
         # Reference to the live dynamic_tools dict managed by DynamicToolFactory.
         # Set by the loop after the factory is initialised each turn.
         self._dynamic_tools_ref: Optional[Dict[str, Callable]] = None
         self._completed_ask_handles: Dict[str, Callable] = {}
         self._task_ask_keys: Dict[asyncio.Task, str] = {}
         # Metadata for completed steerable tools, keyed by call_id.
-        # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable}
+        # Each entry: {"name": str, "call_id": str, "arg_repr": str, "ask_fn": Callable, "handle": Any}
         self._completed_askable_tools: Dict[str, dict] = {}
+        # Caller-supplied ask tools injected at construction time (e.g.
+        # domain-specific read-only tools for handle.ask() inspection loops).
+        self._extra_ask_tools: Dict[str, Callable] = (
+            dict(extra_ask_tools) if extra_ask_tools else {}
+        )
 
     def get_ask_tools(self) -> Dict[str, Callable]:
         """Return a snapshot of currently available ``ask_*`` dynamic tools.
 
-        Merges retained ask tools from completed tasks with live ones,
-        giving precedence to live entries when keys overlap.
+        Merges three sources with increasing precedence:
+        completed ask handles < extra_ask_tools < live dynamic tools.
         """
         result = dict(self._completed_ask_handles)
+        result.update(self._extra_ask_tools)
         dt = self._dynamic_tools_ref
         if dt and isinstance(dt, dict):
             result.update({k: v for k, v in dt.items() if k.startswith("ask_")})
@@ -386,6 +403,7 @@ class ToolsData:
                         "call_id": call_id,
                         "arg_repr": arg_repr,
                         "ask_fn": ask_fn,
+                        "handle": info.handle,
                     }
         self.pending.discard(coro)
         return self.info.pop(coro, None)
@@ -772,6 +790,10 @@ class ToolsData:
             # Centralized serialization for final tool results
             result = serialize_tool_content(tool_name=name, payload=raw, is_final=True)
 
+            # Wrap with inline timing metadata for non-dynamic (base) tools
+            if self._time_ctx is not None and not info.is_dynamic:
+                result = self._time_ctx.wrap_result(result, info.scheduled_time)
+
             consecutive_failures.reset_failures()
         except Exception:
             # Multi-handle child error: update shared placeholder and return early
@@ -876,7 +898,7 @@ class ToolsData:
             except Exception:
                 pass
 
-        # 6️⃣  failure guard -------------------------------------------------
+        # 5️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():
             if self._logger.log_steps:
                 self._logger.error(f"Aborting: too many tool failures.", prefix="🚨")

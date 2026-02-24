@@ -246,7 +246,7 @@ async def codeact_workflow(goal: str) -> SteerableToolHandle:
 
     # Start the actor - returns a SteerableToolHandle
     handle = await actor.act(
-        description=goal,
+        request=goal,
         clarification_enabled=False,
     )
 

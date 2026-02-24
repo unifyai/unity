@@ -196,6 +196,7 @@ class TestEndToEndCallFlow:
         # Create CallManager with real config
         config = CallConfig(
             assistant_id="e2e_test_assistant",
+            user_id="test_user",
             assistant_bio="A test assistant for end-to-end testing",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -345,6 +346,7 @@ class TestEndToEndCallFlow:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test bio",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -358,13 +360,12 @@ class TestEndToEndCallFlow:
         start_unify_meet_called = False
         captured_args = {}
 
-        async def mock_start_unify_meet(contact, boss, agent_name, room_name):
+        async def mock_start_unify_meet(contact, boss, room_name):
             nonlocal start_unify_meet_called, captured_args
             start_unify_meet_called = True
             captured_args = {
                 "contact": contact,
                 "boss": boss,
-                "agent_name": agent_name,
                 "room_name": room_name,
             }
 
@@ -373,7 +374,6 @@ class TestEndToEndCallFlow:
         # Create and handle UnifyMeetReceived event
         event = UnifyMeetReceived(
             contact=boss_contact,
-            livekit_agent_name="test_agent_123",
             room_name="test_room_456",
         )
 
@@ -385,7 +385,6 @@ class TestEndToEndCallFlow:
             "Event routing is broken."
         )
 
-        assert captured_args["agent_name"] == "test_agent_123"
         assert captured_args["room_name"] == "test_room_456"
 
     @pytest.mark.asyncio
@@ -413,6 +412,7 @@ class TestEndToEndCallFlow:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -432,7 +432,6 @@ class TestEndToEndCallFlow:
 
         event = UnifyMeetReceived(
             contact=boss_contact,
-            livekit_agent_name="agent",
             room_name="room",
         )
 
@@ -565,7 +564,7 @@ class TestRoomNameHandling:
         boss_contact,
     ):
         """
-        Test that room_name and livekit_agent_name are passed correctly.
+        Test that room_name is passed correctly.
 
         Before fix 81596d0e, the room name handling was broken because
         assistant_number was removed from args but still expected.
@@ -586,6 +585,7 @@ class TestRoomNameHandling:
 
         config = CallConfig(
             assistant_id="test",
+            user_id="test_user",
             assistant_bio="Test bio",
             assistant_number="+15555550000",
             voice_provider="cartesia",
@@ -599,29 +599,22 @@ class TestRoomNameHandling:
         # Track captured arguments
         captured_args = {}
 
-        async def mock_start_unify_meet(contact, boss, agent_name, room_name):
+        async def mock_start_unify_meet(contact, boss, room_name):
             captured_args["contact"] = contact
             captured_args["boss"] = boss
-            captured_args["agent_name"] = agent_name
             captured_args["room_name"] = room_name
 
         call_manager.start_unify_meet = mock_start_unify_meet
 
-        # The specific room/agent names that were broken
         event = UnifyMeetReceived(
             contact=boss_contact,
-            livekit_agent_name="unity_25_web",
-            room_name="unity_room_12345",
+            room_name="unity_25_meet",
         )
 
         await EventHandler.handle_event(event, mock_cm)
 
-        # Verify the correct values were passed
         assert (
-            captured_args["agent_name"] == "unity_25_web"
-        ), f"Agent name not passed correctly: got {captured_args.get('agent_name')}"
-        assert (
-            captured_args["room_name"] == "unity_room_12345"
+            captured_args["room_name"] == "unity_25_meet"
         ), f"Room name not passed correctly: got {captured_args.get('room_name')}"
 
 
@@ -1033,7 +1026,7 @@ class TestRealLiveKitIntegration:
                 sys.executable,
                 str(call_py),
                 "dev",
-                "e2e_test_agent:e2e_test_room",  # livekit_agent_name:room_name
+                "e2e_test_room",  # room_name (canonical, from make_room_name)
                 "cartesia",  # voice_provider
                 "",  # voice_id (use default)
                 "False",  # outbound
@@ -1041,6 +1034,8 @@ class TestRealLiveKitIntegration:
                 json.dumps(sample_contact),
                 json.dumps(boss_contact),
                 "A test assistant",  # assistant_bio
+                "test_assistant_id",  # ASSISTANT_ID
+                "test_user_id",  # USER_ID
             ]
 
             print(f"[TEST] Spawning voice agent: {' '.join(args[:4])}...")

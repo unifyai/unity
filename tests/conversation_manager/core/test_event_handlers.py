@@ -22,6 +22,7 @@ from unity.conversation_manager.domains.event_handlers import (
     EventHandler,
     _event_type_to_log_key,
 )
+from unity.conversation_manager.types import ScreenshotEntry
 from unity.conversation_manager.events import (
     Event,
     Ping,
@@ -38,21 +39,28 @@ from unity.conversation_manager.events import (
     UnifyMeetStarted,
     UnifyMeetEnded,
     InboundPhoneUtterance,
+    InboundUnifyMeetUtterance,
     OutboundPhoneUtterance,
     CallGuidance,
     GetChatHistory,
     ActorHandleStarted,
+    ActorHandleResponse,
     ActorResult,
     ActorClarificationRequest,
-    ActorPause,
-    ActorResume,
     NotificationInjectedEvent,
     NotificationUnpinnedEvent,
     SyncContacts,
     LogMessageResponse,
-    SummarizeContext,
     DirectMessageEvent,
     AssistantUpdateEvent,
+    AssistantScreenShareStarted,
+    AssistantScreenShareStopped,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
 )
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
@@ -132,11 +140,11 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     cm._session_logger = mock_session_logger
     cm.event_broker = mock_event_broker
     cm.call_manager = mock_call_manager
-    cm.mode = "text"
+    cm.mode = Mode.TEXT
     cm.chat_history = []
     cm.in_flight_actions = {}
     cm.completed_actions = {}
-    cm.is_summarizing = False
+    cm.assistant_screen_share_active = False
     cm.memory_manager = None
 
     # Create a SimulatedContactManager and populate with sample contacts
@@ -164,6 +172,7 @@ def mock_cm(mock_session_logger, mock_event_broker, mock_call_manager, sample_co
     # Mock async methods
     cm.request_llm_run = AsyncMock()
     cm.cancel_proactive_speech = AsyncMock()
+    cm.schedule_proactive_speech = AsyncMock()
     cm.interject_or_run = AsyncMock()
     cm.get_active_contact = MagicMock(return_value=sample_contacts[1])
 
@@ -288,8 +297,6 @@ class TestEventTypeToLogKey:
     def test_actor_events(self):
         """Actor event names convert correctly."""
         assert _event_type_to_log_key(ActorResult) == "actor_result"
-        assert _event_type_to_log_key(ActorPause) == "actor_pause"
-        assert _event_type_to_log_key(ActorResume) == "actor_resume"
 
 
 # =============================================================================
@@ -346,15 +353,6 @@ class TestHandleEventCore:
 
 class TestPingHandler:
     """Tests for the Ping event handler."""
-
-    @pytest.mark.asyncio
-    async def test_ping_prints_keepalive_message(self, mock_cm, capsys):
-        """Ping handler prints keepalive message to stdout."""
-        event = Ping(kind="keepalive")
-        await EventHandler.handle_event(event, mock_cm)
-
-        captured = capsys.readouterr()
-        assert "Ping received - keeping conversation manager alive" in captured.out
 
     @pytest.mark.asyncio
     async def test_ping_logs_debug_message(self, mock_cm):
@@ -719,7 +717,6 @@ class TestUnifyMeetHandlers:
         mock_cm.mode = Mode.TEXT
         event = UnifyMeetReceived(
             contact={"contact_id": 1},  # Boss contact
-            livekit_agent_name="TestAgent",
             room_name="room_123",
         )
 
@@ -785,8 +782,8 @@ class TestVoiceUtteranceHandlers:
         assert msgs[0].content == "Hello, can you hear me?"
 
     @pytest.mark.asyncio
-    async def test_inbound_utterance_cancels_proactive_speech(self, mock_cm):
-        """Inbound utterances cancel proactive speech."""
+    async def test_inbound_utterance_resets_proactive_speech(self, mock_cm):
+        """Inbound utterances reset (reschedule) proactive speech."""
         event = InboundPhoneUtterance(
             contact={"contact_id": 2},
             content="User speaking",
@@ -798,7 +795,7 @@ class TestVoiceUtteranceHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.cancel_proactive_speech.assert_called_once()
+        mock_cm.schedule_proactive_speech.assert_called()
 
     @pytest.mark.asyncio
     async def test_inbound_utterance_triggers_interject_or_run(self, mock_cm):
@@ -817,8 +814,8 @@ class TestVoiceUtteranceHandlers:
         mock_cm.interject_or_run.assert_called_once_with("What's the weather?")
 
     @pytest.mark.asyncio
-    async def test_outbound_utterance_does_not_cancel_proactive(self, mock_cm):
-        """Outbound utterances don't cancel proactive speech."""
+    async def test_outbound_utterance_resets_proactive_speech(self, mock_cm):
+        """Outbound utterances also reset (reschedule) proactive speech."""
         event = OutboundPhoneUtterance(
             contact={"contact_id": 2},
             content="Here's my response",
@@ -830,7 +827,7 @@ class TestVoiceUtteranceHandlers:
             mock_utils.queue_operation = AsyncMock()
             await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.cancel_proactive_speech.assert_not_called()
+        mock_cm.schedule_proactive_speech.assert_called()
 
     @pytest.mark.asyncio
     async def test_call_guidance_updates_contact_index(self, mock_cm):
@@ -932,6 +929,48 @@ class TestActorEventHandlers:
         assert len(mock_cm.notifications_bar.notifications) == 0
 
     @pytest.mark.asyncio
+    async def test_actor_handle_response_updates_matching_pending_action(
+        self,
+        mock_cm,
+    ):
+        """ActorHandleResponse should complete only the matching pending action."""
+        response_text = "Action-specific response payload."
+
+        mock_cm.in_flight_actions = {
+            1: {
+                "query": "Search transcripts for budget review",
+                "handle_actions": [
+                    {
+                        "action_name": "interject_1",
+                        "query": "add context",
+                        "status": "pending",
+                    },
+                    {
+                        "action_name": "ask_1",
+                        "query": "what is the current status?",
+                        "status": "pending",
+                    },
+                ],
+            },
+        }
+        event = ActorHandleResponse(
+            handle_id=1,
+            action_name="ask",
+            query="what is the current status?",
+            response=response_text,
+            call_id="",
+        )
+
+        await EventHandler.handle_event(event, mock_cm)
+
+        interject_event = mock_cm.in_flight_actions[1]["handle_actions"][0]
+        ask_event = mock_cm.in_flight_actions[1]["handle_actions"][1]
+
+        assert interject_event["status"] == "pending"
+        assert ask_event["status"] == "completed"
+        assert ask_event.get("response") == response_text
+
+    @pytest.mark.asyncio
     async def test_actor_clarification_request_updates_handle_actions(self, mock_cm):
         """ActorClarificationRequest adds clarification to handle_actions."""
         mock_cm.in_flight_actions = {
@@ -950,51 +989,580 @@ class TestActorEventHandlers:
         assert clarification["action_name"] == "clarification_request"
         assert clarification["query"] == "What do you mean by 'documents'?"
 
-    @pytest.mark.asyncio
-    async def test_actor_pause_pauses_action_handles(self, mock_cm):
-        """ActorPause pauses all in-flight action handles."""
-        mock_handle = MagicMock()
-        mock_handle.pause = MagicMock(return_value=None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorPause(reason="User requested pause")
 
-        await EventHandler.handle_event(event, mock_cm)
+# =============================================================================
+# 10. Meet Interaction Event Handler Tests
+# =============================================================================
 
-        mock_handle.pause.assert_called_once()
+
+class TestMeetInteractionEventHandlers:
+    """Tests for screen share and remote control event handlers."""
 
     @pytest.mark.asyncio
-    async def test_actor_resume_resumes_action_handles(self, mock_cm):
-        """ActorResume resumes all paused action handles."""
-        mock_handle = MagicMock()
-        mock_handle.resume = MagicMock(return_value=None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorResume(reason="Continue execution")
+    async def test_assistant_screen_share_started_sets_flag(self, mock_cm):
+        """AssistantScreenShareStarted sets assistant_screen_share_active to True."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
 
+        event = AssistantScreenShareStarted(
+            reason="User enabled assistant screen sharing",
+        )
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_handle.resume.assert_called_once()
+        assert mock_cm.assistant_screen_share_active is True
 
     @pytest.mark.asyncio
-    async def test_actor_pause_handles_async_pause(self, mock_cm):
-        """ActorPause handles async pause methods."""
-        mock_handle = MagicMock()
-        mock_handle.pause = AsyncMock()
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action 1", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorPause(reason="Async pause")
+    async def test_assistant_screen_share_stopped_clears_flag(self, mock_cm):
+        """AssistantScreenShareStopped sets assistant_screen_share_active to False."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
 
+        event = AssistantScreenShareStopped(
+            reason="User disabled assistant screen sharing",
+        )
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_handle.pause.assert_called_once()
+        assert mock_cm.assistant_screen_share_active is False
+
+    @pytest.mark.asyncio
+    async def test_user_screen_share_started_sets_flag(self, mock_cm):
+        """UserScreenShareStarted sets user_screen_share_active to True."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = UserScreenShareStarted(
+            reason="User started sharing their screen",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_screen_share_active is True
+
+    @pytest.mark.asyncio
+    async def test_user_screen_share_stopped_clears_flag(self, mock_cm):
+        """UserScreenShareStopped sets user_screen_share_active to False."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = True
+        mock_cm.user_remote_control_active = False
+
+        event = UserScreenShareStopped(
+            reason="User stopped sharing their screen",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_screen_share_active is False
+
+    @pytest.mark.asyncio
+    async def test_user_remote_control_started_sets_flag(
+        self,
+        mock_cm,
+    ):
+        """UserRemoteControlStarted sets user_remote_control_active to True."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = UserRemoteControlStarted(
+            reason="User took remote control of assistant desktop",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_remote_control_active is True
+
+    @pytest.mark.asyncio
+    async def test_user_remote_control_stopped_clears_flag(
+        self,
+        mock_cm,
+    ):
+        """UserRemoteControlStopped clears user_remote_control_active."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = True
+
+        event = UserRemoteControlStopped(
+            reason="User released remote control of assistant desktop",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_remote_control_active is False
+
+    @pytest.mark.asyncio
+    async def test_user_webcam_started_sets_flag(self, mock_cm):
+        """UserWebcamStarted sets user_webcam_active to True."""
+        mock_cm.user_webcam_active = False
+
+        event = UserWebcamStarted(reason="User enabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is True
+
+    @pytest.mark.asyncio
+    async def test_user_webcam_stopped_clears_flag(self, mock_cm):
+        """UserWebcamStopped sets user_webcam_active to False."""
+        mock_cm.user_webcam_active = True
+
+        event = UserWebcamStopped(reason="User disabled their webcam")
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert mock_cm.user_webcam_active is False
+
+    @pytest.mark.asyncio
+    async def test_meet_interaction_pushes_notification(self, mock_cm):
+        """All meet interaction events push a notification to the bar."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        initial_count = len(mock_cm.notifications_bar.notifications)
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled assistant screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        assert len(mock_cm.notifications_bar.notifications) == initial_count + 1
+        notification = mock_cm.notifications_bar.notifications[-1]
+        assert notification.type == "Meet"
+        assert "screen sharing" in notification.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_meet_interaction_triggers_llm_run(self, mock_cm):
+        """Meet interaction events trigger an LLM run."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        event = UserScreenShareStarted(
+            reason="User started sharing their screen",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.request_llm_run.assert_called()
+
+    # --------------------------------------------------------------------- #
+    # Screenshot capture on utterance
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_utterance_triggers_screenshot_capture_when_screen_sharing(
+        self,
+        mock_cm,
+    ):
+        """Inbound user utterance triggers screenshot capture when assistant
+        screen sharing is active."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.capture_assistant_screenshot = AsyncMock()
+
+        contact = {"contact_id": 1, "first_name": "Boss", "surname": "User"}
+        event = InboundUnifyMeetUtterance(
+            contact=contact,
+            content="So you need to click that button",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.capture_assistant_screenshot.assert_called_once()
+        call_args = mock_cm.capture_assistant_screenshot.call_args
+        assert call_args[0][0] == "So you need to click that button"
+
+    @pytest.mark.asyncio
+    async def test_utterance_no_screenshot_capture_when_not_screen_sharing(
+        self,
+        mock_cm,
+    ):
+        """Inbound user utterance does NOT trigger screenshot capture when
+        assistant screen sharing is inactive."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.capture_assistant_screenshot = AsyncMock()
+
+        contact = {"contact_id": 1, "first_name": "Boss", "surname": "User"}
+        event = InboundUnifyMeetUtterance(
+            contact=contact,
+            content="Just some regular conversation",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_cm.capture_assistant_screenshot.assert_not_called()
+
+    # --------------------------------------------------------------------- #
+    # User screenshot buffer (IPC path)
+    # --------------------------------------------------------------------- #
+
+    def test_buffer_user_screenshot_parses_ipc_json(self, mock_cm):
+        """_buffer_user_screenshot parses IPC JSON and buffers a ScreenshotEntry."""
+        import json
+        from datetime import datetime
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        # Use the real method on the mock CM by binding it
+        mock_cm._screenshot_buffer = []
+        mock_cm._session_logger = MagicMock()
+        method = ConversationManager._buffer_user_screenshot.__get__(mock_cm)
+
+        payload = json.dumps(
+            {
+                "b64": "iVBORw0KGgoAAAANSUhEUg==",
+                "utterance": "Look at this part of my screen",
+                "timestamp": "2026-02-15T12:00:00+00:00",
+            },
+        )
+        method(payload)
+
+        assert len(mock_cm._screenshot_buffer) == 1
+        entry = mock_cm._screenshot_buffer[0]
+        assert isinstance(entry, ScreenshotEntry)
+        assert entry.source == "user"
+        assert entry.b64 == "iVBORw0KGgoAAAANSUhEUg=="
+        assert entry.utterance == "Look at this part of my screen"
+        assert isinstance(entry.timestamp, datetime)
+
+    # --------------------------------------------------------------------- #
+    # Two-phase screenshot buffer (peek + commit)
+    # --------------------------------------------------------------------- #
+
+    def test_peek_does_not_clear_buffer_simulating_cancelled_turn(self, mock_cm):
+        """Peeking the screenshot buffer leaves entries intact for retry.
+
+        Simulates a cancelled LLM turn: peek is called but commit never
+        happens.  The next peek must return the same screenshots.  With the
+        old destructive drain this would have returned an empty list on the
+        second call.
+        """
+        from datetime import datetime, timezone
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm._screenshot_buffer = []
+        peek = ConversationManager.peek_screenshot_buffer.__get__(mock_cm)
+
+        ts = datetime(2026, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("AAAA", "Click the button", ts, "assistant", 1),
+        )
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("BBBB", "Now scroll down", ts, "user", 2),
+        )
+
+        # First peek (start of a turn that will be cancelled)
+        first = peek()
+        assert len(first) == 2
+
+        # Simulate cancellation — commit is never called.
+
+        # Second peek (retry turn) must see the same screenshots.
+        second = peek()
+        assert len(second) == 2
+        assert second[0].b64 == "AAAA"
+        assert second[1].b64 == "BBBB"
+
+    def test_commit_clears_peeked_and_preserves_new_arrivals(self, mock_cm):
+        """Committing after a successful turn removes consumed entries while
+        preserving screenshots that arrived during the turn.
+
+        With the old destructive drain, screenshots appended between drain
+        and turn completion would have been lost.
+        """
+        from datetime import datetime, timezone
+
+        from unity.conversation_manager.conversation_manager import ConversationManager
+
+        mock_cm._screenshot_buffer = []
+        peek = ConversationManager.peek_screenshot_buffer.__get__(mock_cm)
+        commit = ConversationManager.commit_screenshot_buffer.__get__(mock_cm)
+
+        ts = datetime(2026, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("AAAA", "Original screenshot", ts, "assistant", 1),
+        )
+
+        # Peek at the start of the turn (1 screenshot).
+        peeked = peek()
+        assert len(peeked) == 1
+
+        # A new screenshot arrives mid-turn (e.g. user speaks again).
+        mock_cm._screenshot_buffer.append(
+            ScreenshotEntry("BBBB", "New during turn", ts, "user", 2),
+        )
+
+        # Turn succeeds — commit only the peeked count.
+        commit(len(peeked))
+
+        # The original screenshot is gone; the mid-turn arrival survives.
+        assert len(mock_cm._screenshot_buffer) == 1
+        assert mock_cm._screenshot_buffer[0].b64 == "BBBB"
+
+    # --------------------------------------------------------------------- #
+    # Direct fast brain guidance on mode change
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_meet_event_sends_fast_brain_guidance_in_voice_mode(
+        self,
+        mock_cm,
+    ):
+        """Screen share events publish direct CallGuidance to the fast brain
+        when in voice mode, bypassing the slow brain for instant delivery."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.mode = Mode.MEET  # voice mode
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        # Verify CallGuidance was published to the fast brain channel
+        calls = mock_cm.event_broker.publish.call_args_list
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
+        assert len(guidance_calls) == 1
+        # The guidance text should contain behavioral instructions
+        import json as _json
+
+        data = _json.loads(guidance_calls[0].args[1])
+        content = data.get("payload", {}).get("content", "")
+        assert "screen sharing" in content.lower()
+
+    @pytest.mark.asyncio
+    async def test_meet_event_no_fast_brain_guidance_in_text_mode(
+        self,
+        mock_cm,
+    ):
+        """Screen share events do NOT publish fast brain guidance when in
+        text mode (no voice agent to receive it)."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+        mock_cm.mode = Mode.TEXT
+
+        event = AssistantScreenShareStarted(
+            reason="User enabled screen sharing",
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        # No CallGuidance should be published
+        calls = mock_cm.event_broker.publish.call_args_list
+        guidance_calls = [c for c in calls if c.args[0] == "app:call:call_guidance"]
+        assert len(guidance_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_all_meet_events_have_fast_brain_guidance(self, mock_cm):
+        """Each meet interaction event has corresponding fast brain guidance text."""
+        from unity.conversation_manager.domains.event_handlers import (
+            _MEET_FAST_BRAIN_GUIDANCE,
+        )
+
+        event_classes = [
+            AssistantScreenShareStarted,
+            AssistantScreenShareStopped,
+            UserScreenShareStarted,
+            UserScreenShareStopped,
+            UserWebcamStarted,
+            UserWebcamStopped,
+            UserRemoteControlStarted,
+            UserRemoteControlStopped,
+        ]
+        for cls in event_classes:
+            assert (
+                cls in _MEET_FAST_BRAIN_GUIDANCE
+            ), f"{cls.__name__} missing from _MEET_FAST_BRAIN_GUIDANCE"
+            assert len(_MEET_FAST_BRAIN_GUIDANCE[cls]) > 0
+
+    # --------------------------------------------------------------------- #
+    # Call-started screen share state sync (initialization race fix)
+    # --------------------------------------------------------------------- #
+
+    @pytest.mark.asyncio
+    async def test_call_started_syncs_screen_share_state_to_fast_brain(
+        self,
+        mock_cm,
+    ):
+        """When assistant_screen_share_active is already True at call start,
+        the handler queues screen share guidance to the fast brain socket."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, event_json = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:call_guidance"
+        import json
+
+        event_data = json.loads(event_json)
+        content = event_data.get("payload", {}).get("content", "")
+        assert "screen sharing is now on" in content.lower()
+
+    @pytest.mark.asyncio
+    async def test_call_started_does_not_sync_when_screen_share_inactive(
+        self,
+        mock_cm,
+    ):
+        """When assistant_screen_share_active is False, no guidance is queued."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_call_started_no_crash_without_socket_server(
+        self,
+        mock_cm,
+    ):
+        """If socket server is not yet created, the handler skips gracefully."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_cm.call_manager._socket_server = None
+
+        event = UnifyMeetStarted(contact={"contact_id": 1})
+        await EventHandler.handle_event(event, mock_cm)
+        # Should not raise — the falsy check on _socket_server prevents the call.
+
+    @pytest.mark.asyncio
+    async def test_phone_call_started_also_syncs_screen_share_state(
+        self,
+        mock_cm,
+    ):
+        """PhoneCallStarted handler also syncs screen share state."""
+        mock_cm.assistant_screen_share_active = True
+        mock_cm.mode = Mode.TEXT
+        mock_socket = AsyncMock()
+        mock_cm.call_manager._socket_server = mock_socket
+
+        event = PhoneCallStarted(
+            contact={"contact_id": 2, "phone_number": "+15555552222"},
+        )
+        await EventHandler.handle_event(event, mock_cm)
+
+        mock_socket.queue_for_clients.assert_called_once()
+        channel, _ = mock_socket.queue_for_clients.call_args.args
+        assert channel == "app:call:call_guidance"
+
+    # --------------------------------------------------------------------- #
+    # Renderer tests
+    # --------------------------------------------------------------------- #
+
+    def test_render_meet_state_empty_when_all_off(self):
+        """render_meet_interaction_state returns empty when nothing is active."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=False,
+            user_screen_share_active=False,
+            user_remote_control_active=False,
+        )
+        assert result == ""
+
+    def test_render_meet_state_assistant_screen_share_only(self):
+        """Only assistant screen share active produces a single section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=True,
+            user_screen_share_active=False,
+            user_remote_control_active=False,
+        )
+        assert "<assistant_screen_share status='active'>" in result
+        assert "</assistant_screen_share>" in result
+        assert "visible to the user" in result
+        # Other sections absent.
+        assert "<user_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_user_screen_share_only(self):
+        """Only user screen share active produces a single section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=False,
+            user_screen_share_active=True,
+            user_remote_control_active=False,
+        )
+        assert "<user_screen_share status='active'>" in result
+        assert "</user_screen_share>" in result
+        assert "sharing their screen with you" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_user_remote_control_only(self):
+        """Only user remote control active produces a single section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=False,
+            user_screen_share_active=False,
+            user_remote_control_active=True,
+        )
+        assert "<user_remote_control status='active'>" in result
+        assert "</user_remote_control>" in result
+        assert "mouse and keyboard" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_screen_share" not in result
+
+    def test_render_meet_state_user_webcam_only(self):
+        """Only user webcam active produces a single webcam section."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            user_webcam_active=True,
+        )
+        assert "<user_webcam status='active'>" in result
+        assert "</user_webcam>" in result
+        assert "webcam" in result
+        assert "<assistant_screen_share" not in result
+        assert "<user_screen_share" not in result
+        assert "<user_remote_control" not in result
+
+    def test_render_meet_state_all_four_active(self):
+        """All four active produces four independent sections."""
+        from unity.conversation_manager.domains.renderer import Renderer
+
+        result = Renderer.render_meet_interaction_state(
+            assistant_screen_share_active=True,
+            user_screen_share_active=True,
+            user_webcam_active=True,
+            user_remote_control_active=True,
+        )
+        assert "<assistant_screen_share status='active'>" in result
+        assert "<user_screen_share status='active'>" in result
+        assert "<user_webcam status='active'>" in result
+        assert "<user_remote_control status='active'>" in result
+
+    def test_render_meet_state_appears_at_top_of_full_render(self):
+        """Active meet sections appear before notifications in the full render."""
+        from unity.conversation_manager.domains.renderer import Renderer
+        from unity.conversation_manager.domains.notifications import NotificationBar
+
+        renderer = Renderer()
+        result = renderer.render_state(
+            contact_index=ContactIndex(),
+            notification_bar=NotificationBar(),
+            assistant_screen_share_active=True,
+            user_screen_share_active=False,
+            user_remote_control_active=False,
+        ).full_render
+
+        screen_share_pos = result.index("<assistant_screen_share")
+        notifications_pos = result.index("<notifications>")
+        assert screen_share_pos < notifications_pos
 
 
 # =============================================================================
-# 10. Notification Event Handler Tests
+# 11. Notification Event Handler Tests
 # =============================================================================
 
 
@@ -1019,8 +1587,8 @@ class TestNotificationEventHandlers:
         )
 
     @pytest.mark.asyncio
-    async def test_notification_injected_cancels_proactive_speech(self, mock_cm):
-        """NotificationInjectedEvent cancels proactive speech."""
+    async def test_notification_injected_resets_proactive_speech(self, mock_cm):
+        """NotificationInjectedEvent resets (reschedules) proactive speech."""
         event = NotificationInjectedEvent(
             content="Interrupt notification",
             source="System",
@@ -1029,7 +1597,7 @@ class TestNotificationEventHandlers:
 
         await EventHandler.handle_event(event, mock_cm)
 
-        mock_cm.cancel_proactive_speech.assert_called_once()
+        mock_cm.schedule_proactive_speech.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_notification_injected_triggers_immediate_llm(self, mock_cm):
@@ -1134,38 +1702,6 @@ class TestLogMessageResponseHandler:
 
 
 # =============================================================================
-# 13. SummarizeContext Event Handler Tests
-# =============================================================================
-
-
-class TestSummarizeContextHandler:
-    """Tests for SummarizeContext event handler."""
-
-    @pytest.mark.asyncio
-    async def test_summarize_context_skips_without_memory_manager(self, mock_cm):
-        """SummarizeContext is skipped when memory_manager is None."""
-        mock_cm.memory_manager = None
-        mock_cm.is_summarizing = True
-
-        event = SummarizeContext()
-
-        # Mock queue_operation to execute the function immediately
-        async def immediate_queue_operation(func, *args, **kwargs):
-            await func(*args, **kwargs)
-
-        with patch(
-            "unity.conversation_manager.domains.event_handlers.managers_utils.queue_operation",
-            side_effect=immediate_queue_operation,
-        ):
-            await EventHandler.handle_event(event, mock_cm)
-
-        # is_summarizing should be reset to False
-        assert mock_cm.is_summarizing is False
-        # chat_history should be cleared
-        assert mock_cm.chat_history == []
-
-
-# =============================================================================
 # 14. DirectMessageEvent Handler Tests
 # =============================================================================
 
@@ -1211,34 +1747,6 @@ class TestDirectMessageEventHandler:
 
 class TestEventHandlerEdgeCases:
     """Tests for edge cases and error handling in event handlers."""
-
-    @pytest.mark.asyncio
-    async def test_actor_pause_handles_missing_handle(self, mock_cm):
-        """ActorPause handles actions without handles gracefully."""
-        # Action with no handle (None)
-        mock_cm.in_flight_actions = {
-            1: {"query": "Action without handle", "handle": None, "handle_actions": []},
-        }
-        event = ActorPause(reason="Test pause")
-
-        # Should not raise
-        await EventHandler.handle_event(event, mock_cm)
-
-    @pytest.mark.asyncio
-    async def test_actor_pause_handles_exception_in_handle(self, mock_cm):
-        """ActorPause handles exceptions from handle.pause() gracefully."""
-        mock_handle = MagicMock()
-        mock_handle.pause = MagicMock(side_effect=Exception("Pause failed"))
-        mock_cm.in_flight_actions = {
-            1: {"query": "Do something", "handle": mock_handle, "handle_actions": []},
-        }
-        event = ActorPause(reason="Test")
-
-        # Should not raise - exception is caught
-        await EventHandler.handle_event(event, mock_cm)
-
-        # Error should be logged
-        mock_cm._session_logger.error.assert_called()
 
     @pytest.mark.asyncio
     async def test_actor_clarification_for_nonexistent_action(self, mock_cm):
@@ -1537,3 +2045,174 @@ class TestAssistantUpdateEventHandler:
         # Should print a message about missing contact_manager
         captured = capsys.readouterr()
         assert "contact_manager is None" in captured.out
+
+
+# =============================================================================
+# 19. _recent_conversation_snippet Helper Tests
+# =============================================================================
+
+
+class TestRecentConversationSnippet:
+    """Tests for the _recent_conversation_snippet helper used in remote-control broadcasts."""
+
+    def _get_snippet(self):
+        from unity.conversation_manager.domains.event_handlers import (
+            _recent_conversation_snippet,
+        )
+
+        return _recent_conversation_snippet
+
+    def test_returns_none_when_empty(self, mock_cm):
+        """Returns None when the global thread has no messages."""
+        snippet = self._get_snippet()
+        assert snippet(mock_cm) is None
+
+    def test_extracts_recent_messages(self, mock_cm):
+        """Extracts the last N user/assistant messages in chronological order."""
+        snippet = self._get_snippet()
+        mock_cm.contact_index.push_message(
+            contact_id=1,
+            sender_name="Boss",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="Hey, open the browser",
+            role="user",
+        )
+        mock_cm.contact_index.push_message(
+            contact_id=1,
+            sender_name="You",
+            thread_name=Medium.SMS_MESSAGE,
+            message_content="Sure, opening it now",
+            role="assistant",
+        )
+
+        result = snippet(mock_cm)
+        assert result is not None
+        lines = result.split("\n")
+        assert len(lines) == 2
+        assert lines[0] == "user: Hey, open the browser"
+        assert lines[1] == "assistant: Sure, opening it now"
+
+    def test_limits_to_n_messages(self, mock_cm):
+        """Only the last n messages are returned (default 4)."""
+        snippet = self._get_snippet()
+        for i in range(10):
+            mock_cm.contact_index.push_message(
+                contact_id=1,
+                sender_name="Boss",
+                thread_name=Medium.SMS_MESSAGE,
+                message_content=f"Message {i}",
+                role="user",
+            )
+
+        result = snippet(mock_cm, n=4)
+        assert result is not None
+        lines = result.split("\n")
+        assert len(lines) == 4
+        assert "Message 9" in lines[-1]
+        assert "Message 6" in lines[0]
+
+    def test_skips_system_markers(self, mock_cm):
+        """System markers like <Call Started> are excluded."""
+        snippet = self._get_snippet()
+        mock_cm.contact_index.push_message(
+            contact_id=1,
+            sender_name="System",
+            thread_name=Medium.PHONE_CALL,
+            message_content="<Call Started>",
+            role="user",
+        )
+        mock_cm.contact_index.push_message(
+            contact_id=1,
+            sender_name="Boss",
+            thread_name=Medium.PHONE_CALL,
+            message_content="Hello there",
+            role="user",
+        )
+
+        result = snippet(mock_cm)
+        assert result is not None
+        assert "<Call Started>" not in result
+        assert "Hello there" in result
+
+
+# =============================================================================
+# 20. Remote Control → ComputerPrimitives Integration Tests
+# =============================================================================
+
+
+class TestRemoteControlComputerPrimitivesIntegration:
+    """Verify the event handler calls ComputerPrimitives.set_user_remote_control."""
+
+    @pytest.mark.asyncio
+    async def test_started_calls_set_user_remote_control_true(self, mock_cm):
+        """UserRemoteControlStarted calls set_user_remote_control(True, ...)."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        mock_cp = MagicMock()
+        with patch(
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=mock_cp,
+        ):
+            event = UserRemoteControlStarted(reason="User took control")
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cp.set_user_remote_control.assert_called_once()
+        args, kwargs = mock_cp.set_user_remote_control.call_args
+        assert args[0] is True
+        assert "conversation_context" in kwargs
+
+    @pytest.mark.asyncio
+    async def test_stopped_calls_set_user_remote_control_false(self, mock_cm):
+        """UserRemoteControlStopped calls set_user_remote_control(False, ...)."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = True
+
+        mock_cp = MagicMock()
+        with patch(
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=mock_cp,
+        ):
+            event = UserRemoteControlStopped(reason="User released control")
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cp.set_user_remote_control.assert_called_once()
+        args, kwargs = mock_cp.set_user_remote_control.call_args
+        assert args[0] is False
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_computer_primitives_singleton(self, mock_cm):
+        """No error when ComputerPrimitives singleton doesn't exist."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        with patch(
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=None,
+        ):
+            event = UserRemoteControlStarted(reason="User took control")
+            # Should not raise
+            await EventHandler.handle_event(event, mock_cm)
+
+    @pytest.mark.asyncio
+    async def test_screen_share_events_do_not_call_set_user_remote_control(
+        self,
+        mock_cm,
+    ):
+        """Non-remote-control meet events do not trigger set_user_remote_control."""
+        mock_cm.assistant_screen_share_active = False
+        mock_cm.user_screen_share_active = False
+        mock_cm.user_remote_control_active = False
+
+        mock_cp = MagicMock()
+        with patch(
+            "unity.manager_registry.ManagerRegistry.get_instance",
+            return_value=mock_cp,
+        ):
+            event = AssistantScreenShareStarted(reason="Screen share started")
+            await EventHandler.handle_event(event, mock_cm)
+
+        mock_cp.set_user_remote_control.assert_not_called()

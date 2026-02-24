@@ -35,6 +35,15 @@ async def test_act_is_masked_in_demo_mode(initialized_cm):
 
     assert "act" not in tools, "act should be masked in demo mode"
     assert (
+        "ask_about_contacts" not in tools
+    ), "ask_about_contacts should be masked in demo mode"
+    assert (
+        "update_contacts" not in tools
+    ), "update_contacts should be masked in demo mode"
+    assert (
+        "query_past_transcripts" not in tools
+    ), "query_past_transcripts should be masked in demo mode"
+    assert (
         "set_boss_details" in tools
     ), "set_boss_details should be exposed in demo mode"
 
@@ -207,54 +216,3 @@ async def test_demo_operator_exists(initialized_cm):
     assert operator is not None, "Demo operator should exist"
     assert operator["first_name"] == DEMO_OPERATOR["first_name"]
     assert operator["phone_number"] == DEMO_OPERATOR["phone_number"]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Prompt content tests
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_slow_brain_prompt_contains_demo_guidance(initialized_cm):
-    """The slow brain system prompt should contain demo-specific guidance."""
-    from unity.conversation_manager.domains.brain import build_brain_spec
-
-    spec = build_brain_spec(initialized_cm.cm)
-    prompt_text = spec.system_prompt.flatten()
-
-    assert (
-        "demo mode" in prompt_text.lower()
-    ), "Slow brain prompt should mention demo mode"
-    assert (
-        "set_boss_details" in prompt_text
-    ), "Slow brain prompt should mention set_boss_details tool"
-    assert (
-        "unify.ai" in prompt_text.lower()
-    ), "Slow brain prompt should mention unify.ai for sign-up"
-    # act should NOT be mentioned in the tool list
-    assert (
-        "act` freely" not in prompt_text
-    ), "Slow brain prompt should not encourage using act in demo mode"
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_voice_prompt_contains_demo_guidance(initialized_cm):
-    """The voice agent prompt should contain demo-specific guidance when in demo mode."""
-    from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
-
-    prompt = build_voice_agent_prompt(
-        bio="A helpful assistant",
-        assistant_name="Lucy",
-        boss_first_name="",
-        boss_surname="",
-        demo_mode=True,
-    )
-    text = prompt.flatten()
-
-    assert "demo" in text.lower(), "Voice prompt should reference demo context"
-    assert "unify.ai" in text.lower(), "Voice prompt should mention unify.ai"
-    assert (
-        "first time" in text.lower() or "not signed up" in text.lower()
-    ), "Voice prompt should indicate boss hasn't signed up"

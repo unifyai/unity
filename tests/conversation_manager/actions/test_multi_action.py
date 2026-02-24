@@ -3,7 +3,7 @@ tests/conversation_manager/test_multi_action.py
 ====================================================
 
 Tests that verify ConversationManager correctly handles multiple concurrent
-`act` requests and disambiguates when to create new actions vs steer existing ones.
+action requests and disambiguates when to create new actions vs steer existing ones.
 
 These tests build upon test_take_action.py and test_steer_action.py to cover
 more complex realistic scenarios involving:
@@ -39,13 +39,21 @@ pytestmark = [pytest.mark.eval]
 # Note: BOSS (contact_id=1) is imported from conftest.py
 
 
-def _count_act_calls(cm):
-    """Count how many times 'act' was called."""
-    return sum(1 for tool in cm.all_tool_calls if tool == "act")
+_ACTION_TOOLS = {
+    "act",
+    "ask_about_contacts",
+    "update_contacts",
+    "query_past_transcripts",
+}
+
+
+def _count_action_calls(cm):
+    """Count how many action-creating tools were called."""
+    return sum(1 for tool in cm.all_tool_calls if tool in _ACTION_TOOLS)
 
 
 # ---------------------------------------------------------------------------
-#  Sequential independent actions - each should trigger new act
+#  Sequential independent actions - each should trigger new action
 # ---------------------------------------------------------------------------
 
 
@@ -58,7 +66,7 @@ async def test_two_unrelated_requests_create_two_tasks(initialized_cm):
     Flow:
     1. User asks for a web search about one topic
     2. User asks for a completely unrelated contact lookup
-    3. Both should trigger separate act calls
+    3. Both should trigger separate actions
     """
     cm = initialized_cm
 
@@ -101,7 +109,7 @@ async def test_parallel_searches_different_topics(initialized_cm):
     Flow:
     1. User asks to search for topic A
     2. User explicitly requests a NEW separate search for topic B
-    3. Both should be independent act calls
+    3. Both should be independent actions
     """
     cm = initialized_cm
 
@@ -124,8 +132,8 @@ async def test_parallel_searches_different_topics(initialized_cm):
 
     # Should have called act at least twice
     assert (
-        _count_act_calls(cm) >= 2
-    ), "Expected two separate act calls for explicitly different requests"
+        _count_action_calls(cm) >= 2
+    ), "Expected two separate actions for explicitly different requests"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Step 1: first search")
@@ -146,7 +154,7 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
     Flow:
     1. User asks for a web search
     2. User explicitly requests a different type of task (contact lookup)
-    3. Should create a new act, not interject
+    3. Should create a new action, not interject
     """
     cm = initialized_cm
 
@@ -158,7 +166,7 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
         ),
     )
     assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
-    initial_act_count = _count_act_calls(cm)
+    initial_act_count = _count_action_calls(cm)
 
     # Step 2: Different task type - contact lookup (clearly not an interject)
     result2 = await cm.step_until_wait(
@@ -170,12 +178,12 @@ async def test_also_search_creates_new_task_not_interject(initialized_cm):
 
     # Should have called act again (new action) for different request type
     # Alternatively, may have multiple in-flight actions
-    new_act_count = _count_act_calls(cm)
+    new_act_count = _count_action_calls(cm)
     action_count = get_in_flight_action_count(cm)
 
     assert (
         new_act_count > initial_act_count or action_count >= 2
-    ), "Expected new act call for different request type"
+    ), "Expected new action for different request type"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Step 1: first task")
@@ -203,7 +211,7 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
         ),
     )
     assert get_in_flight_action_count(cm) >= 1, "Expected at least one in-flight action"
-    act_count_after_first = _count_act_calls(cm)
+    act_count_after_first = _count_action_calls(cm)
 
     # Step 2: Add constraint to the SAME search
     result2 = await cm.step_until_wait(
@@ -215,12 +223,12 @@ async def test_add_detail_to_same_topic_interjects(initialized_cm):
 
     # Should have interjected, not created new action
     has_interject = has_steering_tool_call(cm, "interject_")
-    new_act_count = _count_act_calls(cm)
+    new_act_count = _count_action_calls(cm)
 
     # Either interjected OR didn't create a new act (both acceptable)
     assert (
         has_interject or new_act_count == act_count_after_first
-    ), "Expected interject for adding constraint to same topic, not new act"
+    ), "Expected interject for adding constraint to same topic, not new action"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Step 1: initial search")
@@ -348,7 +356,7 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
     1. User starts a task
     2. User cancels it
     3. User starts a new unrelated task
-    4. New task should be fresh act call
+    4. New task should be a fresh action
     """
     cm = initialized_cm
 
@@ -369,7 +377,7 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
         ),
     )
 
-    act_count_after_cancel = _count_act_calls(cm)
+    act_count_after_cancel = _count_action_calls(cm)
 
     # Step 3: Start new unrelated task
     result3 = await cm.step_until_wait(
@@ -381,8 +389,8 @@ async def test_stop_task_then_start_new_unrelated(initialized_cm):
 
     # Should have called act again for the new task
     assert (
-        _count_act_calls(cm) > act_count_after_cancel
-    ), "Expected new act call after canceling previous task"
+        _count_action_calls(cm) > act_count_after_cancel
+    ), "Expected new action after canceling previous task"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Step 1: first task")
@@ -399,7 +407,7 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
     Flow:
     1. User asks about contacts in NYC
     2. Small talk / acknowledgment
-    3. User asks about contacts in LA (different query, should be new act)
+    3. User asks about contacts in LA (different query, should be new action)
     """
     cm = initialized_cm
 
@@ -420,7 +428,7 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
         ),
     )
 
-    act_count_midpoint = _count_act_calls(cm)
+    act_count_midpoint = _count_action_calls(cm)
 
     # Step 3: New request - LA contacts (similar pattern but different query)
     result3 = await cm.step_until_wait(
@@ -432,8 +440,8 @@ async def test_sequential_tasks_after_completion_context(initialized_cm):
 
     # Should have called act again for the new location
     assert (
-        _count_act_calls(cm) > act_count_midpoint
-    ), "Expected new act call for different location query, not just using old results"
+        _count_action_calls(cm) > act_count_midpoint
+    ), "Expected new action for different location query, not just using old results"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Step 1: NYC contacts")
@@ -456,7 +464,7 @@ async def test_interject_first_then_start_second(initialized_cm):
     1. User starts web search
     2. User interjects to narrow the search
     3. User starts a completely different task
-    4. Should have interject AND second act
+    4. Should have interject AND second action
     """
     cm = initialized_cm
 
@@ -485,13 +493,13 @@ async def test_interject_first_then_start_second(initialized_cm):
         ),
     )
 
-    # Should have both interject (or modification) and multiple act calls
-    act_count = _count_act_calls(cm)
+    # Should have both interject (or modification) and multiple actions
+    act_count = _count_action_calls(cm)
     has_interject = has_steering_tool_call(cm, "interject_")
 
     assert act_count >= 2 or (
         act_count >= 1 and has_interject
-    ), "Expected interject for narrowing search AND new act for contact lookup"
+    ), "Expected interject for narrowing search AND new action for contact lookup"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Step 1: restaurant search")
@@ -509,7 +517,7 @@ async def test_three_tasks_rapid_succession(initialized_cm):
     1. User asks for weather
     2. User asks for contacts
     3. User asks for transcript search
-    4. All should trigger separate act calls
+    4. All should trigger separate actions
     """
     cm = initialized_cm
 
@@ -538,10 +546,10 @@ async def test_three_tasks_rapid_succession(initialized_cm):
         ),
     )
 
-    # Should have at least 3 act calls for 3 different tasks
+    # Should have at least 3 actions for 3 different tasks
     assert (
-        _count_act_calls(cm) >= 3
-    ), "Expected at least 3 act calls for 3 independent requests"
+        _count_action_calls(cm) >= 3
+    ), "Expected at least 3 actions for 3 independent requests"
 
     # Efficiency assertions at end
     assert_efficient(result1, 3, "Task 1: weather")
@@ -596,12 +604,12 @@ async def test_pause_first_start_second_resume_first(initialized_cm):
         ),
     )
 
-    # Should have pause, second act, and resume
+    # Should have pause, second action, and resume
     has_pause = has_steering_tool_call(cm, "pause_")
     has_resume = has_steering_tool_call(cm, "resume_")
-    act_count = _count_act_calls(cm)
+    act_count = _count_action_calls(cm)
 
-    assert act_count >= 2, "Expected at least 2 act calls"
+    assert act_count >= 2, "Expected at least 2 actions"
     assert (
         has_pause or has_resume
     ), "Expected pause and/or resume steering for the first task"

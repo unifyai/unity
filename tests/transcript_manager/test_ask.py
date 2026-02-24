@@ -502,3 +502,20 @@ async def test_ask_uses_reduce_for_numeric_aggregation(
         steps,
         "LLM should use reduce tool for numeric aggregation",
     )
+
+
+@pytest.mark.asyncio
+async def test_ask_email_cc_metadata(
+    tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
+) -> None:
+    """Verify TM.ask can surface CC recipients from email metadata."""
+    tm, _ID_BY_NAME = tm_manager_scenario
+
+    question = "Who was CC'd on the email about the product launch event?"
+    handle = await tm.ask(question, _return_reasoning_steps=True)
+    candidate, steps = await handle.result()
+
+    # Ground truth: Julia Nguyen and Anne Fischer were CC'd
+    expected = "Julia Nguyen and Anne Fischer (julia.nguyen@example.com, anne.fischer@example.com)"
+
+    _llm_assert_correct(question, expected, candidate, steps)

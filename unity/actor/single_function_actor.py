@@ -12,10 +12,10 @@ or action primitives (like ContactManager.ask, TaskScheduler.execute, etc.).
 
 Supports optional verification via LLM to check if the function achieved its goal.
 
-When no explicit ``call_kwargs`` are provided but a ``description`` is given,
+When no explicit ``call_kwargs`` are provided but a ``request`` is given,
 the actor uses a lightweight LLM step to inspect the matched function's
 signature and docstring and generate the appropriate keyword arguments from
-the natural-language description.
+the natural-language request.
 
 Execution results are packaged as ``ExecutionResult`` objects (the same structured
 format used by ``CodeActActor``), capturing stdout, stderr, the return value, and
@@ -42,7 +42,6 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.llm_client import new_llm_client
 from unity.function_manager.execution_env import create_execution_globals
-from unity.manager_registry import ManagerRegistry
 from unity.function_manager.primitives import get_primitive_callable
 
 from unity.function_manager.primitives import ComputerPrimitives
@@ -174,8 +173,18 @@ class SingleFunctionActorHandle(BaseActorHandle):
                 # completion and result() forwards to it.
                 return
 
-            # Non-steerable: run verification if enabled
-            if self._verify and self._actor is not None:
+            # Non-steerable: run verification if enabled.
+            # Skip verification when the function already raised an exception —
+            # the traceback is more useful than an LLM opinion about a None
+            # return value, and we must not overwrite it.
+            if execution_result.error:
+                logger.warning(
+                    "Function '%s' raised an exception, skipping verification. "
+                    "Error:\n%s",
+                    self._function_name,
+                    execution_result.error,
+                )
+            elif self._verify and self._actor is not None:
                 try:
                     verification = await self._actor._verify_execution(
                         function_name=self._function_name,
@@ -372,11 +381,11 @@ class SingleFunctionActor(BaseActor):
     - Executing action primitives (state manager methods) directly
 
     The actor finds and executes a single function or primitive, either by
-    explicit ID/name or by semantic search matching the description.
+    explicit ID/name or by semantic search matching the request.
 
     When no explicit ``call_kwargs`` are provided and the matched function
     has parameters, the actor uses a lightweight LLM step to inspect the
-    function's signature and docstring alongside the user's ``description``
+    function's signature and docstring alongside the user's ``request``
     and generates appropriate keyword arguments automatically.
     """
 
@@ -386,8 +395,11 @@ class SingleFunctionActor(BaseActor):
         function_manager: Optional["FunctionManager"] = None,
         headless: bool = True,
         computer_mode: str = "magnitude",
-        agent_mode: str = "web",
+        agent_mode: str = "web-vm",
         agent_server_url: str | None = None,
+        *,
+        environments: Optional[list] = None,
+        guidance_manager=None,
     ):
         """
         Initialize the SingleFunctionActor.
@@ -399,23 +411,31 @@ class SingleFunctionActor(BaseActor):
                             uses the singleton.
             headless: Whether to run in headless mode.
             computer_mode: Computer backend mode ("magnitude" or "mock").
-            agent_mode: Agent mode for ComputerPrimitives ("web" or "desktop").
-            agent_server_url: URL for the agent server. For desktop mode, pass the
-                external VM's URL.
+            agent_mode: Deprecated. All three modes (desktop, web-vm, web) are
+                now active simultaneously via sub-namespaces.
+            agent_server_url: URL for the container agent-service.
+            environments: Optional list of execution environments (accepted for
+                compatibility with CodeActActor / BaseActor but only used to
+                extract computer primitives if *computer_primitives* is None).
+            guidance_manager: Accepted for compatibility with BaseActor; unused.
         """
+        super().__init__(
+            environments=environments,
+            function_manager=function_manager,
+            guidance_manager=guidance_manager,
+        )
+
+        # If an explicit ComputerPrimitives was passed, prefer it over whatever
+        # BaseActor extracted from environments.
         if computer_primitives is not None:
             self._computer_primitives = computer_primitives
-        else:
+        elif self._computer_primitives is None:
             self._computer_primitives = ComputerPrimitives(
-                headless=headless,
                 computer_mode=computer_mode,
-                agent_mode=agent_mode,
                 agent_server_url=agent_server_url,
             )
 
-        self._function_manager = (
-            function_manager or ManagerRegistry.get_function_manager()
-        )
+        self._function_manager = self.function_manager
 
     def _get_function_by_id(
         self,
@@ -426,9 +446,9 @@ class SingleFunctionActor(BaseActor):
         result = self._function_manager.filter_functions(
             filter=f"function_id == {function_id}",
             include_implementations=True,
-            return_callable=True,
-            namespace=namespace,
-            also_return_metadata=True,
+            _return_callable=True,
+            _namespace=namespace,
+            _also_return_metadata=True,
         )
         metadata = result.get("metadata", [])
         if not metadata:
@@ -445,26 +465,28 @@ class SingleFunctionActor(BaseActor):
 
     def _search_function(
         self,
-        description: str,
+        query: str,
         namespace: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Search for the best matching function, injecting dependencies into namespace."""
         result = self._function_manager.search_functions(
-            query=description,
+            query=query,
             n=1,
-            return_callable=True,
-            namespace=namespace,
-            also_return_metadata=True,
+            _return_callable=True,
+            _namespace=namespace,
+            _also_return_metadata=True,
         )
         metadata = result.get("metadata", [])
         if not metadata:
-            raise ValueError(f"No function found matching description: {description}")
+            raise ValueError(f"No function found matching: {query}")
         return metadata[0]
 
     def _create_execution_globals(self) -> Dict[str, Any]:
         """Create the globals dict for function execution."""
+        from unity.function_manager.primitives import Primitives
+
         globals_dict = create_execution_globals()
-        globals_dict["computer_primitives"] = self._computer_primitives
+        globals_dict["primitives"] = Primitives()
         return globals_dict
 
     async def _execute_primitive(
@@ -475,7 +497,9 @@ class SingleFunctionActor(BaseActor):
         """Execute a primitive (state manager method) with stdout capture."""
         name = primitive_data.get("name")
 
-        fn = get_primitive_callable(primitive_data, self._computer_primitives)
+        from unity.function_manager.primitives import Primitives
+
+        fn = get_primitive_callable(primitive_data, primitives=Primitives())
         if fn is None:
             raise ValueError(f"Could not resolve primitive '{name}' to a callable")
 
@@ -643,12 +667,13 @@ class SingleFunctionActor(BaseActor):
         function_name: str,
         argspec: Optional[str],
         docstring: Optional[str],
-        description: str,
+        request: str,
         parent_chat_context: list[dict] | None = None,
+        guidelines: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Use an LLM to generate keyword arguments for a function call.
 
-        When the caller provides a natural-language ``description`` but no
+        When the caller provides a natural-language ``request`` but no
         explicit ``call_kwargs``, this method inspects the function's signature
         (``argspec``) and ``docstring`` and asks an LLM to produce the correct
         keyword arguments.
@@ -657,26 +682,30 @@ class SingleFunctionActor(BaseActor):
             function_name: Name of the matched function.
             argspec: The function's parameter signature string (e.g. ``(query: str, limit: int = 10)``).
             docstring: The function's docstring.
-            description: The user's natural-language description / query.
+            request: The user's natural-language request.
             parent_chat_context: Optional conversation history for additional context.
+            guidelines: Optional meta-guidance on how to approach argument generation.
 
         Returns:
             A dictionary of keyword arguments to pass to the function.
         """
         client = new_llm_client()
-        client.set_system_message(
+        system_msg = (
             "You are an argument-generation assistant. Given a function's signature, "
             "docstring, and the user's natural-language request, produce the keyword "
             "arguments that should be passed to the function.\n\n"
             "Rules:\n"
             "- Only include parameters that are present in the function's signature.\n"
             "- Omit parameters that have suitable defaults and don't need overriding.\n"
-            "- Use the user's description as the primary source for argument values.\n"
+            "- Use the user's request as the primary source for argument values.\n"
             "- If the function takes a single string parameter (e.g. `query`, `goal`, "
             "`description`, `message`, `prompt`, `question`, `text`, `input`), "
-            "pass the user's full description as that parameter.\n"
-            "- Return an empty dict {} if the function takes no arguments.",
+            "pass the user's full request as that parameter.\n"
+            "- Return an empty dict {} if the function takes no arguments."
         )
+        if guidelines:
+            system_msg += f"\n\nAdditional guidelines to follow:\n{guidelines}"
+        client.set_system_message(system_msg)
 
         prompt_parts = [f"## Function: `{function_name}`"]
 
@@ -686,7 +715,7 @@ class SingleFunctionActor(BaseActor):
         if docstring:
             prompt_parts.append(f"\n## Docstring\n{docstring}")
 
-        prompt_parts.append(f"\n## User Request\n{description}")
+        prompt_parts.append(f"\n## User Request\n{request}")
 
         if parent_chat_context:
             # Include a brief summary of recent conversation for context
@@ -738,8 +767,9 @@ class SingleFunctionActor(BaseActor):
 
     async def act(
         self,
-        description: Optional[str] = None,
+        request: Optional[str] = None,
         *,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         function_id: Optional[int] = None,
@@ -755,18 +785,21 @@ class SingleFunctionActor(BaseActor):
         Execute a single function or primitive.
 
         Args:
-            description: Natural language description of what to do.
+            request: Natural language request specifying what to do.
                         Used for semantic search if function_id/primitive_name not provided.
                         Also used for LLM-based argument generation when ``call_kwargs``
                         is not explicitly provided.
                         Required when neither function_id nor primitive_name is specified.
+            guidelines: Optional meta-guidance on *how* to approach the task, as
+                opposed to *what* to do. When provided, these are included in the
+                LLM context for argument generation and verification steps.
             function_id: Optional explicit function ID to execute.
                         If provided, skips the search step.
             primitive_name: Optional explicit primitive name (e.g., 'ContactManager.ask').
                            If provided, skips the search step.
             call_kwargs: Optional keyword arguments to pass to the function/primitive.
                         If not provided and the matched function has parameters, an LLM
-                        step generates appropriate arguments from ``description``.
+                        step generates appropriate arguments from ``request``.
             verify: Optional verification flag. If None, uses the function's own verify flag.
                    If True, forces verification. If False, skips verification.
             _parent_chat_context: Optional conversation context from the caller (e.g.
@@ -788,15 +821,15 @@ class SingleFunctionActor(BaseActor):
 
         Raises:
             ValueError: If no matching function or primitive is found, or if no
-                       selection method (description, function_id, primitive_name) is provided.
+                       selection method (request, function_id, primitive_name) is provided.
         """
         # Determine whether the caller explicitly provided call_kwargs.
         caller_provided_kwargs = call_kwargs is not None
         call_kwargs = call_kwargs or {}
 
-        if function_id is None and primitive_name is None and description is None:
+        if function_id is None and primitive_name is None and request is None:
             raise ValueError(
-                "Must provide at least one of: description, function_id, or primitive_name",
+                "Must provide at least one of: request, function_id, or primitive_name",
             )
 
         globals_dict = self._create_execution_globals()
@@ -838,12 +871,12 @@ class SingleFunctionActor(BaseActor):
             )
         else:
             function_data = self._search_function(
-                description,
+                request,
                 namespace=globals_dict,
             )
             logger.info(
                 f"SingleFunctionActor: Found '{function_data.get('name')}' "
-                f"for description: '{description}'",
+                f"for request: '{request}'",
             )
 
         function_name = function_data.get("name", "unknown")
@@ -864,14 +897,14 @@ class SingleFunctionActor(BaseActor):
 
         # ── LLM-based argument generation ──────────────────────────────────
         # When the caller did not provide explicit call_kwargs and we have a
-        # description, use an LLM to map the description to the function's
+        # request, use an LLM to map the request to the function's
         # parameters.  Skip when:
         #  - call_kwargs were explicitly provided (even if empty)
-        #  - description is None (direct ID/name execution with no description)
+        #  - request is None (direct ID/name execution with no request)
         #  - the function takes no parameters (argspec is "()" or empty)
         needs_arg_generation = (
             not caller_provided_kwargs
-            and description is not None
+            and request is not None
             and argspec is not None
             and argspec.strip() not in ("()", "")
         )
@@ -879,14 +912,15 @@ class SingleFunctionActor(BaseActor):
         if needs_arg_generation:
             logger.info(
                 f"SingleFunctionActor: Generating call_kwargs for '{function_name}' "
-                f"from description via LLM",
+                f"from request via LLM",
             )
             call_kwargs = await self._generate_call_kwargs(
                 function_name=function_name,
                 argspec=argspec,
                 docstring=docstring,
-                description=description,
+                request=request,
                 parent_chat_context=_parent_chat_context,
+                guidelines=guidelines,
             )
             logger.info(
                 f"SingleFunctionActor: Generated call_kwargs for '{function_name}': "
@@ -909,7 +943,7 @@ class SingleFunctionActor(BaseActor):
             execution_task=execution_task,
             is_primitive=is_primitive,
             verify=should_verify,
-            goal=description,
+            goal=request,
             docstring=docstring,
             actor=self,
             _clarification_up_q=clar_up,

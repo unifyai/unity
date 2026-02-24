@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import functools
 from typing import Optional, Callable, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass
 
 
-from ..session_details import SESSION_DETAILS
 from ..common.llm_client import new_llm_client
 from ..manager_registry import ManagerRegistry
 from ..common.llm_helpers import methods_to_tool_dict
@@ -16,6 +14,7 @@ from ..common.async_tool_loop import start_async_tool_loop
 from . import prompt_builders as pb
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
+from ..events.manager_event_logging import log_manager_result
 
 if TYPE_CHECKING:
     from ..contact_manager.base import BaseContactManager
@@ -29,8 +28,6 @@ class MemoryManager(BaseMemoryManager):
     Offline helper that processes transcripts in chunks (~50 messages by default).
     """
 
-    # Rolling activity logic removed
-
     # ------------------------------------------------------------------ #
     #  Shared helper: convert Message / event dicts to plain-text transcript
     # ------------------------------------------------------------------ #
@@ -42,8 +39,8 @@ class MemoryManager(BaseMemoryManager):
     ) -> str:
         """Return *plain-text* view of the message/event list.
 
-        • Chat messages are rendered exactly like `TranscriptManager.build_plain_transcript`.
-        • *ManagerMethod* events (kind == "manager_method") are preserved as **raw JSON** so
+        \u2022 Chat messages are rendered exactly like `TranscriptManager.build_plain_transcript`.
+        \u2022 *ManagerMethod* events (kind == "manager_method") are preserved as **raw JSON** so
           downstream helpers/tests can still inspect all attributes (the tests assert the
           literal substring `"kind": "manager_method"` is present).
         """
@@ -66,8 +63,6 @@ class MemoryManager(BaseMemoryManager):
                     import json  # local import to avoid polluting module namespace
 
                     dat = itm.get("data", {})
-                    # Omit only EventBus metadata keys; include everything else so
-                    # summaries retain meaningful content (question/request/answer/etc.).
                     keys_to_omit = {
                         "row_id",
                         "event_id",
@@ -83,7 +78,6 @@ class MemoryManager(BaseMemoryManager):
                     }
                     extra_lines.append(json.dumps(concise))
                 except Exception:
-                    # Fallback – best-effort string conversion
                     extra_lines.append(str(itm))
 
         if extra_lines:
@@ -101,9 +95,19 @@ class MemoryManager(BaseMemoryManager):
         enable_callbacks: When True, register EventBus callbacks for message
             ingestion and manager-method tracking. When False, skip callback
             registration.
+
+        Per-capability flags gate which tools and prompt sections are included
+        in the unified chunk-processing loop.
         """
 
         enable_callbacks: bool = True
+
+        contacts: bool = True
+        bios: bool = True
+        rolling_summaries: bool = True
+        response_policies: bool = True
+        knowledge: bool = True
+        tasks: bool = True
 
     def __init__(
         self,
@@ -115,7 +119,6 @@ class MemoryManager(BaseMemoryManager):
         config: Optional["MemoryManager.MemoryConfig"] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
-        # Use ManagerRegistry to get the correct implementation based on settings
         self._contact_manager = (
             contact_manager
             if contact_manager is not None
@@ -139,12 +142,12 @@ class MemoryManager(BaseMemoryManager):
             else ManagerRegistry.get_task_scheduler()
         )
 
-        # ── Config-controlled callback registration ----------------
+        # \u2500\u2500 Config-controlled callback registration ----------------
         self._cfg: MemoryManager.MemoryConfig = (
             config if config is not None else MemoryManager.MemoryConfig()
         )
         self._register_update_callbacks: bool = self._cfg.enable_callbacks
-        # ── real-time 50-message trigger (update callbacks) --------------------
+        # \u2500\u2500 real-time 50-message trigger (update callbacks) --------------------
         self._CHUNK_SIZE: int = 50
         self._recent_messages: list[dict] = []
         self._messages_since_update: int = 0
@@ -152,9 +155,6 @@ class MemoryManager(BaseMemoryManager):
         self._chunk_lock = asyncio.Lock()
 
         if self._register_update_callbacks:
-            # Fire-and-forget setup of message counter and explicit-call callbacks
-            # If loop is provided (called from a thread), schedule on main loop
-            # Otherwise use regular create_task (called from async context)
             if loop is not None:
                 loop.call_soon_threadsafe(
                     loop.create_task,
@@ -163,9 +163,6 @@ class MemoryManager(BaseMemoryManager):
             else:
                 asyncio.create_task(self._setup_message_callbacks())
 
-            # 1.  Automatically pin the *calling_id* for the lifetime of any explicit
-            #     tool invocation coming from ConversationManager so the related
-            #     ManagerMethod events are never trimmed before completion.
             EVENT_BUS.register_auto_pin(
                 event_type="ManagerMethod",
                 open_predicate=lambda e: (
@@ -179,8 +176,6 @@ class MemoryManager(BaseMemoryManager):
                 key_fn=lambda e: e.calling_id,
             )
 
-            # 2.  Listen to explicit ManagerMethod events so they can be included
-            #     in the transcript chunk payloads passed to the LLM.
             if loop is not None:
                 loop.call_soon_threadsafe(
                     loop.create_task,
@@ -189,175 +184,87 @@ class MemoryManager(BaseMemoryManager):
             else:
                 asyncio.create_task(self._setup_explicit_call_callbacks())
 
-        # If update callbacks are disabled  no-op for message processing
-
     # ------------------------------------------------------------------ #
-    # 1  update_contacts                                                 #
+    #  Contact tool helpers (shared by update_contacts and process_chunk) #
     # ------------------------------------------------------------------ #
-    async def update_contacts(
-        self,
-        transcript: str,
-        guidance: Optional[str] = None,
-        *,
-        update_bios: bool = True,
-        update_rolling_summaries: bool = True,
-        update_response_policies: bool = True,
-    ) -> str:
-        """
-        Scan the transcript, identify *new* contacts or modified details,
-        and persist them.  Returns a short description of what changed.
-        """
 
-        # ─ 1.  Build **restricted** live tool-set  ──────────────────────────
-        # Guardrails:
-        #   • Disallow creation of *new* columns via custom_fields
-        #   • Disallow any modification of the `bio` or `rolling_summary` fields
-        #
-        # We therefore expose *thin* wrappers around the low-level synchronous
-        # helpers (`_create_contact` / `update_contact`) that validate the
-        # supplied keyword arguments **before** delegating to the real
-        # implementation in a background thread.  The *ask* helpers are still
-        # exposed unmodified so the LLM can read the current state.
-
-        # Track ids of contacts that are *newly* created during this tool loop so
-        # we can optionally follow up with bio / rolling-summary updates.
-        new_contact_ids: list[int] = []
+    def _build_contact_tools(self) -> Dict[str, Callable[..., Any]]:
+        """Build the contact CRUD tool set with async wrappers."""
 
         @functools.wraps(self._contact_manager._create_contact, updated=())
-        async def _safe_create_contact(**kwargs):
-            # Reject attempts to touch forbidden fields
-            for forbidden in ("bio", "rolling_summary"):
-                if kwargs.get(forbidden) is not None:
-                    raise ValueError(
-                        "MemoryManager.update_contacts – creation of contacts must not set 'bio' or 'rolling_summary'.",
-                    )
-            # Reject custom_fields entirely to avoid implicit column creation
+        async def _create_contact(**kwargs):
             if kwargs.get("custom_fields"):
                 raise ValueError(
-                    "MemoryManager.update_contacts – creation of custom columns is not allowed.",
+                    "Creation of custom columns is not allowed.",
                 )
-
-            # Strictly filter to parameters accepted by the underlying
-            # _create_contact implementation to drop any tool-loop control
-            # kwargs (e.g. pause_event, interject_queue, ...).
-            import inspect  # local import
+            import inspect
 
             allowed = set(
                 inspect.signature(self._contact_manager._create_contact).parameters,
             )
             cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
-
-            outcome = await asyncio.to_thread(
+            return await asyncio.to_thread(
                 self._contact_manager._create_contact,
                 **cleaned_kwargs,
             )
 
-            # -------------------  capture newly assigned id -------------------
-            try:
-                contact_id = (
-                    outcome.get("details", {}).get("contact_id")  # type: ignore[assignment]
-                    if isinstance(outcome, dict)
-                    else None
-                )
-                if isinstance(contact_id, int):
-                    new_contact_ids.append(contact_id)
-            except Exception:
-                # Defensive – never let a parsing error break the caller.
-                pass
-
-            return outcome
-
         @functools.wraps(self._contact_manager.update_contact, updated=())
-        async def _safeupdate_contact(**kwargs):
-            # Reject forbidden field modifications
-            for forbidden in ("bio", "rolling_summary"):
-                if kwargs.get(forbidden) is not None:
-                    raise ValueError(
-                        "MemoryManager.update_contacts – modification of 'bio' or 'rolling_summary' is not allowed.",
-                    )
-            # Reject custom_fields to prevent new columns
+        async def _update_contact(**kwargs):
             if kwargs.get("custom_fields"):
                 raise ValueError(
-                    "MemoryManager.update_contacts – modification involving custom columns is not allowed.",
+                    "Modification involving custom columns is not allowed.",
                 )
-
-            # Same hidden-arg stripping logic as for _safe_create_contact
-            import inspect  # local import
+            import inspect
 
             allowed = set(
                 inspect.signature(self._contact_manager.update_contact).parameters,
             )
             cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
-
             return await asyncio.to_thread(
                 self._contact_manager.update_contact,
                 **cleaned_kwargs,
             )
 
-        #  merge_contacts – expose full-contact merge to the LLM
-        #
-        #  Unlike the create/update wrappers above, *all* columns are allowed
-        #  during a merge, therefore we only strip internal helper parameters
-        #  (e.g. parent_chat_context) that the underlying implementation does
-        #  not understand – no additional field restrictions are applied.
         @functools.wraps(self._contact_manager._merge_contacts, updated=())
-        async def _safe_merge_contacts(**kwargs):
-            # Remove any kwargs that _merge_contacts is not expecting (helps
-            # avoid accidental leaks of hidden parameters coming from the
-            # tool-use loop itself).
-            import inspect  # local import to avoid polluting module namespace
+        async def _merge_contacts(**kwargs):
+            import inspect
 
             allowed = set(
                 inspect.signature(self._contact_manager._merge_contacts).parameters,
             )
             cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
-
             return await asyncio.to_thread(
                 self._contact_manager._merge_contacts,
                 **cleaned_kwargs,
             )
 
-        # ────────────────────────────────────────────────────────────────
-        #   Patch wrapper *signatures* & *docstrings* so the LLM sees a
-        #   cleaned-up schema that hides now-forbidden parameters.
-        # ----------------------------------------------------------------
-        from inspect import Signature, Parameter, signature as _sig  # type: ignore
-        from unity.common.llm_helpers import _strip_hidden_params_from_doc
-
-        _FORBIDDEN = {"bio", "rolling_summary", "custom_fields"}
-
-        def _prune_wrapper(_wrapper, _original):
-            """Reuse *original* metadata but remove forbidden params."""
-            orig_sig = _sig(_original)
-            # Keep parameter **order** but drop any forbidden names
-            new_params = [
-                p.replace()  # shallow copy
-                for p in orig_sig.parameters.values()
-                if p.name not in _FORBIDDEN
-            ]
-            _wrapper.__signature__ = Signature(parameters=new_params)
-
-            orig_doc = _original.__doc__ or ""
-            _wrapper.__doc__ = (
-                _strip_hidden_params_from_doc(orig_doc, _FORBIDDEN)
-                + "\n\nNOTE: Disregard any mention of the 'bio', "
-                "'rolling_summary', or 'custom_fields' arguments, which have all been removed."
-            )
-
-        _prune_wrapper(_safe_create_contact, self._contact_manager._create_contact)
-        _prune_wrapper(_safeupdate_contact, self._contact_manager.update_contact)
-
-        # Base helpers -----------------------------------------------------------
-        # Always expose the same tools across real and simulated environments.
-        tools: Dict[str, Callable[..., Any]] = {
+        return {
             "contact_ask": self._contact_manager.ask,
-            "create_contact": _safe_create_contact,
-            "update_contact": _safeupdate_contact,
-            # Full-contact merge helper (no field restrictions)
-            "merge_contacts": _safe_merge_contacts,
+            "create_contact": _create_contact,
+            "update_contact": _update_contact,
+            "merge_contacts": _merge_contacts,
         }
 
-        # ─ 2.  LLM client
+    # ------------------------------------------------------------------ #
+    # 1  update_contacts                                                 #
+    # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "update_contacts",
+        payload_key="transcript",
+        display_label="Updating Contacts",
+    )
+    async def update_contacts(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
+        """
+        Scan the transcript, identify *new* contacts or modified details,
+        and persist them.  Returns a short description of what changed.
+        """
+        tools = self._build_contact_tools()
+
         llm = new_llm_client()
         llm.set_system_message(
             pb.build_contact_update_prompt(
@@ -366,7 +273,6 @@ class MemoryManager(BaseMemoryManager):
             ),
         )
 
-        # ─ 3.  Kick off *single* tool-use loop
         handle = start_async_tool_loop(
             llm,
             transcript,
@@ -374,351 +280,17 @@ class MemoryManager(BaseMemoryManager):
             loop_id="MemoryManager.update_contacts",
         )
 
-        result_str = await handle.result()  # plain str returned by LLM
-
-        # ------------------------------------------------------------------
-        # Follow-up: for every *new* contact created during this call, refresh
-        # their bio and/or rolling summary using the same transcript chunk.
-        # ------------------------------------------------------------------
-        if new_contact_ids and (update_bios or update_rolling_summaries):
-            follow_up_tasks: list[asyncio.Task] = []
-            for _cid in new_contact_ids:
-                if update_bios:
-                    follow_up_tasks.append(
-                        asyncio.create_task(
-                            self.update_contact_bio(
-                                transcript,
-                                contact_id=_cid,
-                            ),
-                        ),
-                    )
-                if update_rolling_summaries:
-                    follow_up_tasks.append(
-                        asyncio.create_task(
-                            self.update_contact_rolling_summary(
-                                transcript,
-                                contact_id=_cid,
-                            ),
-                        ),
-                    )
-                if update_response_policies:
-                    follow_up_tasks.append(
-                        asyncio.create_task(
-                            self.update_contact_response_policy(
-                                transcript,
-                                contact_id=_cid,
-                            ),
-                        ),
-                    )
-
-            if follow_up_tasks:
-                # Run concurrently – ignore individual failures so one contact
-                # does not block others or propagate errors back to callers.
-                await asyncio.gather(*follow_up_tasks, return_exceptions=True)
-
-        return result_str
-
-    # ------------------------------------------------------------------ #
-    # 2  update_contact_bio                                              #
-    # ------------------------------------------------------------------ #
-    async def update_contact_bio(
-        self,
-        transcript: str,
-        *,
-        contact_id: int,
-        guidance: Optional[str] = None,
-    ) -> str:
-        """Refresh the *bio* column for the given contact."""
-        # Ensure the assistant writes about itself in **second person**.
-        assistant_extra = (
-            "IMPORTANT: This bio belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer to the assistant in the third person."  # noqa: E501
-            if contact_id == 0
-            else None
-        )
-
-        # Merge any caller-supplied guidance with our assistant-specific rule.
-        combined_guidance: Optional[str] = (
-            "\n".join(g for g in (guidance, assistant_extra) if g) or None
-        )
-        target_id = contact_id  # capture for closure
-
-        async def set_bio(bio: str) -> str:
-            """Update only the bio column for the target contact id captured in the closure."""
-            final_id = target_id
-            if final_id is None:
-                raise ValueError(
-                    "contact_id is required but was not provided by the caller.",
-                )
-            await asyncio.to_thread(
-                self._contact_manager.update_contact,
-                contact_id=final_id,
-                bio=bio,
-            )
-            return f"Bio for contact with id {final_id} successfully updated"
-
-        tools: Dict[str, Callable[..., Any]] = {
-            "set_bio": set_bio,
-        }
-
-        llm = new_llm_client()
-        contacts = await asyncio.to_thread(
-            self._contact_manager.filter_contacts,
-            filter=f"contact_id == {contact_id}",
-            limit=1,
-        )
-        c0 = contacts[0]
-        latest_bio_val = c0.bio
-        contact_name_val = (
-            " ".join(p for p in [c0.first_name, c0.surname] if p).strip() or None
-        )
-        llm.set_system_message(
-            pb.build_bio_prompt(
-                f"{contact_name_val} (id {contact_id})",
-                tools,
-                guidance=combined_guidance,
-            ),
-        )
-
-        # ------------------------------------------------------------------
-        # Retrieve the *current* bio from the backend so the LLM always sees
-        # the latest state without relying on the caller to supply it.
-        # We perform the lookup in a background thread because the underlying
-        # implementation is synchronous and may hit the network.
-        try:
-            contacts = await asyncio.to_thread(
-                self._contact_manager.filter_contacts,
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-            )
-            latest_bio_val = contacts[0].bio if contacts else None
-        except Exception:
-            latest_bio_val = None  # best-effort fallback
-
-        user_payload = {
-            "contact_id": contact_id,
-            "latest_bio (to maybe update)": latest_bio_val,
-            "transcript": transcript,
-        }
-        if contact_name_val is not None:
-            user_payload["contact_name"] = contact_name_val
-
-        user_blob = json.dumps(user_payload, indent=2)
-
-        handle = start_async_tool_loop(
-            llm,
-            user_blob,
-            tools,
-            loop_id="MemoryManager.update_contact_bio",
-        )
-
         return await handle.result()
 
     # ------------------------------------------------------------------ #
-    # 3  update_contact_rolling_summary                                  #
+    # 2  update_knowledge                                                #
     # ------------------------------------------------------------------ #
-    async def update_contact_rolling_summary(
-        self,
-        transcript: str,
-        *,
-        contact_id: int,
-        guidance: Optional[str] = None,
-    ) -> str:
-        """Refresh the *rolling_summary* column for the given contact."""
-
-        # Ensure the assistant's rolling summary uses **second person**.
-        assistant_extra = (
-            "IMPORTANT: This rolling summary belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer to the assistant in the third person."  # noqa: E501
-            if contact_id == 0
-            else None
-        )
-
-        combined_guidance: Optional[str] = (
-            "\n".join(g for g in (guidance, assistant_extra) if g) or None
-        )
-        target_id = contact_id  # capture for closure
-
-        async def set_rolling_summary(rolling_summary: str) -> str:
-            final_id = target_id
-            if final_id is None:
-                raise ValueError(
-                    "contact_id is required but was not provided by the caller.",
-                )
-            await asyncio.to_thread(
-                self._contact_manager.update_contact,
-                contact_id=final_id,
-                rolling_summary=rolling_summary,
-            )
-            return (
-                f"Rolling summary for contact with id {final_id} successfully updated"
-            )
-
-        tools: Dict[str, Callable[..., Any]] = {
-            "set_rolling_summary": set_rolling_summary,
-        }
-
-        # ────────────────────────────────────────────────────────────────
-        #   Retrieve contact details once (name + current rolling summary)
-        #   so we can build the prompt and seed the user payload without
-        #   duplicating backend look-ups later on.
-        # ----------------------------------------------------------------
-        try:
-            result = await asyncio.to_thread(
-                self._contact_manager.filter_contacts,
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-            )
-            contacts = result.get("contacts", [])
-            c0 = contacts[0] if contacts else None
-            contact_name_val = (
-                " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
-                if c0
-                else None
-            )
-            latest_summary_val = c0.rolling_summary if c0 else None
-        except Exception:
-            contact_name_val = None
-            latest_summary_val = None  # best-effort fallback
-
-        # ------------------------------------------------------------------
-        llm = new_llm_client()
-        contact_label = (
-            f"{contact_name_val} (id {contact_id})"
-            if contact_name_val
-            else f"id {contact_id}"
-        )
-        llm.set_system_message(
-            pb.build_rolling_prompt(
-                contact_label,
-                tools,
-                guidance=combined_guidance,
-            ),
-        )
-
-        # ------------------------------------------------------------------
-        # Build the LLM *user* payload using the already-retrieved summary.
-        # ------------------------------------------------------------------
-        user_blob = json.dumps(
-            {
-                "contact_id": contact_id,
-                "latest_rolling_summary (to maybe update)": latest_summary_val,
-                "transcript": transcript,
-            },
-            indent=2,
-        )
-
-        handle = start_async_tool_loop(
-            llm,
-            user_blob,
-            tools,
-            loop_id="MemoryManager.update_contact_rolling_summary",
-        )
-
-        return await handle.result()
-
-    # ------------------------------------------------------------------ #
-    # 4  update_contact_response_policy                                  #
-    # ------------------------------------------------------------------ #
-    async def update_contact_response_policy(
-        self,
-        transcript: str,
-        *,
-        contact_id: int,
-        guidance: Optional[str] = None,
-    ) -> str:
-        """Refresh the *response_policy* column for the given contact."""
-
-        # Ensure the assistant's response policy uses **second person**.
-        assistant_extra = (
-            "IMPORTANT: This response policy belongs to the assistant itself (contact_id 0). Always use **second-person** pronouns ('you') when describing the assistant. Never refer to the assistant in the third person."  # noqa: E501
-            if contact_id == 0
-            else None
-        )
-
-        combined_guidance: Optional[str] = (
-            "\n".join(g for g in (guidance, assistant_extra) if g) or None
-        )
-        target_id = contact_id  # capture for closure
-
-        async def set_response_policy(response_policy: str) -> str:
-            final_id = target_id
-            if final_id is None:
-                raise ValueError(
-                    "contact_id is required but was not provided by the caller.",
-                )
-            await asyncio.to_thread(
-                self._contact_manager.update_contact,
-                contact_id=final_id,
-                response_policy=response_policy,
-            )
-            return (
-                f"Response policy for contact with id {final_id} successfully updated"
-            )
-
-        tools: Dict[str, Callable[..., Any]] = {
-            "set_response_policy": set_response_policy,
-        }
-
-        # ────────────────────────────────────────────────────────────────
-        #   Retrieve contact details once (name + current response policy)
-        #   so we can build the prompt and seed the user payload without
-        #   duplicating backend look-ups later on.
-        # ----------------------------------------------------------------
-        try:
-            contacts = await asyncio.to_thread(
-                self._contact_manager.filter_contacts,
-                filter=f"contact_id == {contact_id}",
-                limit=1,
-            )
-            c0 = contacts[0] if contacts else None
-            contact_name_val = (
-                " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
-                if c0
-                else None
-            )
-            latest_policy_val = c0.response_policy if c0 else None
-        except Exception:
-            contact_name_val = None
-            latest_policy_val = None  # best-effort fallback
-
-        # ------------------------------------------------------------------
-        llm = new_llm_client()
-        contact_label = (
-            f"{contact_name_val} (id {contact_id})"
-            if contact_name_val
-            else f"id {contact_id}"
-        )
-        llm.set_system_message(
-            pb.build_response_policy_prompt(
-                contact_label,
-                tools,
-                guidance=combined_guidance,
-            ),
-        )
-
-        # ------------------------------------------------------------------
-        # Build the LLM *user* payload using the already-retrieved policy.
-        # ------------------------------------------------------------------
-        user_blob = json.dumps(
-            {
-                "contact_id": contact_id,
-                "latest_response_policy (to maybe update)": latest_policy_val,
-                "transcript": transcript,
-            },
-            indent=2,
-        )
-
-        handle = start_async_tool_loop(
-            llm,
-            user_blob,
-            tools,
-            loop_id="MemoryManager.update_contact_response_policy",
-        )
-
-        return await handle.result()
-
-    # ------------------------------------------------------------------ #
-    # 4  update_knowledge                                                #
-    # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "update_knowledge",
+        payload_key="transcript",
+        display_label="Updating Knowledge",
+    )
     async def update_knowledge(
         self,
         transcript: str,
@@ -727,8 +299,6 @@ class MemoryManager(BaseMemoryManager):
         """
         Mine reusable information and persist to the long-term knowledge base.
         """
-
-        # Use the instance-provided KnowledgeManager (real or simulated)
         _km = self._knowledge_manager
 
         tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
@@ -757,8 +327,14 @@ class MemoryManager(BaseMemoryManager):
         return await handle.result()
 
     # ------------------------------------------------------------------ #
-    # 5  update_tasks                                                    #
+    # 3  update_tasks                                                    #
     # ------------------------------------------------------------------ #
+    @log_manager_result(
+        "MemoryManager",
+        "update_tasks",
+        payload_key="transcript",
+        display_label="Updating Tasks",
+    )
     async def update_tasks(
         self,
         transcript: str,
@@ -770,7 +346,6 @@ class MemoryManager(BaseMemoryManager):
         description of what was changed or 'no-op' when no updates were
         necessary.
         """
-
         tools: Dict[str, Callable[..., Any]] = methods_to_tool_dict(
             self._task_scheduler.ask,
             self._task_scheduler.update,
@@ -778,7 +353,6 @@ class MemoryManager(BaseMemoryManager):
         )
 
         llm = new_llm_client()
-
         llm.set_system_message(
             pb.build_task_prompt(
                 tools,
@@ -796,11 +370,88 @@ class MemoryManager(BaseMemoryManager):
         return await handle.result()
 
     # ------------------------------------------------------------------ #
-    # 5  reset – simplified helper                                       #
+    # 4  process_chunk  (unified single-loop for passive chunk trigger)  #
     # ------------------------------------------------------------------ #
-    async def reset(self) -> None:  # noqa: D401 – imperative name
-        """Reset the event bus and re-register message-related callbacks."""
+    @log_manager_result(
+        "MemoryManager",
+        "process_chunk",
+        payload_key="transcript",
+        display_label="Processing Memory Chunk",
+    )
+    async def process_chunk(
+        self,
+        transcript: str,
+        guidance: Optional[str] = None,
+    ) -> str:
+        """Run a single LLM tool loop that handles all enabled memory
+        maintenance tasks (contacts, bios, rolling summaries, response
+        policies, knowledge, tasks) in one pass.
 
+        The ``self._cfg`` flags determine which tools and prompt sections
+        are included.
+        """
+        tools: Dict[str, Callable[..., Any]] = {}
+
+        # Contact tools (gated by contacts flag)
+        if self._cfg.contacts:
+            tools.update(self._build_contact_tools())
+
+        # Knowledge tools
+        if self._cfg.knowledge:
+            _km = self._knowledge_manager
+            tools.update(
+                methods_to_tool_dict(
+                    _km.ask,
+                    _km.refactor,
+                    _km.update,
+                    include_class_name=True,
+                ),
+            )
+            # Also expose contact_ask for knowledge context lookups
+            if "contact_ask" not in tools:
+                tools["contact_ask"] = self._contact_manager.ask
+
+        # Task tools
+        if self._cfg.tasks:
+            tools.update(
+                methods_to_tool_dict(
+                    self._task_scheduler.ask,
+                    self._task_scheduler.update,
+                    include_class_name=True,
+                ),
+            )
+
+        if not tools:
+            return "no-op (all memory capabilities disabled)"
+
+        llm = new_llm_client()
+        llm.set_system_message(
+            pb.build_unified_prompt(
+                tools,
+                contacts=self._cfg.contacts,
+                bios=self._cfg.bios,
+                rolling_summaries=self._cfg.rolling_summaries,
+                response_policies=self._cfg.response_policies,
+                knowledge=self._cfg.knowledge,
+                tasks=self._cfg.tasks,
+                guidance=guidance,
+            ),
+        )
+
+        handle = start_async_tool_loop(
+            llm,
+            transcript,
+            tools,
+            loop_id="MemoryManager.process_chunk",
+        )
+
+        return await handle.result()
+
+    # ------------------------------------------------------------------ #
+    # 5  reset                                                           #
+    # ------------------------------------------------------------------ #
+    async def reset(self) -> None:  # noqa: D401 \u2013 imperative name
+        """Reset the event bus and re-register message-related callbacks."""
         EVENT_BUS.clear()
 
         if self._register_update_callbacks:
@@ -809,61 +460,42 @@ class MemoryManager(BaseMemoryManager):
                 self._setup_explicit_call_callbacks(),
             )
 
-    # ───────────────────────────  MESSAGE-BASED CALLBACKS  ───────────────────────────
+    # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  MESSAGE-BASED CALLBACKS  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     async def _setup_message_callbacks(self) -> None:
-        """Register a callback that fires *every* incoming `message` event.
+        """Register a callback that fires *every* incoming `message` event."""
 
-        The helper relies on the EventBus singleton being fully initialised – we therefore
-        make sure to await `_ensure_ready` via `register_callback` internally.
-        """
-
-        async def _cb(events):  # noqa: ANN001 – signature imposed by EventBus
+        async def _cb(events):  # noqa: ANN001
             await self._on_new_message(events[0])
 
         try:
             await EVENT_BUS.register_callback(
                 event_type="Message",
                 callback=_cb,
-                every_n=1,  # every single message
+                every_n=1,
             )
-        except Exception:  # pragma: no cover – defensive
-            # We do *not* propagate registration failures – the MemoryManager still
-            # works via manual scheduling even when the callback cannot be installed.
+        except Exception:  # pragma: no cover
             pass
-
-    # ------------------------------------------------------------------
-    #       Capture *explicit* ManagerMethod invocations coming from the
-    #       ConversationManager so the passive 30-message chunk has full
-    #       context.
-    # ------------------------------------------------------------------
 
     async def _setup_explicit_call_callbacks(self) -> None:
         """Register a callback for ManagerMethod events tagged with
         `source == "ConversationManager"` (incoming & outgoing)."""
 
-        async def _cb(events):  # noqa: ANN001 – imposed by EventBus
+        async def _cb(events):  # noqa: ANN001
             await self._on_new_explicit_call(events[0])
 
         try:
             await EVENT_BUS.register_callback(
                 event_type="ManagerMethod",
                 callback=_cb,
-                filter='evt.payload.get("source") == "ConversationManager"',
+                filter='evt.payload.get("source") == "ConversationManager" and evt.payload.get("manager") != "MemoryManager"',
                 every_n=1,
             )
-        except Exception:  # pragma: no cover – defensive
+        except Exception:  # pragma: no cover
             pass
 
-    # ------------------------------------------------------------------
     async def _on_new_explicit_call(self, evt: Event) -> None:
-        """Append explicit ManagerMethod events to the current buffer.
-
-        Note: These events do NOT advance the 50-message counter; only
-        actual chat `Message` events count towards flushing the chunk.
-        """
-
-        # Keep the data lightweight & JSON-serialisable
+        """Append explicit ManagerMethod events to the current buffer."""
         self._recent_messages.append(
             {
                 "kind": "manager_method",
@@ -879,50 +511,51 @@ class MemoryManager(BaseMemoryManager):
             },
         )
 
-        # Advance the counter for manager-method events as well so that
-        # passive chunks include explicit tool invocations without waiting
-        # for additional chat messages.
         self._messages_since_update += 1
 
         if self._messages_since_update >= self._CHUNK_SIZE:
             await self._flush_recent_items()
 
-    # ------------------------------------------------------------------
     async def _flush_recent_items(self) -> None:
         """Helper that triggers chunk processing & resets local counters."""
-
         self._messages_since_update = 0
         items = self._recent_messages.copy()
         self._recent_messages.clear()
-
         await self._process_message_chunk(items)
-
-    # ------------------------------------------------------------------
-    # Override the original message-handler so it stores the unified format
-    # ------------------------------------------------------------------
 
     async def _on_new_message(self, evt: Event) -> None:
         """Collect messages and trigger memory updates every *CHUNK_SIZE* messages."""
+        payload = evt.payload
 
-        # Payload is guaranteed to be a `Message` instance thanks to the
-        # instrumentation in TranscriptManager.log_message.
-        from unity.transcript_manager.types.message import Message  # local import
-
-        if not isinstance(evt.payload, Message):  # ignore unexpected payloads
+        # Payloads are standardised as dicts by the EventBus, but may still
+        # arrive as Pydantic model instances from live publish paths.
+        if hasattr(payload, "model_dump"):
+            d = payload.model_dump(mode="json")
+        elif isinstance(payload, dict):
+            d = payload
+        else:
             return
 
-        msg = evt.payload
+        # Minimal validation: a Message payload must have content.
+        if "content" not in d:
+            return
 
-        # Append a typed record so downstream code can distinguish items
+        ts_raw = d.get("timestamp")
+        ts_str = (
+            ts_raw.isoformat()
+            if hasattr(ts_raw, "isoformat")
+            else str(ts_raw) if ts_raw else ""
+        )
+
         self._recent_messages.append(
             {
                 "kind": "message",
                 "data": {
-                    "sender_id": msg.sender_id,
-                    "receiver_ids": msg.receiver_ids,
-                    "medium": msg.medium,
-                    "timestamp": msg.timestamp.isoformat(),
-                    "content": msg.content,
+                    "sender_id": d.get("sender_id"),
+                    "receiver_ids": d.get("receiver_ids"),
+                    "medium": d.get("medium"),
+                    "timestamp": ts_str,
+                    "content": d.get("content"),
                 },
             },
         )
@@ -933,84 +566,20 @@ class MemoryManager(BaseMemoryManager):
             await self._flush_recent_items()
 
     async def _process_message_chunk(self, messages: list[dict]) -> None:
-        """Run the full suite of memory updates for one 50-message chunk."""
-
-        # Serialise – prevent concurrent chunks from interleaving updates
+        """Run the unified memory update loop for one chunk."""
         async with self._chunk_lock:
             try:
                 plain_transcript = self.build_plain_transcript(
                     messages,
                     contact_manager=self._contact_manager,
                 )
-
-                # ── 1. Global, transcript-level updates (run *concurrently*) ────────
-                global_tasks = [
-                    self.update_contacts(plain_transcript),
-                    self.update_knowledge(plain_transcript),
-                    self.update_tasks(plain_transcript),
-                ]
-
-                # ── 2. Per-contact updates (bio & rolling summary) ──────────────────
-                contact_ids: set[int] = set()
-
-                # Exclude the assistant's own contact from updates
-                assistant_id = SESSION_DETAILS.assistant.contact_id
-
-                for item in messages:
-                    if item.get("kind") != "message":
-                        continue  # ignore manager-method items for contact updates
-
-                    md = item.get("data", {})
-
-                    # 1) sender -----------------------------------------------------
-                    sid = md.get("sender_id")
-                    if isinstance(sid, int) and sid != assistant_id:
-                        contact_ids.add(sid)
-
-                    # 2) receiver(s) ----------------------------------------------
-                    rids = md.get("receiver_ids")
-
-                    if rids is None:
-                        continue
-
-                    if isinstance(rids, int):
-                        if rids != assistant_id:
-                            contact_ids.add(rids)
-                    elif isinstance(rids, (list, tuple, set)):
-                        for rid in rids:
-                            if isinstance(rid, int) and rid != assistant_id:
-                                contact_ids.add(rid)
-
-                # Build per-contact tasks
-                for _cid in contact_ids:
-                    global_tasks.extend(
-                        [
-                            self.update_contact_bio(
-                                plain_transcript,
-                                contact_id=_cid,
-                            ),
-                            self.update_contact_rolling_summary(
-                                plain_transcript,
-                                contact_id=_cid,
-                            ),
-                            self.update_contact_response_policy(
-                                plain_transcript,
-                                contact_id=_cid,
-                            ),
-                        ],
-                    )
-
-                # Run *all* updates concurrently – failures are captured but do not
-                # cancel the remaining updates so one misbehaving method doesn’t stall
-                # the entire batch.
-                await asyncio.gather(*global_tasks, return_exceptions=True)
-            except Exception:  # pragma: no cover – defensive
-                # Never propagate errors back to the EventBus – log and swallow.
+                await self.process_chunk(plain_transcript)
+            except Exception:  # pragma: no cover
                 import traceback
 
                 traceback.print_exc()
 
-    # ───────────────────────────  HELPERS  ────────────────────────────
+    # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  HELPERS  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     @classmethod
     def get_rolling_activity(cls, mode: str = "time") -> str:
         """Rolling activity has been temporarily removed; return an empty string."""

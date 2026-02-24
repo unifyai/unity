@@ -28,6 +28,8 @@ from .capture import (
 
 from .callable import execute_callable
 
+from .package_overlay import PackageOverlay, _CURRENT_PACKAGE_OVERLAY
+
 from .session import (
     PythonExecutionSession,
     SessionExecutor,
@@ -35,6 +37,7 @@ from .session import (
     StateMode,
     SupportedLanguage,
     SupportedShellLanguage,
+    _CURRENT_ENVIRONMENTS,
     _CURRENT_SANDBOX,
     _PARENT_CHAT_CONTEXT,
     _execute_shell_stateless,
@@ -60,11 +63,15 @@ __all__ = [
     "capture_sandbox_output",
     # callable
     "execute_callable",
+    # package_overlay
+    "PackageOverlay",
+    "_CURRENT_PACKAGE_OVERLAY",
     # session
     "SupportedShellLanguage",
     "SupportedLanguage",
     "StateMode",
     "SessionKey",
+    "_CURRENT_ENVIRONMENTS",
     "_CURRENT_SANDBOX",
     "_PARENT_CHAT_CONTEXT",
     "_validate_execution_params",

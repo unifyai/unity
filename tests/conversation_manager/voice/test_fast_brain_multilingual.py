@@ -41,6 +41,7 @@ _SPANISH_MARKERS = [
     "encantado",
     "entendido",
     "perfecto",
+    "de nada",
     # Common conversational words
     "cómo",
     "también",
@@ -52,16 +53,42 @@ _SPANISH_MARKERS = [
     "algo",
     "todo",
     "todos",
+    "genial",
+    "eso",
+    "importante",
+    "bien",
+    "bueno",
+    "verdad",
+    "mejor",
+    "siempre",
     "después",
+    "nada",
+    "solo",
+    "pero",
+    "cuando",
+    "desde",
+    "para",
+    "sobre",
+    "entre",
+    "como",
+    "porque",
+    "aunque",
+    "según",
+    "además",
     # Verbs / verb forms
     "necesito",
     "puedo",
     "puede",
+    "puedes",
     "tengo",
+    "tiene",
+    "tienes",
     "quiero",
+    "quieres",
     "estoy",
     "creo",
     "hacer",
+    "hago",
     "hablar",
     "revisar",
     "enviar",
@@ -70,6 +97,22 @@ _SPANISH_MARKERS = [
     "vamos",
     "déjame",
     "dime",
+    "alegra",
+    "alegro",
+    "guste",
+    "gusta",
+    "haya",
+    "servido",
+    "quiere",
+    "parece",
+    "sería",
+    "podría",
+    "debería",
+    "necesita",
+    "sigue",
+    "están",
+    "estamos",
+    "tenemos",
     # Nouns / domain words
     "número",
     "reunión",
@@ -83,6 +126,12 @@ _SPANISH_MARKERS = [
     "resultado",
     "prioridades",
     "actualización",
+    "versión",
+    "ajustes",
+    "cambios",
+    "equipo",
+    "tiempo",
+    "manera",
     # Phrases
     "por favor",
     "cómo estás",
@@ -94,6 +143,8 @@ _SPANISH_MARKERS = [
     "gusto",
     "cuento",
     "confirmar",
+    "me alegro",
+    "qué tal",
 ]
 
 _FRENCH_MARKERS = [
@@ -119,11 +170,19 @@ _FRENCH_MARKERS = [
     "quelque",
     "beaucoup",
     "seulement",
-    # Verbs / verb forms
+    # Verbs / verb forms (infinitives + common conjugations)
     "aider",
     "faire",
     "confirmer",
     "vérifier",
+    "vérifie",
+    # Common short phrases
+    "un instant",
+    "je vérifie",
+    "je peux",
+    "pas de souci",
+    "tout de suite",
+    "en cours",
     # Contractions (matched after apostrophe normalisation)
     "j'ai",
     "c'est",
@@ -179,15 +238,22 @@ def _normalize_apostrophes(text: str) -> str:
     return text.replace("\u2019", "'").replace("\u2018", "'")
 
 
+_SPANISH_ACCENT_RE = re.compile(r"[áéíóúñ]", re.IGNORECASE)
+_FRENCH_ACCENT_RE = re.compile(r"[àâéèêëçùûüôîï]", re.IGNORECASE)
+
+
 def _has_spanish(text: str) -> bool:
     low = _normalize_apostrophes(text.lower())
     hits = sum(1 for w in _SPANISH_MARKERS if w in low)
-    return hits >= 2 or "¿" in text or "¡" in text
+    accent_hits = len(_SPANISH_ACCENT_RE.findall(text))
+    return hits >= 1 or accent_hits >= 2 or "¿" in text or "¡" in text
 
 
 def _has_french(text: str) -> bool:
     low = _normalize_apostrophes(text.lower())
-    return sum(1 for w in _FRENCH_MARKERS if w in low) >= 2
+    hits = sum(1 for w in _FRENCH_MARKERS if w in low)
+    accent_hits = len(_FRENCH_ACCENT_RE.findall(text))
+    return hits >= 2 or (hits >= 1 and accent_hits >= 1) or accent_hits >= 2
 
 
 def _has_japanese(text: str) -> bool:

@@ -39,7 +39,9 @@ class SteeringOperation:
 
     name: str  # e.g., "ask", "stop"
     method_name: str  # Method name on SteerableToolHandle
-    param_name: str  # Primary parameter name for the action (e.g., "query", "reason")
+    param_name: (
+        str  # Primary parameter name for the action (e.g., "question", "reason")
+    )
     requires_clarification: bool = False  # Whether this needs a call_id suffix
 
     def get_docstring(self) -> str:
@@ -55,7 +57,7 @@ class SteeringOperation:
 
 # Core steering operations - derived from SteerableToolHandle's abstract methods
 STEERING_OPERATIONS: tuple[SteeringOperation, ...] = (
-    SteeringOperation("ask", "ask", "query"),
+    SteeringOperation("ask", "ask", "question"),
     SteeringOperation("stop", "stop", "reason"),
     SteeringOperation("interject", "interject", "message"),
     SteeringOperation("pause", "pause", ""),

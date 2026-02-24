@@ -203,7 +203,7 @@ class TestActForwardsResponseFormat:
         # Set up a mock Actor that captures kwargs
         captured_kwargs: dict[str, Any] = {}
 
-        async def fake_act(description, **kwargs):
+        async def fake_act(request, **kwargs):
             captured_kwargs.update(kwargs)
             handle = MagicMock()
             handle.result = AsyncMock(return_value="done")
@@ -238,7 +238,7 @@ class TestActForwardsResponseFormat:
         """When response_format is omitted, None is passed to Actor."""
         captured_kwargs: dict[str, Any] = {}
 
-        async def fake_act(description, **kwargs):
+        async def fake_act(request, **kwargs):
             captured_kwargs.update(kwargs)
             handle = MagicMock()
             handle.result = AsyncMock(return_value="done")
@@ -272,7 +272,7 @@ class TestStructuredResultPropagation:
         """A structured JSON string from handle.result() propagates to ActorResult."""
         expected_payload = {"name": "Alice", "email": "alice@example.com"}
 
-        async def fake_act(description, **kwargs):
+        async def fake_act(request, **kwargs):
             handle = MagicMock()
             # Simulate the loop returning json.dumps(payload) via final_response
             handle.result = AsyncMock(return_value=json.dumps(expected_payload))
@@ -308,7 +308,7 @@ class TestStructuredResultPropagation:
         """The response_format schema is preserved in the action metadata
         so it can be inspected later (e.g., for rendering or debugging)."""
 
-        async def fake_act(description, **kwargs):
+        async def fake_act(request, **kwargs):
             handle = MagicMock()
             handle.result = AsyncMock(return_value='{"x": 1}')
             handle.next_notification = AsyncMock(side_effect=asyncio.CancelledError)

@@ -6,22 +6,18 @@ Sandbox for **MemoryManager** maintenance tasks.
 Supports plain-text *or* voice capture of the initial transcript
 description via the ``--voice/-v`` flag (same UX as the other sandboxes).
 
-┌────────────── 11 accepted commands ───────────────────────┐
+┌────────────── 8 accepted commands ────────────────────────┐
 │ uc   –– update_contacts                                   │
-│ ucb {contact_id[, …]}  –– update_contact_bio              │
-│ ucrs {contact_id[, …]} –– update_contact_rolling_summary  │
 │ uk   –– update_knowledge                                  │
 │ ut   –– update_tasks                                      │
 │ cc        –– clear Contacts store                         │
-│ ccb       –– clear Contact bios      (alias cc)           │
-│ ccrs      –– clear Rolling summaries (alias cc)           │
 │ ck        –– clear Knowledge store                        │
 │ nt   –– new_transcript {description}                      │
 │ ntv  –– new_transcript_vocally (voice only)               │
 │ r    –– record freeform command (voice mode)              │
 └───────────────────────────────────────────────────────────┘
 
-After typing **uc / ucb / ucrs / uk / ut** you will be *asked* for the message
+After typing **uc / uk / ut** you will be *asked* for the message
 **range** in a second prompt.  Use Python-slice style notation just like
 lists are indexed:
 
@@ -66,11 +62,11 @@ from sandboxes.utils import (
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
     activate_project,
+    configure_sandbox_logging,
     speak as _speak,
     _wait_for_tts_end as _wait_tts_end,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 LG = logging.getLogger("memory_manager_sandbox")
 
 
@@ -158,8 +154,6 @@ def _parse_range(range_str: str, num_messages: int) -> tuple[int, int]:
 # Map long-form command names to their short aliases for convenience
 _CMD_ALIASES: dict[str, str] = {
     "update_contacts": "uc",
-    "update_contact_bio": "ucb",
-    "update_contact_rolling_summary": "ucrs",
     "update_knowledge": "uk",
     "update_tasks": "ut",
 }
@@ -257,6 +251,12 @@ async def _main_async() -> None:
 
     # Unify context
     activate_project(args.project_name, args.overwrite)
+
+    configure_sandbox_logging(
+        log_file=".logs_memory_sandbox.txt",
+        tcp_port=-1,
+    )
+    LG.setLevel(logging.INFO)
 
     # ─────────────────── project version handling ────────────────────
     if args.project_version != -1:
@@ -410,7 +410,7 @@ async def _main_async() -> None:
             _explain_commands()
             continue
 
-        if lower in {"cc", "ccb", "ccrs"}:
+        if lower == "cc":
             _clear_contacts()
             mm = _create_mm()
             tm = mm._transcript_manager
@@ -425,33 +425,11 @@ async def _main_async() -> None:
             _maybe_speak("Knowledge store cleared.")
             continue
 
-        # Functional uc/ucb/ucrs/uk commands --------------------------------
+        # Functional uc/uk/ut commands ----------------------------------------
         parts = prompt.split(maxsplit=1)
         cmd = _CMD_ALIASES.get(parts[0], parts[0])
 
-        if cmd in {"uc", "ucb", "ucrs", "uk", "ut"}:
-            # Extract contact_id for contact-specific commands (ucb/ucrs)
-            # The user can now supply **one or many** comma-separated ids, e.g. "ucb 0,1,2".
-            contact_id_vals: list[int] = []
-            if cmd in {"ucb", "ucrs"}:
-                if len(parts) < 2 or not parts[1].strip():
-                    print(
-                        "⚠️  Please provide one or more contact_id(s) after the command, e.g. 'ucb 42' or 'ucb 1,2,3'.",
-                    )
-                    continue
-
-                try:
-                    ids_token = parts[1].split()[0]  # first whitespace-separated token
-                    contact_id_vals = [
-                        int(tok) for tok in ids_token.split(",") if tok.strip()
-                    ]
-                except ValueError:
-                    print("⚠️  contact_id(s) must be valid integers, comma-separated.")
-                    continue
-
-                if not contact_id_vals:
-                    print("⚠️  No valid contact_id(s) provided.")
-                    continue
+        if cmd in {"uc", "uk", "ut"}:
 
             # ------------------------------------------------------------------
             # 1️⃣  Ensure we have a *local* copy of the transcript to work with
@@ -611,25 +589,6 @@ async def _main_async() -> None:
             try:
                 if cmd == "uc":
                     result = await mm.update_contacts(chunk_txt, guidance=guidance_txt)
-                elif cmd in {"ucb", "ucrs"}:
-                    # Iterate over each supplied contact id sequentially
-                    results: list[str] = []
-                    for cid in contact_id_vals:
-                        if cmd == "ucb":
-                            res = await mm.update_contact_bio(
-                                chunk_txt,
-                                contact_id=cid,
-                                guidance=guidance_txt,
-                            )
-                        else:  # ucrs
-                            res = await mm.update_contact_rolling_summary(
-                                chunk_txt,
-                                contact_id=cid,
-                                guidance=guidance_txt,
-                            )
-                        results.append(f"{cid}: {res}")
-
-                    result = "; ".join(results)
                 elif cmd == "ut":
                     result = await mm.update_tasks(chunk_txt, guidance=guidance_txt)
                 else:  # uk

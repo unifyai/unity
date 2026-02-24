@@ -27,15 +27,15 @@ from unity.function_manager.primitives.registry import (
     get_registry,
     _CLASS_PATH_TO_ALIAS,
 )
+from unity.manager_registry import SingletonABCMeta
 
 if TYPE_CHECKING:
-    from unity.function_manager.computer import Computer
+    from unity.function_manager.computer_backends import ComputerBackend
     from unity.contact_manager.contact_manager import ContactManager
     from unity.transcript_manager.transcript_manager import TranscriptManager
     from unity.knowledge_manager.knowledge_manager import KnowledgeManager
     from unity.task_scheduler.task_scheduler import TaskScheduler
     from unity.secret_manager.secret_manager import SecretManager
-    from unity.guidance_manager.guidance_manager import GuidanceManager
     from unity.web_searcher.web_searcher import WebSearcher
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,180 @@ DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
 _vm_ready = threading.Event()
 
 
-class ComputerPrimitives:
+_COMPUTER_METHODS = (
+    "act",
+    "observe",
+    "query",
+    "navigate",
+    "get_links",
+    "get_content",
+    "get_screenshot",
+)
+
+
+def _make_session_method(
+    method_name: str,
+    owner: "ComputerPrimitives",
+    session_resolver,
+):
+    """Build a wrapped async method that routes through a session.
+
+    ``session_resolver`` is an async callable returning a ``ComputerSession``.
+    Shared by ``_ComputerNamespace`` (lazy singleton) and ``WebSessionHandle``
+    (bound instance).
     """
-    Provides a library of high-level, agentic actions for the Actor.
-    Each public method is a tool that the actor can incorporate into its generated code.
+    from unity.function_manager.computer_backends import ComputerSession
+
+    if method_name == "get_screenshot":
+
+        async def screenshot_wrapper(*args, **kwargs):
+            kwargs.pop("_clarification_up_q", None)
+            kwargs.pop("_clarification_down_q", None)
+            if not _vm_ready.is_set():
+                ready = await asyncio.to_thread(_vm_ready.wait, 300)
+                if not ready:
+                    raise RuntimeError(
+                        "Managed VM did not become ready within 5 minutes",
+                    )
+            import base64, io
+            from PIL import Image as _Image
+
+            session = await session_resolver()
+            b64 = await session.get_screenshot()
+            return _Image.open(io.BytesIO(base64.b64decode(b64)))
+
+        screenshot_wrapper.__name__ = method_name
+        from unity.function_manager.computer_backends import ComputerBackend
+
+        screenshot_wrapper.__doc__ = (
+            getattr(ComputerBackend, method_name, None).__doc__
+            or getattr(ComputerSession, method_name, None).__doc__
+        )
+        return screenshot_wrapper
+
+    async def wrapper(*args, **kwargs):
+        kwargs.pop("_clarification_up_q", None)
+        kwargs.pop("_clarification_down_q", None)
+        if not _vm_ready.is_set():
+            ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            if not ready:
+                raise RuntimeError("Managed VM did not become ready within 5 minutes")
+        if method_name in owner._SECRET_INJECTED_METHODS and args:
+            resolved = await owner.secret_manager.from_placeholder(args[0])
+            args = (resolved,) + args[1:]
+        session = await session_resolver()
+        return await getattr(session, method_name)(*args, **kwargs)
+
+    wrapper.__name__ = method_name
+    # Prefer the rich docstrings from ComputerBackend ABC over ComputerSession's terse ones
+    from unity.function_manager.computer_backends import ComputerBackend
+
+    wrapper.__doc__ = (
+        getattr(ComputerBackend, method_name, None).__doc__
+        or getattr(ComputerSession, method_name, None).__doc__
+    )
+    return wrapper
+
+
+class _ComputerNamespace:
+    """Thin wrapper that routes method calls to a lazily-created singleton session.
+
+    Used for ``primitives.computer.desktop``.
     """
 
-    # Methods dynamically created from the backend (single source of truth)
+    def __init__(self, owner: "ComputerPrimitives", mode: str):
+        self._owner = owner
+        self._mode = mode
+
+        async def _resolve():
+            return await owner.backend.get_session(mode)
+
+        for name in _COMPUTER_METHODS:
+            setattr(self, name, _make_session_method(name, owner, _resolve))
+
+
+class WebSessionHandle:
+    """Wrapped browser session returned by ``primitives.computer.web.new_session()``.
+
+    Has the same method set as ``primitives.computer.desktop``: ``act``,
+    ``observe``, ``query``, ``navigate``, ``get_links``, ``get_content``,
+    ``get_screenshot``.  Additionally exposes ``stop()`` for explicit
+    lifecycle management.
+    """
+
+    def __init__(self, session: "ComputerSession", owner: "ComputerPrimitives"):
+        self._session = session
+        self._owner = owner
+
+        async def _resolve():
+            return self._session
+
+        for name in _COMPUTER_METHODS:
+            setattr(self, name, _make_session_method(name, owner, _resolve))
+
+    async def stop(self):
+        """Stop the browser session and release resources."""
+        await self._session.stop()
+
+
+class _WebSessionFactory:
+    """Factory for independent browser sessions.
+
+    Accessed as ``primitives.computer.web``.  Has no default session --
+    every browser session is explicitly created via ``new_session()`` and
+    must be stopped when no longer needed.
+    """
+
+    def __init__(self, owner: "ComputerPrimitives"):
+        self._owner = owner
+
+    async def new_session(self, visible: bool = True) -> WebSessionHandle:
+        """Create a new independent browser session.
+
+        Each call spawns a fresh Chromium process with its own browsing
+        context (cookies, storage, etc.).  Multiple sessions can run in
+        parallel without interfering with each other.
+
+        Parameters
+        ----------
+        visible : bool, default True
+            If True, the browser window renders on the VM desktop (visible
+            via noVNC) but is controlled entirely via CDP -- no mouse or
+            keyboard involvement.  The user can un-minimize the window in
+            noVNC to observe the session in real time.
+
+            If False, the browser runs headless on the host machine for
+            fast background lookups where visibility is unnecessary.
+
+        Returns
+        -------
+        WebSessionHandle
+            Session handle with methods: ``act``, ``observe``, ``query``,
+            ``navigate``, ``get_links``, ``get_content``, ``get_screenshot``,
+            and ``stop``.  Call ``stop()`` when done to release resources.
+        """
+        mode = "web-vm" if visible else "web"
+        session = await self._owner.backend.create_session(mode)
+        return WebSessionHandle(session, self._owner)
+
+
+class ComputerPrimitives(metaclass=SingletonABCMeta):
+    """Multi-mode computer control interface.
+
+    Two attributes:
+
+    - ``primitives.computer.desktop`` -- singleton namespace for full desktop
+      control (mouse/keyboard via noVNC).  Methods: ``act``, ``observe``,
+      ``query``, ``navigate``, ``get_links``, ``get_content``,
+      ``get_screenshot``.
+    - ``primitives.computer.web`` -- factory for independent browser sessions.
+      Call ``new_session(visible=True/False)`` to create a session handle with
+      the same method set as the desktop namespace, plus ``stop()``.
+
+    Singleton via ``SingletonABCMeta`` / ``ManagerRegistry``.  All actors
+    (including nested sub-agents) share the same backend connection.
+    """
+
     _DYNAMIC_METHODS = (
         "act",
         "observe",
@@ -69,22 +236,13 @@ class ComputerPrimitives:
         "get_links",
         "get_content",
     )
-    # All primitive methods (used for discovery)
-    _PRIMITIVE_METHODS = _DYNAMIC_METHODS
+    _PRIMITIVE_METHODS = _DYNAMIC_METHODS + ("get_screenshot",)
+    _SECRET_INJECTED_METHODS = frozenset({"act", "observe"})
 
     @staticmethod
-    def _resolve_agent_server_url(explicit_url: str | None) -> str:
-        """
-        Resolve agent_server_url with priority:
-        1. Explicit non-default override (user's personal desktop)
-        2. SESSION_DETAILS.assistant.desktop_url (managed VM)
-        3. Fallback to DEFAULT_AGENT_SERVER_URL (local dev)
-        """
-        # If user explicitly provided a non-default URL, honor it
+    def _resolve_container_url(explicit_url: str | None) -> str:
         if explicit_url is not None and explicit_url != DEFAULT_AGENT_SERVER_URL:
             return explicit_url
-
-        # Try SESSION_DETAILS.assistant.desktop_url
         try:
             from unity.session_details import SESSION_DETAILS
 
@@ -92,126 +250,179 @@ class ComputerPrimitives:
                 return SESSION_DETAILS.assistant.desktop_url.rstrip("/") + "/api"
         except Exception:
             pass
-
         return DEFAULT_AGENT_SERVER_URL
 
     def __init__(
         self,
-        headless: bool = False,
         computer_mode: str = "magnitude",
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
         *,
+        container_url: str | None = None,
+        local_url: str | None = None,
         connect_now: bool = False,
-        # Deprecated parameters (kept for backward compatibility, ignored)
-        session_connect_url: str | None = None,
-        controller_mode: str = "hybrid",
+        # Legacy compat: callers that pass agent_server_url get it mapped to container_url
+        agent_server_url: str | None = None,
+        **_kwargs,
     ):
-        # Resolve URL centrally from SESSION_DETAILS or explicit override
-        resolved_url = self._resolve_agent_server_url(agent_server_url)
+        resolved_container = container_url or self._resolve_container_url(
+            agent_server_url,
+        )
 
-        # Cache computer configuration for lazy initialization
-        computer_kwargs = {
+        self._computer_mode = computer_mode
+        self._computer_kwargs_map = {
             "magnitude": {
-                "headless": headless,
-                "agent_mode": agent_mode,
-                "agent_server_url": resolved_url,
+                "container_url": resolved_container,
+                "local_url": local_url,
             },
-            "mock": {
-                # MockComputerBackend accepts optional url, screenshot, etc.
-                # but works fine with no kwargs
-            },
+            "mock": {},
         }
 
         self._secret_manager = None
-        self._computer = None
-        self._computer_mode = computer_mode
-        self._computer_kwargs_map = computer_kwargs
+        self._backend = None
+        self._desktop_ns: Optional[_ComputerNamespace] = None
+        self._web_factory: Optional[_WebSessionFactory] = None
 
-        # No VM to wait for when using mock backend or co-located agent-service
-        if computer_mode == "mock" or resolved_url == DEFAULT_AGENT_SERVER_URL:
+        self._interject_queues: set[asyncio.Queue] = set()
+        self._user_remote_control_active: bool = False
+
+        if computer_mode == "mock" or resolved_container == DEFAULT_AGENT_SERVER_URL:
             _vm_ready.set()
 
-        # Lazily create the Computer (and thus avoid connecting to agent-service) unless requested
         if connect_now:
-            from unity.function_manager.computer import Computer
-
-            self._computer = Computer(
-                mode=self._computer_mode,
-                secret_manager=self.secret_manager,
-                **self._computer_kwargs_map[self._computer_mode],
-            )
-        self._setup_computer_methods()
+            _ = self.backend
 
     @property
     def secret_manager(self):
-        """Lazily initialize and return the SecretManager via ManagerRegistry."""
         if self._secret_manager is None:
             from unity.manager_registry import ManagerRegistry
 
             self._secret_manager = ManagerRegistry.get_secret_manager()
         return self._secret_manager
 
-    def _setup_computer_methods(self):
-        """Dynamically create tool methods without forcing an early backend connection."""
-        from unity.function_manager.computer_backends import (
-            MagnitudeBackend,
-            MockComputerBackend,
-        )
-
-        if self._computer_mode == "magnitude":
-            backend_class = MagnitudeBackend
-        elif self._computer_mode == "mock":
-            backend_class = MockComputerBackend
-        else:
-            raise ValueError(
-                f"Unknown computer_mode: '{self._computer_mode}'. Must be 'magnitude' or 'mock'.",
+    @property
+    def backend(self) -> "ComputerBackend":
+        if self._backend is None:
+            from unity.function_manager.computer_backends import (
+                MagnitudeBackend,
+                MockComputerBackend,
             )
 
-        def _make_lazy_wrapper(method_name: str, backend_class):
-            async def wrapper(*args, **kwargs):
-                # Internal-only kwargs may be injected by environment wrappers (e.g.
-                # clarification queue propagation). Backend implementations (notably
-                # MagnitudeBackend) do not accept these, so strip them here.
-                kwargs.pop("_clarification_up_q", None)
-                kwargs.pop("_clarification_down_q", None)
-                # Block until the managed VM is confirmed ready (instant for
-                # localhost / mock since the event is pre-set).
-                if not _vm_ready.is_set():
-                    ready = await asyncio.to_thread(_vm_ready.wait, 300)
-                    if not ready:
-                        raise RuntimeError(
-                            "Managed VM did not become ready within 5 minutes",
-                        )
-                backend_method = getattr(self.computer.backend, method_name)
-                return await backend_method(*args, **kwargs)
+            if self._computer_mode == "magnitude":
+                self._backend = MagnitudeBackend(
+                    **self._computer_kwargs_map["magnitude"],
+                )
+            elif self._computer_mode == "mock":
+                self._backend = MockComputerBackend(
+                    **self._computer_kwargs_map.get("mock", {}),
+                )
+            else:
+                raise ValueError(f"Unknown computer_mode: '{self._computer_mode}'.")
+        return self._backend
 
-            wrapper.__name__ = method_name
-            wrapper.__qualname__ = method_name
-            backend_method = getattr(backend_class, method_name, None)
-            if backend_method and hasattr(backend_method, "__doc__"):
-                wrapper.__doc__ = backend_method.__doc__
-            return wrapper
-
-        for method_name in self._DYNAMIC_METHODS:
-            setattr(
-                self,
-                method_name,
-                _make_lazy_wrapper(method_name, backend_class),
-            )
+    # ── Sub-namespace properties ─────────────────────────────────────────
 
     @property
-    def computer(self) -> "Computer":
-        """Lazily initialize and return the Computer instance."""
-        if self._computer is None:
-            from unity.function_manager.computer import Computer
+    def desktop(self) -> _ComputerNamespace:
+        """Desktop control namespace (mouse/keyboard via noVNC)."""
+        if self._desktop_ns is None:
+            self._desktop_ns = _ComputerNamespace(self, "desktop")
+        return self._desktop_ns
 
-            self._computer = Computer(
-                mode=self._computer_mode,
-                secret_manager=self.secret_manager,
-                **self._computer_kwargs_map[self._computer_mode],
+    @property
+    def web(self) -> _WebSessionFactory:
+        """Factory for independent browser sessions.
+
+        Call ``new_session(visible=True/False)`` to create a session.
+        """
+        if self._web_factory is None:
+            self._web_factory = _WebSessionFactory(self)
+        return self._web_factory
+
+    # ── Steering control (not exposed as actor tools) ────────────────────
+
+    async def pause(self) -> None:
+        """Pause the underlying browser agent's action loop.
+
+        Called programmatically by the actor's steering mechanism when the
+        CodeActActor is paused.  This is not an actor tool — it is never
+        listed in ``_DYNAMIC_METHODS`` or ``_PRIMITIVE_METHODS``.
+        """
+        await self.backend.pause()
+
+    async def resume(self) -> None:
+        """Resume the underlying browser agent's action loop.
+
+        Called programmatically by the actor's steering mechanism when the
+        CodeActActor is resumed.
+        """
+        await self.backend.resume()
+
+    # ── Interject queue registry ─────────────────────────────────────────
+
+    _REMOTE_CONTROL_STARTED_MSG = (
+        "The user has taken remote control of the desktop. They are now "
+        "able to operate the mouse and keyboard directly, so the screen "
+        "state may diverge from what you last observed. This is not cause "
+        "for alarm — the user may be collaborating, demonstrating "
+        "something, or performing a task themselves. Use your judgement: "
+        "if you are unsure whether to proceed with computer actions, "
+        "request clarification rather than guessing."
+    )
+    _REMOTE_CONTROL_STOPPED_MSG = (
+        "The user has released remote control of the desktop. The screen "
+        "state may have changed since your last observation. Before "
+        "continuing any computer-related work, take a fresh screenshot "
+        "to re-orient yourself."
+    )
+
+    @staticmethod
+    def _build_interjection(base_msg: str, context: str | None) -> dict:
+        msg = base_msg
+        if context:
+            msg = f"{base_msg}\n\nRecent conversation context:\n{context}"
+        return {"message": msg}
+
+    def register_interject_queue(self, queue: asyncio.Queue) -> None:
+        """Register an actor's interject queue for environmental broadcasts.
+
+        If the user currently has remote control, the queue immediately
+        receives the corresponding interjection so late-arriving actors
+        are informed of the current state.
+        """
+        self._interject_queues.add(queue)
+        if self._user_remote_control_active:
+            queue.put_nowait(
+                self._build_interjection(self._REMOTE_CONTROL_STARTED_MSG, None),
             )
-        return self._computer
+
+    def deregister_interject_queue(self, queue: asyncio.Queue) -> None:
+        """Remove an actor's interject queue from the registry."""
+        self._interject_queues.discard(queue)
+
+    def set_user_remote_control(
+        self,
+        active: bool,
+        conversation_context: str | None = None,
+    ) -> None:
+        """Update remote-control state and broadcast to all registered actors.
+
+        Parameters
+        ----------
+        active:
+            Whether the user currently has remote control.
+        conversation_context:
+            Optional snippet of recent conversation to include in the
+            interjection, giving actors immediate context on *why* the
+            user is taking or releasing control.
+        """
+        self._user_remote_control_active = active
+        base = (
+            self._REMOTE_CONTROL_STARTED_MSG
+            if active
+            else self._REMOTE_CONTROL_STOPPED_MSG
+        )
+        payload = self._build_interjection(base, conversation_context)
+        for q in self._interject_queues:
+            q.put_nowait(payload)
 
 
 # =============================================================================
@@ -290,7 +501,8 @@ def _create_async_wrapper(manager: Any, manager_alias: str) -> _AsyncPrimitiveWr
 # Manager Registry Key Mapping
 # =============================================================================
 
-# Maps manager_alias to ManagerRegistry getter method name
+# Maps manager_alias to ManagerRegistry getter method name.
+# Empty string means direct construction (e.g. singleton via metaclass).
 _ALIAS_TO_GETTER: dict[str, str] = {
     "contacts": "get_contact_manager",
     "data": "get_data_manager",
@@ -298,9 +510,10 @@ _ALIAS_TO_GETTER: dict[str, str] = {
     "knowledge": "get_knowledge_manager",
     "tasks": "get_task_scheduler",
     "secrets": "get_secret_manager",
-    "guidance": "get_guidance_manager",
     "web": "get_web_searcher",
     "files": "get_file_manager",
+    "computer": "",
+    "actor": "",
 }
 
 # Managers that need async wrapping (sync implementations)
@@ -314,13 +527,14 @@ _SYNC_MANAGERS: frozenset[str] = frozenset({"data", "files"})
 
 class Primitives:
     """
-    Scoped runtime interface to state manager primitives.
+    Scoped runtime interface to all primitives (state managers and computer).
 
     Only managers in the provided `primitive_scope` are accessible.
     Attempting to access an out-of-scope manager raises AttributeError.
 
-    All state managers are obtained via ManagerRegistry typed methods
-    to respect IMPL settings (real vs simulated).
+    Most managers are obtained via ManagerRegistry typed methods to respect
+    IMPL settings (real vs simulated). ComputerPrimitives is constructed
+    directly (singleton via metaclass).
 
     Sync managers (DataManager, FileManager) are wrapped with async interfaces
     for consistency - the LLM can safely use `await` on all primitives.
@@ -348,8 +562,6 @@ class Primitives:
         self._primitive_scope = primitive_scope or PrimitiveScope.all_managers()
         # Lazy-initialized manager instances
         self._managers: dict[str, Any] = {}
-        # ComputerPrimitives handled separately (not in primitives registry)
-        self._computer: Optional[ComputerPrimitives] = None
 
     @property
     def primitive_scope(self) -> PrimitiveScope:
@@ -373,13 +585,28 @@ class Primitives:
             return self._managers[alias]
 
         getter_name = _ALIAS_TO_GETTER.get(alias)
-        if not getter_name:
+        if getter_name is None:
             raise AttributeError(f"Unknown manager alias: {alias}")
 
-        from unity.manager_registry import ManagerRegistry
+        if getter_name == "":
+            # Direct construction via primitive_class_path from the registry.
+            from unity.function_manager.primitives.registry import _MANAGER_BY_ALIAS
 
-        getter = getattr(ManagerRegistry, getter_name)
-        manager = getter()
+            spec = _MANAGER_BY_ALIAS.get(alias)
+            if spec is None:
+                raise AttributeError(f"No ManagerSpec for alias: {alias}")
+            cls = get_registry()._load_manager_class(spec.primitive_class_path)
+            if cls is None:
+                raise AttributeError(
+                    f"Could not load class for alias {alias!r}: "
+                    f"{spec.primitive_class_path}",
+                )
+            manager = cls()
+        else:
+            from unity.manager_registry import ManagerRegistry
+
+            getter = getattr(ManagerRegistry, getter_name)
+            manager = getter()
 
         # Wrap sync managers with async interface
         if alias in _SYNC_MANAGERS:
@@ -389,19 +616,7 @@ class Primitives:
         return manager
 
     def __getattr__(self, name: str) -> Any:
-        """
-        Attribute access for manager retrieval.
-
-        Special handling for 'computer' which is not part of the scoped registry.
-        All other names are treated as manager aliases.
-        """
-        # Computer primitives are not in the primitives registry
-        if name == "computer":
-            if self._computer is None:
-                self._computer = ComputerPrimitives()
-            return self._computer
-
-        # Check if it's a valid manager alias
+        """Attribute access for manager retrieval."""
         if name in VALID_MANAGER_ALIASES:
             return self._get_manager(name)
 
@@ -441,11 +656,6 @@ class Primitives:
         return self._get_manager("secrets")
 
     @property
-    def guidance(self) -> "GuidanceManager":
-        """Guidance management primitives (ask, update)."""
-        return self._get_manager("guidance")
-
-    @property
     def web(self) -> "WebSearcher":
         """Web search primitives (ask)."""
         return self._get_manager("web")
@@ -455,6 +665,16 @@ class Primitives:
         """File management primitives (describe, reduce, filter_files, etc.)."""
         return self._get_manager("files")
 
+    @property
+    def computer(self) -> "ComputerPrimitives":
+        """Computer use primitives (act, navigate, observe, query, etc.)."""
+        return self._get_manager("computer")
+
+    @property
+    def actor(self) -> Any:
+        """Actor delegation primitives (run)."""
+        return self._get_manager("actor")
+
 
 # =============================================================================
 # Primitive Callable Resolution (for FunctionManager execution)
@@ -463,19 +683,18 @@ class Primitives:
 
 def get_primitive_callable(
     primitive_data: dict[str, Any],
-    computer_primitives: Optional[ComputerPrimitives] = None,
+    *,
     primitives: Optional[Primitives] = None,
 ) -> Optional[Callable]:
     """
     Resolve a primitive metadata dict to its actual callable.
 
-    For ComputerPrimitives methods, uses the provided computer_primitives instance.
-    For state manager methods, uses the provided primitives instance or ManagerRegistry.
+    Uses the ``primitives`` instance (which handles all aliases uniformly)
+    when available, falling back to a default-scoped Primitives instance.
 
     Args:
         primitive_data: Primitive metadata with primitive_class and primitive_method.
-        computer_primitives: ComputerPrimitives instance (for ComputerPrimitives primitives).
-        primitives: Optional scoped Primitives instance for state manager resolution.
+        primitives: Scoped Primitives instance for resolution.
 
     Returns:
         The callable method, or None if resolution fails.
@@ -486,38 +705,15 @@ def get_primitive_callable(
     if not class_path or not method_name:
         return None
 
-    # Special case: ComputerPrimitives methods use the provided instance
-    if "ComputerPrimitives" in class_path:
-        if computer_primitives is None:
-            logger.warning(
-                "Cannot resolve ComputerPrimitives primitive without computer_primitives instance",
-            )
-            return None
-        return getattr(computer_primitives, method_name, None)
-
-    # Derive manager_alias from primitive_class using the registry mapping
     manager_alias = _CLASS_PATH_TO_ALIAS.get(class_path)
+    if not manager_alias:
+        return None
 
-    # State managers: use provided primitives instance if available
-    if primitives is not None and manager_alias:
-        try:
-            manager = getattr(primitives, manager_alias)
-            return getattr(manager, method_name, None)
-        except AttributeError:
-            # Manager not in scope, fall through to ManagerRegistry
-            pass
+    # Use provided primitives instance, or construct a default-scoped one.
+    if primitives is None:
+        primitives = Primitives()
 
-    # Fallback: use ManagerRegistry directly
-    if manager_alias:
-        getter_name = _ALIAS_TO_GETTER.get(manager_alias)
-        if getter_name:
-            try:
-                from unity.manager_registry import ManagerRegistry
-
-                getter = getattr(ManagerRegistry, getter_name)
-                instance = getter()
-                return getattr(instance, method_name, None)
-            except Exception as e:
-                logger.warning(f"Could not get manager via '{getter_name}': {e}")
-
-    return None
+    manager = getattr(primitives, manager_alias, None)
+    if manager is None:
+        return None
+    return getattr(manager, method_name, None)

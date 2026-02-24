@@ -8,16 +8,13 @@ from pydantic import BaseModel
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.state_managers import BaseStateManager
-from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
-from unity.image_manager.types.image_refs import ImageRefs
-from unity.image_manager.types.raw_image_ref import RawImageRef
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from unity.actor.environments.base import BaseEnvironment
     from unity.function_manager.function_manager import FunctionManager
-    from unity.function_manager.primitives import ComputerPrimitives
+    from unity.guidance_manager.guidance_manager import GuidanceManager
 
 __all__ = [
     "BaseActor",
@@ -49,7 +46,7 @@ class BaseActor(ABC):
     Abstract contract that every concrete actor must satisfy.
 
     An actor is a component capable of performing work based on a natural
-    language description. It returns a steerable handle that can be paused,
+    language request. It returns a steerable handle that can be paused,
     resumed, interjected, or stopped. This type is intentionally decoupled
     from any task-specific terminology or lifecycle.
 
@@ -88,121 +85,113 @@ class BaseActor(ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
         function_manager: Optional["FunctionManager"] = None,
-        # Computer-use params for default environment creation
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
-        connect_now: bool = False,
-        # Clarification queue params for environment wiring
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
     ) -> None:
         """
         Shared initialization for concrete actor implementations.
 
         This centralizes:
-        - Environment setup with sensible defaults (computer + state managers)
+        - Environment resolution (EnvironmentManager fallback)
         - FunctionManager resolution (registry fallback)
+        - GuidanceManager resolution (registry fallback)
         - Extraction of computer primitives for backward compatibility
+
+        If the EnvironmentManager has stored environments for the current
+        assistant, they override any explicitly passed defaults.
         """
+        environments = self._resolve_environments(environments)
         self.environments: Dict[str, "BaseEnvironment"] = self._setup_environments(
             environments=environments,
-            computer_primitives=computer_primitives,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-            connect_now=connect_now,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
         )
 
-        # Resolve FunctionManager (used by multiple actors for memoized skills).
         from unity.manager_registry import ManagerRegistry
 
         self.function_manager = (
             function_manager or ManagerRegistry.get_function_manager()
         )
+        self.guidance_manager = (
+            guidance_manager or ManagerRegistry.get_guidance_manager()
+        )
 
         # Backward-compat: some call sites expect an actor-level computer primitives instance.
         self._computer_primitives = self._extract_computer_primitives()
+
+    @staticmethod
+    def _resolve_environments(
+        environments: Optional[list["BaseEnvironment"]],
+    ) -> list["BaseEnvironment"]:
+        """Resolve environments, checking EnvironmentManager for stored overrides.
+
+        If the EnvironmentManager has stored environments for the current
+        assistant, they completely replace whatever defaults were passed.
+        If no stored environments exist, the passed defaults are used as-is.
+        """
+        try:
+            from unity.manager_registry import ManagerRegistry
+
+            env_mgr = ManagerRegistry.get_environment_manager()
+            stored = env_mgr.load_all_environments()
+            if stored:
+                return stored
+        except Exception:
+            pass
+
+        return environments if environments is not None else []
 
     def _setup_environments(
         self,
         *,
         environments: Optional[list["BaseEnvironment"]],
-        computer_primitives: Optional["ComputerPrimitives"],
-        session_connect_url: Optional[str],
-        headless: bool,
-        computer_mode: str,
-        agent_mode: str,
-        agent_server_url: str | None,
-        connect_now: bool,
-        clarification_up_q: Optional[asyncio.Queue[str]],
-        clarification_down_q: Optional[asyncio.Queue[str]],
     ) -> Dict[str, "BaseEnvironment"]:
         """
-        Setup execution environments with defaults and optional clarification queues.
+        Build the environment namespace dict from the provided list.
+
+        When multiple environments share a namespace (e.g. ``"primitives"``),
+        they are merged into a ``_CompositeEnvironment`` that aggregates
+        their tools, prompt context, and state capture.
 
         Returns:
             Dict keyed by environment namespace.
         """
-        from unity.actor.environments import (
-            ComputerEnvironment,
-            StateManagerEnvironment,
-        )
-        from unity.function_manager.primitives import ComputerPrimitives
+        from unity.actor.environments.base import _CompositeEnvironment
 
-        # If environments are explicitly provided, honor them and do not implicitly
-        # introduce a computer environment (domain-agnostic mode).
         if environments is None:
-            if computer_primitives is not None:
-                cp = computer_primitives
-            else:
-                cp = ComputerPrimitives(
-                    session_connect_url=session_connect_url,
-                    headless=headless,
-                    computer_mode=computer_mode,
-                    agent_mode=agent_mode,
-                    agent_server_url=agent_server_url,
-                    connect_now=connect_now,
-                )
+            environments = []
 
-            environments = [
-                ComputerEnvironment(
-                    cp,
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                ),
-                StateManagerEnvironment(
-                    clarification_up_q=clarification_up_q,
-                    clarification_down_q=clarification_down_q,
-                ),
-            ]
+        # Group by namespace.
+        by_ns: Dict[str, list["BaseEnvironment"]] = {}
+        for env in environments:
+            by_ns.setdefault(env.namespace, []).append(env)
 
         env_map: Dict[str, "BaseEnvironment"] = {}
-        for env in environments:
-            ns = env.namespace
-            if ns in env_map:
-                raise ValueError(
-                    f"Duplicate environment namespace detected: {ns!r}. "
-                    "Environment namespaces must be unique.",
-                )
-            env_map[ns] = env
+        for ns, envs in by_ns.items():
+            if len(envs) == 1:
+                env_map[ns] = envs[0]
+            else:
+                env_map[ns] = _CompositeEnvironment(envs)
         return env_map
 
     def _extract_computer_primitives(self) -> Optional[Any]:
-        """Extract computer primitives instance for backward compatibility."""
-        if "computer_primitives" in getattr(self, "environments", {}):
-            try:
-                return self.environments["computer_primitives"].get_instance()
-            except Exception:
-                return None
+        """Extract computer primitives instance from environments."""
+        from unity.actor.environments.base import _CompositeEnvironment
+        from unity.actor.environments.computer import ComputerEnvironment
+
+        env = getattr(self, "environments", {}).get("primitives")
+        if env is None:
+            return None
+
+        # Composite: find the ComputerEnvironment sub-env.
+        if isinstance(env, _CompositeEnvironment):
+            for sub in env.sub_environments:
+                if isinstance(sub, ComputerEnvironment):
+                    return sub._computer_primitives
+            return None
+
+        # Direct ComputerEnvironment (standalone).
+        if isinstance(env, ComputerEnvironment):
+            return env._computer_primitives
+
         return None
 
     # ─────────────────────────── Work management ────────────────────────── #
@@ -210,8 +199,9 @@ class BaseActor(ABC):
     @abstractmethod
     async def act(
         self,
-        description: str,
+        request: str,
         *,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -219,7 +209,7 @@ class BaseActor(ABC):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Perform work from a natural language description and return a steerable handle.
+        Perform work from a natural language request and return a steerable handle.
 
         This is the all-purpose method for engaging with knowledge, resources, and
         the world beyond immediate conversational context. Use ``act`` for any work
@@ -250,9 +240,14 @@ class BaseActor(ABC):
         - Multiple ``act`` calls can run concurrently
 
         Args:
-            description: Natural language description of what to do. Can be a question
+            request: Natural language request specifying what to do. Can be a question
                 ("What is David's email?"), a command ("Send an email to David"), or
                 a combination ("Find David's email and send him a reminder").
+            guidelines: Optional meta-guidance on *how* to approach the task, as
+                opposed to *what* to do. Examples: "don't install new python packages",
+                "use sub-agents for solving this task", "prefer simple solutions over
+                complex ones". When provided, these are injected into the system prompt
+                so the actor follows them throughout the session.
             clarification_enabled: Whether the actor can request clarification from
                 its **caller** (i.e. whichever process holds the returned handle).
                 This does NOT surface questions to the end user directly — the
@@ -286,49 +281,33 @@ class BaseCodeActActor(BaseActor, BaseStateManager, ABC):
         self,
         *,
         environments: Optional[list["BaseEnvironment"]] = None,
-        computer_primitives: Optional["ComputerPrimitives"] = None,
         function_manager: Optional["FunctionManager"] = None,
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        computer_mode: str = "magnitude",
-        agent_mode: str = "web",
-        agent_server_url: str | None = None,
-        connect_now: bool = False,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        guidance_manager: Optional["GuidanceManager"] = None,
     ) -> None:
         BaseActor.__init__(
             self,
             environments=environments,
-            computer_primitives=computer_primitives,
             function_manager=function_manager,
-            session_connect_url=session_connect_url,
-            headless=headless,
-            computer_mode=computer_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-            connect_now=connect_now,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            guidance_manager=guidance_manager,
         )
         BaseStateManager.__init__(self)
 
     @abstractmethod
     async def act(
         self,
-        description: str,
+        request: str,
         *,
+        guidelines: Optional[str] = None,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         persist: bool = True,
     ) -> SteerableToolHandle:
-        """Perform work from a natural-language description and return a steerable handle."""
+        """Perform work from a natural-language request and return a steerable handle."""
         raise NotImplementedError

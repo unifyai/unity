@@ -96,6 +96,46 @@ def test_annotated_refs_rejects_raw():
 
 
 # --------------------------------------------------------------------------- #
+#  Filepath field on RawImageRef / AnnotatedImageRef                           #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+def test_raw_ref_with_filepath_only():
+    ref = RawImageRef(filepath="/tmp/images/step1.png")
+    assert ref.image_id is None
+    assert ref.filepath == "/tmp/images/step1.png"
+
+
+@_handle_project
+def test_raw_ref_with_both():
+    ref = RawImageRef(image_id=42, filepath="/tmp/images/step1.png")
+    assert ref.image_id == 42
+    assert ref.filepath == "/tmp/images/step1.png"
+
+
+@_handle_project
+def test_annotated_ref_with_filepath():
+    ann = AnnotatedImageRef(
+        raw_image_ref=RawImageRef(filepath="/tmp/images/step2.png"),
+        annotation="shows the deploy button",
+    )
+    assert ann.raw_image_ref.image_id is None
+    assert ann.raw_image_ref.filepath == "/tmp/images/step2.png"
+    assert ann.annotation == "shows the deploy button"
+
+
+@_handle_project
+def test_raw_ref_serialization_with_filepath():
+    ref = RawImageRef(filepath="/tmp/images/round_trip.png")
+    dumped = ref.model_dump(mode="json")
+    assert dumped == {"image_id": None, "filepath": "/tmp/images/round_trip.png"}
+    restored = RawImageRef.model_validate(dumped)
+    assert restored.filepath == "/tmp/images/round_trip.png"
+    assert restored.image_id is None
+
+
+# --------------------------------------------------------------------------- #
 #  Backend schema enforcement for each Pydantic model in types/                #
 # --------------------------------------------------------------------------- #
 

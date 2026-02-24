@@ -55,7 +55,6 @@ async def update_contacts_and_search():
 | `primitives.knowledge` | KnowledgeManager | `ask`, `update`, `refactor` |
 | `primitives.tasks` | TaskScheduler | `ask`, `update`, `execute` |
 | `primitives.secrets` | SecretManager | `ask`, `update` |
-| `primitives.guidance` | GuidanceManager | `ask`, `update` |
 | `primitives.web` | WebSearcher | `ask` |
 | `primitives.computer` | ComputerPrimitives | `navigate`, `act`, `observe`, `query`, `reason` |
 

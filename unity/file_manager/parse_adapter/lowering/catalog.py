@@ -149,6 +149,7 @@ def summarize_table_profile(
         async_client=False,
         reasoning_effort=None,
         service_tier=None,
+        origin="FileParser.generate_summary",
     )
 
     return generate_summary_with_compression(

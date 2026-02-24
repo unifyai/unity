@@ -5,7 +5,9 @@ import logging
 import queue as _queue
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from sandboxes.conversation_manager.commands import HELP_TEXT, parse_command
@@ -17,8 +19,12 @@ from sandboxes.conversation_manager.ipc_protocol import (
 )
 from sandboxes.conversation_manager.event_tree_display import EventTreeDisplay
 from sandboxes.conversation_manager.log_aggregator import LogAggregator
+from sandboxes.conversation_manager.state_snapshot import (
+    capture_snapshot,
+    render_snapshot_text,
+    save_snapshot,
+)
 from sandboxes.conversation_manager.trace_display import TraceDisplay
-from sandboxes.utils import steering_controls_hint
 
 LG = logging.getLogger("conversation_manager_sandbox")
 
@@ -115,6 +121,7 @@ class GuiRuntime:
     trace_display: TraceDisplay = field(default_factory=TraceDisplay)
     event_tree_display: EventTreeDisplay = field(default_factory=EventTreeDisplay)
     log_aggregator: LogAggregator = field(default_factory=LogAggregator)
+    conversation_lines: list[str] = field(default_factory=list)
 
 
 if _TEXTUAL_AVAILABLE:
@@ -149,7 +156,6 @@ if _TEXTUAL_AVAILABLE:
                     with Vertical(id="left"):
                         yield from self.compose_left()
                     with Vertical(id="right"):
-                        yield Label("", id="steering_hint")
                         yield _make_rich_log(
                             id="responses",
                             wrap=True,
@@ -158,7 +164,7 @@ if _TEXTUAL_AVAILABLE:
                         )
                 with Horizontal(id="cmd_row"):
                     yield Input(
-                        placeholder="Commands: sms, email, call, say, end_call, us, /pause, /i, /ask, /stop",
+                        placeholder="Commands: msg, sms, email, call, say, end_call, us",
                         id="command_input",
                     )
                     yield Button("Send", id="submit_command")
@@ -166,28 +172,6 @@ if _TEXTUAL_AVAILABLE:
 
         def compose_left(self) -> ComposeResult:  # overridden
             yield Label("Not implemented")
-
-        def on_mount(self) -> None:
-            # Periodic update of steering hint visibility.
-            self.set_interval(0.25, self._refresh_hint)
-
-        def _refresh_hint(self) -> None:
-            app = self.app  # type: ignore[attr-defined]
-            rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
-            hint = self.query_one("#steering_hint", Label)
-            active = bool(getattr(rt.state, "active", False))
-            hint.update(
-                (
-                    steering_controls_hint(
-                        pending_clarification=bool(
-                            getattr(rt.state, "pending_clarification", False),
-                        ),
-                        voice_enabled=bool(getattr(rt.args, "voice", False)),
-                    )
-                    if active
-                    else ""
-                ),
-            )
 
         async def _route_raw(self, raw: str) -> None:
             raw = (raw or "").strip()
@@ -321,10 +305,11 @@ if _TEXTUAL_AVAILABLE:
                             yield Button("Compose Email", id="btn_email")
                             yield Button("Start Call", id="btn_call_start")
                             yield Button("End Call", id="btn_call_end")
+                            yield Button("Share Screen", id="btn_screen_share_start")
+                            yield Button("Stop Sharing", id="btn_screen_share_stop")
                             yield Button("Toggle Trace Panel", id="btn_toggle_trace")
                             yield Button("Quit", id="btn_quit")
                         with Vertical(id="right_tabs"):
-                            yield Label("", id="steering_hint")
                             with TabbedContent(id="tabs"):
                                 with TabPane("Event Tree", id="tab_tree"):
                                     yield Tree("ConversationManager", id="event_tree")
@@ -411,8 +396,6 @@ if _TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
 
-                # Periodic refresh of hint + computer panel.
-                self.set_interval(0.25, self._refresh_hint)
                 self.set_interval(1.5, self._refresh_computer_status)
 
                 self._refresh_header_banner()
@@ -571,36 +554,6 @@ if _TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
 
-            def _refresh_hint(self) -> None:
-                app = self.app  # type: ignore[attr-defined]
-                rt: GuiRuntime = app.runtime  # type: ignore[attr-defined]
-                hint = self.query_one("#steering_hint", Label)
-                active = bool(getattr(rt.state, "active", False))
-                try:
-                    new_txt = (
-                        steering_controls_hint(
-                            pending_clarification=bool(
-                                getattr(rt.state, "pending_clarification", False),
-                            ),
-                            voice_enabled=bool(getattr(rt.args, "voice", False)),
-                        )
-                        if active
-                        else ""
-                    )
-                except Exception:
-                    new_txt = ""
-                # Avoid re-rendering if unchanged.
-                try:
-                    if str(new_txt) == str(rt.last_hint_text):
-                        return
-                    rt.last_hint_text = str(new_txt)
-                except Exception:
-                    pass
-                try:
-                    hint.update(str(new_txt or ""))
-                except Exception:
-                    pass
-
             def _refresh_tree(self) -> None:
                 try:
                     # If the user is interacting with the tree, don't rebuild it right away.
@@ -751,7 +704,11 @@ if _TEXTUAL_AVAILABLE:
                 try:
                     cm_log.write(lg.render_expanded("cm"))
                     actor_log.write(
-                        lg.render_expanded("actor", group_by_handle=group_actor),
+                        lg.render_expanded(
+                            "actor",
+                            group_by_handle=group_actor,
+                            max_message_length=0,
+                        ),
                     )
                     mgr_log.write(
                         lg.render_expanded("manager", group_by_handle=group_mgr),
@@ -934,6 +891,20 @@ if _TEXTUAL_AVAILABLE:
                         pass
                     await app.route_command("end_call")  # type: ignore[attr-defined]
                     return
+                if event.button.id == "btn_screen_share_start":
+                    try:
+                        app.post_message(AppendLine("[ui] Share Screen pressed"))  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    await app.route_command("assistant_screen_share_start")  # type: ignore[attr-defined]
+                    return
+                if event.button.id == "btn_screen_share_stop":
+                    try:
+                        app.post_message(AppendLine("[ui] Stop Sharing pressed"))  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    await app.route_command("assistant_screen_share_stop")  # type: ignore[attr-defined]
+                    return
                 if event.button.id == "btn_mic":
                     # Toggle mic recording: first click starts, second click stops.
                     if not bool(getattr(app.runtime.args, "voice", False)):  # type: ignore[attr-defined]
@@ -1019,7 +990,6 @@ if _TEXTUAL_AVAILABLE:
         #left { width: 45%; padding: 1; }
         #right { width: 55%; padding: 1; }
         #responses { height: 1fr; border: round $surface; }
-        #steering_hint { height: auto; color: $text-muted; }
         #cmd_row { height: auto; }
         #command_input { width: 1fr; }
         """
@@ -1151,6 +1121,10 @@ if _TEXTUAL_AVAILABLE:
             if cmd.kind in {"show_logs", "collapse_logs"}:
                 self._handle_logs_locally(kind=cmd.kind, args=cmd.args)
                 return
+            if cmd.kind == "save_state":
+                for line in self._save_state_from_ui(cmd.args):
+                    self.post_message(AppendLine(line))
+                return
 
             # Quit should stop both UI and worker (best-effort).
             if cmd.kind == "quit":
@@ -1210,6 +1184,10 @@ if _TEXTUAL_AVAILABLE:
                 self.post_message(AppendLine(f"❌ Failed to send to worker: {exc}"))
 
         async def on_append_line(self, msg: AppendLine) -> None:
+            try:
+                self.runtime.conversation_lines.append(str(msg.line))
+            except Exception:
+                pass
             # Write into the active screen's response log.
             try:
                 scr = self.screen
@@ -1691,12 +1669,6 @@ if _TEXTUAL_AVAILABLE:
                             rt.event_tree_display.mark_handle_completed(actor_hid)
                         except Exception:
                             pass
-                elif name == "ActorPause":
-                    reason = str(payload.get("reason") or "").strip()
-                    msg = f"ActorPause: {reason}" if reason else "ActorPause"
-                elif name == "ActorResume":
-                    reason = str(payload.get("reason") or "").strip()
-                    msg = f"ActorResume: {reason}" if reason else "ActorResume"
             except Exception:
                 pass
 
@@ -1814,6 +1786,79 @@ if _TEXTUAL_AVAILABLE:
                 rt.dirty_trace = True
             except Exception:
                 pass
+
+        def _save_state_from_ui(self, args: str) -> list[str]:
+            rt = self.runtime
+            snapshot = capture_snapshot(
+                log_aggregator=rt.log_aggregator,
+                event_tree_display=rt.event_tree_display,
+                trace_display=rt.trace_display,
+                conversation_lines=list(rt.conversation_lines),
+            )
+
+            repo_root = Path(__file__).resolve().parents[2]
+            if args and args.strip():
+                json_path = repo_root / args.strip()
+            else:
+                timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+                json_path = repo_root / f".sandbox_state_{timestamp}.json"
+
+            try:
+                save_snapshot(snapshot, json_path)
+            except Exception as exc:
+                return [f"❌ Failed to save state: {exc}"]
+
+            try:
+                text_path = json_path.with_suffix(".txt")
+                text_content = render_snapshot_text(snapshot)
+                with open(text_path, "w", encoding="utf-8") as f:
+                    f.write(text_content)
+            except Exception as exc:
+                return [
+                    f"💾 State saved to: {json_path}",
+                    f"⚠️ Failed to save text version: {exc}",
+                ]
+
+            result_lines = [
+                "💾 State saved:",
+                f"   JSON: {json_path}",
+                f"   Text: {text_path}",
+                (
+                    f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
+                    f"{snapshot.summary['total_cm_logs']} CM logs, "
+                    f"{snapshot.summary['total_actor_logs']} actor logs, "
+                    f"{snapshot.summary['total_manager_logs']} manager logs, "
+                    f"{snapshot.summary['total_traces']} traces, "
+                    f"{snapshot.summary['total_event_trees']} trees"
+                ),
+            ]
+
+            import os
+
+            _launch_cwd = os.environ.get("UNITY_SANDBOX_LAUNCH_CWD", "").strip()
+            _voice_root = Path(_launch_cwd).resolve() if _launch_cwd else repo_root
+            voice_log = _voice_root / ".logs_voice_agent.txt"
+            if voice_log.exists():
+                try:
+                    from sandboxes.conversation_manager.call_transcript import (
+                        build_timeline,
+                        format_timeline,
+                        parse_voice_log,
+                    )
+
+                    voice_data = parse_voice_log(voice_log)
+                    if voice_data.utterances:
+                        timeline = build_timeline(voice_data)
+                        transcript_path = json_path.with_name(
+                            json_path.stem + "_transcript.txt",
+                        )
+                        with open(transcript_path, "w") as f:
+                            f.write(format_timeline(timeline, verbose=True))
+                        result_lines.append(f"   Transcript: {transcript_path}")
+                except Exception as exc:
+                    result_lines.append(f"   ⚠️ Transcript failed: {exc}")
+
+            return result_lines
 
         async def _record_and_transcribe_best_effort(self) -> str:
             """

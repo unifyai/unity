@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from typing import List
 from urllib.parse import urlparse
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
+
 
 def _get_local_root() -> str:
     from unity.file_manager.settings import get_local_root
@@ -18,10 +21,11 @@ class SyncConfig:
     """Configuration for managed VM file sync via rclone SFTP.
 
     Paths:
-    - local_root: get_local_root() (defaults to ~ ; /root in production)
-    - remote_root: /root (VM)
+    - local_root: get_local_root() (defaults to ~/Unity/Local)
+    - remote_root: /Unity/Local (VM, set up by ubuntu-vm-startup.sh)
 
-    Syncs /root which contains user files (Downloads/, functions/, etc.).
+    Syncs the dedicated Unity workspace which contains user files
+    (Downloads/, functions/, etc.).
 
     Conflict resolution: Latest wins (by modification time)
     """
@@ -38,7 +42,7 @@ class SyncConfig:
     local_root: str = field(
         default_factory=lambda: _get_local_root(),
     )
-    remote_root: str = "/root"
+    remote_root: str = "/Unity/Local"
 
     # Sync behavior
     sync_on_write: bool = True
@@ -54,29 +58,6 @@ class SyncConfig:
             ".DS_Store",
             ".bisync/**",  # rclone's own state files
             "venvs/**",  # Virtual environments (managed via HTTP API)
-            # Shell config (overwriting breaks the VM)
-            ".ssh/**",
-            ".gnupg/**",
-            ".bash_history",
-            ".bashrc",
-            ".profile",
-            # Runtime / cache
-            ".cache/**",
-            ".local/**",
-            ".npm/**",
-            ".bun/**",
-            # Desktop environment artifacts
-            ".dbus/**",
-            ".ICEauthority",
-            ".vnc/**",
-            ".config/**",
-            # Non-relevant VM home directories
-            "Music/**",
-            "Pictures/**",
-            "Videos/**",
-            "Public/**",
-            "snap/**",
-            "Templates/**",
         ],
     )
 
@@ -96,26 +77,31 @@ class SyncConfig:
         assistant_id = SESSION_DETAILS.assistant.id
 
         if not desktop_url:
-            print("[FileSync] No desktop_url configured, sync disabled")
+            LOGGER.debug(
+                f"{ICONS['file_sync']} [FileSync] No desktop_url configured, sync disabled",
+            )
             return cls(enabled=False)
 
         ssh_host = cls._extract_host(desktop_url)
         if not ssh_host:
-            print(f"[FileSync] Could not extract host from desktop_url: {desktop_url}")
+            LOGGER.error(
+                f"{ICONS['file_sync']} [FileSync] Could not extract host from desktop_url: {desktop_url}",
+            )
             return cls(enabled=False)
 
-        # Use assistant_context directly - matches Unify context naming convention
-        ssh_user = SESSION_DETAILS.assistant_context
+        ssh_user = SESSION_DETAILS.assistant.name
         if not ssh_user:
-            print("[FileSync] Could not derive SSH user from assistant_context")
+            LOGGER.error(
+                f"{ICONS['file_sync']} [FileSync] No assistant name configured for SSH user",
+            )
             return cls(enabled=False)
 
         # Temp file for SSH key (secure permissions set on write)
         ssh_key_path = f"/tmp/.unity_vm_key_{assistant_id}"
 
-        print(
-            f"[FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
-            f"local=~, remote=/root",
+        LOGGER.debug(
+            f"{ICONS['file_sync']} [FileSync] Config: host={ssh_host}, port=2222, user={ssh_user}, "
+            f"local=~/Unity/Local, remote=/Unity/Local",
         )
 
         return cls(

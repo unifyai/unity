@@ -59,11 +59,17 @@ from unity.conversation_manager.events import (
     UnifyMeetReceived,
     StartupEvent,
     AssistantUpdateEvent,
-    ActorPause,
-    ActorResume,
     SyncContacts,
     PreHireMessage,
     Ping,
+    AssistantScreenShareStarted,
+    AssistantScreenShareStopped,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
 )
 from unity.contact_manager.types.contact import UNASSIGNED
 
@@ -813,7 +819,6 @@ class TestUnifyMeetHandling:
 
             event = Event.from_json(msg["data"])
             assert isinstance(event, UnifyMeetReceived)
-            assert event.livekit_agent_name == "TestAgent"
             assert event.room_name == "room_123"
 
 
@@ -945,111 +950,7 @@ class TestStartupEvents:
 
 
 class TestSystemEvents:
-    """Test handling of system events (pause_actor, resume_actor, sync_contacts)."""
-
-    @pytest.mark.asyncio
-    async def test_handle_pause_actor_event(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test handling of pause_actor system event."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:actor:*")
-
-            message = create_pubsub_message(
-                "unity_system_event",
-                {
-                    "event_type": "pause_actor",
-                    "message": "User took control of desktop",
-                },
-            )
-
-            cm.handle_message(message)
-            # Poll for message acknowledgment instead of fixed sleep
-            await _wait_for_condition(lambda: message._acked)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg is not None
-            assert msg["channel"] == "app:actor:pause_actor"
-
-            event = Event.from_json(msg["data"])
-            assert isinstance(event, ActorPause)
-            assert event.reason == "User took control of desktop"
-
-    @pytest.mark.asyncio
-    async def test_handle_pause_actor_default_message(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test pause_actor with default message when not provided."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:actor:*")
-
-            message = create_pubsub_message(
-                "unity_system_event",
-                {
-                    "event_type": "pause_actor",
-                    "message": None,  # No message provided
-                },
-            )
-
-            cm.handle_message(message)
-            # Poll for message acknowledgment instead of fixed sleep
-            await _wait_for_condition(lambda: message._acked)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            event = Event.from_json(msg["data"])
-            assert "taken control of the desktop" in event.reason
-
-    @pytest.mark.asyncio
-    async def test_handle_resume_actor_event(
-        self,
-        broker,
-        mock_session_details,
-        mock_settings,
-    ):
-        """Test handling of resume_actor system event."""
-        from unity.conversation_manager.comms_manager import CommsManager
-
-        cm = CommsManager(broker)
-        cm.loop = asyncio.get_event_loop()
-
-        async with broker.pubsub() as pubsub:
-            await pubsub.psubscribe("app:actor:*")
-
-            message = create_pubsub_message(
-                "unity_system_event",
-                {
-                    "event_type": "resume_actor",
-                    "message": "User returned control",
-                },
-            )
-
-            cm.handle_message(message)
-            # Poll for message acknowledgment instead of fixed sleep
-            await _wait_for_condition(lambda: message._acked)
-
-            msg = await pubsub.get_message(timeout=1.0, ignore_subscribe_messages=True)
-            assert msg is not None
-            assert msg["channel"] == "app:actor:resume_actor"
-
-            event = Event.from_json(msg["data"])
-            assert isinstance(event, ActorResume)
-            assert event.reason == "User returned control"
+    """Test handling of system events (sync_contacts, screen share, remote control)."""
 
     @pytest.mark.asyncio
     async def test_handle_sync_contacts_event(
@@ -1086,6 +987,159 @@ class TestSystemEvents:
             event = Event.from_json(msg["data"])
             assert isinstance(event, SyncContacts)
             assert event.reason == "Manual sync requested"
+
+
+# =============================================================================
+# Test: Meet Interaction System Events (screen share / remote control)
+# =============================================================================
+
+
+class TestMeetInteractionSystemEvents:
+    """Test handling of meet interaction system events through CommsManager.
+
+    These events are published by the Console frontend when the user toggles
+    screen sharing or remote control during a Unify Meet session. They arrive
+    as unity_system_event messages and should be routed to app:comms:*.
+    """
+
+    _EVENT_CASES = [
+        (
+            "assistant_screen_share_started",
+            AssistantScreenShareStarted,
+            "User enabled assistant screen sharing",
+        ),
+        (
+            "assistant_screen_share_stopped",
+            AssistantScreenShareStopped,
+            "User disabled assistant screen sharing",
+        ),
+        (
+            "user_screen_share_started",
+            UserScreenShareStarted,
+            "User started sharing their screen",
+        ),
+        (
+            "user_screen_share_stopped",
+            UserScreenShareStopped,
+            "User stopped sharing their screen",
+        ),
+        (
+            "user_webcam_started",
+            UserWebcamStarted,
+            "User enabled their webcam",
+        ),
+        (
+            "user_webcam_stopped",
+            UserWebcamStopped,
+            "User disabled their webcam",
+        ),
+        (
+            "user_remote_control_started",
+            UserRemoteControlStarted,
+            "User took remote control of assistant desktop",
+        ),
+        (
+            "user_remote_control_stopped",
+            UserRemoteControlStopped,
+            "User released remote control of assistant desktop",
+        ),
+    ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "event_type,expected_cls,message",
+        _EVENT_CASES,
+        ids=[c[0] for c in _EVENT_CASES],
+    )
+    async def test_meet_interaction_event_routing(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+        event_type,
+        expected_cls,
+        message,
+    ):
+        """System events for meet interactions are routed to app:comms:<event_type>."""
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            msg = create_pubsub_message(
+                "unity_system_event",
+                {"event_type": event_type, "message": message},
+            )
+
+            cm.handle_message(msg)
+            await _wait_for_condition(lambda: msg._acked)
+
+            received = await get_message_on_channel(
+                pubsub,
+                f"app:comms:{event_type}",
+            )
+            assert received is not None, f"Expected message on app:comms:{event_type}"
+
+            event = Event.from_json(received["data"])
+            assert isinstance(event, expected_cls)
+            assert event.reason == message
+
+    @pytest.mark.asyncio
+    async def test_meet_interaction_event_default_reason(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """Meet interaction events use a default reason when message is None."""
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        async with broker.pubsub() as pubsub:
+            await pubsub.psubscribe("app:comms:*")
+
+            msg = create_pubsub_message(
+                "unity_system_event",
+                {"event_type": "assistant_screen_share_started", "message": None},
+            )
+
+            cm.handle_message(msg)
+            await _wait_for_condition(lambda: msg._acked)
+
+            received = await get_message_on_channel(
+                pubsub,
+                "app:comms:assistant_screen_share_started",
+            )
+            event = Event.from_json(received["data"])
+            assert isinstance(event, AssistantScreenShareStarted)
+            assert "screen sharing" in event.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_unknown_system_event_is_acked_silently(
+        self,
+        broker,
+        mock_session_details,
+        mock_settings,
+    ):
+        """Unrecognized system event types are acked without publishing."""
+        from unity.conversation_manager.comms_manager import CommsManager
+
+        cm = CommsManager(broker)
+        cm.loop = asyncio.get_event_loop()
+
+        msg = create_pubsub_message(
+            "unity_system_event",
+            {"event_type": "some_unknown_event", "message": "test"},
+        )
+
+        cm.handle_message(msg)
+        await _wait_for_condition(lambda: msg._acked)
+        assert msg._acked
 
 
 # =============================================================================

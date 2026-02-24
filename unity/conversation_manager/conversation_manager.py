@@ -1,21 +1,24 @@
 import asyncio
-import logging
-
-import json
 from typing import Optional
 import contextlib
 
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 from unity.session_details import DEFAULT_ASSISTANT_ID, SESSION_DETAILS
 from unity.settings import SETTINGS
 from unity.manager_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.hierarchical_logger import SessionLogger
-from unity.conversation_manager import debug_logger
+from unity.conversation_manager import assistant_jobs
 from unity.conversation_manager.domains.call_manager import (
     CallConfig,
     LivekitCallManager,
 )
-from unity.conversation_manager.domains.contact_index import ContactIndex, CommsMessage
+from unity.conversation_manager.domains.contact_index import (
+    ContactIndex,
+    CommsMessage,
+    Message,
+)
 from unity.conversation_manager.domains.brain import build_brain_spec
 from unity.conversation_manager.domains.brain_action_tools import (
     ConversationManagerBrainActionTools,
@@ -28,36 +31,37 @@ from unity.common.prompt_helpers import now as prompt_now
 
 from unity.common.llm_client import new_llm_client
 from unity.common.single_shot import single_shot_tool_decision
+from unity.events.manager_event_logging import _EVENT_SOURCE
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.domains.utils import Debouncer, log_task_exc
 
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.conversation_manager.types import Medium, Mode
+from unity.conversation_manager.types import Medium, Mode, ScreenshotEntry
+from unity.conversation_manager.types.screenshot import (
+    generate_screenshot_path,
+    write_screenshot_to_disk,
+)
 from unity.actor.base import BaseActor
 from unity.conversation_manager.domains.proactive_speech import ProactiveSpeech
-from unity.conversation_manager.domains.guidance_filter import (
-    GuidanceFilter,
-    ConversationMessage,
-)
-
-logger = logging.getLogger(__name__)
-
-# Set logging level and add handler if not already configured
-log_level = SETTINGS.conversation.LOG_LEVEL.upper()
-logger.setLevel(getattr(logging, log_level, logging.INFO))
-
-# Ensure we have a console handler to actually display logs
-if not logger.handlers:
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(levelname)s: %(message)s")
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
+from unity.conversation_manager.tracing import content_trace_id
+from unity.conversation_manager.medium_scripts.common import FastBrainLogger
 
 MAX_CONV_MANAGER_MSGS = 50
+
+
+def _save_screenshot(entry: ScreenshotEntry) -> str:
+    """Save a screenshot to disk and return its relative path.
+
+    If the entry already carries a filepath (set by the fast brain), the file
+    is already on disk — just return the path without writing again.
+    """
+    if entry.filepath:
+        return entry.filepath
+    path = generate_screenshot_path(entry)
+    write_screenshot_to_disk(entry, path)
+    return path
 
 
 class ConversationManager(metaclass=SingletonABCMeta):
@@ -130,6 +134,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # call manager - pass event_broker for socket IPC with voice agent subprocess
         self.call_manager = LivekitCallManager(self.get_call_config(), event_broker)
+        self.call_manager.on_screenshot = self._buffer_screenshot
+        self.call_manager.on_fast_brain_generating = self._on_fast_brain_generating
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -161,12 +167,30 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._current_snapshot_state = (
             None  # SnapshotState with element tracking for incremental diff computation
         )
-        self.is_summarizing = None
-        self.max_messages = 30
+
+        # meet interaction state (screen share / webcam / remote control)
+        self.assistant_screen_share_active: bool = False
+        self.user_screen_share_active: bool = False
+        self.user_webcam_active: bool = False
+        self.user_remote_control_active: bool = False
+
+        # screenshot buffer for slow brain visual context
+        self._screenshot_buffer: list[ScreenshotEntry] = []
+        # mapping from local_message_id (ephemeral CM counter) to
+        # global message_id (persistent backend TM id), populated by
+        # log_message() for post-hoc screenshot image updates.
+        self._local_to_global_message_ids: dict[int, int] = {}
+
+        # mapping from conference_name/room_name to exchange_id, populated
+        # at call/meet end so the async RecordingReady handler can resolve
+        # the exchange without a database filter query.
+        self._recording_exchange_ids: dict[str, int] = {}
 
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
         self._proactive_speech_task: asyncio.Task | None = None
+        self._fast_brain_active: bool = False
+        self._proactive_logger = FastBrainLogger(mode="tts")
 
         # ask handles (for Actor actions)
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -174,10 +198,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # LLM run requests recorded during event handling (production path).
         # In step() mode, requests are recorded via a contextvar instead.
         self._pending_llm_requests: list[tuple[float, bool]] = []
+        self._pending_llm_request_meta: list[dict[str, str]] = []
+        self._current_event_trace: dict[str, str] | None = None
+        self._event_trace_seq: int = 0
+        self._has_non_forwarded_event: bool = False
+        self._llm_request_seq: int = 0
+        self._llm_run_seq: int = 0
 
         # Hierarchical session logger for consistent nested logging
         self._session_logger = SessionLogger("ConversationManager")
-        self._session_logger.info(
+        self._session_logger.debug(
             "session_start",
             "ConversationManager session initialized",
         )
@@ -214,6 +244,134 @@ class ConversationManager(metaclass=SingletonABCMeta):
         return self.call_manager.call_contact or self.contact_index.get_contact(
             contact_id=1,
         )
+
+    async def capture_assistant_screenshot(
+        self,
+        user_utterance: str,
+        local_message_id: int | None = None,
+    ) -> None:
+        """Capture the assistant's screen and buffer it for the next slow brain turn.
+
+        Called when an inbound utterance arrives while assistant screen sharing
+        is active. The screenshot is paired with the user's utterance text so
+        the slow brain can align visual context with spoken instructions.
+        """
+        import aiohttp
+        from datetime import datetime, timezone
+
+        desktop_url = SESSION_DETAILS.assistant.desktop_url
+        if desktop_url:
+            base_url = desktop_url.rstrip("/") + "/api"
+        else:
+            base_url = "http://localhost:3000"
+        try:
+            auth_key = SESSION_DETAILS.unify_key
+            headers = {"authorization": f"Bearer {auth_key}"}
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base_url}/screenshot",
+                    json={},
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status >= 400:
+                        self._session_logger.warning(
+                            "screenshot_capture",
+                            f"Screenshot capture failed: HTTP {resp.status}",
+                        )
+                        return
+                    data = await resp.json()
+                    b64 = data.get("screenshot")
+                    if b64:
+                        from unity.conversation_manager.medium_scripts.common import (
+                            _ensure_jpeg,
+                        )
+
+                        b64 = _ensure_jpeg(b64)
+                        self._screenshot_buffer.append(
+                            ScreenshotEntry(
+                                b64,
+                                user_utterance,
+                                datetime.now(timezone.utc),
+                                "assistant",
+                                local_message_id,
+                            ),
+                        )
+                        self._session_logger.debug(
+                            "screenshot_capture",
+                            f"Buffered screenshot #{len(self._screenshot_buffer)} "
+                            f"for utterance: {user_utterance[:60]}...",
+                        )
+        except Exception as e:
+            self._session_logger.warning(
+                "screenshot_capture",
+                f"Screenshot capture error: {e}",
+            )
+
+    def peek_screenshot_buffer(self) -> list[ScreenshotEntry]:
+        """Return a snapshot of buffered screenshots without clearing.
+
+        The buffer remains intact so that if the consuming operation
+        (e.g. an LLM turn) is cancelled before completion, the next
+        attempt will re-process the same screenshots.  Call
+        :meth:`commit_screenshot_buffer` after all side effects have
+        succeeded to remove the consumed entries.
+        """
+        return list(self._screenshot_buffer)
+
+    def commit_screenshot_buffer(self, count: int) -> None:
+        """Remove the first *count* entries from the screenshot buffer.
+
+        Called after the LLM turn has successfully consumed and persisted
+        the screenshots returned by :meth:`peek_screenshot_buffer`.
+        Any screenshots that arrived *during* the turn (appended after the
+        peek) are preserved for the next turn.
+        """
+        del self._screenshot_buffer[:count]
+
+    def _claim_pending_user_screenshot(self, local_message_id: int) -> None:
+        """Stamp the most recent unclaimed user screenshot with the given local_message_id."""
+        if self._screenshot_buffer:
+            last = self._screenshot_buffer[-1]
+            if last.source == "user" and last.local_message_id is None:
+                self._screenshot_buffer[-1] = last._replace(
+                    local_message_id=local_message_id,
+                )
+
+    def _buffer_screenshot(self, event_json: str) -> None:
+        """Buffer a screenshot received from the fast brain via IPC.
+
+        Accepts both user and assistant screenshots, distinguished by the
+        ``source`` field in the JSON payload.  When a ``filepath`` is included,
+        the file has already been written to disk by the fast brain.
+        """
+        import json as _json
+        from datetime import datetime, timezone
+
+        try:
+            data = _json.loads(event_json)
+            b64 = data.get("b64", "")
+            utterance = data.get("utterance", "")
+            source = data.get("source", "user")
+            filepath = data.get("filepath")
+            ts_str = data.get("timestamp")
+            ts = (
+                datetime.fromisoformat(ts_str) if ts_str else datetime.now(timezone.utc)
+            )
+            if b64:
+                self._screenshot_buffer.append(
+                    ScreenshotEntry(b64, utterance, ts, source, filepath=filepath),
+                )
+                self._session_logger.debug(
+                    "screenshot_capture",
+                    f"Buffered {source} screenshot #{len(self._screenshot_buffer)} "
+                    f"for utterance: {utterance[:60]}...",
+                )
+        except Exception as e:
+            self._session_logger.warning(
+                "screenshot_capture",
+                f"Error buffering screenshot: {e}",
+            )
 
     def get_recent_voice_transcript(
         self,
@@ -380,110 +538,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         except Exception:
             return messages
 
-    async def _check_guidance_relevance(
-        self,
-        guidance_content: str,
-        slow_brain_start_time: "datetime",
-    ) -> bool:
-        """
-        Check if guidance is still relevant given conversation changes since slow brain started.
-
-        The slow brain takes 10-20 seconds to think. During this time, the user may change
-        topics, the fast brain may respond, etc. This method uses a fast LLM filter to
-        determine if the guidance is still relevant or if it's stale.
-
-        Args:
-            guidance_content: The guidance text from the slow brain.
-            slow_brain_start_time: When the slow brain started thinking.
-
-        Returns:
-            True if guidance should be sent, False if it's stale and should be blocked.
-        """
-        from datetime import datetime, timezone
-
-        try:
-            # Get the current voice conversation
-            contact = self.get_active_contact()
-            if not contact:
-                return True  # No contact context, send guidance
-
-            contact_id = contact.get("contact_id")
-            conv_state = self.contact_index.get_conversation_state(contact_id)
-            if not conv_state:
-                return True  # No conversation state, send guidance
-
-            # Get the voice thread
-            voice_medium = (
-                Medium.UNIFY_MEET if self.mode == Mode.MEET else Medium.PHONE_CALL
-            )
-            voice_thread = self.contact_index.get_messages_for_contact(
-                contact_id,
-                voice_medium,
-            )
-
-            if not voice_thread:
-                return True  # No messages to compare, send guidance
-
-            # Convert to ConversationMessage format with is_new flag
-            conversation_messages = []
-            for msg in voice_thread:
-                content = (msg.content or "").strip()
-
-                # Skip system messages (e.g., "<Call Started>")
-                if content.startswith("<") and content.endswith(">"):
-                    continue
-
-                # Determine role
-                if hasattr(msg, "role"):
-                    role = msg.role
-                else:
-                    role = "assistant" if msg.name == "You" else "user"
-
-                # Check if this message arrived AFTER slow brain started
-                msg_time = getattr(msg, "timestamp", None)
-                is_new = False
-                if msg_time is not None:
-                    # Ensure timezone-aware comparison
-                    if msg_time.tzinfo is None:
-                        msg_time = msg_time.replace(tzinfo=timezone.utc)
-                    is_new = msg_time > slow_brain_start_time
-
-                conversation_messages.append(
-                    ConversationMessage(
-                        role=role,
-                        content=content,
-                        timestamp=msg_time or datetime.now(timezone.utc),
-                        is_new=is_new,
-                    ),
-                )
-
-            # If no new messages, guidance is definitely still relevant
-            if not any(m.is_new for m in conversation_messages):
-                return True
-
-            # Use the GuidanceFilter to make the decision
-            guidance_filter = GuidanceFilter()
-            decision = await guidance_filter.should_send_guidance(
-                guidance_content,
-                conversation_messages,
-            )
-
-            self._session_logger.debug(
-                "guidance_filter",
-                f"Filter decision: send={decision.send_guidance}, "
-                f"thoughts={decision.thoughts[:100]}...",
-            )
-
-            return decision.send_guidance
-
-        except Exception as e:
-            # On error, default to sending guidance (fail-open)
-            self._session_logger.error(
-                "guidance_filter",
-                f"Error in guidance filter, defaulting to send: {e}",
-            )
-            return True
-
     async def interject_or_run(self, content: str):
         """Interject the ask handle or run the LLM"""
         if self.active_ask_handle and not self.active_ask_handle.done():
@@ -511,9 +565,15 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
     # this is non-blocking, it will quickly submit the
     # coro and return
-    async def run_llm(self, delay=0, cancel_running=False):
+    async def run_llm(
+        self,
+        delay: float = 0,
+        cancel_running: bool = False,
+        trace_meta: dict[str, str] | None = None,
+    ):
         await self.debouncer.submit(
             self._run_llm,
+            kwargs={"trace_meta": trace_meta or {}},
             delay=delay,
             cancel_running=cancel_running,
         )
@@ -524,29 +584,190 @@ class ConversationManager(metaclass=SingletonABCMeta):
         The request is recorded and later scheduled by the event loop after
         the current event is handled.
         """
+        self._llm_request_seq += 1
+        request_id = f"llmreq-{self._llm_request_seq:06d}"
+        event_trace = self._current_event_trace or {}
+        request_meta = {
+            "request_id": request_id,
+            "origin_event_id": event_trace.get("event_id", ""),
+            "origin_event_name": event_trace.get("event_name", ""),
+        }
         self._pending_llm_requests.append((delay, cancel_running))
+        self._pending_llm_request_meta.append(request_meta)
+        self._session_logger.debug(
+            "llm_queue",
+            (
+                f"Queued slow-brain run request_id={request_id} "
+                f"origin_event_id={request_meta['origin_event_id'] or '-'} "
+                f"origin_event={request_meta['origin_event_name'] or '-'} "
+                f"delay={delay} cancel_running={cancel_running}"
+            ),
+        )
 
     async def flush_llm_requests(self) -> None:
         """Schedule any pending LLM runs recorded during event handling."""
         if not self._pending_llm_requests:
             return
-        delay, cancel_running = self._pending_llm_requests[-1]
-        self._pending_llm_requests.clear()
-        await self.run_llm(delay=delay, cancel_running=cancel_running)
 
-    async def _run_llm(self) -> str | None:
+        dropped_requests = max(len(self._pending_llm_requests) - 1, 0)
+        delay, cancel_running = self._pending_llm_requests[-1]
+        selected_meta = (
+            dict(self._pending_llm_request_meta[-1])
+            if self._pending_llm_request_meta
+            else {}
+        )
+        self._pending_llm_requests.clear()
+        self._pending_llm_request_meta.clear()
+
+        self._llm_run_seq += 1
+        run_id = f"llmrun-{self._llm_run_seq:06d}"
+        selected_meta["run_id"] = run_id
+        selected_meta["dropped_requests"] = str(dropped_requests)
+
+        self._session_logger.debug(
+            "llm_thinking",
+            (
+                f"Dispatching slow-brain run_id={run_id} "
+                f"request_id={selected_meta.get('request_id', '-')} "
+                f"origin_event_id={selected_meta.get('origin_event_id', '-') or '-'} "
+                f"origin_event={selected_meta.get('origin_event_name', '-') or '-'} "
+                f"dropped_requests={dropped_requests} delay={delay} "
+                f"cancel_running={cancel_running}"
+            ),
+        )
+        await self.run_llm(
+            delay=delay,
+            cancel_running=cancel_running,
+            trace_meta=selected_meta,
+        )
+
+    async def _run_llm(self, trace_meta: dict[str, str] | None = None) -> str | None:
         """Run a single LLM decision and return the tool name that was called."""
         # Capture when slow brain starts thinking (for guidance staleness detection)
         from datetime import datetime, timezone
 
+        trace_meta = trace_meta or {}
+        run_id = trace_meta.get("run_id", "llmrun-unknown")
+        request_id = trace_meta.get("request_id", "")
+        origin_event_id = trace_meta.get("origin_event_id", "")
+        origin_event_name = trace_meta.get("origin_event_name", "")
+        self._session_logger.debug(
+            "llm_thinking",
+            (
+                f"Slow-brain run started run_id={run_id} "
+                f"request_id={request_id or '-'} "
+                f"origin_event_id={origin_event_id or '-'} "
+                f"origin_event={origin_event_name or '-'} mode={self.mode}"
+            ),
+        )
+
         slow_brain_start_time = datetime.now(timezone.utc)
 
+        # Peek at buffered screenshots (non-destructive).  The buffer is
+        # only committed after the full turn succeeds, so if this turn is
+        # cancelled mid-flight the screenshots remain available for retry.
+        screenshots = self.peek_screenshot_buffer()
+
+        # Persist each screenshot to disk so the CodeActActor can reference them
+        # by filepath for programmatic operations (OCR, comparison, etc.).
+        screenshot_paths = [_save_screenshot(s) for s in screenshots]
+
+        # Register screenshots with ImageManager and attach filepaths + image_ids
+        # to the corresponding Message objects in the global thread.
+        image_ids: list[int] = []
+        if screenshots:
+            # Register with backend to get persistent image_ids (auto-caption enabled).
+            try:
+                from unity.manager_registry import ManagerRegistry
+
+                image_manager = ManagerRegistry.get_image_manager()
+                items = [
+                    {
+                        "data": entry.b64,
+                        "timestamp": entry.timestamp,
+                        "filepath": path,
+                    }
+                    for entry, path in zip(screenshots, screenshot_paths)
+                ]
+                image_ids = await asyncio.to_thread(
+                    image_manager.add_images,
+                    items,
+                    synchronous=True,
+                )
+            except Exception as e:
+                self._session_logger.warning(
+                    "screenshot_registration",
+                    f"ImageManager registration failed, skipping: {e}",
+                )
+                image_ids = []
+
+            # Build per-message groupings for filepaths, image_ids, and TM refs.
+            msg_to_paths: dict[int, list[str]] = {}
+            msg_to_image_ids: dict[int, list[int]] = {}
+            msg_to_image_refs: dict[int, list[dict]] = {}
+            source_labels = {"assistant": "Assistant's screen", "user": "User's screen"}
+            for i, (entry, path) in enumerate(zip(screenshots, screenshot_paths)):
+                if entry.local_message_id is None:
+                    continue
+                mid = entry.local_message_id
+                msg_to_paths.setdefault(mid, []).append(path)
+                if i < len(image_ids):
+                    img_id = image_ids[i]
+                    msg_to_image_ids.setdefault(mid, []).append(img_id)
+                    label = source_labels.get(entry.source, "Screenshot")
+                    msg_to_image_refs.setdefault(mid, []).append(
+                        {
+                            "raw_image_ref": {"image_id": img_id},
+                            "annotation": f"{label} -- '{entry.utterance}'",
+                        },
+                    )
+
+            # Annotate CM Message objects with filepaths and image_ids.
+            # Uses assignment (not extend) so that re-processing the same
+            # screenshots on a retried turn is idempotent.
+            if msg_to_paths:
+                for gte in self.contact_index.global_thread:
+                    msg = gte.message
+                    if (
+                        isinstance(msg, Message)
+                        and msg.local_message_id in msg_to_paths
+                    ):
+                        msg.screenshots = msg_to_paths.pop(msg.local_message_id)
+                        if msg.local_message_id in msg_to_image_ids:
+                            msg.image_ids = msg_to_image_ids.pop(
+                                msg.local_message_id,
+                            )
+                    if not msg_to_paths:
+                        break
+
+            # Post-hoc update TM messages with AnnotatedImageRefs.
+            if msg_to_image_refs and self.transcript_manager is not None:
+                for local_mid, refs in msg_to_image_refs.items():
+                    tm_msg_id = self._local_to_global_message_ids.get(local_mid)
+                    if tm_msg_id is not None:
+                        try:
+                            await asyncio.to_thread(
+                                self.transcript_manager.update_message_images,
+                                tm_msg_id,
+                                refs,
+                            )
+                        except Exception as e:
+                            self._session_logger.warning(
+                                "screenshot_tm_update",
+                                f"TM image update failed for msg {tm_msg_id}: {e}",
+                            )
+
         self.snapshot()
-        brain_spec = build_brain_spec(self)
-        self._session_logger.debug(
-            "state_update",
-            f"State prompt:\n{brain_spec.state_prompt}",
+        brain_spec = build_brain_spec(
+            self,
+            screenshots=screenshots,
+            screenshot_paths=screenshot_paths,
         )
+        if screenshots:
+            self._session_logger.debug(
+                "screen_share",
+                f"Attaching {len(screenshots)} screenshot(s) to slow brain turn",
+            )
         input_message = brain_spec.state_message()
         system_prompt = brain_spec.system_prompt
 
@@ -562,10 +783,14 @@ class ConversationManager(metaclass=SingletonABCMeta):
             self.in_flight_actions,
             self.completed_actions,
             self.last_snapshot,
+            assistant_screen_share_active=self.assistant_screen_share_active,
+            user_screen_share_active=self.user_screen_share_active,
+            user_webcam_active=self.user_webcam_active,
+            user_remote_control_active=self.user_remote_control_active,
         )
 
         # Log LLM thinking start
-        self._session_logger.log_llm_thinking(f"mode={self.mode}")
+        self._session_logger.log_llm_thinking()
 
         # Build response model dynamically with current in-flight actions
         response_model = brain_spec.response_model
@@ -580,58 +805,89 @@ class ConversationManager(metaclass=SingletonABCMeta):
             **action_tools.build_completed_action_tools(),
         }
 
+        # Strip guide_voice_agent when the fast brain already sees all
+        # events that triggered this turn (no guidance value to add).
+        if "guide_voice_agent" in tools:
+            is_boss_on_call = (self.get_active_contact() or {}).get("contact_id") == 1
+            if is_boss_on_call or not self._has_non_forwarded_event:
+                tools.pop("guide_voice_agent")
+        self._has_non_forwarded_event = False
+
         # Single-shot LLM call: one decision, one action
-        client = new_llm_client(SETTINGS.UNIFY_MODEL)
+        client = new_llm_client(
+            SETTINGS.UNIFY_MODEL,
+            origin="ConversationManager.decide",
+        )
         client.set_system_message(system_prompt.to_list())
         client.set_prompt_caching(["system"])
         messages = self._preprocess_messages(self.chat_history + [input_message])
-        result = await single_shot_tool_decision(
-            client,
-            messages,
-            tools,
-            tool_choice="required" if tools else "auto",
-            response_format=response_model,
-        )
+        _source_token = _EVENT_SOURCE.set("ConversationManager")
+        try:
+            result = await single_shot_tool_decision(
+                client,
+                messages,
+                tools,
+                tool_choice="required" if tools else "auto",
+                response_format=response_model,
+            )
+        finally:
+            _EVENT_SOURCE.reset(_source_token)
 
-        # Extract structured output (thoughts, call_guidance)
+        # Extract structured output (thoughts)
         structured = result.structured_output
         thoughts = ""
         if structured is not None:
             thoughts = getattr(structured, "thoughts", "")
 
-            # Handle call_guidance for voice modes
-            if self.mode.is_voice:
-                call_guidance = getattr(structured, "call_guidance", "")
-                if call_guidance:
-                    # Check if guidance is still relevant (conversation may have moved on)
-                    should_send = await self._check_guidance_relevance(
-                        call_guidance,
-                        slow_brain_start_time,
-                    )
+        # Handle guide_voice_agent tool calls for voice modes.
+        # The slow brain decides BLOCK (omit the tool), NOTIFY (default),
+        # or SPEAK (should_speak=True + response_text) by calling
+        # guide_voice_agent in parallel with its action tool.
+        if self.mode.is_voice:
+            call_guidance = ""
+            should_speak = False
+            response_text = ""
+            for tool_exec in result.tools:
+                if tool_exec.name == "guide_voice_agent":
+                    args = tool_exec.args or {}
+                    call_guidance = args.get("content", "")
+                    should_speak = args.get("should_speak", False)
+                    response_text = args.get("response_text", "")
+                    break
 
-                    if should_send:
-                        contact = self.get_active_contact()
-                        event = CallGuidance(contact, call_guidance)
-                        await self.event_broker.publish(
-                            "app:call:call_guidance",
-                            event.to_json(),
-                        )
-                        await self.event_broker.publish(
-                            "app:comms:assistant_call_guidance",
-                            event.to_json(),
-                        )
-                    else:
-                        self._session_logger.info(
-                            "guidance_filtered",
-                            f"Stale guidance blocked: {call_guidance[:50]}...",
-                        )
+            if call_guidance:
+                guidance_id = content_trace_id("guid", call_guidance)
+                contact = self.get_active_contact()
+                event = CallGuidance(
+                    contact=contact,
+                    content=call_guidance,
+                    response_text=response_text,
+                    should_speak=should_speak,
+                    source="slow_brain",
+                )
+                self._session_logger.info(
+                    "call_guidance",
+                    (
+                        f"Publishing guidance guidance_id={guidance_id} "
+                        f"run_id={run_id} speak={should_speak}"
+                    ),
+                )
+                event_json = event.to_json()
+                await self.event_broker.publish(
+                    "app:call:call_guidance",
+                    event_json,
+                )
+                await self.event_broker.publish(
+                    "app:comms:assistant_call_guidance",
+                    event_json,
+                )
 
-        # Log LLM response
-        self._session_logger.log_llm_response(
+        self._session_logger.debug(
+            "llm_response",
             (
-                f"thoughts: {thoughts[:100]}..."
+                f"run_id={run_id} thoughts: {thoughts[:100]}..."
                 if len(thoughts) > 100
-                else f"thoughts: {thoughts}"
+                else f"run_id={run_id} thoughts: {thoughts}"
             )
             + (f" | action: {result.tool_name}" if result.tool_name else ""),
         )
@@ -643,6 +899,13 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self._current_state_snapshot = None
         self._current_snapshot_state = None
 
+        # The turn completed successfully — commit the screenshot buffer so
+        # these entries are not re-processed on the next turn.  Any new
+        # screenshots that arrived during this turn (appended after the peek)
+        # are preserved.
+        if screenshots:
+            self.commit_screenshot_buffer(len(screenshots))
+
         # Build assistant message for chat history
         assistant_content = (
             structured.model_dump_json() if structured else result.text_response or ""
@@ -650,16 +913,20 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": assistant_content})
 
-        if (
-            len(self.chat_history) >= int(0.7 * self.max_messages)
-            and not self.is_summarizing
-        ):
-            self._session_logger.info("summarize", "Summarizing conversation")
-            await self.event_broker.publish(
-                "app:comms:summarize",
-                SummarizeContext().to_json(),
-            )
-            self.is_summarizing = True
+        # If the LLM called wait(delay=N), schedule a delayed follow-up turn.
+        if result.tool_name == "wait":
+            delay = (result.tool_args or {}).get("delay")
+            self._session_logger.info("wait", "Waiting...")
+            if delay is not None:
+                await self.request_llm_run(delay=delay)
+
+        self._session_logger.debug(
+            "llm_response",
+            (
+                f"Slow-brain run completed run_id={run_id} "
+                f"tool={result.tool_name or '-'}"
+            ),
+        )
 
         return result.tool_name
 
@@ -686,13 +953,33 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
-
-                await EventHandler.handle_event(
-                    event,
-                    self,
-                    is_voice_call=self.call_manager.uses_realtime_api,
-                )
-                await self.flush_llm_requests()
+                channel = msg.get("channel", "")
+                if isinstance(channel, bytes):
+                    channel = channel.decode("utf-8", errors="replace")
+                self._event_trace_seq += 1
+                event_id = f"evt-{self._event_trace_seq:06d}"
+                event_name = event.__class__.__name__
+                self._current_event_trace = {
+                    "event_id": event_id,
+                    "event_name": event_name,
+                }
+                if event.__class__.loggable:
+                    self._session_logger.debug(
+                        "event_trace",
+                        (
+                            f"Processing event_id={event_id} "
+                            f"event={event_name} channel={channel or '-'}"
+                        ),
+                    )
+                try:
+                    await EventHandler.handle_event(
+                        event,
+                        self,
+                        is_voice_call=self.call_manager.uses_realtime_api,
+                    )
+                    await self.flush_llm_requests()
+                finally:
+                    self._current_event_trace = None
 
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""
@@ -701,10 +988,8 @@ class ConversationManager(metaclass=SingletonABCMeta):
             current_time = self.loop.time()
             if current_time - self.last_activity_time > self.inactivity_timeout:
                 log_str = f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown"
-                print(
-                    log_str,
-                )  # need console logging of inactivity to detect idle containers
-                self._session_logger.info("session_end", log_str)
+                LOGGER.debug(f"{DEFAULT_ICON} {log_str}")
+                self._session_logger.debug("session_end", log_str)
                 self.stop.set()
                 await self.event_broker.aclose()
                 break  # Exit the loop after triggering shutdown
@@ -776,6 +1061,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
     def get_call_config(self) -> CallConfig:
         return CallConfig(
             assistant_id=self.assistant_id,
+            user_id=self.user_id,
             assistant_bio=self.assistant_about,
             assistant_number=self.assistant_number,
             voice_provider=self.voice_provider,
@@ -792,27 +1078,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(2)
 
     async def cleanup(self):
-        """Clean up any running call processes and file sync.
-
-        Always updates rolling summaries before shutdown, regardless of message count,
-        to ensure conversation context is persisted for the next session.
-        """
-        # Import inline to avoid potential circular import issues with type checkers
-        from unity.conversation_manager.domains import managers_utils
-
-        # Always update rolling summaries before shutdown
-        self._session_logger.info(
-            "cleanup",
-            "Updating rolling summaries before shutdown",
-        )
-        try:
-            await managers_utils.update_rolling_summaries(self)
-        except Exception as e:
-            self._session_logger.error(
-                "cleanup",
-                f"Failed to update rolling summaries: {e}",
-            )
-
+        """Clean up any running call processes and file sync."""
         await self.store_chat_history()
         await self.call_manager.cleanup_call_proc()
 
@@ -820,11 +1086,11 @@ class ConversationManager(metaclass=SingletonABCMeta):
         await self._stop_file_sync()
 
         if self.job_name and self.assistant_id != DEFAULT_ASSISTANT_ID:
-            self._session_logger.info(
+            self._session_logger.debug(
                 "session_end",
                 f"Marking job {self.job_name} done",
             )
-            debug_logger.mark_job_done(self.job_name)
+            assistant_jobs.mark_job_done(self.job_name)
         self.stop.set()
 
     async def _stop_file_sync(self) -> None:
@@ -840,44 +1106,50 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 return
 
             if adapter.sync_started:
-                print("[ConversationManager] Stopping file sync...")
+                LOGGER.debug(
+                    f"{DEFAULT_ICON} [ConversationManager] Stopping file sync...",
+                )
                 await adapter.stop_sync()
-                print("[ConversationManager] File sync stopped")
+                LOGGER.debug(f"{DEFAULT_ICON} [ConversationManager] File sync stopped")
         except Exception as e:
-            print(f"[ConversationManager] Failed to stop file sync: {e}")
+            LOGGER.error(
+                f"{DEFAULT_ICON} [ConversationManager] Failed to stop file sync: {e}",
+            )
 
     # Proactive speech related methods
 
-    async def schedule_proactive_speech(self, skip_initial_wait: bool = False):
-        """Decides if and when to speak proactively, and schedules it.
+    PROACTIVE_DEBOUNCE_SECONDS = 5
 
-        Args:
-            skip_initial_wait: If True, skip the initial 8s wait (used when rescheduling after a false decision)
+    def _on_fast_brain_generating(self) -> None:
+        """Called via IPC when the fast brain starts generating a reply.
+
+        Sets ``_fast_brain_active`` so the proactive speech loop knows the
+        user is about to hear (or is already hearing) the assistant speak.
+        The flag is cleared when the corresponding ``OutboundUtterance``
+        arrives, and ``schedule_proactive_speech`` restarts the cycle from
+        the correct baseline.
         """
-        self._session_logger.debug(
-            "proactive_speech",
-            f"schedule_proactive_speech called, mode={self.mode}, skip_initial_wait={skip_initial_wait}",
-        )
+        self._fast_brain_active = True
+        asyncio.ensure_future(self.schedule_proactive_speech())
+
+    async def schedule_proactive_speech(self):
+        """Cancel any pending proactive speech and start a fresh cycle.
+
+        Called on every user/assistant utterance event to reset the silence
+        timer.  Only operates in voice modes (call / meet).
+        """
         await self.cancel_proactive_speech()
 
-        # Only schedule if we are in a call/voice mode where silence matters
         if not self.mode.is_voice:
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Skipping: mode {self.mode} not a voice mode",
-            )
             return
 
-        self._session_logger.debug("proactive_speech", "Creating proactive speech task")
-        # Create a task to run the decision and potential wait
         self._proactive_speech_task = asyncio.create_task(
-            self._proactive_speech_loop(skip_initial_wait=skip_initial_wait),
+            self._proactive_speech_loop(),
         )
         self._proactive_speech_task.add_done_callback(log_task_exc)
 
     async def cancel_proactive_speech(self):
         if self._proactive_speech_task and not self._proactive_speech_task.done():
-            # Don't cancel if we are running inside the task (recursion case)
             if self._proactive_speech_task == asyncio.current_task():
                 return
 
@@ -886,85 +1158,36 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 await self._proactive_speech_task
             self._proactive_speech_task = None
 
-    async def _proactive_speech_loop(self, skip_initial_wait: bool = False):
+    async def _proactive_speech_loop(self):
+        _log = self._proactive_logger
         try:
-            # Wait a reasonable amount of time first to allow for natural conversation flow
-            if not skip_initial_wait:
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Waiting 10s before checking for silence",
-                )
-                await asyncio.sleep(10)
-            else:
-                self._session_logger.debug(
-                    "proactive_speech",
-                    "Skipping initial wait (reschedule after false decision)",
-                )
+            _log.proactive_debounce(self.PROACTIVE_DEBOUNCE_SECONDS)
+            await asyncio.sleep(self.PROACTIVE_DEBOUNCE_SECONDS)
 
-            self._session_logger.debug(
-                "proactive_speech",
-                "Entering _proactive_speech_loop",
-            )
+            if self._fast_brain_active:
+                _log.proactive_deferred("fast brain is active")
+                return
 
-            # Get conversation turns and last message timestamp using helper
-            conversation_turns, last_message_timestamp = (
-                self.get_recent_voice_transcript()
-            )
-
-            # Calculate elapsed time from last message timestamp
-            if last_message_timestamp:
-                now = prompt_now(as_string=False)
-                if isinstance(last_message_timestamp, datetime):
-                    elapsed_seconds = (now - last_message_timestamp).total_seconds()
-                else:
-                    elapsed_seconds = 0
-            else:
-                elapsed_seconds = 0
-
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Elapsed time since last message: {elapsed_seconds:.1f}s",
-            )
-
-            # Build system prompt dynamically (there's no self.system_prompt attribute)
+            # Gather context for the decision.
+            conversation_turns, _ = self.get_recent_voice_transcript()
             brain_spec = build_brain_spec(self)
+
             decision = await self.proactive_speech.decide(
                 conversation_turns,
                 brain_spec.system_prompt.flatten(),
-                elapsed_seconds=elapsed_seconds,
             )
-            self._session_logger.debug(
-                "proactive_speech",
-                f"Decision: should_speak={decision.should_speak}, delay={decision.delay}s",
-            )
+            _log.proactive_decision(decision.should_speak, decision.delay)
 
             if not decision.should_speak:
-                # Adaptive wait: if we're already past 10s, check more frequently (5s)
-                # Otherwise, wait until we hit ~12s threshold (but cap at 7s max wait)
-                if elapsed_seconds < 10:
-                    wait_time = min(
-                        12 - elapsed_seconds,
-                        7,
-                    )  # Wait until ~12s, but max 7s
-                else:
-                    wait_time = 5  # Already past 10s, check every 5s
-
-                self._session_logger.debug(
-                    "proactive_speech",
-                    f"Not speaking (delay={decision.delay}s), will check again in {wait_time:.1f}s",
-                )
-                await asyncio.sleep(wait_time)
-                # Skip initial wait when rescheduling since we just waited
-                await self.schedule_proactive_speech(skip_initial_wait=True)
+                _log.proactive_dormant()
                 return
 
-            self._session_logger.info(
-                "proactive_speech",
-                f"Speaking in {decision.delay}s: {decision.content}",
-            )
-            await asyncio.sleep(decision.delay)
+            # Wait the requested delay (cancellable if an utterance arrives).
+            if decision.delay > 0:
+                _log.proactive_speaking(decision.delay, decision.content)
+                await asyncio.sleep(decision.delay)
 
-            # Record in contact_index
+            # Record in contact_index.
             contact = self.get_active_contact()
             if contact:
                 contact_id = contact.get("contact_id")
@@ -979,16 +1202,22 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     role="assistant",
                 )
 
-            # Publish to Voice Agent via call_guidance channel
+            guidance_id = content_trace_id("guid", decision.content)
+            event = CallGuidance(
+                contact=contact or {},
+                content=decision.content,
+                response_text=decision.content,
+                should_speak=True,
+                source="proactive_speech",
+            )
             await self.event_broker.publish(
                 "app:call:call_guidance",
-                json.dumps({"content": decision.content}),
+                event.to_json(),
             )
-
-            await self.schedule_proactive_speech()
+            _log.proactive_published(guidance_id, decision.content)
 
         except asyncio.CancelledError:
-            self._session_logger.debug("proactive_speech", "Task cancelled")
+            _log.proactive_cancelled()
             raise
         except Exception as e:
-            self._session_logger.error("proactive_speech", f"Error in loop: {e}")
+            _log.proactive_error(str(e))

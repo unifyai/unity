@@ -98,6 +98,7 @@ class ContextRegistry:
         from unity.function_manager.function_manager import FunctionManager
         from unity.blacklist_manager.blacklist_manager import BlackListManager
         from unity.data_manager.data_manager import DataManager
+        from unity.environment_manager.environment_manager import EnvironmentManager
 
         return [
             ContactManager,
@@ -111,6 +112,7 @@ class ContextRegistry:
             FunctionManager,
             BlackListManager,
             DataManager,
+            EnvironmentManager,
         ]
 
     @classmethod
@@ -160,12 +162,12 @@ class ContextRegistry:
         Ensure aggregation contexts exist for cross-assistant and cross-user queries.
 
         Creates two contexts:
-          - {UserName}/All/{suffix} - all assistants for this user
-          - All/{suffix}            - all users, all assistants
+          - {user_id}/All/{suffix} - all assistants for this user
+          - All/{suffix}           - all users, all assistants
 
         For test contexts (starting with "tests/"), the aggregation contexts are
         scoped to the test root for proper isolation:
-          - {test_root}/{UserName}/All/{suffix}
+          - {test_root}/{user_id}/All/{suffix}
           - {test_root}/All/{suffix}
 
         These contexts:
@@ -177,15 +179,15 @@ class ContextRegistry:
         if len(parts) < 3:
             return
 
-        # Handle test contexts: tests/.../DefaultUser/Assistant/Suffix
-        # Find the User position by looking for "DefaultUser" marker
+        # Handle test contexts: tests/.../{default_user_id}/{default_assistant_id}/Suffix
+        # Find the user position by looking for the DEFAULT_USER_CONTEXT marker
         if parts[0] == "tests":
             from unity.session_details import DEFAULT_USER_CONTEXT
 
             try:
                 user_idx = parts.index(DEFAULT_USER_CONTEXT)
             except ValueError:
-                # Can't determine structure without the DefaultUser marker
+                # Can't determine structure without the DEFAULT_USER_CONTEXT marker
                 return
 
             # Need at least User/Assistant/Suffix after the test root

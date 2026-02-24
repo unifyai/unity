@@ -9,6 +9,7 @@ from typing import Any, Optional, Type
 from pydantic import BaseModel
 from unity.manager_registry import ManagerRegistry
 from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS, DEFAULT_ICON
 from unity.common.simulated import (
     SimulatedLineage,
     SimulatedLog,
@@ -92,7 +93,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     def __init__(
         self,
         llm: unillm.AsyncUnify,
-        description: str,
+        request: str,
         *,
         steps: int | None,
         duration: float | None = None,
@@ -113,7 +114,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         hold_completion: bool = False,
     ) -> None:
         self._llm = llm
-        self._description = description
+        self._request = request
         self._steps = steps
         self._duration = duration
         self._parent_chat_context = parent_chat_context
@@ -168,7 +169,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     def clarification_down_q(self) -> Optional[asyncio.Queue[str]]:
         return self._clarification_down_q
 
-    def _run_actions(self, description: str) -> None:
+    def _run_actions(self, request: str) -> None:
         try:
             while True:
                 if self._requests_clarification:
@@ -212,21 +213,21 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                     # Prefer prebaked function-aware result if available
                     msg = (
                         self._planned_result
-                        or f"Completed '{description}' after {self._duration}\u2009s duration."
+                        or f"Completed '{request}' after {self._duration}\u2009s duration."
                     )
                     self._complete(msg)
                     return
                 if self._steps is not None and self._steps_taken >= (self._steps or 0):
                     msg = (
                         self._planned_result
-                        or f"Completed '{description}' in {self._steps} steps."
+                        or f"Completed '{request}' in {self._steps} steps."
                     )
                     self._complete(msg)
                     return
                 self._pause_event.wait()
                 time.sleep(0.1)
         finally:
-            self._description = None
+            self._request = None
             self._paused = None
             self._action_thread = None
             self._pause_event.set()
@@ -239,7 +240,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self._last_started_at = time.monotonic()
         self._action_thread = threading.Thread(
             target=self._run_actions,
-            args=(self._description,),
+            args=(self._request,),
             daemon=True,
         )
         self._action_thread.start()
@@ -252,7 +253,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                         rem = self.get_remaining_duration_seconds()
                         if rem is not None:
                             self._emit_status(
-                                f"⏳ Duration remaining: {max(0.0, rem):.1f}s",
+                                f"{ICONS['pending']} Duration remaining: {max(0.0, rem):.1f}s",
                             )
                         # Sleep in small chunks to be responsive to done-event (~20s total)
                         for _ in range(200):
@@ -296,13 +297,13 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                 self._steps_taken += 1
             if self._steps is not None and self._steps_taken >= self._steps:
                 self._complete(
-                    f"Completed '{self._description}' in {self._steps} steps.",
+                    f"Completed '{self._request}' in {self._steps} steps.",
                 )
             # Emit steps remaining after each user-visible interaction that consumes a step
             try:
                 if self._steps is not None:
                     remaining = max(0, int(self._steps) - int(self._steps_taken))
-                    self._emit_status(f"🪜 Steps remaining: {remaining}")
+                    self._emit_status(f"{DEFAULT_ICON} Steps remaining: {remaining}")
             except Exception:
                 pass
 
@@ -353,12 +354,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         """
         if self._done_event.is_set() and self._gate_open:
             return
-        if not self._description:
+        if not self._request:
             raise Exception("No actions are currently being performed.")
-        msg = f"Stopped '{self._description}' for reason: {reason}"
+        msg = f"Stopped '{self._request}' for reason: {reason}"
         try:
             suffix = f" – reason: {reason}" if reason else ""
-            LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
+            LOGGER.info(
+                f"{ICONS['stop_requested']} [{self._log_label}] Stop requested{suffix}",
+            )
         except Exception:
             pass
         self._open_completion_gate()
@@ -375,7 +378,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         *,
         _parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
-        if not self._description:
+        if not self._request:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
 
@@ -396,12 +399,12 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             fn = self._entrypoint_info
             prompt = (
                 "You are mid-execution of a function-driven simulated task.\n"
-                f"Task: {self._description}\n"
+                f"Task: {self._request}\n"
                 f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
                 f"Docstring:\n{fn.get('docstring','')}\n\n"
             )
         else:
-            prompt = f"Current simulated actions:\n{self._description}\n\n"
+            prompt = f"Current simulated actions:\n{self._request}\n\n"
         # Unified LLM roundtrip (includes timing, gated body, and optional dumps)
         try:
             _sys = getattr(self._llm, "system_message", None)
@@ -414,7 +417,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         )
 
     async def pause(self) -> str:
-        if not self._description:
+        if not self._request:
             raise Exception("The actor is not running, so nothing to pause.")
         if self._paused:
             return "Actor is already paused."
@@ -427,10 +430,10 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             self._last_started_at = None
         self.simulate_step()
         self._log_pause()
-        return f"Paused '{self._description}'."
+        return f"Paused '{self._request}'."
 
     async def resume(self) -> str:
-        if not self._description:
+        if not self._request:
             raise Exception("No actor is running, so nothing to resume.")
         if not self._paused:
             return "Actor is already running."
@@ -441,7 +444,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             self._last_started_at = time.monotonic()
         self.simulate_step()
         self._log_resume()
-        return f"Resumed '{self._description}'."
+        return f"Resumed '{self._request}'."
 
     async def ask(
         self,
@@ -459,7 +462,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         Returns:
             A SteerableToolHandle whose result() returns the answer string.
         """
-        if not self._description:
+        if not self._request:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
         # Build a concise child label consistent with simulated scheduler
@@ -476,14 +479,14 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             fn = self._entrypoint_info
             prompt = (
                 "You are executing a simulated function as part of a task. Answer briefly.\n"
-                f"Task: {self._description}\n"
+                f"Task: {self._request}\n"
                 f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
                 f"Docstring:\n{fn.get('docstring','')}\n\n"
                 f"User asks: {question}"
             )
         else:
             prompt = (
-                f"You are working on simulating these actions:\n{self._description}\n\n"
+                f"You are working on simulating these actions:\n{self._request}\n\n"
                 f"User asks: {question}"
             )
         try:
@@ -517,7 +520,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             msg = (
                 result
                 if result is not None
-                else f"Completed '{self._description}' (triggered)."
+                else f"Completed '{self._request}' (triggered)."
             )
             self._complete(msg)
         # Delegate to the mixin to open the shared gate.
@@ -530,7 +533,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         """Emit a status line to the central logger so it reaches the broadcast port."""
         try:
             LOGGER.info(
-                f"[{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
+                f"{DEFAULT_ICON} [{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
             )
         except Exception:
             pass
@@ -592,7 +595,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         # Report progress without consuming steps (observing isn't work)
         # Compose a small progress message consistent with the configured mode
         try:
-            desc = str(self._description) if self._description else "activity"
+            desc = str(self._request) if self._request else "activity"
         except Exception:
             desc = "activity"
 
@@ -647,7 +650,7 @@ class SimulatedActor(BaseActor):
         emit_notifications: bool = True,
         hold_completion: bool = False,
         # Accept but ignore parameters that real Actor may use
-        description: str = "",
+        request: str = "",
         **kwargs: Any,
     ) -> None:
         """
@@ -662,6 +665,7 @@ class SimulatedActor(BaseActor):
                         next_notification(). When False, next_notification() blocks
                         until the action completes. Defaults to True.
         """
+        super().__init__()
         self._steps = steps
         self._duration = duration
         self._requests_clarification = _requests_clarification
@@ -674,7 +678,7 @@ class SimulatedActor(BaseActor):
         self._sim_guidance: Optional[str] = simulation_guidance
 
         # One shared, memory-retaining LLM for all activities
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, origin="SimulatedActor")
         # Compose a system message that preserves default behaviour while
         # allowing optional simulation guidance to influence simulated responses.
         _base_sys = (
@@ -692,7 +696,7 @@ class SimulatedActor(BaseActor):
     @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
-        description: str,
+        request: str,
         *,
         clarification_enabled: bool = True,
         response_format: Optional[Type[BaseModel]] = None,
@@ -733,7 +737,7 @@ class SimulatedActor(BaseActor):
             _log_sched(
                 _act_label,
                 "act",
-                {"description": description},
+                {"request": request},
             )
         except Exception:
             pass
@@ -765,7 +769,7 @@ class SimulatedActor(BaseActor):
                     "Return ONE short past-tense sentence that STARTS with 'Completed',\n"
                     "summarising the concrete outcome of running the function in the context below.\n"
                     "Do not include code or steps. Keep it under two sentences.\n\n"
-                    f"Task description: {description}\n"
+                    f"Task request: {request}\n"
                     f"Function: {name} {sig} (id={entrypoint})\n"
                     f"Docstring:\n{doc}\n\n"
                     f"Implementation:\n{impl}"
@@ -780,7 +784,7 @@ class SimulatedActor(BaseActor):
         # Construct the simulated handle with optional entrypoint context
         return SimulatedActorHandle(
             self._llm,
-            description,
+            request,
             steps=self._steps,
             duration=self._duration,
             parent_chat_context=_parent_chat_context,

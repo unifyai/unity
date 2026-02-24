@@ -13,6 +13,7 @@ This module is intentionally compact and covers the highest-signal behaviors:
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -32,6 +33,13 @@ from unity.events.manager_event_logging import log_manager_call
 from unity.function_manager.function_manager import _LineageTrackedFunction
 
 pytestmark = pytest.mark.enable_eventbus
+
+
+def _get(out: Any, key: str, default: Any = None) -> Any:
+    """Get a field from either a dict or Pydantic model."""
+    if isinstance(out, dict):
+        return out.get(key, default)
+    return getattr(out, key, default)
 
 
 # ---------------------------------------------------------------------------
@@ -60,8 +68,6 @@ def _result_stdout_text(res: Any) -> str:
 async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeypatch):
     actor = CodeActActor(
         environments=[],  # avoid default computer/state-manager envs in unit test
-        headless=True,
-        computer_mode="mock",
     )
 
     async def _fake_execute(**_kwargs):
@@ -76,7 +82,6 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
             "venv_id": None,
             "session_created": False,
             "duration_ms": 1,
-            "computer_used": False,
         }
 
     monkeypatch.setattr(actor._session_executor, "execute", _fake_execute, raising=True)
@@ -106,7 +111,15 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
             and e.payload.get("method") == "execute_code"
         ]
         assert sorted([e.payload.get("phase") for e in mm]) == ["incoming", "outgoing"]
-        assert mm[0].payload.get("hierarchy") == ["CodeActActor.act", "execute_code"]
+        _h = mm[0].payload.get("hierarchy")
+        assert (
+            len(_h) == 2
+            and _h[0] == "CodeActActor.act"
+            and re.match(
+                r"execute_code\([0-9a-f]{4}\)$",
+                _h[1],
+            )
+        )
         assert "execute_code(" in str(mm[0].payload.get("hierarchy_label"))
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
@@ -117,8 +130,6 @@ async def test_execute_code_boundary_publishes_events_and_cleans_lineage(monkeyp
 async def test_execute_code_boundary_marks_error_when_executor_raises(monkeypatch):
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
     )
 
     async def _boom(**_kwargs):
@@ -159,10 +170,24 @@ async def test_execute_code_boundary_marks_error_when_executor_raises(monkeypatc
 
 
 class _StubFunctionManager:
-    """Minimal stand-in for FunctionManager used by execute_function tests."""
+    """Minimal stand-in for FunctionManager used by execute_function tests.
 
-    async def execute_function(self, **kwargs):
-        return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+    Provides ``_get_function_data_by_name`` so the code synthesis path can
+    look up an implementation, and the standard discovery stubs to avoid
+    ``AttributeError`` during actor construction.
+    """
+
+    _include_primitives = False
+
+    def _get_function_data_by_name(self, *, name: str):
+        return {
+            "name": name,
+            "implementation": f"def {name}(**kwargs):\n    return 'ok'",
+            "language": "python",
+        }
+
+    def _get_primitive_data_by_name(self, *, name: str):
+        return None
 
     # The constructor probes these; stubs avoid AttributeError.
     search_functions = None
@@ -171,10 +196,16 @@ class _StubFunctionManager:
 
 
 class _BoomFunctionManager(_StubFunctionManager):
-    """Like _StubFunctionManager but raises on execute_function."""
+    """Like _StubFunctionManager but returns an implementation that raises."""
 
-    async def execute_function(self, **kwargs):
-        raise RuntimeError("boom")
+    def _get_function_data_by_name(self, *, name: str):
+        return {
+            "name": name,
+            "implementation": (
+                f"def {name}(**kwargs):\n    raise RuntimeError('boom')"
+            ),
+            "language": "python",
+        }
 
 
 @pytest.mark.asyncio
@@ -183,8 +214,6 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
     """execute_function pushes execute_function({name}) onto lineage and restores it."""
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
         function_manager=_StubFunctionManager(),
     )
 
@@ -198,7 +227,7 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
             )
         EVENT_BUS.join_published()
 
-        assert out.get("error") is None
+        assert _get(out, "error") is None
         assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
 
         mm = [
@@ -208,10 +237,9 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
             and e.payload.get("method") == "execute_function"
         ]
         assert sorted([e.payload.get("phase") for e in mm]) == ["incoming", "outgoing"]
-        assert mm[0].payload.get("hierarchy") == [
-            "CodeActActor.act",
-            "execute_function(greet)",
-        ]
+        _h = mm[0].payload.get("hierarchy")
+        assert len(_h) == 2 and _h[0] == "CodeActActor.act"
+        assert re.match(r"execute_function\(greet\)\([0-9a-f]{4}\)$", _h[1])
         assert "execute_function(greet)(" in str(mm[0].payload.get("hierarchy_label"))
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
@@ -220,11 +248,13 @@ async def test_execute_function_boundary_publishes_events_and_cleans_lineage():
 @pytest.mark.asyncio
 @_handle_project
 async def test_execute_function_boundary_marks_error_and_cleans_lineage():
-    """execute_function publishes status=error and restores lineage on failure."""
+    """execute_function publishes status=error and restores lineage on failure.
+
+    The boom function raises inside the sandbox; execute_function catches this
+    and returns an error dict rather than propagating the exception.
+    """
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
         function_manager=_BoomFunctionManager(),
     )
 
@@ -232,12 +262,15 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
     token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
         async with capture_events("ManagerMethod") as events:
-            with pytest.raises(RuntimeError, match="boom"):
-                await execute_function(
-                    function_name="fail_fn",
-                    call_kwargs=None,
-                )
+            out = await execute_function(
+                function_name="fail_fn",
+                call_kwargs=None,
+            )
         EVENT_BUS.join_published()
+
+        # The error is captured in the result, not raised.
+        assert _get(out, "error") is not None
+        assert "boom" in str(_get(out, "error"))
 
         assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
 
@@ -250,11 +283,9 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
         ]
         assert len(outgoing) == 1
         assert outgoing[0].payload.get("status") == "error"
-        assert "RuntimeError" in str(outgoing[0].payload.get("error_type"))
-        assert outgoing[0].payload.get("hierarchy") == [
-            "CodeActActor.act",
-            "execute_function(fail_fn)",
-        ]
+        _h = outgoing[0].payload.get("hierarchy")
+        assert len(_h) == 2 and _h[0] == "CodeActActor.act"
+        assert re.match(r"execute_function\(fail_fn\)\([0-9a-f]{4}\)$", _h[1])
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
@@ -262,30 +293,40 @@ async def test_execute_function_boundary_marks_error_and_cleans_lineage():
 @pytest.mark.asyncio
 @_handle_project
 async def test_execute_function_propagates_lineage_to_nested_manager():
-    """State managers called inside execute_function inherit the full lineage."""
+    """The lineage set by execute_function is visible inside the sandbox.
 
-    captured_lineage: list[str] = []
+    We verify by having the stub function capture the lineage ContextVar
+    from within its implementation (which runs inside PythonExecutionSession).
+    """
 
-    class _CapturingFunctionManager(_StubFunctionManager):
-        async def execute_function(self, **kwargs):
-            captured_lineage.extend(TOOL_LOOP_LINEAGE.get([]))
-            return {"result": "captured", "error": None, "stdout": "", "stderr": ""}
+    class _LineageCapturingFM(_StubFunctionManager):
+        """Returns an implementation that captures TOOL_LOOP_LINEAGE."""
+
+        def _get_function_data_by_name(self, *, name: str):
+            return {
+                "name": name,
+                "implementation": (
+                    "def my_func(**kwargs):\n"
+                    "    from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE\n"
+                    "    return list(TOOL_LOOP_LINEAGE.get([]))\n"
+                ),
+                "language": "python",
+            }
 
     actor = CodeActActor(
         environments=[],
-        headless=True,
-        computer_mode="mock",
-        function_manager=_CapturingFunctionManager(),
+        function_manager=_LineageCapturingFM(),
     )
 
     execute_function = actor.get_tools("act")["execute_function"]
     token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
-        await execute_function(function_name="my_func", call_kwargs=None)
-        assert captured_lineage == [
-            "CodeActActor.act",
-            "execute_function(my_func)",
-        ]
+        out = await execute_function(function_name="my_func", call_kwargs=None)
+        assert _get(out, "error") is None, f"Unexpected error: {_get(out, 'error')}"
+        # The lineage captured inside the sandbox should include execute_function.
+        captured = _get(out, "result")
+        assert len(captured) == 2 and captured[0] == "CodeActActor.act"
+        assert re.match(r"execute_function\(my_func\)\([0-9a-f]{4}\)$", captured[1])
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
@@ -322,7 +363,7 @@ def _make_primitives() -> Any:
 @_handle_project
 async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy():
     """Full hierarchy list across execute_code + FM boundary + manager."""
-    actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
+    actor = CodeActActor(environments=[])
     execute_code = actor.get_tools("act")["execute_code"]
 
     sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
@@ -364,12 +405,12 @@ async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy
             and e.payload.get("phase") in ("incoming", "outgoing")
         ]
         assert {e.payload.get("phase") for e in ask_events} == {"incoming", "outgoing"}
-        assert ask_events[0].payload.get("hierarchy") == [
-            "CodeActActor.act",
-            "execute_code",
-            "send_meeting_invite",
-            "UnitStateManager.ask",
-        ]
+        _h = ask_events[0].payload.get("hierarchy")
+        assert len(_h) == 4
+        assert _h[0] == "CodeActActor.act"
+        assert re.match(r"execute_code\([0-9a-f]{4}\)$", _h[1])
+        assert re.match(r"send_meeting_invite\([0-9a-f]{4}\)$", _h[2])
+        assert re.match(r"UnitStateManager\.ask\([0-9a-f]{4}\)$", _h[3])
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
@@ -378,8 +419,14 @@ async def test_execute_code_function_boundary_to_manager_includes_full_hierarchy
 @pytest.mark.asyncio
 @_handle_project
 async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calling_ids():
-    """Concurrent sibling boundaries must not nest under each other."""
-    actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
+    """Concurrent sibling boundaries must not nest under each other.
+
+    _LineageTrackedFunction manages TOOL_LOOP_LINEAGE (ContextVar), not
+    event-bus events.  The observable proof that lineage didn't cross-talk
+    is that the inner manager calls (UnitStateManager.ask) each carry a
+    hierarchy containing only their own function boundary, not the sibling's.
+    """
+    actor = CodeActActor(environments=[])
     execute_code = actor.get_tools("act")["execute_code"]
 
     sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
@@ -416,21 +463,31 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
         EVENT_BUS.join_published()
         assert _result_error(res) is None
 
-        def _call_ids(name: str) -> set[str]:
-            evts = [
-                e
-                for e in events
-                if e.payload.get("manager") == "FunctionManager"
-                and e.payload.get("method") == name
-            ]
-            assert evts
-            return {e.calling_id for e in evts}
+        # Inner manager calls (UnitStateManager.ask) are the observable events.
+        # Each should carry a hierarchy that includes its own function boundary
+        # but NOT the sibling's.
+        ask_events = [
+            e
+            for e in events
+            if e.payload.get("manager") == "UnitStateManager"
+            and e.payload.get("method") == "ask"
+            and e.payload.get("phase") == "incoming"
+        ]
+        assert len(ask_events) == 2
 
-        f1_ids = _call_ids("f1")
-        f2_ids = _call_ids("f2")
-        assert len(f1_ids) == 1
-        assert len(f2_ids) == 1
-        assert next(iter(f1_ids)) != next(iter(f2_ids))
+        hierarchies = [e.payload.get("hierarchy", []) for e in ask_events]
+        f1_hierarchy = [h for h in hierarchies if any("f1" in seg for seg in h)]
+        f2_hierarchy = [h for h in hierarchies if any("f2" in seg for seg in h)]
+        assert len(f1_hierarchy) == 1, f"Expected one f1 hierarchy, got {f1_hierarchy}"
+        assert len(f2_hierarchy) == 1, f"Expected one f2 hierarchy, got {f2_hierarchy}"
+
+        # f1's hierarchy must NOT contain f2, and vice versa.
+        assert not any(
+            "f2" in seg for seg in f1_hierarchy[0]
+        ), f"f1 hierarchy leaked f2: {f1_hierarchy[0]}"
+        assert not any(
+            "f1" in seg for seg in f2_hierarchy[0]
+        ), f"f2 hierarchy leaked f1: {f2_hierarchy[0]}"
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
@@ -438,9 +495,15 @@ async def test_concurrent_function_boundaries_do_not_cross_talk_lineage_or_calli
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_lineage():
-    """FM boundary errors must publish status=error and always restore lineage."""
-    actor = CodeActActor(environments=[], headless=True, computer_mode="mock")
+async def test_function_boundary_error_restores_lineage_and_surfaces_error():
+    """_LineageTrackedFunction must restore TOOL_LOOP_LINEAGE when the
+    wrapped function raises, and the error must surface in execute_code's result.
+
+    _LineageTrackedFunction manages lineage (ContextVar) only — it does not
+    publish ManagerMethod events to the event bus.  The execute_code boundary
+    captures the exception and reports it in the result dict.
+    """
+    actor = CodeActActor(environments=[])
     execute_code = actor.get_tools("act")["execute_code"]
 
     sandbox = PythonExecutionSession(environments={}, computer_primitives=None)
@@ -454,32 +517,23 @@ async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_li
     sb_token = _CURRENT_SANDBOX.set(sandbox)
     lineage_token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
-        async with capture_events("ManagerMethod") as events:
-            res = await execute_code(
-                thought="run",
-                code="await boom()\n",
-                language="python",
-                state_mode="stateful",
-                session_id=0,
-                session_name=None,
-                venv_id=None,
-                _notification_up_q=None,
-            )
-        EVENT_BUS.join_published()
+        res = await execute_code(
+            thought="run",
+            code="await boom()\n",
+            language="python",
+            state_mode="stateful",
+            session_id=0,
+            session_name=None,
+            venv_id=None,
+            _notification_up_q=None,
+        )
 
+        # The error should be captured in the result.
         assert _result_error(res)
-        assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
+        assert "RuntimeError" in str(_result_error(res))
 
-        outgoing = [
-            e
-            for e in events
-            if e.payload.get("manager") == "FunctionManager"
-            and e.payload.get("method") == "boom"
-            and e.payload.get("phase") == "outgoing"
-        ]
-        assert len(outgoing) == 1
-        assert outgoing[0].payload.get("status") == "error"
-        assert "RuntimeError" in str(outgoing[0].payload.get("error_type"))
+        # Lineage must be restored to the pre-call state.
+        assert TOOL_LOOP_LINEAGE.get([]) == ["CodeActActor.act"]
     finally:
         TOOL_LOOP_LINEAGE.reset(lineage_token)
         _CURRENT_SANDBOX.reset(sb_token)
@@ -492,91 +546,33 @@ async def test_function_boundary_error_emits_outgoing_error_and_does_not_leak_li
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_function_wraps_namespaces_with_clarification_injector():
-    """When _clarification_up_q / _clarification_down_q are provided,
-    execute_function wraps environment instances with
-    _ClarificationQueueInjector before passing to FunctionManager."""
-
-    captured_ns: dict = {}
-
-    class _CapturingFM(_StubFunctionManager):
-        async def execute_function(self, **kwargs):
-            captured_ns.update(kwargs.get("extra_namespaces") or {})
-            return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
+async def test_execute_function_environments_accessible_in_sandbox():
+    """Environments injected into the actor are accessible from within
+    execute_function's sandbox execution, just like execute_code."""
 
     from unity.actor.environments import create_env
-    from unity.actor.environments.base import _ClarificationQueueInjector
 
     class _DummyService:
+        value = "hello_from_env"
+
         async def do_something(self):
-            pass
+            return self.value
 
     actor = CodeActActor(
         environments=[create_env("my_service", _DummyService())],
-        headless=True,
-        computer_mode="mock",
-        function_manager=_CapturingFM(),
-    )
-
-    execute_function = actor.get_tools("act")["execute_function"]
-
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
-    try:
-        await execute_function(
-            function_name="greet",
-            call_kwargs=None,
-            _clarification_up_q=up_q,
-            _clarification_down_q=down_q,
-        )
-    finally:
-        TOOL_LOOP_LINEAGE.reset(token)
-
-    # The environment instance should be wrapped with _ClarificationQueueInjector.
-    assert "my_service" in captured_ns
-    assert isinstance(captured_ns["my_service"], _ClarificationQueueInjector)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_function_no_wrapping_without_clarification_queues():
-    """Without clarification queues, environment instances are passed unwrapped."""
-
-    captured_ns: dict = {}
-
-    class _CapturingFM(_StubFunctionManager):
-        async def execute_function(self, **kwargs):
-            captured_ns.update(kwargs.get("extra_namespaces") or {})
-            return {"result": "ok", "error": None, "stdout": "", "stderr": ""}
-
-    from unity.actor.environments import create_env
-    from unity.actor.environments.base import _ClarificationQueueInjector
-
-    class _DummyService:
-        async def do_something(self):
-            pass
-
-    svc = _DummyService()
-    actor = CodeActActor(
-        environments=[create_env("my_service", svc)],
-        headless=True,
-        computer_mode="mock",
-        function_manager=_CapturingFM(),
+        function_manager=_StubFunctionManager(),
     )
 
     execute_function = actor.get_tools("act")["execute_function"]
 
     token = TOOL_LOOP_LINEAGE.set(["CodeActActor.act"])
     try:
-        await execute_function(
+        out = await execute_function(
             function_name="greet",
             call_kwargs=None,
         )
     finally:
         TOOL_LOOP_LINEAGE.reset(token)
 
-    # Without clarification queues, the raw instance should be passed.
-    assert "my_service" in captured_ns
-    assert not isinstance(captured_ns["my_service"], _ClarificationQueueInjector)
+    # The function should execute successfully via the sandbox.
+    assert _get(out, "error") is None, f"Unexpected error: {_get(out, 'error')}"

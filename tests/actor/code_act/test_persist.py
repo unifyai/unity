@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from unittest.mock import AsyncMock
 
 from unity.actor.code_act_actor import CodeActActor
 
@@ -13,10 +12,7 @@ async def test_code_act_persist_keeps_loop_alive_until_stopped():
     When persist=True, the underlying async tool loop should not terminate after a
     single assistant message. Instead it should wait for interjections until stopped.
     """
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
+    actor = CodeActActor(timeout=60)
 
     handle = await actor.act(
         "Reply with exactly 'READY' and do not call any tools. Then wait for further instructions.",

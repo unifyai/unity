@@ -12,6 +12,7 @@ Also tests incremental context propagation:
 
 from __future__ import annotations
 
+import asyncio
 from typing import List
 
 import pytest
@@ -237,6 +238,192 @@ async def test_ask_uses_parent_context(llm_config) -> None:
     assert (
         "apple" in ans.lower()
     ), "Answer did not reflect parent context (banana allergy)."
+
+
+@pytest.mark.asyncio
+async def test_ask_inspection_loop_context_without_parent(monkeypatch) -> None:
+    """Without _parent_chat_context, the inspection loop uses LLM_DECIDES
+    propagation with no parent_chat_context — the transcript already has the
+    embedded parent context header from when the loop was started."""
+    from unity.common import async_tool_loop as atl
+
+    captured_kwargs: dict = {}
+
+    class _DummyInspectionHandle:
+        async def result(self):
+            return "ok"
+
+    def _fake_start_async_tool_loop(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _DummyInspectionHandle()
+
+    monkeypatch.setattr(atl, "start_async_tool_loop", _fake_start_async_tool_loop)
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = [{"role": "user", "content": "loop transcript message"}]
+
+    task = asyncio.Future()
+    task.set_result("done")
+
+    handle = atl.AsyncToolLoopHandle(
+        task=task,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
+        client=_DummyClient(),
+        loop_id="OuterLoop",
+    )
+
+    _helper = await handle.ask("What happened?")
+
+    assert (
+        captured_kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
+    )
+    assert captured_kwargs["parent_chat_context"] is None
+
+
+@pytest.mark.asyncio
+async def test_ask_inspection_loop_with_parent_context(monkeypatch) -> None:
+    """With _parent_chat_context, the inspection loop uses LLM_DECIDES
+    propagation, passes the real parent context, and replaces the stale
+    runtime parent-context header in the transcript with a pointer."""
+    from unity.common import async_tool_loop as atl
+
+    captured: dict = {}
+
+    class _DummyInspectionHandle:
+        async def result(self):
+            return "ok"
+
+    def _fake_start_async_tool_loop(*args, **kwargs):
+        inspection_client = args[0]
+        captured["system_message"] = inspection_client.system_message
+        captured["kwargs"] = kwargs
+        return _DummyInspectionHandle()
+
+    monkeypatch.setattr(atl, "start_async_tool_loop", _fake_start_async_tool_loop)
+
+    stale_parent_ctx_content = (
+        "## Caller Context\nSome caller info.\n\n"
+        "## Parent Chat Context\n"
+        "You received this request from within a parent conversation. "
+        "The messages below show...\n\n"
+        '[{"role": "outer_user", "content": "stale parent message"}]'
+    )
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = [
+                {"role": "system", "content": "You are a helpful tool."},
+                {
+                    "role": "system",
+                    "_runtime_context": True,
+                    "_ctx_header": True,
+                    "_parent_chat_context": True,
+                    "content": stale_parent_ctx_content,
+                },
+                {"role": "user", "content": "do the thing"},
+                {"role": "assistant", "content": "doing it"},
+            ]
+
+    task = asyncio.Future()
+    task.set_result("done")
+
+    handle = atl.AsyncToolLoopHandle(
+        task=task,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
+        client=_DummyClient(),
+        loop_id="OuterLoop",
+    )
+
+    fresh_context = [{"role": "user", "content": "fresh parent message"}]
+    _helper = await handle.ask("What happened?", _parent_chat_context=fresh_context)
+
+    kwargs = captured["kwargs"]
+    assert kwargs["propagate_chat_context"] == ChatContextPropagation.LLM_DECIDES
+    assert kwargs["parent_chat_context"] == fresh_context
+
+    # The system message should contain the pointer, not the stale dump.
+    # The pointer appears inside a JSON-serialized transcript, so newlines
+    # are escaped.  Check for the distinctive phrase instead.
+    sys_msg = captured["system_message"]
+    assert "stale parent message" not in sys_msg
+    assert "has been omitted from this transcript to avoid duplication" in sys_msg
+
+    # The Caller Context section before the parent context should be preserved
+    assert "Caller Context" in sys_msg
+    assert "Some caller info." in sys_msg
+
+
+@pytest.mark.asyncio
+async def test_ask_inspection_prompt_redacts_image_payloads(monkeypatch) -> None:
+    """Inspection ask should redact image blobs from both the system message
+    (inspected transcript) and the parent_chat_context kwarg."""
+    from unity.common import async_tool_loop as atl
+
+    captured: dict = {}
+
+    class _DummyInspectionHandle:
+        async def result(self):
+            return "ok"
+
+    def _fake_start_async_tool_loop(*args, **kwargs):
+        inspection_client = args[0]
+        captured["system_message"] = inspection_client.system_message
+        captured["parent_chat_context"] = kwargs.get("parent_chat_context")
+        return _DummyInspectionHandle()
+
+    monkeypatch.setattr(atl, "start_async_tool_loop", _fake_start_async_tool_loop)
+
+    big_b64 = "A" * 4000
+    raw_data_url = f"data:image/png;base64,{big_b64}"
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = [
+                {
+                    "role": "tool",
+                    "name": "execute_code",
+                    "content": [
+                        {"type": "text", "text": "screenshot captured"},
+                        {"type": "image_url", "image_url": {"url": raw_data_url}},
+                    ],
+                },
+            ]
+
+    task = asyncio.Future()
+    task.set_result("done")
+
+    handle = atl.AsyncToolLoopHandle(
+        task=task,
+        interject_queue=asyncio.Queue(),
+        cancel_event=asyncio.Event(),
+        stop_event=asyncio.Event(),
+        client=_DummyClient(),
+        loop_id="OuterLoop",
+    )
+
+    parent_ctx_with_image = [
+        {"role": "user", "content": f"latest screenshot: {raw_data_url}"},
+    ]
+    _helper = await handle.ask(
+        "Summarize status",
+        _parent_chat_context=parent_ctx_with_image,
+    )
+
+    sys_msg = str(captured.get("system_message") or "")
+    parent_ctx = str(captured.get("parent_chat_context") or "")
+
+    # Image blobs must be redacted in the system message (inspected transcript)
+    assert raw_data_url not in sys_msg
+    assert "data:image/png;base64,<omitted>" in sys_msg
+
+    # Image blobs must be redacted in the parent_chat_context kwarg
+    assert raw_data_url not in parent_ctx
+    assert "<omitted>" in parent_ctx
 
 
 @pytest.mark.asyncio

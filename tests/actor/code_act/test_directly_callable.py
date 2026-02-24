@@ -1,11 +1,11 @@
 """
-Tests for the sub-agent environment feature.
+Tests for the directly-callable environment feature.
 
 Covers:
 1. matches_segment — dotted-path segment matching
 2. resolve_directly_callable — pattern expansion + error handling
 3. StateManagerEnvironment per-method filtering (allowed_methods)
-4. _build_sub_agent_environments — environment construction from patterns
+4. _build_environments_from_db — environment construction from DB patterns
 """
 
 import pytest
@@ -249,119 +249,76 @@ def test_sme_allowed_methods_scoped_primitives():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 4. _build_sub_agent_environments
+# 4. _build_environments_from_db
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def test_build_envs_primitives_only():
+def _make_mock_fm(known_names: dict):
+    """Create a mock FunctionManager whose list_functions returns *known_names*."""
+    from unittest.mock import MagicMock
+
+    fm = MagicMock()
+    fm.list_functions.return_value = known_names
+    return fm
+
+
+def test_build_envs_from_db_primitives_only():
     """Primitive patterns produce a scoped StateManagerEnvironment."""
-    from unity.actor.code_act_actor import _build_sub_agent_environments
+    from unity.actor.environments.actor import _build_environments_from_db
 
-    parent_env = StateManagerEnvironment()
-    envs = _build_sub_agent_environments(
-        environment=["primitives.contacts.ask"],
-        parent_environments={"primitives": parent_env},
-        function_manager=None,
-    )
+    fm = _make_mock_fm({"primitives.contacts.ask": {}})
+    envs = _build_environments_from_db(["primitives.contacts.ask"], fm)
 
-    # Should produce exactly one environment (StateManagerEnvironment)
     assert len(envs) == 1
     env = envs[0]
     assert isinstance(env, StateManagerEnvironment)
     tools = env.get_tools()
     assert "primitives.contacts.ask" in tools
-    # Only the requested method
     assert all(
         name == "primitives.contacts.ask" for name in tools
     ), f"Unexpected tools: {list(tools.keys())}"
 
 
-def test_build_envs_local_custom_env():
-    """Local custom environment functions are passed through."""
-    from unity.actor.code_act_actor import _build_sub_agent_environments
-    from unity.actor.environments import create_env
+def test_build_envs_from_db_empty_prompt_functions():
+    """Empty prompt_functions produces no environments."""
+    from unity.actor.environments.actor import _build_environments_from_db
 
-    class MyService:
-        async def do_something(self):
-            """Does something."""
-
-        async def other_method(self):
-            """Other."""
-
-    parent_env = create_env("my_service", MyService())
-    envs = _build_sub_agent_environments(
-        environment=["my_service.do_something"],
-        parent_environments={"my_service": parent_env},
-        function_manager=None,
-    )
-
-    # Should pass through the parent env
-    assert len(envs) == 1
-    assert envs[0] is parent_env
-
-
-def test_build_envs_mixed_sources():
-    """Mixed primitive + local patterns produce multiple environments."""
-    from unity.actor.code_act_actor import _build_sub_agent_environments
-    from unity.actor.environments import create_env
-
-    class MyService:
-        async def run(self):
-            """Run."""
-
-    sm_env = StateManagerEnvironment()
-    svc_env = create_env("my_service", MyService())
-
-    envs = _build_sub_agent_environments(
-        environment=["primitives.contacts.ask", "my_service.run"],
-        parent_environments={"primitives": sm_env, "my_service": svc_env},
-        function_manager=None,
-    )
-
-    # Should produce two environments
-    assert len(envs) == 2
-    types = {type(e).__name__ for e in envs}
-    assert "StateManagerEnvironment" in types
-
-
-def test_build_envs_unknown_pattern_raises():
-    """Unknown pattern raises ValueError."""
-    from unity.actor.code_act_actor import _build_sub_agent_environments
-
-    with pytest.raises(ValueError, match="did not match"):
-        _build_sub_agent_environments(
-            environment=["nonexistent"],
-            parent_environments={},
-            function_manager=None,
-        )
-
-
-def test_build_envs_empty_environment():
-    """Empty environment produces no environments (but doesn't raise)."""
-    from unity.actor.code_act_actor import _build_sub_agent_environments
-
-    envs = _build_sub_agent_environments(
-        environment=[],
-        parent_environments={},
-        function_manager=None,
-    )
+    envs = _build_environments_from_db([], None)
     assert envs == []
 
 
-def test_build_envs_namespace_expansion():
-    """Namespace pattern expands and creates correctly scoped environment."""
-    from unity.actor.code_act_actor import _build_sub_agent_environments
+def test_build_envs_from_db_none_prompt_functions():
+    """None prompt_functions produces no environments."""
+    from unity.actor.environments.actor import _build_environments_from_db
 
-    parent_env = StateManagerEnvironment()
-    envs = _build_sub_agent_environments(
-        environment=["primitives.contacts"],
-        parent_environments={"primitives": parent_env},
-        function_manager=None,
+    envs = _build_environments_from_db(None, None)
+    assert envs == []
+
+
+def test_build_envs_from_db_unknown_pattern_raises():
+    """Unknown pattern raises ValueError when no names match."""
+    from unity.actor.environments.actor import _build_environments_from_db
+
+    fm = _make_mock_fm({"primitives.contacts.ask": {}})
+    with pytest.raises(ValueError, match="did not match"):
+        _build_environments_from_db(["nonexistent"], fm)
+
+
+def test_build_envs_from_db_namespace_expansion():
+    """Namespace pattern expands and creates correctly scoped environment."""
+    from unity.actor.environments.actor import _build_environments_from_db
+
+    fm = _make_mock_fm(
+        {
+            "primitives.contacts.ask": {},
+            "primitives.contacts.update": {},
+            "primitives.tasks.ask": {},
+        },
     )
+    envs = _build_environments_from_db(["primitives.contacts"], fm)
 
     assert len(envs) == 1
     tools = envs[0].get_tools()
-    # Should include all contacts methods
     assert any("contacts.ask" in n for n in tools)
     assert any("contacts.update" in n for n in tools)
     # Should NOT include other managers

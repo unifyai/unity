@@ -156,7 +156,7 @@ class TestAddUnifyMessageAttachments:
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
             patch(
-                "unity.file_manager.managers.local.LocalFileManager",
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
                 return_value=mock_file_manager,
             ),
         ):
@@ -189,7 +189,7 @@ class TestAddUnifyMessageAttachments:
         mock_file_manager.save_file_to_downloads = MagicMock()
 
         with patch(
-            "unity.file_manager.managers.local.LocalFileManager",
+            "unity.manager_registry.ManagerRegistry.get_file_manager",
             return_value=mock_file_manager,
         ):
             attachments = [
@@ -227,7 +227,7 @@ class TestAddUnifyMessageAttachments:
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
             patch(
-                "unity.file_manager.managers.local.LocalFileManager",
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
                 return_value=mock_file_manager,
             ),
         ):
@@ -282,7 +282,7 @@ class TestAddUnifyMessageAttachments:
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
             patch(
-                "unity.file_manager.managers.local.LocalFileManager",
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
                 return_value=mock_file_manager,
             ),
             patch(
@@ -331,7 +331,7 @@ class TestAddUnifyMessageAttachments:
         with (
             patch("aiohttp.ClientSession", return_value=mock_session),
             patch(
-                "unity.file_manager.managers.local.LocalFileManager",
+                "unity.manager_registry.ManagerRegistry.get_file_manager",
                 return_value=mock_file_manager,
             ),
         ):

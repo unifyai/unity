@@ -24,9 +24,18 @@ from sandboxes.conversation_manager.commands import (
     parse_command,
 )
 from sandboxes.conversation_manager.event_publisher import EventPublisher
+from unity.conversation_manager.events import (
+    AssistantScreenShareStarted,
+    AssistantScreenShareStopped,
+    UserRemoteControlStarted,
+    UserRemoteControlStopped,
+    UserScreenShareStarted,
+    UserScreenShareStopped,
+    UserWebcamStarted,
+    UserWebcamStopped,
+)
 from sandboxes.conversation_manager.io_gate import gated_input
 from sandboxes.conversation_manager.scenario_generator import ScenarioGenerator
-from sandboxes.conversation_manager.steering import SteeringController, is_active
 from sandboxes.conversation_manager.config_manager import (
     ConfigurationManager,
     ActorConfig,
@@ -44,6 +53,17 @@ from sandboxes.conversation_manager.state_snapshot import (
 )
 
 LG = logging.getLogger("conversation_manager_sandbox")
+
+_MEET_INTERACTION_EVENTS: dict[str, type] = {
+    "assistant_screen_share_start": AssistantScreenShareStarted,
+    "assistant_screen_share_stop": AssistantScreenShareStopped,
+    "user_screen_share_start": UserScreenShareStarted,
+    "user_screen_share_stop": UserScreenShareStopped,
+    "user_webcam_start": UserWebcamStarted,
+    "user_webcam_stop": UserWebcamStopped,
+    "user_remote_control_start": UserRemoteControlStarted,
+    "user_remote_control_stop": UserRemoteControlStopped,
+}
 
 PromptFn = Callable[[str], Awaitable[str]]
 
@@ -96,14 +116,17 @@ class CommandRouter:
             bool(getattr(st, "in_call", False)) if in_call is None else bool(in_call)
         )
 
-        active_now = is_active(self.cm, st)
+        try:
+            h = getattr(self.cm, "active_ask_handle", None)
+            active_now = h is not None and not h.done()
+        except Exception:
+            active_now = False
         cmd: ParsedCommand = parse_command(
             text=raw,
             in_call=in_call_now,
             active=active_now,
         )
 
-        # Keep a minimal chat history for steering context.
         if cmd.kind not in {"unknown", "help"} and (raw or "").strip():
             try:
                 self.chat_history.append({"role": "user", "content": raw.strip()})
@@ -181,18 +204,6 @@ class CommandRouter:
         if cmd.kind in {"event", "utterance"}:
             return await self._handle_event(cmd)
 
-        # Steering
-        if cmd.kind == "steering":
-            ctrl = SteeringController(
-                cm=self.cm,
-                state=st,
-                publisher=self.publisher,
-                chat_history=self.chat_history,
-                args=self.args,
-            )
-            out = await ctrl.handle(cmd.args)
-            return RouterResult(lines=[out] if out else [])
-
         return RouterResult(lines=[f"⚠️ Unhandled command kind: {cmd.kind}"])
 
     async def _handle_trace_display(self, args: str) -> RouterResult:
@@ -262,19 +273,45 @@ class CommandRouter:
                 ],
             )
 
-        return RouterResult(
-            lines=[
-                f"💾 State saved:",
-                f"   JSON: {json_path}",
-                f"   Text: {text_path}",
-                f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
-                f"{snapshot.summary['total_cm_logs']} CM logs, "
-                f"{snapshot.summary['total_actor_logs']} actor logs, "
-                f"{snapshot.summary['total_manager_logs']} manager logs, "
-                f"{snapshot.summary['total_traces']} traces, "
-                f"{snapshot.summary['total_event_trees']} trees",
-            ],
-        )
+        result_lines = [
+            f"💾 State saved:",
+            f"   JSON: {json_path}",
+            f"   Text: {text_path}",
+            f"   Summary: {snapshot.summary.get('total_conversation_lines', 0)} conversation lines, "
+            f"{snapshot.summary['total_cm_logs']} CM logs, "
+            f"{snapshot.summary['total_actor_logs']} actor logs, "
+            f"{snapshot.summary['total_manager_logs']} manager logs, "
+            f"{snapshot.summary['total_traces']} traces, "
+            f"{snapshot.summary['total_event_trees']} trees",
+        ]
+
+        # Generate call transcript from the voice agent log if available.
+        import os
+
+        _launch_cwd = os.environ.get("UNITY_SANDBOX_LAUNCH_CWD", "").strip()
+        _voice_root = Path(_launch_cwd).resolve() if _launch_cwd else repo_root
+        voice_log = _voice_root / ".logs_voice_agent.txt"
+        if voice_log.exists():
+            try:
+                from sandboxes.conversation_manager.call_transcript import (
+                    build_timeline,
+                    format_timeline,
+                    parse_voice_log,
+                )
+
+                voice_data = parse_voice_log(voice_log)
+                if voice_data.utterances:
+                    timeline = build_timeline(voice_data)
+                    transcript_path = json_path.with_name(
+                        json_path.stem + "_transcript.txt",
+                    )
+                    with open(transcript_path, "w") as f:
+                        f.write(format_timeline(timeline, verbose=True))
+                    result_lines.append(f"   Transcript: {transcript_path}")
+            except Exception as exc:
+                LG.warning("Failed to generate call transcript: %s", exc)
+
+        return RouterResult(lines=result_lines)
 
     async def _handle_log_expansion(self, args: str, *, expand: bool) -> RouterResult:
         lg = self.log_aggregator
@@ -521,18 +558,13 @@ class CommandRouter:
         st = self.state
         st.last_event_published_at = asyncio.get_running_loop().time()
 
-        # Queue events while paused.
-        if getattr(st, "paused", False):
-            try:
-                st.queued_events.append(cmd)
-            except Exception:
-                pass
-            return RouterResult(lines=[f"⏸️ Queued while paused: {cmd.name}"])
-
         if cmd.kind == "utterance":
             await self.publisher.publish_phone_utterance(cmd.args)
             return RouterResult(lines=[])
 
+        if cmd.name == "message":
+            await self.publisher.publish_unify_message(cmd.args)
+            return RouterResult(lines=[])
         if cmd.name == "sms":
             await self.publisher.publish_sms(cmd.args)
             return RouterResult(lines=[])
@@ -547,12 +579,11 @@ class CommandRouter:
             await self.publisher.publish_email(subj, body)
             return RouterResult(lines=[])
         if cmd.name == "call":
-            # Live voice mode: spawn real LiveKit voice agent
+            if getattr(st, "in_voice_session", False):
+                return RouterResult(
+                    lines=["⚠️ Already in a voice session. End it first."],
+                )
             if getattr(self.args, "live_voice", False):
-                if getattr(st, "live_voice_active", False):
-                    return RouterResult(
-                        lines=["⚠️ A live voice call is already active."],
-                    )
                 try:
                     lines = await self.publisher.start_live_call()
                     return RouterResult(lines=lines)
@@ -565,12 +596,35 @@ class CommandRouter:
             return RouterResult(
                 lines=[
                     "📞 Call started.",
-                    "Tip: use `say <text>` to speak, and `end_call` to finish.",
+                    "Tip: use `say <content>` to speak, `end_call` to finish.",
+                ],
+            )
+        if cmd.name == "meet":
+            if getattr(st, "in_voice_session", False):
+                return RouterResult(
+                    lines=["⚠️ Already in a voice session. End it first."],
+                )
+            if getattr(self.args, "live_voice", False):
+                try:
+                    lines = await self.publisher.start_live_meet()
+                    return RouterResult(lines=lines)
+                except Exception as exc:
+                    st.in_meet = False
+                    return RouterResult(
+                        lines=[f"❌ Failed to start live meet: {exc}"],
+                    )
+            await self.publisher.publish_meet_start()
+            return RouterResult(
+                lines=[
+                    "🎥 Unify Meet started.",
+                    "Tip: use `say <content>` to speak, `end_meet` to finish.",
                 ],
             )
         if cmd.name == "say":
-            if not getattr(st, "in_call", False):
-                return RouterResult(lines=["⚠️ No active call. Use `call` first."])
+            if not getattr(st, "in_voice_session", False):
+                return RouterResult(
+                    lines=["⚠️ No active voice session. Use `call` or `meet` first."],
+                )
             if getattr(st, "live_voice_active", False):
                 return RouterResult(
                     lines=[
@@ -578,11 +632,16 @@ class CommandRouter:
                         "   The voice agent handles speech-to-text automatically.",
                     ],
                 )
-            await self.publisher.publish_phone_utterance(cmd.args)
+            if getattr(st, "in_meet", False):
+                await self.publisher.publish_meet_utterance(cmd.args)
+            else:
+                await self.publisher.publish_phone_utterance(cmd.args)
             return RouterResult(lines=[])
         if cmd.name == "sayv":
-            if not getattr(st, "in_call", False):
-                return RouterResult(lines=["⚠️ No active call. Use `call` first."])
+            if not getattr(st, "in_voice_session", False):
+                return RouterResult(
+                    lines=["⚠️ No active voice session. Use `call` or `meet` first."],
+                )
             if getattr(st, "live_voice_active", False):
                 return RouterResult(
                     lines=[
@@ -599,7 +658,6 @@ class CommandRouter:
                     lines=["⚠️ Restart with `--voice` to enable recording."],
                 )
 
-            # Convenience: allow `sayv <text>` without recording.
             text = (cmd.args or "").strip()
             if not text:
                 try:
@@ -612,7 +670,6 @@ class CommandRouter:
                 except Exception as exc:
                     return RouterResult(lines=[f"⚠️ Voice mode unavailable ({exc})."])
                 try:
-                    # GUI callers pass prompt_text=None; avoid stdin-driven recording there.
                     if bool(getattr(self.args, "gui", False)):
                         audio = await asyncio.to_thread(record_for_seconds, 6.0)
                         text = (
@@ -631,23 +688,53 @@ class CommandRouter:
                         lines=["⚠️ Transcription was empty. Please try again."],
                     )
 
-            await self.publisher.publish_phone_utterance(text)
+            if getattr(st, "in_meet", False):
+                await self.publisher.publish_meet_utterance(text)
+            else:
+                await self.publisher.publish_phone_utterance(text)
             return RouterResult(lines=[f"▶️ {text}"])
         if cmd.name == "end_call":
-            # Live voice mode: clean up LiveKit room + subprocess
             if getattr(st, "live_voice_active", False):
                 try:
-                    lines = await self.publisher.end_live_call()
+                    lines = await self.publisher.end_live_session()
                     return RouterResult(lines=lines)
                 except Exception as exc:
-                    LG.error("end_live_call failed: %s", exc, exc_info=True)
+                    LG.error("end_live_session failed: %s", exc, exc_info=True)
                     st.in_call = False
                     st.live_voice_session = None
                     return RouterResult(
-                        lines=[f"❌ Error ending live voice call: {exc}"],
+                        lines=[f"❌ Error ending live voice session: {exc}"],
                     )
             await self.publisher.publish_call_end()
             return RouterResult(lines=["📞 Call ended."])
+        if cmd.name == "end_meet":
+            if getattr(st, "live_voice_active", False):
+                try:
+                    lines = await self.publisher.end_live_session()
+                    return RouterResult(lines=lines)
+                except Exception as exc:
+                    LG.error("end_live_session failed: %s", exc, exc_info=True)
+                    st.in_meet = False
+                    st.live_voice_session = None
+                    return RouterResult(
+                        lines=[f"❌ Error ending live voice session: {exc}"],
+                    )
+            await self.publisher.publish_meet_end()
+            return RouterResult(lines=["🎥 Unify Meet ended."])
+
+        meet_event_cls = _MEET_INTERACTION_EVENTS.get(cmd.name)
+        if meet_event_cls is not None:
+            if not getattr(st, "in_meet", False):
+                return RouterResult(
+                    lines=[
+                        "⚠️ Meet interaction events require an active meet. Use `meet` first.",
+                    ],
+                )
+            await self.publisher.publish_meet_interaction_event(
+                meet_event_cls,
+                cmd.args,
+            )
+            return RouterResult(lines=[])
 
         return RouterResult(lines=[f"⚠️ Unknown event command: {cmd.name}"])
 

@@ -15,6 +15,8 @@ import asyncio
 
 import pytest
 
+from tests.actor.state_managers.utils import extract_code_act_execute_code_snippets
+from tests.async_helpers import _wait_for_condition
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.environments import StateManagerEnvironment
 from unity.function_manager.primitives import Primitives, PrimitiveScope
@@ -56,36 +58,32 @@ def _force_simulated(monkeypatch: pytest.MonkeyPatch) -> None:
     ManagerRegistry.clear()
 
 
-async def _wait_for_inner_handle_adopted(
+def _restrict_to_execute_code(actor: CodeActActor) -> None:
+    """Limit the actor tool surface so mode selection happens inside execute_code."""
+    act_tools = actor.get_tools("act")
+    actor.add_tools("act", {"execute_code": act_tools["execute_code"]})
+
+
+async def _wait_for_tool_result_in_transcript(
     handle,
+    tool_name: str,
     *,
-    count: int = 1,
     timeout: float = 120.0,
 ) -> None:
-    """Wait until the outer loop has adopted at least *count* inner handles.
+    """Wait until a tool result for *tool_name* appears in the handle's transcript.
 
-    Detection: the loop's task_info dict contains metadata entries whose
-    ``handle`` attribute is not None.
+    The transcript (``handle.get_history()``) is append-only, so a tool result
+    message is a permanent, race-free signal that the tool ran and its return
+    value was processed (including handle adoption when applicable).
     """
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            task_info = getattr(handle._task, "task_info", {})
-            n = sum(
-                1
-                for _t, info in (
-                    task_info.items() if isinstance(task_info, dict) else []
-                )
-                if getattr(info, "handle", None) is not None
-            )
-            if n >= count:
-                return
-        except Exception:
-            pass
-        await asyncio.sleep(0.3)
-    raise AssertionError(
-        f"Expected {count} inner handle(s) adopted within timeout, " f"but found fewer",
-    )
+
+    async def _predicate():
+        return any(
+            m.get("role") == "tool" and m.get("name") == tool_name
+            for m in handle.get_history()
+        )
+
+    await _wait_for_condition(_predicate, poll=0.1, timeout=timeout)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -108,10 +106,9 @@ async def test_execute_function_primitive_steering(monkeypatch):
 
     try:
         # can_compose=False forces the LLM to use execute_function (no code sandbox).
-        # The tool_policy requires a FunctionManager discovery call on step 0.
         # Primitives may not appear in search results immediately after sync
         # (backend embedding computation is async), so we give the LLM the
-        # exact function name to use on step 1.
+        # exact function name to use after the discovery step.
         handle = await actor.act(
             "Step 1: Call FunctionManager_list_functions (required first step).\n"
             "Step 2: Call execute_function with function_name='primitives.contacts.ask' "
@@ -121,8 +118,12 @@ async def test_execute_function_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for the inner ContactManager.ask handle to be adopted.
-        await _wait_for_inner_handle_adopted(handle, timeout=120)
+        # Wait for the execute_function tool result in the transcript.
+        await _wait_for_tool_result_in_transcript(
+            handle,
+            "execute_function",
+            timeout=120,
+        )
 
         # Steer: interject additional context mid-flight.
         await handle.interject(
@@ -140,6 +141,103 @@ async def test_execute_function_primitive_steering(monkeypatch):
     finally:
         try:
             if not handle.done():
+                await handle.stop("test cleanup")
+        except Exception:
+            pass
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_execute_code_mode_selection_realistic_steerable_intent(monkeypatch):
+    """Natural request that implies mid-flight control should return a handle."""
+    _force_simulated(monkeypatch)
+
+    scope = PrimitiveScope(scoped_managers=frozenset({"contacts"}))
+    primitives = Primitives(primitive_scope=scope)
+    env = StateManagerEnvironment(primitives)
+    actor = CodeActActor(environments=[env], timeout=220)
+    _restrict_to_execute_code(actor)
+    handle = None
+
+    try:
+        handle = await actor.act(
+            "Start checking contacts in Berlin now, but keep the lookup running because "
+            "I may refine the criteria while it is underway.",
+            clarification_enabled=False,
+        )
+
+        await _wait_for_tool_result_in_transcript(
+            handle,
+            "execute_code",
+            timeout=120,
+        )
+
+        snippets = extract_code_act_execute_code_snippets(handle)
+        assert snippets, "Expected CodeAct to use execute_code."
+        assert any(
+            "primitives.contacts.ask" in snippet and ".result(" not in snippet
+            for snippet in snippets
+        ), (
+            "Expected at least one execute_code snippet to return a primitive handle "
+            "without awaiting .result() for steerable user intent.\n"
+            f"Snippets:\n{chr(10).join(snippets)}"
+        )
+
+        await handle.interject("Also include contacts in Munich.")
+        result = await asyncio.wait_for(handle.result(), timeout=120)
+        assert result is not None, "Expected a non-None result from the actor"
+    finally:
+        try:
+            if handle is not None and not handle.done():
+                await handle.stop("test cleanup")
+        except Exception:
+            pass
+        try:
+            await actor.close()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_execute_code_mode_selection_realistic_inline_composition(monkeypatch):
+    """Natural request that requires same-block processing should await result."""
+    _force_simulated(monkeypatch)
+
+    scope = PrimitiveScope(scoped_managers=frozenset({"contacts"}))
+    primitives = Primitives(primitive_scope=scope)
+    env = StateManagerEnvironment(primitives)
+    actor = CodeActActor(environments=[env], timeout=220)
+    _restrict_to_execute_code(actor)
+    handle = None
+
+    try:
+        handle = await actor.act(
+            "In one code step, look up contacts in Berlin and immediately compute a "
+            "short summary string with the number of matches before replying.",
+            clarification_enabled=False,
+        )
+
+        result = await asyncio.wait_for(handle.result(), timeout=120)
+        assert result is not None, "Expected a non-None result from the actor"
+
+        snippets = extract_code_act_execute_code_snippets(handle)
+        assert snippets, "Expected CodeAct to use execute_code."
+        assert any(
+            "primitives.contacts.ask" in snippet and ".result(" in snippet
+            for snippet in snippets
+        ), (
+            "Expected at least one execute_code snippet to await .result() for inline "
+            "composition intent.\n"
+            f"Snippets:\n{chr(10).join(snippets)}"
+        )
+    finally:
+        try:
+            if handle is not None and not handle.done():
                 await handle.stop("test cleanup")
         except Exception:
             pass
@@ -178,8 +276,12 @@ async def test_execute_code_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for the inner ContactManager.ask handle to be adopted.
-        await _wait_for_inner_handle_adopted(handle, timeout=120)
+        # Wait for the execute_code tool result in the transcript.
+        await _wait_for_tool_result_in_transcript(
+            handle,
+            "execute_code",
+            timeout=120,
+        )
 
         # Steer: interject additional context mid-flight.
         await handle.interject(
@@ -241,8 +343,12 @@ async def test_execute_code_dual_primitive_steering(monkeypatch):
             clarification_enabled=False,
         )
 
-        # Wait for both inner handles to be adopted.
-        await _wait_for_inner_handle_adopted(handle, count=2, timeout=120)
+        # Wait for the execute_code tool result in the transcript.
+        await _wait_for_tool_result_in_transcript(
+            handle,
+            "execute_code",
+            timeout=120,
+        )
 
         # Steer the first handle (contacts) via an interjection.
         await handle.interject("Also include contacts in Munich.")

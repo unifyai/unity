@@ -2,16 +2,13 @@
 tests/conversation_manager/test_take_action.py
 ===================================================
 
-Tests that verify ConversationManager correctly delegates to `act` for various
-types of requests that require access to knowledge, resources, or the world.
+Tests that verify ConversationManager correctly delegates to ``act`` for
+requests that require the general-purpose Actor (knowledge, tasks, web
+search, guidance, files, combined/research).
 
-These tests use the same categories of requests as tests/actor/test_state_managers
-but phrased as natural conversational scenarios. At this level we don't verify
-which inner state manager is reached - we simply verify that the request lands
-on the `act` method with a SimulatedActor under the hood.
-
-Each scenario presents a natural conversational request from the boss that should
-trigger the assistant to call `act`.
+Contact-specific routing (``ask_about_contacts``, ``update_contacts``) and
+transcript-specific routing (``query_past_transcripts``) are tested in their
+own dedicated modules under this directory.
 """
 
 import pytest
@@ -33,153 +30,6 @@ from unity.conversation_manager.events import (
 pytestmark = pytest.mark.eval
 
 # Note: BOSS (contact_id=1) is imported from conftest.py
-
-
-# ---------------------------------------------------------------------------
-#  Contact-related requests -> should trigger act
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_contact_lookup_triggers_act(initialized_cm):
-    """
-    Boss asks about contact preferences -> should call act to search contacts.
-
-    Natural scenario: Boss wants to know how to reach someone.
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="Does Sarah prefer phone or email?",
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Contact preference lookup should trigger act",
-        cm=cm,
-    )
-
-    # Efficiency assertions at end
-    assert_efficient(result, 3)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_contact_search_by_location_triggers_act(initialized_cm):
-    """
-    Boss asks about contacts in a location -> should call act.
-
-    Natural scenario: Boss planning a trip and wants to meet contacts.
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="I'm heading to Berlin next week. Do we know anyone there?",
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Location-based contact search should trigger act",
-        cm=cm,
-    )
-
-    # Efficiency assertions at end
-    assert_efficient(result, 3)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_create_contact_triggers_act(initialized_cm):
-    """
-    Boss asks to save a new contact -> should call act.
-
-    Natural scenario: Boss met someone and wants to save their details.
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="Just met Jane Doe at the conference. Can you save her email jane.d@example.com?",
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Contact creation should trigger act",
-        cm=cm,
-    )
-
-    # Efficiency assertions at end
-    assert_efficient(result, 3)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_save_service_number_act_query_describes_entity(initialized_cm):
-    """
-    Boss shares a service/support number -> act query should describe the
-    organisation, not the name of whoever answered the phone.
-
-    Scenario: boss says "Save this number 8005551234 — it's the Acme billing
-    support line. Sarah answered when I called." The act query should frame
-    the contact as a service number for Acme, not as "add Sarah".
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content=(
-                "Save this number 8005551234 - it's the Acme billing support "
-                "line. Sarah answered when I called."
-            ),
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Saving a service number should trigger act",
-        cm=cm,
-    )
-
-    actor_events = filter_events_by_type(result.output_events, ActorHandleStarted)
-    act_query = actor_events[0].query.lower()
-
-    # The query should reference the service/company, not "add Sarah"
-    assert (
-        "8005551234" in act_query
-    ), f"act query should include the phone number, got: {actor_events[0].query}"
-    assert (
-        "acme" in act_query or "billing" in act_query or "support" in act_query
-    ), f"act query should describe the service/organisation, got: {actor_events[0].query}"
-    # Must NOT frame this as adding a person named Sarah
-    query_words = act_query.split()
-    # Check that "sarah" doesn't appear as a contact name in typical patterns
-    sarah_as_contact = (
-        "add sarah" in act_query
-        or "create sarah" in act_query
-        or "save sarah" in act_query
-        or "contact sarah" in act_query
-        or ("sarah" in act_query and "first_name" in act_query)
-    )
-    assert not sarah_as_contact, (
-        f"act query should NOT frame Sarah as the contact name — she is a "
-        f"transient representative, got: {actor_events[0].query}"
-    )
-
-    assert_efficient(result, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -353,95 +203,6 @@ async def test_priority_task_query_triggers_act(initialized_cm):
         result,
         ActorHandleStarted,
         "Priority task query should trigger act",
-        cm=cm,
-    )
-
-    # Efficiency assertions at end
-    assert_efficient(result, 3)
-
-
-# ---------------------------------------------------------------------------
-#  Transcript-related requests -> should trigger act
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_transcript_search_triggers_act(initialized_cm):
-    """
-    Boss asks about a past conversation -> should call act.
-
-    Natural scenario: Boss trying to remember what was discussed.
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="What did David say about the project deadline last week?",
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Transcript search should trigger act",
-        cm=cm,
-    )
-
-    # Efficiency assertions at end
-    assert_efficient(result, 3)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_recent_messages_search_triggers_act(initialized_cm):
-    """
-    Boss asks about recent messages -> should call act.
-
-    Natural scenario: Boss checking for updates from someone.
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="Has Alice messaged me in the last day or so?",
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Recent messages search should trigger act",
-        cm=cm,
-    )
-
-    # Efficiency assertions at end
-    assert_efficient(result, 3)
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_specific_topic_search_triggers_act(initialized_cm):
-    """
-    Boss asks about messages on a specific topic -> should call act.
-
-    Natural scenario: Boss looking for a specific discussion.
-    """
-    cm = initialized_cm
-
-    result = await cm.step_until_wait(
-        SMSReceived(
-            contact=BOSS,
-            content="Can you find the last message where someone mentioned the Q3 budget?",
-        ),
-    )
-
-    assert_act_triggered(
-        result,
-        ActorHandleStarted,
-        "Topic-based message search should trigger act",
         cm=cm,
     )
 

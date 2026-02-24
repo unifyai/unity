@@ -109,6 +109,48 @@ async def run_with_steering() -> str:
 """
 
 
+def get_handle_mode_selection_example() -> str:
+    """Example: choosing between return-handle and await modes."""
+
+    return """
+# Example: Choose return-handle vs await based on task shape
+async def long_running_status_visible() -> object:
+    # Long-running or externally dependent work: return the handle so
+    # the outer loop can expose progress and steering.
+    notify({
+        "type": "progress",
+        "message": "Starting durable task execution and returning a steerable handle."
+    })
+    return await primitives.tasks.execute(task_id=123)
+
+async def neutral_intent_defaults_to_handle() -> object:
+    # Neutral or uncertain intent: return the handle by default so
+    # outer-loop steering and progress visibility stay available.
+    notify({
+        "type": "progress",
+        "message": "Starting contact lookup and returning a handle for steering."
+    })
+    return await primitives.contacts.ask("Find contacts in Berlin")
+
+async def compose_immediately() -> str:
+    # Immediate composition: await the result for same-block logic.
+    notify({
+        "type": "progress",
+        "message": "Resolving contact details for immediate composition.",
+        "step": 1,
+        "total": 2
+    })
+    handle = await primitives.contacts.ask("Who is Alice?")
+    answer = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "contact_lookup",
+        "result_summary": "Contact details resolved for same-block composition."
+    })
+    return f"Contact lookup complete: {answer}"
+"""
+
+
 def get_clarification_example() -> str:
     """Example: handling clarification requests from tools."""
 
@@ -120,6 +162,160 @@ async def tool_call_that_may_clarify() -> str:
     # - pause and ask the user for a disambiguating choice
     handle = await start_mutation_that_may_clarify()
     return await handle.result()
+"""
+
+
+def get_notify_web_search_example() -> str:
+    """Example: using notify() for staged external research progress."""
+
+    return """
+# Example: Progress notifications during staged web research
+async def gather_role_openings(query: str) -> list[dict]:
+    notify({
+        "type": "progress",
+        "message": "Searching public sources for relevant role listings.",
+        "step": 1,
+        "total": 3
+    })
+
+    initial_handle = await primitives.web.ask(
+        f"Find current openings related to: {query}"
+    )
+    initial_results = await initial_handle.result()
+
+    notify({
+        "type": "progress",
+        "message": "Initial listings collected; validating against official company pages.",
+        "step": 2,
+        "total": 3,
+        "candidate_count": len(initial_results) if isinstance(initial_results, list) else None
+    })
+
+    verified_handle = await primitives.web.ask(
+        "Cross-check the listings against official careers pages and remove outdated posts."
+    )
+    verified_results = await verified_handle.result()
+
+    notify({
+        "type": "progress",
+        "message": "Validation complete; preparing a concise, deduplicated summary.",
+        "step": 3,
+        "total": 3,
+        "verified_count": len(verified_results) if isinstance(verified_results, list) else None
+    })
+
+    return verified_results
+"""
+
+
+def get_notify_multistep_workflow_example() -> str:
+    """Example: using notify() between meaningful workflow milestones."""
+
+    return """
+# Example: Multi-step workflow notifications
+async def build_contact_insights(city: str) -> str:
+    notify({
+        "type": "progress",
+        "message": f"Fetching contacts for {city}.",
+        "step": 1,
+        "total": 3
+    })
+    contacts_handle = await primitives.contacts.ask(
+        f"List contacts in {city} with role and company."
+    )
+    contacts = await contacts_handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "fetch_contacts",
+        "result_summary": f"Retrieved candidate contacts for {city}.",
+        "count": len(contacts) if isinstance(contacts, list) else None
+    })
+
+    notify({
+        "type": "progress",
+        "message": "Summarizing recent interaction signals for matching contacts.",
+        "step": 2,
+        "total": 3
+    })
+    transcript_handle = await primitives.transcripts.ask(
+        f"Summarize recent interactions for contacts in {city}."
+    )
+    interaction_summary = await transcript_handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "summarize_interactions",
+        "result_summary": "Conversation signals extracted for ranking."
+    })
+
+    notify({
+        "type": "progress",
+        "message": "Persisting synthesized insights to the knowledge store.",
+        "step": 3,
+        "total": 3
+    })
+    save_handle = await primitives.knowledge.update(
+        f"Store structured contact insights for {city}: contacts={contacts}, summary={interaction_summary}"
+    )
+    save_result = await save_handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "persist_insights",
+        "result_summary": "Insights persisted to knowledge store."
+    })
+
+    return str(save_result)
+"""
+
+
+def get_notify_long_running_example() -> str:
+    """Example: periodic notify() usage for long-running operations."""
+
+    return """
+# Example: Long-running operation with concrete periodic notifications
+async def process_large_collection(records: list[dict]) -> dict:
+    batch_size = 250
+    total_batches = max(1, (len(records) + batch_size - 1) // batch_size)
+
+    processed = 0
+    rejected = 0
+
+    for index in range(total_batches):
+        start = index * batch_size
+        end = min(len(records), start + batch_size)
+        batch = records[start:end]
+
+        notify({
+            "type": "progress",
+            "message": f"Processing batch {index + 1}/{total_batches}.",
+            "step": index + 1,
+            "total": total_batches,
+            "batch_size": len(batch),
+            "processed_so_far": processed,
+            "rejected_so_far": rejected
+        })
+
+        for item in batch:
+            if item.get("is_valid"):
+                processed += 1
+            else:
+                rejected += 1
+
+        notify({
+            "type": "progress",
+            "message": f"Batch {index + 1} complete.",
+            "step": index + 1,
+            "total": total_batches,
+            "processed_so_far": processed,
+            "rejected_so_far": rejected
+        })
+
+    # GOOD: specific, measurable updates
+    # BAD: generic filler messages with no new signal:
+    # notify({"type": "progress", "message": "Working on it..."})
+    # notify({"type": "progress", "message": "Still processing..."})
+    # BAD: low-level internal diagnostics instead of user-facing progress:
+    # notify({"type": "progress", "message": "tool_call_id=abc123, state_mode=stateful, parser=ProductList"})
+    return {"processed": processed, "rejected": rejected, "total": len(records)}
 """
 
 
@@ -233,7 +429,14 @@ def get_computer_navigation_example() -> str:
 # Example: Computer navigation and extraction
 async def fetch_product_price(product_url: str) -> float:
     """Navigate to product page and extract price."""
-    await computer_primitives.navigate(product_url)
+    session = await primitives.computer.web.new_session()
+    notify({
+        "type": "progress",
+        "message": "Opening the product page now.",
+        "step": 1,
+        "total": 2
+    })
+    await session.navigate(product_url)
 
     # Extract structured data using observe
     from pydantic import BaseModel
@@ -243,11 +446,23 @@ async def fetch_product_price(product_url: str) -> float:
         price: float
         in_stock: bool
 
-    info = await computer_primitives.observe(
+    notify({
+        "type": "progress",
+        "message": "Reading the page to capture the product details.",
+        "step": 2,
+        "total": 2
+    })
+    info = await session.observe(
         "Extract product name, price, and stock status",
         response_format=ProductInfo
     )
 
+    notify({
+        "type": "step_complete",
+        "step_name": "extract_product_info",
+        "result_summary": f"Captured pricing details for {info.name}."
+    })
+    await session.stop()
     return info.price
 '''
 
@@ -259,45 +474,109 @@ def get_computer_multistep_example() -> str:
 # Example: Multi-step computer workflow
 async def complete_checkout(cart_items: list) -> str:
     """Complete e-commerce checkout flow."""
+    session = await primitives.computer.web.new_session()
     # Navigate to checkout
-    await computer_primitives.navigate("https://shop.example.com/checkout")
+    notify({
+        "type": "progress",
+        "message": "Opening checkout to begin the order flow.",
+        "step": 1,
+        "total": 4
+    })
+    await session.navigate("https://shop.example.com/checkout")
 
     # Fill shipping info
-    await computer_primitives.act("Fill shipping address: 123 Main St, City, 12345")
+    notify({
+        "type": "progress",
+        "message": "Entering shipping details.",
+        "step": 2,
+        "total": 4
+    })
+    await session.act("Fill shipping address: 123 Main St, City, 12345")
 
     # Verify shipping info was entered correctly
-    verification = await computer_primitives.observe(
+    notify({
+        "type": "progress",
+        "message": "Checking that the shipping details were entered correctly.",
+        "step": 3,
+        "total": 4
+    })
+    verification = await session.observe(
         "Is the shipping address '123 Main St, City, 12345' displayed?"
     )
     if "no" in verification.lower():
         raise ValueError("Shipping address verification failed")
 
     # Complete payment
-    await computer_primitives.act("Click 'Complete Order' button")
+    notify({
+        "type": "progress",
+        "message": "Submitting the order now.",
+        "step": 4,
+        "total": 4
+    })
+    await session.act("Click 'Complete Order' button")
 
     # Confirm order placed
-    confirmation = await computer_primitives.observe("Extract order confirmation number")
+    notify({
+        "type": "progress",
+        "message": "Checking for the order confirmation details."
+    })
+    confirmation = await session.observe("Extract order confirmation number")
+    notify({
+        "type": "step_complete",
+        "step_name": "checkout",
+        "result_summary": "Checkout completed and confirmation captured."
+    })
+    await session.stop()
     return f"Order placed: {confirmation}"
 '''
 
 
 def get_computer_screenshot_driven_example() -> str:
-    """Example: screenshot-driven implementation (within a computer loop).
+    """Example: screenshot-driven implementation using get_screenshot() + display().
 
-    UI actions are guided by the current page state (captured as screenshots/evidence).
+    UI actions are guided by the current page state (captured via explicit screenshot calls).
     """
 
     return """
 # Example: Screenshot-driven implementation
 async def proceed_using_screenshot() -> str:
-    await computer_primitives.navigate("https://example.com/setup")
+    session = await primitives.computer.web.new_session()
+    notify({
+        "type": "progress",
+        "message": "Opening the setup page.",
+        "step": 1,
+        "total": 3
+    })
+    await session.navigate("https://example.com/setup")
 
-    # After computer actions, the loop surfaces a screenshot as an image block.
-    # Prefer acting directly from that context, and only use observe for structured extraction
-    # or when a precise, machine-checkable answer is required.
+    # Use get_screenshot() + display() to see the current screen state.
+    # Prefer acting directly from that visual context, and only use observe
+    # for structured extraction or when a precise, machine-checkable answer is required.
+    notify({
+        "type": "progress",
+        "message": "Reviewing the page and advancing to the next step.",
+        "step": 2,
+        "total": 3
+    })
+    display(await session.get_screenshot())
 
-    await computer_primitives.act("Using the screenshot, click the 'Continue' button.")
-    return await computer_primitives.observe("From the new screenshot, confirm we reached the next step.")
+    await session.act("Click the 'Continue' button.")
+    display(await session.get_screenshot())
+
+    notify({
+        "type": "progress",
+        "message": "Confirming that the next setup step is visible.",
+        "step": 3,
+        "total": 3
+    })
+    result = await session.observe("Confirm we reached the next step.")
+    notify({
+        "type": "step_complete",
+        "step_name": "setup_navigation",
+        "result_summary": "Reached the next setup step."
+    })
+    await session.stop()
+    return result
 """
 
 
@@ -309,15 +588,15 @@ def get_computer_session_execution_example() -> str:
 
 *User Request*: "What is the main heading and the text of the first paragraph on playwright.dev?"
 
-*Turn 1: Navigate to the website*
+*Turn 1: Navigate to the website and view the page*
 * **Tool Call**:
     ```json
     {
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev.",
-          "code": "await computer_primitives.navigate(\'https://playwright.dev/\')",
+          "thought": "The first step is to navigate to the website specified in the user\'s request, which is playwright.dev. I\'ll take a screenshot to see the page.",
+          "code": "session = await primitives.computer.web.new_session()\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Opening the website and loading the page.\\"})\\nawait session.navigate(\'https://playwright.dev/\')\\ndisplay(await session.get_screenshot())\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"page_load\\", \\"result_summary\\": \\"The page is open and ready for extraction.\\"})",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -326,9 +605,8 @@ def get_computer_session_execution_example() -> str:
     ```
 * **Observation**:
     ```text
-    --- COMPUTER STATE ---
-    URL: https://playwright.dev/
-    [A screenshot is available to you as an image block.]
+    --- stdout ---
+    [screenshot image of the playwright.dev homepage]
     ```
 
 *Turn 2: Observe the content using a Pydantic model*
@@ -338,8 +616,8 @@ def get_computer_session_execution_example() -> str:
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "Great, I\'m on the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
-          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\npage_info = await computer_primitives.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\n\\nprint(page_info.model_dump_json(indent=2))",
+          "thought": "Great, I can see the page. Now I\'ll extract the heading and paragraph text into a structured object for clarity. I\'ll define a Pydantic model right here in the sandbox.",
+          "code": "from pydantic import BaseModel, Field\\n\\nclass PageContent(BaseModel):\\n    heading: str = Field(description=\\"The main H1 heading of the page\\")\\n    first_paragraph: str = Field(description=\\"The text of the first paragraph under the heading\\")\\n\\nPageContent.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Reading the page to capture the requested content.\\"})\\npage_info = await session.observe(\\n    \\"Extract the main heading and the first paragraph.\\",\\n    response_format=PageContent\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_page_content\\", \\"result_summary\\": \\"Captured the heading and intro paragraph.\\"})\\n\\nprint(page_info.model_dump_json(indent=2))\\nawait session.stop()",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -348,14 +626,11 @@ def get_computer_session_execution_example() -> str:
     ```
 * **Observation**:
     ```text
-    --- STDOUT ---
+    --- stdout ---
     {
       "heading": "Playwright enables reliable end-to-end testing for modern web apps.",
       "first_paragraph": "Playwright is an open-source framework for web testing and automation. It allows testing Chromium, Firefox and WebKit with a single API."
     }
-    --- COMPUTER STATE ---
-    URL: https://playwright.dev/
-    [A screenshot is available to you as an image block.]
     ```
 
 *Turn 3: Provide the final answer*
@@ -381,7 +656,7 @@ def get_computer_stateful_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "This is a multi-step task. First, I\'ll extract all products. I know I\'ll need to parse prices that might be strings (e.g., \'$25.99\'), so I\'ll define a helper function to clean them. This function will persist in the sandbox for later.",
-          "code": "import re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nall_products_data = await computer_primitives.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")",
+          "code": "session = await primitives.computer.web.new_session()\\nimport re\\nfrom pydantic import BaseModel, Field\\nfrom typing import List\\n\\ndef parse_price(price_str: str) -> float:\\n    nums = re.findall(r\'[\\\\d.]+\', price_str)\\n    return float(nums[0]) if nums else 0.0\\n\\nclass Product(BaseModel):\\n    name: str\\n    price_text: str = Field(alias=\\"price\\")\\n\\nclass ProductList(BaseModel):\\n    products: List[Product]\\n\\nProductList.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Collecting product names and prices from the page.\\"})\\nall_products_data = await session.observe(\\n    \\"Extract all products with their name and price text\\",\\n    response_format=ProductList\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"collect_products\\", \\"result_summary\\": f\\"Captured {len(all_products_data.products)} products for analysis.\\"})\\nprint(f\\"Extracted {len(all_products_data.products)} products.\\")\\nawait session.stop()",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -402,7 +677,7 @@ def get_computer_stateful_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "I have the product data in the `all_products_data` variable and my `parse_price` function is defined. Now I can perform the calculation in pure Python.",
-          "code": "prices_under_100 = []\\nfor product in all_products_data.products:\\n    price = parse_price(product.price_text)\\n    if price < 100.0:\\n        prices_under_100.append(price)\\n\\nif prices_under_100:\\n    average = sum(prices_under_100) / len(prices_under_100)\\n    result_text = f\\"The average price of products under $100 is ${average:.2f}.\\"\\nelse:\\n    result_text = \\"No products found under $100.\\"\\n\\nprint(result_text)",
+          "code": "notify({\\"type\\": \\"progress\\", \\"message\\": \\"Calculating the average for products under $100.\\"})\\nprices_under_100 = []\\nfor product in all_products_data.products:\\n    price = parse_price(product.price_text)\\n    if price < 100.0:\\n        prices_under_100.append(price)\\n\\nif prices_under_100:\\n    average = sum(prices_under_100) / len(prices_under_100)\\n    result_text = f\\"The average price of products under $100 is ${average:.2f}.\\"\\nelse:\\n    result_text = \\"No products found under $100.\\"\\n\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"calculate_average\\", \\"result_summary\\": \\"Pricing analysis is complete.\\"})\\nprint(result_text)",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -426,15 +701,15 @@ def get_computer_interactive_workflow_example() -> str:
 
 *User Request*: "Find the support email on example.com and save it to our knowledge base."
 
-*Turn 1: Navigate to the website*
+*Turn 1: Navigate to the website and view the page*
 * **Tool Call**:
     ```json
     {
       "tool_calls": [{
         "name": "execute_code",
         "arguments": {
-          "thought": "I\'ll navigate to the website to find the support email.",
-          "code": "await computer_primitives.navigate(\'https://example.com/contact\')",
+          "thought": "I\'ll navigate to the website to find the support email and take a screenshot to see the page.",
+          "code": "session = await primitives.computer.web.new_session()\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Opening the contact page to find support details.\\"})\\nawait session.navigate(\'https://example.com/contact\')\\ndisplay(await session.get_screenshot())\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"open_contact_page\\", \\"result_summary\\": \\"The contact page is visible and ready to review.\\"})",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -443,9 +718,8 @@ def get_computer_interactive_workflow_example() -> str:
     ```
 * **Observation**:
     ```text
-    --- COMPUTER STATE ---
-    URL: https://example.com/contact
-    [A screenshot is available to you as an image block.]
+    --- stdout ---
+    [screenshot image of the example.com contact page]
     ```
 
 *Turn 2: Extract the support email using structured observation*
@@ -456,7 +730,7 @@ def get_computer_interactive_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "I can see the contact page. I\'ll extract the support email using a Pydantic model for reliable structured extraction.",
-          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\ninfo = await computer_primitives.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nprint(f\\"Support email: {info.support_email}\\")",
+          "code": "from pydantic import BaseModel\\n\\nclass ContactInfo(BaseModel):\\n    support_email: str\\n    phone: str | None = None\\n\\nContactInfo.model_rebuild()\\n\\nnotify({\\"type\\": \\"progress\\", \\"message\\": \\"Reading the page to capture support contact details.\\"})\\ninfo = await session.observe(\\n    \\"Extract the support email address and phone number from the contact page.\\",\\n    response_format=ContactInfo\\n)\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"extract_support_contact\\", \\"result_summary\\": \\"Support contact details were captured.\\"})\\nprint(f\\"Support email: {info.support_email}\\")\\nawait session.stop()",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -477,7 +751,7 @@ def get_computer_interactive_workflow_example() -> str:
         "name": "execute_code",
         "arguments": {
           "thought": "I have the support email. Now I\'ll save it to the knowledge base using the state manager.",
-          "code": "handle = await primitives.knowledge.update(\\n    f\\"Store that Example Corp\'s support email is {info.support_email}\\"\\n)\\nresult = await handle.result()\\nprint(result)",
+          "code": "notify({\\"type\\": \\"progress\\", \\"message\\": \\"Saving the support contact so it can be reused later.\\"})\\nhandle = await primitives.knowledge.update(\\n    f\\"Store that Example Corp\'s support email is {info.support_email}\\"\\n)\\nresult = await handle.result()\\nnotify({\\"type\\": \\"step_complete\\", \\"step_name\\": \\"knowledge_update\\", \\"result_summary\\": \\"Support contact was saved to shared knowledge.\\"})\\nprint(result)",
           "language": "python",
           "state_mode": "stateful"
         }
@@ -505,11 +779,24 @@ def get_primitives_contact_ask_example() -> str:
 # Example: Read-only contact query
 async def find_contact_email(name: str) -> str:
     """Find a contact's email address by name."""
+    notify({
+        "type": "progress",
+        "message": f"Looking up contact details for {name}.",
+        "step": 1,
+        "total": 2
+    })
+
     # ContactManager.ask is read-only and returns a steerable handle
     handle = await primitives.contacts.ask(f"What is {name}'s email address?")
 
     # Wait for result
     answer = await handle.result()
+
+    notify({
+        "type": "step_complete",
+        "step_name": "contact_lookup",
+        "result_summary": f"Completed contact lookup for {name}."
+    })
 
     # Extract email from natural language answer
     # (In practice, use response_format for structured output)
@@ -524,12 +811,24 @@ def get_primitives_contact_update_example() -> str:
 # Example: Contact mutation
 async def update_contact_phone(email: str, phone: str) -> str:
     """Update a contact's phone number."""
+    notify({
+        "type": "progress",
+        "message": f"Preparing contact update for {email}.",
+        "step": 1,
+        "total": 2
+    })
+
     # ContactManager.update is a mutation and returns a steerable handle
     instruction = f"Update the contact with email {email}: set phone to {phone}"
     handle = await primitives.contacts.update(instruction)
 
     # Wait for completion
     result = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "contact_update",
+        "result_summary": f"Phone update completed for {email}."
+    })
     return result
 '''
 
@@ -546,12 +845,24 @@ async def find_employee_count_for_contact(contact_name: str) -> int:
     1. KnowledgeManager.ask internally calls ContactManager.ask to find employer
     2. KnowledgeManager.ask then queries its own tables for employee count
     """
+    notify({
+        "type": "progress",
+        "message": f"Looking up employer employee count for {contact_name}.",
+        "step": 1,
+        "total": 2
+    })
+
     # Single high-level query; KM handles cross-manager coordination internally
     handle = await primitives.knowledge.ask(
         f"How many employees are at the company {contact_name} works at?"
     )
 
     answer = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "knowledge_lookup",
+        "result_summary": "Employee count query completed."
+    })
 
     # Extract count from natural language answer
     # (In practice, use response_format for structured output)
@@ -576,6 +887,13 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 
     TaskIdResult.model_rebuild()
 
+    notify({
+        "type": "progress",
+        "message": "Resolving task ID from the request description.",
+        "step": 1,
+        "total": 3
+    })
+
     # Step 1: Find the task_id using structured output from `ask(...)`.
     # (TaskScheduler.execute requires an integer task_id.)
     lookup_handle = await primitives.tasks.ask(
@@ -583,8 +901,19 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
         response_format=TaskIdResult,
     )
     task_info = await lookup_handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "task_lookup",
+        "result_summary": f"Resolved task '{task_info.task_name}' (task_id={task_info.task_id})."
+    })
 
     # Step 2: Execute using the task_id (returns a steerable ActiveQueue handle).
+    notify({
+        "type": "progress",
+        "message": f"Starting task execution for task_id={task_info.task_id}.",
+        "step": 2,
+        "total": 3
+    })
     handle = await primitives.tasks.execute(task_id=task_info.task_id)
 
     # Inject guidance early in execution
@@ -593,6 +922,12 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
     # Query status mid-execution
     status_handle = await handle.ask("What is the current status?")
     status = await status_handle.result()
+    notify({
+        "type": "progress",
+        "message": "Received a mid-flight task status update.",
+        "step": 2,
+        "total": 3
+    })
 
     # Stop early if needed
     if "error" in status.lower():
@@ -600,6 +935,11 @@ async def execute_task_by_description_with_guidance(description: str) -> str:
 
     # Wait for completion
     result = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "task_execution",
+        "result_summary": "Task execution finished."
+    })
     return result
 '''
 
@@ -615,6 +955,13 @@ async def execute_task_and_append(task_a_id: int, task_b_id: int) -> str:
     TaskScheduler.execute returns an ActiveQueue handle that exposes
     a dynamic method: append_to_queue_<tool>_<id>(task_id=...)
     """
+    notify({
+        "type": "progress",
+        "message": f"Starting queue execution with task_id={task_a_id}.",
+        "step": 1,
+        "total": 3
+    })
+
     # Start task A
     handle = await primitives.tasks.execute(task_id=task_a_id)
 
@@ -625,9 +972,19 @@ async def execute_task_and_append(task_a_id: int, task_b_id: int) -> str:
     # Append task B to the queue while A is running
     # Note: In practice, the LLM discovers this method via tool introspection
     await handle.append_to_queue(task_id=task_b_id)
+    notify({
+        "type": "step_complete",
+        "step_name": "append_to_queue",
+        "result_summary": f"Appended task_id={task_b_id} to the active queue."
+    })
 
     # Wait for completion (both tasks will execute in order)
     result = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "queued_execution",
+        "result_summary": "Queued tasks completed in order."
+    })
     return result
 '''
 
@@ -639,7 +996,22 @@ def get_primitives_files_describe_example() -> str:
 # Example: Discover file storage layout
 async def discover_file_structure(file_path: str) -> dict:
     """Discover what tables/contexts are available in a file."""
+    notify({
+        "type": "progress",
+        "message": f"Inspecting storage layout for {file_path}.",
+        "step": 1,
+        "total": 2
+    })
+
     storage = await primitives.files.describe(file_path=file_path)
+    table_count = len(storage.tables) if storage.has_tables else 0
+    notify({
+        "type": "step_complete",
+        "step_name": "describe_file_storage",
+        "result_summary": "Storage layout inspection completed.",
+        "has_tables": bool(storage.has_tables),
+        "table_count": table_count
+    })
 
     # storage contains:
     # - indexed_exists: bool (whether file has been indexed)
@@ -662,6 +1034,13 @@ def get_primitives_files_reduce_example() -> str:
 # Example: Aggregate data from a file table
 async def count_records_by_category(table_context: str) -> dict:
     """Count records grouped by a category column."""
+    notify({
+        "type": "progress",
+        "message": f"Running grouped aggregation for context {table_context}.",
+        "step": 1,
+        "total": 2
+    })
+
     result = await primitives.files.reduce(
         context=table_context,
         metric="count",
@@ -669,6 +1048,11 @@ async def count_records_by_category(table_context: str) -> dict:
         group_by="category",
         filter="status == 'active'",
     )
+    notify({
+        "type": "step_complete",
+        "step_name": "reduce_records",
+        "result_summary": "Grouped aggregation completed."
+    })
     return result
 '''
 
@@ -680,12 +1064,25 @@ def get_primitives_files_filter_example() -> str:
 # Example: Filter rows from a file table
 async def get_recent_records(table_context: str) -> list:
     """Get recent records matching a filter."""
+    notify({
+        "type": "progress",
+        "message": f"Filtering recent records in context {table_context}.",
+        "step": 1,
+        "total": 2
+    })
+
     rows = await primitives.files.filter_files(
         context=table_context,
         filter="created_date > '2024-01-01'",
         columns=["id", "name", "created_date", "status"],
         limit=50,
     )
+    notify({
+        "type": "step_complete",
+        "step_name": "filter_records",
+        "result_summary": "Row filtering completed.",
+        "row_count": len(rows) if isinstance(rows, list) else None
+    })
     return rows
 '''
 
@@ -697,11 +1094,24 @@ def get_primitives_files_search_example() -> str:
 # Example: Semantic search over file data
 async def search_for_topic(table_context: str, query: str) -> list:
     """Search for records semantically matching a query."""
+    notify({
+        "type": "progress",
+        "message": f"Running semantic search for query '{query}'.",
+        "step": 1,
+        "total": 2
+    })
+
     hits = await primitives.files.search_files(
         context=table_context,
         references={"description": query},  # column → reference text for semantic matching
         limit=10,
     )
+    notify({
+        "type": "step_complete",
+        "step_name": "semantic_search",
+        "result_summary": "Semantic search completed.",
+        "hit_count": len(hits) if isinstance(hits, list) else None
+    })
     return hits
 '''
 
@@ -713,6 +1123,13 @@ def get_primitives_files_visualize_example() -> str:
 # Example: Generate a chart from file data
 async def plot_distribution(table_context: str) -> str:
     """Generate a bar chart showing distribution by category."""
+    notify({
+        "type": "progress",
+        "message": "Generating chart from file-backed data.",
+        "step": 1,
+        "total": 2
+    })
+
     result = await primitives.files.visualize(
         tables=table_context,
         plot_type="bar",
@@ -721,36 +1138,13 @@ async def plot_distribution(table_context: str) -> str:
         metric="sum",
         title="Amount by Category",
     )
+    notify({
+        "type": "step_complete",
+        "step_name": "generate_visualization",
+        "result_summary": "Visualization request completed."
+    })
     # result contains the plot URL
     return result.get("url") if isinstance(result, dict) else result
-'''
-
-
-def get_primitives_guidance_ask_example() -> str:
-    """Example: read-only guidance query."""
-
-    return '''
-# Example: Read-only guidance query
-async def get_incident_response_guidance() -> str:
-    """Ask for incident response guidance."""
-    handle = await primitives.guidance.ask("What guidance do you have for incident response?")
-    return await handle.result()
-'''
-
-
-def get_primitives_guidance_update_example() -> str:
-    """Example: guidance mutation via `primitives.guidance.update(...)`."""
-
-    return '''
-# Example: Guidance update (create/edit)
-async def create_runbook_entry() -> str:
-    """Create a new guidance entry (runbook)."""
-    instruction = (
-        "Create a new guidance entry titled 'Runbook: DB Failover'. "
-        "Include step-by-step failover procedure, validation checks, and rollback steps."
-    )
-    handle = await primitives.guidance.update(instruction)
-    return await handle.result()
 '''
 
 
@@ -761,8 +1155,20 @@ def get_primitives_web_ask_example() -> str:
 # Example: Web research query
 async def research_latest_news() -> str:
     """Ask the WebSearcher for time-sensitive info."""
+    notify({
+        "type": "progress",
+        "message": "Starting web research for current headlines.",
+        "step": 1,
+        "total": 2
+    })
     handle = await primitives.web.ask("What are the major world news headlines this week?")
-    return await handle.result()
+    result = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "web_research",
+        "result_summary": "Web research completed."
+    })
+    return result
 '''
 
 
@@ -778,8 +1184,15 @@ def get_mixed_browse_persist_example() -> str:
 # Example: Browse and persist workflow
 async def scrape_and_save_contact(linkedin_url: str) -> str:
     """Scrape contact info from LinkedIn and save to ContactManager."""
+    session = await primitives.computer.web.new_session()
     # Browse to profile
-    await computer_primitives.navigate(linkedin_url)
+    notify({
+        "type": "progress",
+        "message": "Opening the profile page to gather contact details.",
+        "step": 1,
+        "total": 3
+    })
+    await session.navigate(linkedin_url)
 
     # Extract structured data
     from pydantic import BaseModel
@@ -790,15 +1203,34 @@ async def scrape_and_save_contact(linkedin_url: str) -> str:
         email: Optional[str] = None
         company: str
 
-    profile = await computer_primitives.observe(
+    notify({
+        "type": "progress",
+        "message": "Reading the profile to capture key contact fields.",
+        "step": 2,
+        "total": 3
+    })
+    profile = await session.observe(
         "Extract name, email, and current company from profile",
         response_format=LinkedInProfile
     )
 
+    await session.stop()
+
     # Persist to ContactManager
+    notify({
+        "type": "progress",
+        "message": "Saving the extracted profile into contacts.",
+        "step": 3,
+        "total": 3
+    })
     instruction = f"Create contact: {profile.name}, email {profile.email}, employer {profile.company}"
     handle = await primitives.contacts.update(instruction)
     result = await handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "persist_contact",
+        "result_summary": f"Contact persistence completed for {profile.name}."
+    })
 
     return f"Saved contact: {result}"
 '''
@@ -814,18 +1246,40 @@ import asyncio
 async def gather_contact_info_concurrently(name: str, company_url: str) -> dict:
     """Gather contact info from multiple sources concurrently."""
     # Start both operations concurrently
+    notify({
+        "type": "progress",
+        "message": "Starting concurrent contact lookup and company research.",
+        "step": 1,
+        "total": 2
+    })
     contact_handle = await primitives.contacts.ask(f"Find {name}'s email and phone")
 
     # Navigate and extract company info in parallel
     async def fetch_company_info():
-        await computer_primitives.navigate(company_url)
-        return await computer_primitives.observe("Extract company size and industry")
+        session = await primitives.computer.web.new_session()
+        notify({
+            "type": "progress",
+            "message": "Opening the company page for background details."
+        })
+        await session.navigate(company_url)
+        notify({
+            "type": "progress",
+            "message": "Reading the company page for size and industry."
+        })
+        result = await session.observe("Extract company size and industry")
+        await session.stop()
+        return result
 
     # Wait for both to complete
     contact_result, company_info = await asyncio.gather(
         contact_handle.result(),
         fetch_company_info()
     )
+    notify({
+        "type": "step_complete",
+        "step_name": "concurrent_research",
+        "result_summary": "Both concurrent lookups completed."
+    })
 
     return {
         "contact": contact_result,
@@ -841,6 +1295,12 @@ def get_mixed_interjection_routing_example() -> str:
 # Example: Interjection routing to in-flight handles
 async def search_multiple_sources_with_correction(query: str) -> dict:
     # Start multiple concurrent searches
+    notify({
+        "type": "progress",
+        "message": "Starting parallel contact and transcript searches.",
+        "step": 1,
+        "total": 2
+    })
     contact_handle = await primitives.contacts.ask(query)
     transcript_handle = await primitives.transcripts.ask(query)
 
@@ -851,6 +1311,11 @@ async def search_multiple_sources_with_correction(query: str) -> dict:
     # Wait for results (interjections handled by pane)
     contact_result = await contact_handle.result()
     transcript_result = await transcript_handle.result()
+    notify({
+        "type": "step_complete",
+        "step_name": "parallel_search",
+        "result_summary": "Parallel search results are ready."
+    })
 
     return {
         "contacts": contact_result,
@@ -979,6 +1444,7 @@ def get_verification_ok_example() -> str:
 - **Intent**: `create_contact(name='Alice', email='alice@corp.com')`
 - **Agent Trace**:
   - `REASONING: I will create the contact and confirm the result.`
+  - `notify({'type': 'progress', 'message': 'Updating the contact now.'})`
   - `tool_call: primitives.contacts.update(...)`
   - `✓ done`
 - **Evidence**: Return value indicates success.
@@ -997,6 +1463,7 @@ def get_verification_ambiguous_example() -> str:
 - **Intent**: `invite_attendee(name='Bob')`
 - **Agent Trace**:
   - `REASONING: I found two Bobs; I chose Bob S. and proceeded.`
+  - `notify({'type': 'progress', 'message': 'Looking up matching contacts.'})`
   - `tool_call: primitives.contacts.ask(...)`
 - **Evidence**: The trace reveals an unverified assumption (which Bob).
 - **Decision**:
@@ -1047,7 +1514,8 @@ def get_computer_verification_extraction_example() -> str:
 - **Goal**: "Find the product price."
 - **Intent**: `extract_price()`
 - **Agent Trace**:
-  - `computer_primitives.observe('Extract price')`
+  - `notify({'type': 'progress', 'message': 'Reading the page to capture the current price.'})`
+  - `session.observe('Extract price')`
   - `returned: '$199'`
 - **Evidence**: Screenshot shows the price as `$299` (the `$199` is the crossed-out old price).
 - **Decision**:
@@ -1064,8 +1532,10 @@ def get_computer_verification_multistep_example() -> str:
 - **Goal**: "Submit the signup form."
 - **Intent**: `submit_signup(email='a@corp.com')`
 - **Agent Trace**:
-  - `computer_primitives.act('Type email…')`
-  - `computer_primitives.act('Click Sign up')`
+  - `notify({'type': 'progress', 'message': 'Entering signup details.'})`
+  - `session.act('Type email…')`
+  - `notify({'type': 'progress', 'message': 'Submitting the signup form.'})`
+  - `session.act('Click Sign up')`
   - `✓ done`
 - **Evidence**: Screenshot shows a confirmation banner 'Thanks for signing up'.
 - **Decision**:
@@ -1082,6 +1552,7 @@ def get_primitives_verification_contact_update_example() -> str:
 - **Goal**: "Update Carol's phone number."
 - **Intent**: `update_phone(email='carol@corp.com', phone='555-0101')`
 - **Agent Trace**:
+  - `notify({'type': 'progress', 'message': 'Applying the requested contact update.'})`
   - `primitives.contacts.update(...)`
   - `✓ done`
 - **Evidence**: Return value indicates the contact was updated successfully.
@@ -1100,6 +1571,7 @@ def get_primitives_verification_cross_manager_example() -> str:
 - **Intent**: `create_ceo_contact(company='Acme')`
 - **Agent Trace**:
   - `REASONING: I queried the company but found no CEO field.`
+  - `notify({'type': 'progress', 'message': 'Searching company details for CEO information.'})`
   - `primitives.knowledge.ask(...)`
   - `✓ done (insufficient data)`
 - **Evidence**: Return value indicates missing CEO data; nothing to create.
@@ -1117,7 +1589,9 @@ def get_mixed_verification_browse_persist_example() -> str:
 - **Goal**: "Find support email on the site and save it to Knowledge."
 - **Intent**: `scrape_support_email_and_save()`
 - **Agent Trace**:
-  - `computer_primitives.observe('Extract support email') -> 'help@company.com'`
+  - `notify({'type': 'progress', 'message': 'Reading the site for the support email.'})`
+  - `session.observe('Extract support email') -> 'help@company.com'`
+  - `notify({'type': 'progress', 'message': 'Saving the support email to shared knowledge.'})`
   - `primitives.knowledge.update('Save support_email=help@company.com')`
   - `✓ done`
 - **Evidence**: Screenshot shows the extracted email; update return value indicates persistence succeeded.
@@ -1206,9 +1680,6 @@ def get_example_function_map() -> dict[str, callable]:
         "get_primitives_files_filter_example": get_primitives_files_filter_example,
         "get_primitives_files_search_example": get_primitives_files_search_example,
         "get_primitives_files_visualize_example": get_primitives_files_visualize_example,
-        # Guidance
-        "get_primitives_guidance_ask_example": get_primitives_guidance_ask_example,
-        "get_primitives_guidance_update_example": get_primitives_guidance_update_example,
         # Web
         "get_primitives_web_ask_example": get_primitives_web_ask_example,
         # Secrets
@@ -1221,17 +1692,17 @@ def get_example_function_map() -> dict[str, callable]:
 
 
 # ---------------------------------------------------------------------------
-# 8. Function-First Pattern Examples (for CodeActActor)
+# 8. Discovery-First Pattern Examples (for CodeActActor)
 # ---------------------------------------------------------------------------
 
 
-def get_function_first_pattern_example() -> str:
-    """Example: prioritizing pre-saved functions via FunctionManager tools (CodeAct style)."""
+def get_discovery_first_pattern_example() -> str:
+    """Example: prioritizing pre-saved functions and guidance via discovery tools (CodeAct style)."""
 
     return r"""
-# ✅ PATTERN: Function-First Workflow (CodeActActor)
-# If FunctionManager tools are available, ALWAYS search for an existing function
-# BEFORE writing custom logic with raw primitives.
+# ✅ PATTERN: Discovery-First Workflow (CodeActActor)
+# If FunctionManager and GuidanceManager tools are available, ALWAYS search both
+# for existing functions and guidance BEFORE writing custom logic with raw primitives.
 #
 # Step 1 (JSON TOOL CALL): search for an existing function
 # {
@@ -1239,25 +1710,27 @@ def get_function_first_pattern_example() -> str:
 #   "arguments": {"query": "contacts prefer phone", "n": 5}
 # }
 #
-# Step 2 (JSON TOOL CALL): execute with state_mode="stateful" (REQUIRED!)
+# Step 2 (JSON TOOL CALL): execute the discovered function
 # {
 #   "name": "execute_code",
 #   "arguments": {
 #     "language": "python",
-#     "state_mode": "stateful",
+#     "state_mode": "stateless",
 #     "code": "result = await ask_contacts_question('Which of our contacts prefers phone contact?')\nprint(result)"
 #   }
 # }
 #
-# IMPORTANT: You MUST use state_mode="stateful" because functions are injected into Session 0.
-# Using stateless creates a fresh session where the function is NOT available!
+# FunctionManager-discovered functions are available in all execute_code calls
+# (both stateful and stateless). Use stateful only when you need intermediate
+# variables to persist across calls.
 #
 # If no function exists, THEN fall back to composing with primitives directly in Python.
+# When you do fall back to `primitives.*`, emit `notify({...})` before each call.
 """
 
 
-def get_function_first_anti_pattern_example() -> str:
-    """Anti-pattern: skipping FunctionManager search when it exists (CodeAct style)."""
+def get_discovery_first_anti_pattern_example() -> str:
+    """Anti-pattern: skipping FunctionManager/GuidanceManager search when they exist (CodeAct style)."""
 
     return r"""
 # ❌ ANTI-PATTERN #1: Skipping FunctionManager when it's available
@@ -1270,22 +1743,9 @@ def get_function_first_anti_pattern_example() -> str:
 #   handle = await primitives.contacts.ask("Which contacts prefer phone?")
 #   result = await handle.result()
 #
-# ❌ ANTI-PATTERN #2: Using stateless mode after FunctionManager search
-#
-# DON'T do this:
-# {
-#   "name": "execute_code",
-#   "arguments": {
-#     "language": "python",
-#     "state_mode": "stateless",
-#     "code": "result = await ask_contacts_question(...)"
-#   }
-# }
-# ERROR: NameError - function not available in fresh session!
-#
 # ✅ CORRECT:
 #   1) Call FunctionManager_search_functions(...) as a JSON tool call
-#   2) Call execute_code with state_mode="stateful" and invoke the injected function
+#   2) Call execute_code and invoke the discovered function (any state_mode works)
 """
 
 
@@ -1312,11 +1772,11 @@ def get_function_parameter_exploration_example() -> str:
 """
 
 
-def get_code_act_function_first_examples() -> str:
-    """Get function-first examples for CodeActActor."""
+def get_code_act_discovery_first_examples() -> str:
+    """Get discovery-first examples for CodeActActor."""
     examples = [
-        get_function_first_pattern_example().strip(),
-        get_function_first_anti_pattern_example().strip(),
+        get_discovery_first_pattern_example().strip(),
+        get_discovery_first_anti_pattern_example().strip(),
         get_function_parameter_exploration_example().strip(),
     ]
     return "\n\n".join(examples)
@@ -1340,7 +1800,7 @@ def get_code_act_session_examples() -> str:
 **Key idea:** Use `execute_code` for *everything* (Python + shell), and use sessions
 to preserve state across multiple tool calls.
 
-> **Reminder**: FunctionManager functions are injected into Session 0 — always use `state_mode="stateful"` to access them (see Critical Rules).
+> **Note**: FunctionManager-discovered functions are available in all `execute_code` calls regardless of `state_mode`.
 
 #### Example A — Stateful shell session for repo navigation
 ```json
@@ -1441,6 +1901,9 @@ def get_core_pattern_examples() -> str:
         get_error_handling_example().strip(),
         get_handle_steering_example().strip(),
         get_clarification_example().strip(),
+        get_notify_web_search_example().strip(),
+        get_notify_multistep_workflow_example().strip(),
+        get_notify_long_running_example().strip(),
     ]
     return "\n\n".join(examples)
 
@@ -1448,13 +1911,17 @@ def get_core_pattern_examples() -> str:
 def get_code_act_pattern_examples() -> str:
     """Get core pattern examples relevant to CodeActActor.
 
-    Includes error handling, clarification patterns, and function-first workflow
+    Includes error handling, clarification patterns, and discovery-first workflow
     that complement the primitives examples.
     """
 
     examples = [
         get_error_handling_example().strip(),
+        get_handle_mode_selection_example().strip(),
         get_clarification_example().strip(),
+        get_notify_web_search_example().strip(),
+        get_notify_multistep_workflow_example().strip(),
+        get_notify_long_running_example().strip(),
     ]
     return "\n\n".join(examples)
 
@@ -1524,7 +1991,7 @@ def get_examples_for_environments(
     """Get examples appropriate for the given environment combination.
 
     Args:
-        has_computer: Whether computer_primitives environment is active
+        has_computer: Whether primitives.computer environment is active
         has_primitives: Whether primitives environment is active
         include_core: Whether to include core patterns (default: True)
         managers: If provided, only include examples for these managers

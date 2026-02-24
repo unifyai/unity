@@ -28,6 +28,7 @@ from ..common.simulated import (
     maybe_tool_log_completed,
 )
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Structured response models for simulated private methods
@@ -186,7 +187,7 @@ _MergeOutcomeStrict.model_rebuild()
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedContactHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Minimal LLM-backed handle used by SimulatedContactManager.ask / update.
     """
@@ -236,7 +237,9 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -266,7 +269,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -297,7 +300,9 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 
@@ -429,14 +434,9 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -448,10 +448,7 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -499,6 +496,7 @@ class SimulatedContactManager(BaseContactManager):
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._deterministic = deterministic
         self._log_events = log_events
@@ -540,7 +538,10 @@ class SimulatedContactManager(BaseContactManager):
             new_llm_client as _new_llm_client,
         )  # local import to avoid cycles
 
-        self._llm = _new_llm_client(stateful=True)
+        self._llm = _new_llm_client(
+            stateful=True,
+            origin="SimulatedContactManager",
+        )
         # Mirror the real manager's tool exposure programmatically
         # and build the *exact* same prompts via the shared builders.
         ask_tools = mirror_contact_manager_tools("ask")

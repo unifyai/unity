@@ -1364,6 +1364,24 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-monitoring"
+version = "2.29.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio", version = "1.67.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "grpcio", version = "1.76.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+    { name = "proto-plus" },
+    { name = "protobuf", version = "5.29.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+    { name = "protobuf", version = "6.33.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/97/06/9fc0a34bed4221a68eef3e0373ae054de367dc42c0b689d5d917587ef61b/google_cloud_monitoring-2.29.1.tar.gz", hash = "sha256:86cac55cdd2608561819d19544fb3c129bbb7dcecc445d8de426e34cd6fa8e49", size = 404383, upload-time = "2026-02-05T18:59:13.026Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/97/7c27aa95eccf8b62b066295a7c4ad04284364b696d3e7d9d47152b255a24/google_cloud_monitoring-2.29.1-py3-none-any.whl", hash = "sha256:944a57031f20da38617d184d5658c1f938e019e8061f27fd944584831a1b9d5a", size = 387922, upload-time = "2026-02-05T18:58:54.964Z" },
+]
+
+[[package]]
 name = "google-cloud-pubsub"
 version = "2.34.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3391,6 +3409,21 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-exporter-gcp-monitoring"
+version = "1.11.0a0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-cloud-monitoring" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-resourcedetector-gcp" },
+    { name = "opentelemetry-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/48/d1c7d2380bb1754d1eb6a011a2e0de08c6868cb6c0f34bcda0444fa0d614/opentelemetry_exporter_gcp_monitoring-1.11.0a0.tar.gz", hash = "sha256:386276eddbbd978a6f30fafd3397975beeb02a1302bdad554185242a8e2c343c", size = 20828, upload-time = "2025-11-04T19:32:14.522Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/8c/03a6e73e270a9c890dbd6cc1c47c83d86b8a8a974a9168d92e043c6277cc/opentelemetry_exporter_gcp_monitoring-1.11.0a0-py3-none-any.whl", hash = "sha256:b6740cba61b2f9555274829fe87a58447b64d0378f1067a4faebb4f5b364ca22", size = 13611, upload-time = "2025-11-04T19:32:08.212Z" },
+]
+
+[[package]]
 name = "opentelemetry-exporter-otlp"
 version = "1.39.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3510,6 +3543,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/49/1d/f25d76d8260c156c40c97c9ed4511ec0f9ce353f8108ca6e7561f82a06b2/opentelemetry_proto-1.39.1.tar.gz", hash = "sha256:6c8e05144fc0d3ed4d22c2289c6b126e03bcd0e6a7da0f16cedd2e1c2772e2c8", size = 46152, upload-time = "2025-12-11T13:32:48.681Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/95/b40c96a7b5203005a0b03d8ce8cd212ff23f1793d5ba289c87a097571b18/opentelemetry_proto-1.39.1-py3-none-any.whl", hash = "sha256:22cdc78efd3b3765d09e68bfbd010d4fc254c9818afd0b6b423387d9dee46007", size = 72535, upload-time = "2025-12-11T13:32:33.866Z" },
+]
+
+[[package]]
+name = "opentelemetry-resourcedetector-gcp"
+version = "1.11.0a0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/5d/2b3240d914b87b6dd9cd5ca2ef1ccaf1d0626b897d4c06877e22c8c10fcf/opentelemetry_resourcedetector_gcp-1.11.0a0.tar.gz", hash = "sha256:915a1d6fd15daca9eedd3fc52b0f705375054f2ef140e2e7a6b4cca95a47cdb1", size = 18796, upload-time = "2025-11-04T19:32:16.59Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/6c/1e13fe142a7ca3dc6489167203a1209d32430cca12775e1df9c9a41c54b2/opentelemetry_resourcedetector_gcp-1.11.0a0-py3-none-any.whl", hash = "sha256:5d65a2a039b1d40c6f41421dbb08d5f441368275ac6de6e76a8fccd1f6acb67e", size = 18798, upload-time = "2025-11-04T19:32:10.915Z" },
 ]
 
 [[package]]
@@ -8697,7 +8745,6 @@ dependencies = [
     { name = "aiohttp" },
     { name = "google-genai" },
     { name = "jsonlines" },
-    { name = "litellm" },
     { name = "openai" },
     { name = "requests" },
     { name = "requests-toolbelt" },
@@ -8710,7 +8757,6 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.12.14" },
     { name = "google-genai", specifier = ">=1.52.0" },
     { name = "jsonlines", specifier = ">=3.1.0" },
-    { name = "litellm", specifier = ">=1.80.7" },
     { name = "openai", specifier = ">=2.8.1" },
     { name = "requests", specifier = ">=2.32.4" },
     { name = "requests-toolbelt", specifier = ">=1.0.0" },
@@ -8796,6 +8842,9 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "opencv-python" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-gcp-monitoring" },
+    { name = "opentelemetry-sdk" },
     { name = "pillow" },
     { name = "playwright" },
     { name = "psutil" },
@@ -8804,7 +8853,6 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "pygments" },
     { name = "python-dotenv" },
-    { name = "redis" },
     { name = "requests" },
     { name = "scikit-image" },
     { name = "sounddevice" },
@@ -8863,6 +8911,9 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.3.4" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "opencv-python", specifier = ">=4.11.0.86" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "opentelemetry-exporter-gcp-monitoring", specifier = ">=1.9.0a0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "playwright", specifier = "==1.52.0" },
     { name = "psutil", specifier = ">=5.9.0" },
@@ -8871,7 +8922,6 @@ requires-dist = [
     { name = "pydantic-core", specifier = ">=2.0.0" },
     { name = "pygments", specifier = ">=2.19.2" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "redis", specifier = ">=7.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "scikit-image", specifier = ">=0.25.2" },
     { name = "sounddevice", specifier = ">=0.5.3" },

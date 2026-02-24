@@ -21,6 +21,8 @@ from pydantic import BaseModel as _BaseModel
 from pydantic import create_model as _create_model
 
 from unity.common.prompt_helpers import now as prompt_now
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import DEFAULT_ICON
 
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
@@ -201,6 +203,18 @@ def _filter_cm_state_for_actor(state_snapshot: dict) -> dict:
     if not content:
         return state_snapshot
 
+    # When screenshots are attached, content is a list of multimodal parts
+    # rather than a plain string. Apply the regex to each text part.
+    if isinstance(content, list):
+        filtered_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                filtered_text = _IN_FLIGHT_ACTIONS_PATTERN.sub("", part["text"])
+                filtered_parts.append({**part, "text": filtered_text})
+            else:
+                filtered_parts.append(part)
+        return {**state_snapshot, "content": filtered_parts}
+
     filtered_content = _IN_FLIGHT_ACTIONS_PATTERN.sub("", content)
     return {**state_snapshot, "content": filtered_content}
 
@@ -306,6 +320,44 @@ class ConversationManagerBrainActionTools:
         self._cm = cm
         self._event_broker = get_event_broker()
 
+    async def _surface_comms_error(
+        self,
+        error_msg: str,
+        topic: str,
+        *,
+        contact_id: int | None = None,
+        medium: str | None = None,
+    ) -> dict[str, Any]:
+        """Push a comms error into the conversation thread and publish the Error event.
+
+        Ensures the brain sees the failure in ``active_conversations`` on the
+        next turn and can reason about recovery (retry with missing info,
+        fall back to a different channel, etc.).
+
+        Args:
+            error_msg: Human-readable error description.
+            topic: Event broker topic (e.g. ``"app:comms:sms_sent"``).
+            contact_id: Target contact (when known) — the error is pushed into
+                their conversation thread.
+            medium: Communication medium for the thread entry (e.g.
+                ``Medium.SMS_MESSAGE``).
+
+        Returns:
+            ``{"status": "error", "error": <error_msg>}`` for the tool return.
+        """
+        if contact_id is not None and medium is not None:
+            self._cm.contact_index.push_message(
+                contact_id=contact_id,
+                sender_name="System",
+                thread_name=medium,
+                message_content=f"[Send Failed] {error_msg}",
+                role="system",
+                timestamp=prompt_now(as_string=False),
+            )
+        event = Error(error_msg)
+        await self._event_broker.publish(topic, event.to_json())
+        return {"status": "error", "error": error_msg}
+
     async def send_sms(
         self,
         *,
@@ -342,9 +394,12 @@ class ConversationManagerBrainActionTools:
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
-            event = Error(outbound_error)
-            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-            return {"status": "error", "error": outbound_error}
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
+            )
 
         detail_error, contact = _resolve_or_attach_detail(
             contact,
@@ -355,9 +410,12 @@ class ConversationManagerBrainActionTools:
             self._cm.contact_index,
         )
         if detail_error:
-            event = Error(detail_error)
-            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-            return {"status": "error", "error": detail_error}
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:sms_sent",
+                contact_id=contact_id,
+                medium=Medium.SMS_MESSAGE,
+            )
 
         to_number = contact.get("phone_number")
         response = await comms_utils.send_sms_message_via_number(
@@ -371,14 +429,19 @@ class ConversationManagerBrainActionTools:
                 self._cm.contact_index.get_contact(phone_number=to_number) or contact
             )
             event = SMSSent(contact=fresh_contact, content=content)
+            await self._event_broker.publish("app:comms:sms_sent", event.to_json())
+            return {"status": "ok"}
+
+        if not self._cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
         else:
-            if not self._cm.assistant_number:
-                error_msg = "You don't have a number, please provision one."
-            else:
-                error_msg = f"Failed to send sms to {to_number}"
-            event = Error(error_msg)
-        await self._event_broker.publish("app:comms:sms_sent", event.to_json())
-        return {"status": "ok"}
+            error_msg = f"Failed to send sms to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            "app:comms:sms_sent",
+            contact_id=contact_id,
+            medium=Medium.SMS_MESSAGE,
+        )
 
     async def send_unify_message(
         self,
@@ -400,15 +463,17 @@ class ConversationManagerBrainActionTools:
 
         contact = self._cm.contact_index.get_contact(contact_id=contact_id)
 
+        _unify_topic = "app:comms:unify_message_sent"
+        _unify_err = dict(contact_id=contact_id, medium=Medium.UNIFY_MESSAGE)
+
         if contact:
             outbound_error = _check_outbound_allowed(contact)
             if outbound_error:
-                event = Error(outbound_error)
-                await self._event_broker.publish(
-                    "app:comms:unify_message_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    outbound_error,
+                    _unify_topic,
+                    **_unify_err,
                 )
-                return {"status": "error", "error": outbound_error}
 
         # Handle attachment
         attachment = None
@@ -428,13 +493,11 @@ class ConversationManagerBrainActionTools:
                 max_size_mb = 25
                 file_size_mb = len(file_contents) / (1024 * 1024)
                 if file_size_mb > max_size_mb:
-                    error_msg = f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit"
-                    event = Error(error_msg)
-                    await self._event_broker.publish(
-                        "app:comms:unify_message_sent",
-                        event.to_json(),
+                    return await self._surface_comms_error(
+                        f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
+                        _unify_topic,
+                        **_unify_err,
                     )
-                    return {"status": "error", "error": error_msg}
 
                 attachment_filename = os.path.basename(attachment_filepath)
                 upload_result = await comms_utils.upload_unify_attachment(
@@ -443,32 +506,26 @@ class ConversationManagerBrainActionTools:
                 )
 
                 if "error" in upload_result:
-                    error_msg = f"Failed to upload attachment: {upload_result['error']}"
-                    event = Error(error_msg)
-                    await self._event_broker.publish(
-                        "app:comms:unify_message_sent",
-                        event.to_json(),
+                    return await self._surface_comms_error(
+                        f"Failed to upload attachment: {upload_result['error']}",
+                        _unify_topic,
+                        **_unify_err,
                     )
-                    return {"status": "error", "error": error_msg}
 
                 attachment = upload_result
 
             except FileNotFoundError:
-                error_msg = f"File not found: {attachment_filepath}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:unify_message_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    _unify_topic,
+                    **_unify_err,
                 )
-                return {"status": "error", "error": error_msg}
             except Exception as e:
-                error_msg = f"Failed to read file: {e}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:unify_message_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"Failed to read file: {e}",
+                    _unify_topic,
+                    **_unify_err,
                 )
-                return {"status": "error", "error": error_msg}
 
         response = await comms_utils.send_unify_message(
             content=content,
@@ -488,13 +545,14 @@ class ConversationManagerBrainActionTools:
                 content=content,
                 attachments=attachments_for_event,
             )
-        else:
-            event = Error("Failed to send unify message")
-        await self._event_broker.publish(
-            "app:comms:unify_message_sent",
-            event.to_json(),
+            await self._event_broker.publish(_unify_topic, event.to_json())
+            return {"status": "ok"}
+
+        return await self._surface_comms_error(
+            "Failed to send unify message",
+            _unify_topic,
+            **_unify_err,
         )
-        return {"status": "ok"}
 
     async def send_email(
         self,
@@ -574,6 +632,15 @@ class ConversationManagerBrainActionTools:
         cc = _coerce_recipients(cc)
         bcc = _coerce_recipients(bcc)
 
+        _email_topic = "app:comms:email_sent"
+        # Best-effort contact_id for thread placement of email errors.
+        _email_cid = (
+            (to[0][0] if to else None)
+            or (cc[0][0] if cc else None)
+            or (bcc[0][0] if bcc else None)
+        )
+        _email_err = dict(contact_id=_email_cid, medium=Medium.EMAIL)
+
         # --- Validation: reply_all is mutually exclusive with to/cc/bcc ---
         if reply_all and (to or cc or bcc):
             error_msg = (
@@ -581,9 +648,11 @@ class ConversationManagerBrainActionTools:
                 "Either use reply_all to auto-populate recipients from the thread, "
                 "or specify recipients explicitly."
             )
-            event = Error(error_msg)
-            await self._event_broker.publish("app:comms:email_sent", event.to_json())
-            return {"status": "error", "error": error_msg}
+            return await self._surface_comms_error(
+                error_msg,
+                _email_topic,
+                **_email_err,
+            )
 
         # --- Helper: resolve recipients to unique (email, contact) pairs ---
         def _resolve_recipients(
@@ -657,17 +726,13 @@ class ConversationManagerBrainActionTools:
                             break
 
             if not original_email:
-                error_msg = (
+                return await self._surface_comms_error(
                     "reply_all=True but no email found to reply to. "
                     "Either provide email_id_to_reply_to or ensure there's a matching "
-                    "inbound email in the thread."
+                    "inbound email in the thread.",
+                    _email_topic,
+                    **_email_err,
                 )
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
-                )
-                return {"status": "error", "error": error_msg}
 
             # Standard reply-all behavior:
             # - Original sender -> to
@@ -707,30 +772,27 @@ class ConversationManagerBrainActionTools:
             # --- Resolve explicit recipients to email addresses ---
             to_err, to_resolved = _resolve_recipients(to)
             if to_err:
-                event = Error(to_err)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    to_err,
+                    _email_topic,
+                    **_email_err,
                 )
-                return {"status": "error", "error": to_err}
 
             cc_err, cc_resolved = _resolve_recipients(cc)
             if cc_err:
-                event = Error(cc_err)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    cc_err,
+                    _email_topic,
+                    **_email_err,
                 )
-                return {"status": "error", "error": cc_err}
 
             bcc_err, bcc_resolved = _resolve_recipients(bcc)
             if bcc_err:
-                event = Error(bcc_err)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    bcc_err,
+                    _email_topic,
+                    **_email_err,
                 )
-                return {"status": "error", "error": bcc_err}
 
             # Extract just the email addresses for sending
             final_to = [email for email, _ in to_resolved]
@@ -748,16 +810,12 @@ class ConversationManagerBrainActionTools:
 
             # --- Validation: at least one recipient required ---
             if not final_to and not final_cc and not final_bcc:
-                error_msg = (
+                return await self._surface_comms_error(
                     "At least one recipient is required. "
-                    "Provide to, cc, or bcc, or use reply_all=True."
+                    "Provide to, cc, or bcc, or use reply_all=True.",
+                    _email_topic,
+                    **_email_err,
                 )
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
-                )
-                return {"status": "error", "error": error_msg}
 
             # --- Infer reply ID from email thread if not provided ---
             if not reply_email_id:
@@ -801,13 +859,11 @@ class ConversationManagerBrainActionTools:
                 max_size_mb = 25
                 file_size_mb = len(file_contents) / (1024 * 1024)
                 if file_size_mb > max_size_mb:
-                    error_msg = f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit"
-                    event = Error(error_msg)
-                    await self._event_broker.publish(
-                        "app:comms:email_sent",
-                        event.to_json(),
+                    return await self._surface_comms_error(
+                        f"File too large: {file_size_mb:.1f}MB exceeds {max_size_mb}MB limit",
+                        _email_topic,
+                        **_email_err,
                     )
-                    return {"status": "error", "error": error_msg}
 
                 attachment_filename = os.path.basename(attachment_filepath)
                 attachment = {
@@ -815,21 +871,17 @@ class ConversationManagerBrainActionTools:
                     "content_base64": base64.b64encode(file_contents).decode("utf-8"),
                 }
             except FileNotFoundError:
-                error_msg = f"File not found: {attachment_filepath}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"File not found: {attachment_filepath}",
+                    _email_topic,
+                    **_email_err,
                 )
-                return {"status": "error", "error": error_msg}
             except Exception as e:
-                error_msg = f"Failed to read file: {e}"
-                event = Error(error_msg)
-                await self._event_broker.publish(
-                    "app:comms:email_sent",
-                    event.to_json(),
+                return await self._surface_comms_error(
+                    f"Failed to read file: {e}",
+                    _email_topic,
+                    **_email_err,
                 )
-                return {"status": "error", "error": error_msg}
 
         # --- Send the email ---
         response = await comms_utils.send_email_via_address(
@@ -854,18 +906,22 @@ class ConversationManagerBrainActionTools:
                 cc=final_cc,
                 bcc=final_bcc,
             )
+            await self._event_broker.publish(_email_topic, event.to_json())
+            return {"status": "ok"}
+
+        if not self._cm.assistant_email:
+            error_msg = "You don't have an email address, please provision one."
         else:
-            if not self._cm.assistant_email:
-                error_msg = "You don't have an email address, please provision one."
-            else:
-                recipients = final_to + final_cc + final_bcc
-                error_msg = response.get(
-                    "error",
-                    f"Failed to send email to {recipients}",
-                )
-            event = Error(error_msg)
-        await self._event_broker.publish("app:comms:email_sent", event.to_json())
-        return {"status": "ok"}
+            recipients = final_to + final_cc + final_bcc
+            error_msg = response.get(
+                "error",
+                f"Failed to send email to {recipients}",
+            )
+        return await self._surface_comms_error(
+            error_msg,
+            _email_topic,
+            **_email_err,
+        )
 
     async def make_call(
         self,
@@ -934,9 +990,12 @@ class ConversationManagerBrainActionTools:
 
         outbound_error = _check_outbound_allowed(contact)
         if outbound_error:
-            event = Error(outbound_error)
-            await self._event_broker.publish("app:comms:make_call", event.to_json())
-            return {"status": "error", "error": outbound_error}
+            return await self._surface_comms_error(
+                outbound_error,
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
+            )
 
         detail_error, contact = _resolve_or_attach_detail(
             contact,
@@ -947,12 +1006,17 @@ class ConversationManagerBrainActionTools:
             self._cm.contact_index,
         )
         if detail_error:
-            event = Error(detail_error)
-            await self._event_broker.publish("app:comms:make_call", event.to_json())
-            return {"status": "error", "error": detail_error}
+            return await self._surface_comms_error(
+                detail_error,
+                "app:comms:make_call",
+                contact_id=contact_id,
+                medium=Medium.PHONE_CALL,
+            )
 
         to_number = contact.get("phone_number")
-        print(f"[make_call] context: {context}, to_number: {to_number}")
+        LOGGER.debug(
+            f"{DEFAULT_ICON} [make_call] context: {context}, to_number: {to_number}",
+        )
         # Store initial guidance so CallManager can publish it to the fast brain
         # after the subprocess spawns (before the recipient picks up).
         if context:
@@ -965,14 +1029,19 @@ class ConversationManagerBrainActionTools:
                 or {}
             )
             event = PhoneCallSent(contact=fresh_contact)
+            await self._event_broker.publish("app:comms:make_call", event.to_json())
+            return {"status": "ok"}
+
+        if not self._cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
         else:
-            if not self._cm.assistant_number:
-                error_msg = "You don't have a number, please provision one."
-            else:
-                error_msg = f"Failed to send call to {to_number}"
-            event = Error(error_msg)
-        await self._event_broker.publish("app:comms:make_call", event.to_json())
-        return {"status": "ok"}
+            error_msg = f"Failed to send call to {to_number}"
+        return await self._surface_comms_error(
+            error_msg,
+            "app:comms:make_call",
+            contact_id=contact_id,
+            medium=Medium.PHONE_CALL,
+        )
 
     async def act(
         self,
@@ -980,6 +1049,7 @@ class ConversationManagerBrainActionTools:
         query: str,
         response_format: Optional[dict] = None,
         persist: bool = False,
+        include_conversation_context: bool = True,
     ) -> dict[str, Any]:
         """
         Engage with knowledge, resources, and the world beyond immediate conversations.
@@ -1001,7 +1071,7 @@ class ConversationManagerBrainActionTools:
         it, it will tell you, and you can then ask the user.
 
         Args:
-            query: Natural language description of what to do or find.
+            query: Natural language request specifying what to do or find.
             response_format: An optional structured schema describing the shape of
                 the result you need back.  When provided, the action is required to
                 return a JSON object conforming to this schema (via a dedicated
@@ -1050,16 +1120,26 @@ class ConversationManagerBrainActionTools:
 
                 The default (False) is a one-shot task: the actor works until
                 done and the result arrives as an ``ActorResult``.
+            include_conversation_context: Whether to pass the current conversation
+                state to the action. When ``true`` (default), the action receives
+                the full rendered conversation snapshot — messages, notifications,
+                and in-flight actions — helping it understand the broader context.
+                Set ``false`` when the action is self-contained and the query
+                alone provides all necessary information (e.g. simple lookups,
+                web searches, or factual questions). Subsequent steering calls
+                (interject, ask) on this action will also skip context forwarding.
         """
         global _next_handle_id
 
-        # Pass the fresh rendered state snapshot as context for the Actor.
-        # Filter to remove CM-internal elements (steering tools) that don't exist in Actor scope.
-        parent_context = (
-            [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
-            if self._cm._current_state_snapshot
-            else None
-        )
+        # Pass the fresh rendered state snapshot as context for the Actor,
+        # unless the LLM opted out.
+        parent_context = None
+        if include_conversation_context:
+            parent_context = (
+                [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
+                if self._cm._current_state_snapshot
+                else None
+            )
 
         # Convert the LLM-provided schema dict into a Pydantic model that the
         # Actor's async tool loop uses for structured output validation.
@@ -1067,10 +1147,10 @@ class ConversationManagerBrainActionTools:
         if response_format is not None:
             pydantic_response_format = schema_dict_to_pydantic(response_format)
 
-        # Queue the actor invocation. listen_to_operations() ensures
-        # this runs only after managers are initialized.  Queueing is
-        # instant (just a queue.put), so the registration and event
-        # publish below happen before the queued work executes.
+        # Invoke the actor. If managers are already initialized, run
+        # directly so in_flight_actions is populated before we return.
+        # Otherwise queue via listen_to_operations() which defers until
+        # initialization completes.
         cm = self._cm
 
         async def _invoke_actor():
@@ -1091,6 +1171,7 @@ class ConversationManagerBrainActionTools:
                 "handle": handle,
                 "query": query,
                 "persist": persist,
+                "action_type": "act",
                 "handle_actions": [
                     {
                         "action_name": "act_started",
@@ -1099,6 +1180,7 @@ class ConversationManagerBrainActionTools:
                     },
                 ],
                 "initial_snapshot_state": initial_snapshot_state,
+                "context_opted_in": include_conversation_context,
             }
             asyncio.create_task(managers_utils.actor_watch_result(handle_id, handle))
             asyncio.create_task(
@@ -1108,9 +1190,13 @@ class ConversationManagerBrainActionTools:
                 managers_utils.actor_watch_clarifications(handle_id, handle),
             )
 
-        await managers_utils.queue_operation(_invoke_actor)
         handle_id = _next_handle_id
         _next_handle_id += 1
+
+        if cm.initialized:
+            await _invoke_actor()
+        else:
+            await managers_utils.queue_operation(_invoke_actor)
 
         await self._event_broker.publish(
             f"app:actor:actor_started_handle_{handle_id}",
@@ -1118,10 +1204,222 @@ class ConversationManagerBrainActionTools:
                 handle_id=handle_id,
                 action_name="act",
                 query=query,
+                response_format=response_format,
             ).to_json(),
         )
 
         return {"status": "acting", "query": query}
+
+    async def _invoke_manager_action(
+        self,
+        *,
+        manager: Any,
+        method_name: str,
+        text: str,
+        action_type: str,
+        response_format: Optional[dict] = None,
+        include_conversation_context: bool = True,
+    ) -> dict[str, Any]:
+        """Shared lifecycle for direct manager tools (contact and transcript actions).
+
+        Follows the same pattern as ``act``: queue invocation, store handle in
+        ``in_flight_actions``, spawn watcher tasks, publish started event.
+        """
+        global _next_handle_id
+
+        parent_context = None
+        if include_conversation_context:
+            parent_context = (
+                [_filter_cm_state_for_actor(self._cm._current_state_snapshot)]
+                if self._cm._current_state_snapshot
+                else None
+            )
+
+        pydantic_response_format = None
+        if response_format is not None:
+            pydantic_response_format = schema_dict_to_pydantic(response_format)
+
+        cm = self._cm
+
+        async def _invoke():
+            method = getattr(manager, method_name)
+            handle = await method(
+                text,
+                response_format=pydantic_response_format,
+                _parent_chat_context=parent_context,
+            )
+
+            initial_snapshot_state: SnapshotState | None = None
+            if hasattr(cm, "_current_snapshot_state"):
+                initial_snapshot_state = cm._current_snapshot_state
+
+            cm.in_flight_actions[handle_id] = {
+                "handle": handle,
+                "query": text,
+                "persist": False,
+                "action_type": action_type,
+                "handle_actions": [
+                    {
+                        "action_name": f"{action_type}_started",
+                        "query": text,
+                        "timestamp": prompt_now(),
+                    },
+                ],
+                "initial_snapshot_state": initial_snapshot_state,
+                "context_opted_in": include_conversation_context,
+            }
+            asyncio.create_task(
+                managers_utils.actor_watch_result(handle_id, handle),
+            )
+            asyncio.create_task(
+                managers_utils.actor_watch_notifications(handle_id, handle),
+            )
+            asyncio.create_task(
+                managers_utils.actor_watch_clarifications(handle_id, handle),
+            )
+
+        handle_id = _next_handle_id
+        _next_handle_id += 1
+
+        if cm.initialized:
+            await _invoke()
+        else:
+            await managers_utils.queue_operation(_invoke)
+
+        await self._event_broker.publish(
+            f"app:actor:actor_started_handle_{handle_id}",
+            ActorHandleStarted(
+                handle_id=handle_id,
+                action_name=action_type,
+                query=text,
+                response_format=response_format,
+            ).to_json(),
+        )
+
+        return {"status": "acting", "query": text}
+
+    async def ask_about_contacts(
+        self,
+        *,
+        text: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Query contact records directly — names, emails, phone numbers, roles,
+        relationships, and any other stored contact attributes.
+
+        This is a **direct channel** to the contact management system, bypassing
+        the general ``act`` pathway. Use it for any purely contact-related
+        questions:
+
+        - Looking up a specific contact's details
+        - Finding contacts by attribute (role, location, company, etc.)
+        - Checking if a contact exists
+        - Listing or filtering contacts
+        - Comparing contact records
+
+        **Route here instead of ``act`` when the question is purely about
+        contact data.** If the question also involves non-contact information
+        (tasks, knowledge, transcripts, web, files, etc.) or requires
+        cross-domain reasoning, use ``act`` instead.
+
+        Args:
+            text: Natural language question about contacts
+                (e.g. "What is Sarah's email address?").
+            response_format: Optional structured schema describing the shape of
+                the result you need back. Same format as ``act``'s
+                ``response_format`` — keys are field names, values are type
+                strings (``"string"``, ``"integer"``, etc.), nested dicts, or
+                single-element lists for arrays. When omitted, a free-form text
+                answer is returned.
+        """
+        return await self._invoke_manager_action(
+            manager=self._cm.contact_manager,
+            method_name="ask",
+            text=text,
+            action_type="ask_about_contacts",
+            response_format=response_format,
+        )
+
+    async def update_contacts(
+        self,
+        *,
+        text: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Create, edit, delete, or merge contact records directly.
+
+        This is a **direct channel** to the contact management system, bypassing
+        the general ``act`` pathway. Use it for any purely contact-related
+        mutations:
+
+        - Creating new contacts
+        - Updating contact details (phone, email, address, role, bio, etc.)
+        - Deleting contacts
+        - Merging duplicate contacts
+
+        **Route here instead of ``act`` when the request is purely about
+        modifying contacts.** If the request also involves non-contact work
+        or cross-domain operations, use ``act`` instead.
+
+        Args:
+            text: Natural language description of the contact change
+                (e.g. "Add a new contact for John Smith, email john@acme.com").
+            response_format: Optional structured schema describing the shape of
+                the result you need back. Same format as ``act``'s
+                ``response_format``. When omitted, a free-form text summary of
+                the mutation is returned.
+        """
+        return await self._invoke_manager_action(
+            manager=self._cm.contact_manager,
+            method_name="update",
+            text=text,
+            action_type="update_contacts",
+            response_format=response_format,
+        )
+
+    async def query_past_transcripts(
+        self,
+        *,
+        text: str,
+        response_format: Optional[dict] = None,
+    ) -> dict[str, Any]:
+        """
+        Search and analyse past messages and conversation history directly.
+
+        This is a **direct channel** to the transcript store, bypassing the
+        general ``act`` pathway. Use it for any purely transcript-related
+        questions:
+
+        - Retrieving recent messages from a specific contact or channel
+        - Searching past conversations for a keyword or topic
+        - Summarising what was discussed in a previous exchange
+        - Checking what someone said or when they last messaged
+        - Comparing or filtering messages by date, medium, or sender
+
+        **Route here instead of ``act`` when the question is purely about
+        past messages or conversation history.** If the question also involves
+        non-transcript information (contacts, knowledge, tasks, web, files,
+        etc.) or requires cross-domain reasoning, use ``act`` instead.
+
+        Args:
+            text: Natural language question about past transcripts
+                (e.g. "What did Bob say about the deadline yesterday?").
+            response_format: Optional structured schema describing the shape of
+                the result you need back. Same format as ``act``'s
+                ``response_format`` — keys are field names, values are type
+                strings (``"string"``, ``"integer"``, etc.), nested dicts, or
+                single-element lists for arrays. When omitted, a free-form text
+                answer is returned.
+        """
+        return await self._invoke_manager_action(
+            manager=self._cm.transcript_manager,
+            method_name="ask",
+            text=text,
+            action_type="query_past_transcripts",
+            response_format=response_format,
+        )
 
     async def set_boss_details(
         self,
@@ -1167,7 +1465,10 @@ class ConversationManagerBrainActionTools:
         )
         return {"status": "updated", "updates": updates}
 
-    async def wait(self) -> dict[str, Any]:
+    async def wait(
+        self,
+        delay: int | None = None,
+    ) -> dict[str, Any]:
         """
         Wait for more input without taking any action.
 
@@ -1180,8 +1481,72 @@ class ConversationManagerBrainActionTools:
         The user should usually have the last word. Do not send follow-up
         messages, additional information, or "anything else?" prompts unless
         the user explicitly asks for more.
+
+        Parameters
+        ----------
+        delay : int | None
+            Seconds to wait before automatically waking up for another thinking
+            turn.  When ``None`` (the default), wait indefinitely until the next
+            external event (new message, action completion, etc.).  When set to a
+            positive integer, the system schedules a follow-up thinking turn after
+            that many seconds — useful for probing a long-running action or
+            revisiting a situation after a reasonable interval.
         """
-        return {"status": "waiting"}
+        return {"status": "waiting", "delay": delay}
+
+    async def guide_voice_agent(
+        self,
+        *,
+        content: str,
+        should_speak: bool = False,
+        response_text: str = "",
+    ) -> dict[str, Any]:
+        """
+        Relay information to the Voice Agent during a live call.
+
+        Call this tool **in parallel** with your action tool (``wait``, ``act``,
+        ``send_sms``, etc.) to send guidance to the Voice Agent. If you have
+        nothing to relay, simply omit this tool call entirely.
+
+        **Modes:**
+
+        1. **NOTIFY** (default) — Provide context for the Voice Agent to decide
+           how to phrase. The Voice Agent receives this as background context and
+           gets an LLM turn to decide whether and how to speak. Use for progress
+           updates, supplementary context, or information the Voice Agent can
+           articulate better with its conversational context.
+
+        2. **SPEAK** — Provide exact text to speak aloud immediately via TTS,
+           bypassing the Voice Agent's LLM. Set ``should_speak=True`` and provide
+           ``response_text``. Use when you can write a concise, natural sentence
+           the user should hear now (concrete data, completion confirmations).
+
+        3. **BLOCK** — Do not call this tool at all.
+
+        Write ``content`` in the language currently spoken on the call so the
+        Voice Agent can relay it without translating.
+
+        Do NOT use this tool to steer conversation style, suggest specific
+        dialogue, or micromanage the Voice Agent's approach. Provide data,
+        status, and progress — not conversational direction.
+
+        Args:
+            content: The guidance content to relay. Examples:
+                ``"I found 9 backend engineer openings at OpenAI"``,
+                ``"The meeting is confirmed for 3pm Thursday in the downtown office."``
+            should_speak: When True, ``response_text`` is spoken aloud via TTS,
+                bypassing the fast brain's LLM. Use for concrete data answers,
+                completion confirmations, or notifications the user should hear
+                immediately. When False (default), the guidance is injected as
+                silent context and the fast brain decides whether and how to speak.
+            response_text: Exact text to speak aloud when ``should_speak`` is
+                True. Must be concise (1-2 sentences), natural, and in the Voice
+                Agent's persona (first person, conversational). Examples:
+                ``"Your flight's at 6am out of Terminal 2, gate B14."``,
+                ``"Done — I've sent the email to Sarah."``.
+                Leave empty when ``should_speak`` is False.
+        """
+        return {"status": "guidance_noted"}
 
     def as_tools(self) -> dict[str, "Callable[..., Any]"]:
         """Return the static tools dict for start_async_tool_loop."""
@@ -1194,10 +1559,15 @@ class ConversationManagerBrainActionTools:
             "make_call": self.make_call,
             "wait": self.wait,
         }
+        if getattr(self._cm.mode, "is_voice", False):
+            tools["guide_voice_agent"] = self.guide_voice_agent
         if SETTINGS.DEMO_MODE:
             tools["set_boss_details"] = self.set_boss_details
         else:
             tools["act"] = self.act
+            tools["ask_about_contacts"] = self.ask_about_contacts
+            tools["update_contacts"] = self.update_contacts
+            tools["query_past_transcripts"] = self.query_past_transcripts
         return tools
 
     def build_action_steering_tools(self) -> dict[str, "Callable[..., Any]"]:
@@ -1296,6 +1666,21 @@ class ConversationManagerBrainActionTools:
 
         return tools
 
+    @staticmethod
+    def _extract_tool_param_value(
+        *,
+        kwargs: dict[str, Any],
+        primary_name: str,
+        aliases: tuple[str, ...] = (),
+    ) -> Any:
+        """Extract a tool parameter value from kwargs using primary name then aliases."""
+        if not primary_name:
+            return ""
+        for name in (primary_name, *aliases):
+            if name in kwargs:
+                return kwargs.get(name, "")
+        return ""
+
     def _make_completed_action_ask_tool(
         self,
         handle_id: int,
@@ -1308,11 +1693,18 @@ class ConversationManagerBrainActionTools:
 
         cm = self._cm
         event_broker = cm.event_broker
+        ask_param_aliases = tuple(
+            name for name in ("question", "query") if name != param_name
+        )
 
         async def ask_completed_action(
             **kwargs: Any,
         ) -> dict[str, Any]:
-            param_value = kwargs.get(param_name, "") if param_name else ""
+            param_value = self._extract_tool_param_value(
+                kwargs=kwargs,
+                primary_name=param_name,
+                aliases=ask_param_aliases,
+            )
 
             # Get handle_data from completed_actions
             handle_data = cm.completed_actions.get(handle_id)
@@ -1406,7 +1798,16 @@ class ConversationManagerBrainActionTools:
         async def steering_tool(
             **kwargs: Any,
         ) -> dict[str, Any]:
-            param_value = kwargs.get(param_name, "") if param_name else ""
+            param_aliases: tuple[str, ...] = ()
+            if operation == "ask":
+                param_aliases = tuple(
+                    name for name in ("question", "query") if name != param_name
+                )
+            param_value = self._extract_tool_param_value(
+                kwargs=kwargs,
+                primary_name=param_name,
+                aliases=param_aliases,
+            )
 
             handle_data = cm.in_flight_actions.get(handle_id)
 
@@ -1427,14 +1828,18 @@ class ConversationManagerBrainActionTools:
 
                         # Capture values for the closure.
                         # Use the fresh rendered state snapshot (set by _run_llm before tools execute).
+                        # Only pass context if the original action opted in.
                         _handle = handle
                         _param_value = param_value
                         _handle_id = handle_id
-                        _parent_context = (
-                            [cm._current_state_snapshot]
-                            if cm._current_state_snapshot
-                            else None
+                        _ctx_opted_in = (
+                            handle_data.get("context_opted_in", True)
+                            if handle_data
+                            else True
                         )
+                        _parent_context = None
+                        if _ctx_opted_in and cm._current_state_snapshot:
+                            _parent_context = [cm._current_state_snapshot]
 
                         # Spawn background task to perform ask and emit result
                         async def _perform_ask_and_emit():
@@ -1486,34 +1891,42 @@ class ConversationManagerBrainActionTools:
                                 },
                             )
 
-                        # Compute incremental diff from initial snapshot to current state.
-                        # This avoids sending duplicate information that was already in the
-                        # initial _parent_chat_context when act() was called.
+                        # Only compute and send context diffs if the original
+                        # action opted into conversation context.
                         parent_context_cont = None
-                        initial_snapshot = (
-                            handle_data.get("initial_snapshot_state")
+                        _interject_ctx_opted_in = (
+                            handle_data.get("context_opted_in", True)
                             if handle_data
-                            else None
+                            else True
                         )
-                        current_snapshot = getattr(cm, "_current_snapshot_state", None)
 
-                        if current_snapshot is not None:
-                            # Compute diff between initial and current state
-                            diff_content = compute_snapshot_diff(
-                                initial_snapshot,
-                                current_snapshot,
+                        if _interject_ctx_opted_in:
+                            initial_snapshot = (
+                                handle_data.get("initial_snapshot_state")
+                                if handle_data
+                                else None
                             )
-                            if diff_content:
-                                parent_context_cont = [
-                                    {
-                                        "role": "user",
-                                        "content": diff_content,
-                                        "_cm_context_diff": True,
-                                    },
-                                ]
-                        elif cm._current_state_snapshot:
-                            # Fallback: if no snapshot tracking, use full snapshot (backward compat)
-                            parent_context_cont = [cm._current_state_snapshot]
+                            current_snapshot = getattr(
+                                cm,
+                                "_current_snapshot_state",
+                                None,
+                            )
+
+                            if current_snapshot is not None:
+                                diff_content = compute_snapshot_diff(
+                                    initial_snapshot,
+                                    current_snapshot,
+                                )
+                                if diff_content:
+                                    parent_context_cont = [
+                                        {
+                                            "role": "user",
+                                            "content": diff_content,
+                                            "_cm_context_diff": True,
+                                        },
+                                    ]
+                            elif cm._current_state_snapshot:
+                                parent_context_cont = [cm._current_state_snapshot]
 
                         await handle.interject(
                             param_value,

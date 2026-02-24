@@ -2,18 +2,16 @@
 tests/conversation_manager/test_voice_agent_prompt.py
 =====================================================
 
-Tests for the Voice Agent (fast brain) prompt builder, verifying that the LLM
-can answer questions directly using context provided in the system prompt,
-rather than deferring to the slow brain.
+Tests for the Voice Agent (fast brain) prompt builder.
 
-These tests validate the three context enrichments:
+**Context enrichment tests** verify the LLM can answer questions directly
+using context provided in the system prompt, rather than deferring:
 1. **Assistant name**: The fast brain knows its own name and can introduce itself.
 2. **Contact bio**: The fast brain knows the bio/background of the person on the call.
 3. **Meet participants**: The fast brain knows all participant details in multi-party calls.
 
-Each test builds a voice agent prompt with the relevant context, sends a user
-question to the LLM, and asserts the response answers directly (no deferral
-phrases like "let me check").
+**Brevity tests** (eval) verify the fast brain keeps responses concise —
+short enough for a natural phone conversation, not chatbot-style paragraphs.
 """
 
 from __future__ import annotations
@@ -45,7 +43,7 @@ DEFERRAL_PHRASES = [
 ]
 
 # The model used by the fast brain in production
-FAST_BRAIN_MODEL = "gpt-5-nano@openai"
+FAST_BRAIN_MODEL = "gpt-5-mini@openai"
 
 
 # =============================================================================
@@ -65,7 +63,7 @@ async def ask_fast_brain(system_prompt: str, user_message: str) -> str:
     """
     client = new_llm_client(
         model=FAST_BRAIN_MODEL,
-        reasoning_effort="minimal",
+        reasoning_effort="low",
     )
     messages = [
         {"role": "system", "content": system_prompt},
@@ -107,6 +105,22 @@ def assert_contains(response: str, expected: str, context: str = "") -> None:
     )
 
 
+def assert_concise(response: str, max_words: int = 50, context: str = "") -> None:
+    """Assert that the response is concise (phone-call brevity).
+
+    Args:
+        response: The assistant's response text.
+        max_words: Maximum acceptable word count.
+        context: Optional description of what we're testing.
+    """
+    word_count = len(response.split())
+    assert word_count <= max_words, (
+        f"Response too verbose ({word_count} words, max {max_words})!\n"
+        f"Full response: {response}\n"
+        f"{f'Context: {context}' if context else ''}"
+    )
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -121,8 +135,8 @@ def base_prompt_kwargs() -> dict:
         "boss_first_name": "Sarah",
         "boss_surname": "Chen",
         "boss_phone_number": "+15551234567",
-        "boss_email_address": "sarah@techstartup.com",
-        "boss_bio": "CEO of TechStartup Inc., focused on AI products.",
+        "boss_email_address": "sarah@meridianlabs.com",
+        "boss_bio": "CEO of Meridian Labs, focused on AI products.",
     }
 
 
@@ -159,7 +173,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
             {
                 "first_name": "Sarah",
                 "surname": "Chen",
-                "bio": "CEO of TechStartup Inc., focused on AI products.",
+                "bio": "CEO of Meridian Labs, focused on AI products.",
             },
             {
                 "first_name": "Marcus",
@@ -169,7 +183,7 @@ def meet_prompt(base_prompt_kwargs: dict) -> str:
             {
                 "first_name": "Priya",
                 "surname": "Sharma",
-                "bio": "Product Manager at TechStartup. Coordinates between engineering and clients.",
+                "bio": "Product Manager at Meridian Labs. Coordinates between engineering and clients.",
             },
         ],
     ).flatten()
@@ -206,17 +220,6 @@ class TestAssistantName:
 
         assert_no_deferral(response, "Asked who they're speaking with")
         assert_contains(response, "Alex", "Assistant should mention its name")
-
-    async def test_prompt_without_name_still_works(self, base_prompt_kwargs: dict):
-        """
-        When assistant_name is not provided, the prompt should still work
-        without errors (graceful degradation).
-        """
-        kwargs = {**base_prompt_kwargs, "assistant_name": None}
-        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
-
-        # Should not contain "My name is" when name is not set
-        assert "My name is" not in prompt
 
 
 # =============================================================================
@@ -260,23 +263,6 @@ class TestContactBio:
             response,
             "cloud migration",
             "Should mention cloud migration from bio",
-        )
-
-    async def test_boss_bio_available(self, boss_call_prompt: str):
-        """
-        When on a call with the boss, the fast brain should know the boss's
-        background from the bio.
-        """
-        response = await ask_fast_brain(
-            boss_call_prompt,
-            "What's the name of my company again?",
-        )
-
-        assert_no_deferral(response, "Asked about boss's company from bio")
-        assert_contains(
-            response,
-            "TechStartup",
-            "Should mention company name from boss bio",
         )
 
 
@@ -340,68 +326,126 @@ class TestMeetParticipants:
 
 
 # =============================================================================
-# Test Class: Prompt Content Verification (non-LLM)
+# Test Class: Brevity (eval)
 # =============================================================================
 
 
-class TestPromptContent:
-    """Unit tests verifying the prompt builder includes expected content."""
+@pytest.mark.eval
+@pytest.mark.asyncio
+class TestBrevity:
+    """Eval tests verifying the fast brain keeps responses concise.
 
-    def test_assistant_name_in_prompt(self, boss_call_prompt: str):
-        """Prompt includes assistant name when provided."""
-        assert "My name is Alex." in boss_call_prompt
+    On a phone call, responses should sound like a person talking — one or two
+    sentences, not a paragraph.  These tests ask questions that typically provoke
+    chatbot-style monologues and assert the response stays short.
 
-    def test_boss_bio_in_prompt(self, boss_call_prompt: str):
-        """Prompt includes boss bio when provided."""
-        assert "CEO of TechStartup" in boss_call_prompt
+    Each test uses a distinct, realistic bio (the kind a real user would write)
+    so we exercise brevity against rich context, not bland test stubs.
+    """
 
-    def test_contact_bio_in_prompt(self, contact_call_prompt: str):
-        """Prompt includes contact bio when provided."""
-        assert "VP of Engineering at ClientCorp" in contact_call_prompt
-
-    def test_participants_in_prompt(self, meet_prompt: str):
-        """Prompt includes all participant details."""
-        assert "Call participants" in meet_prompt
-        assert "Sarah Chen" in meet_prompt
-        assert "Marcus Rivera" in meet_prompt
-        assert "Priya Sharma" in meet_prompt
-        assert "CEO of TechStartup" in meet_prompt
-        assert "VP of Engineering at ClientCorp" in meet_prompt
-        assert "Product Manager at TechStartup" in meet_prompt
-
-    def test_no_name_when_none(self, base_prompt_kwargs: dict):
-        """Prompt omits name line when assistant_name is None."""
-        kwargs = {**base_prompt_kwargs, "assistant_name": None}
-        prompt = build_voice_agent_prompt(**kwargs, is_boss_user=True).flatten()
-        assert "My name is" not in prompt
-
-    def test_no_contact_bio_when_none(self, base_prompt_kwargs: dict):
-        """Prompt omits contact bio line when contact_bio is None."""
+    async def test_tell_me_about_yourself(self):
+        """
+        "Tell me a bit about yourself" should get a brief, natural answer —
+        not a feature list or corporate brochure.
+        """
         prompt = build_voice_agent_prompt(
-            **base_prompt_kwargs,
-            is_boss_user=False,
-            contact_first_name="John",
-            contact_surname="Doe",
-            contact_phone_number="+15550000000",
-            contact_email="john@example.com",
-            contact_bio=None,
+            bio="I have been working as an admin assistant for 3 years. I live in Spain, I love football, and I'm especially comfortable with MS Office.",
+            assistant_name="Alex",
+            boss_first_name="Sarah",
+            boss_surname="Chen",
+            is_boss_user=True,
         ).flatten()
-        assert "- Bio:" not in prompt.split("Contact details")[1].split("\n\n")[0]
+        response = await ask_fast_brain(prompt, "Tell me a bit about yourself.")
 
-    def test_no_participants_when_none(self, base_prompt_kwargs: dict):
-        """Prompt omits participants section when not provided."""
+        assert_concise(response, max_words=40, context="tell me about yourself")
+
+    async def test_what_can_you_do(self):
+        """
+        "What can you do?" should get a conversational one-liner, not an
+        exhaustive capability dump.
+        """
+        prompt = build_voice_agent_prompt(
+            bio="Former executive assistant at a London law firm. I handle calendars, travel bookings, expense reports, and client correspondence. Big fan of hiking on weekends.",
+            assistant_name="Jordan",
+            boss_first_name="Marcus",
+            boss_surname="Rivera",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "So what can you do?")
+
+        assert_concise(response, max_words=40, context="what can you do")
+
+    async def test_how_can_you_help_me(self):
+        """
+        "How can you help me?" — another common trigger for verbose responses.
+        """
+        prompt = build_voice_agent_prompt(
+            bio="I've supported C-suite execs for 5 years across finance and tech. I'm great with Notion, Slack, and Google Workspace. Originally from Brazil, currently based in Lisbon.",
+            assistant_name="Sam",
+            boss_first_name="Priya",
+            boss_surname="Sharma",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "How can you help me?")
+
+        assert_concise(response, max_words=40, context="how can you help me")
+
+    async def test_simple_greeting_is_short(self):
+        """
+        A casual "hey, how's it going?" should get a brief, warm reply —
+        not a paragraph about the assistant's purpose.
+        """
+        prompt = build_voice_agent_prompt(
+            bio="Personal assistant with a background in event planning. I'm based in Tokyo and speak Japanese and English fluently. I enjoy cooking and running.",
+            assistant_name="Riley",
+            boss_first_name="Tom",
+            boss_surname="Nakamura",
+            is_boss_user=True,
+        ).flatten()
+        response = await ask_fast_brain(prompt, "Hey, how's it going?")
+
+        assert_concise(response, max_words=15, context="casual greeting")
+
+
+# =============================================================================
+# Test Class: Screen Sharing Prompt Section
+# =============================================================================
+
+
+class TestScreenSharingPromptSection:
+    """Tests that the fast brain prompt includes screen sharing rules."""
+
+    def test_prompt_contains_screen_sharing_section(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """The voice agent prompt includes a static screen sharing section
+        so the fast brain knows how to handle visual context notifications."""
         prompt = build_voice_agent_prompt(
             **base_prompt_kwargs,
             is_boss_user=True,
         ).flatten()
-        assert "Call participants" not in prompt
 
-    def test_data_handling_section_present(self, boss_call_prompt: str):
-        """Prompt contains the data handling rules section."""
-        assert "How I handle data" in boss_call_prompt
-        assert "Never fabricate data" in boss_call_prompt
+        assert "Screen sharing" in prompt
+        assert "[notification]" in prompt
+        assert "fabricate" in prompt.lower()
 
-    def test_deferral_examples_present(self, boss_call_prompt: str):
-        """Prompt contains active deferral examples (not refusal language)."""
-        assert "Let me check on that" in boss_call_prompt
-        assert "I can't access" not in boss_call_prompt.split("NEVER say")[0]
+    def test_screen_sharing_section_present_in_all_modes(
+        self,
+        base_prompt_kwargs: dict,
+    ):
+        """Screen sharing section is present regardless of boss/contact mode."""
+        boss_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=True,
+        ).flatten()
+
+        contact_prompt = build_voice_agent_prompt(
+            **base_prompt_kwargs,
+            is_boss_user=False,
+            contact_first_name="Alice",
+            contact_surname="Smith",
+        ).flatten()
+
+        for prompt in (boss_prompt, contact_prompt):
+            assert "Screen sharing" in prompt

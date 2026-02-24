@@ -22,10 +22,11 @@ from .base import BaseWebSearcher
 from ..common.async_tool_loop import SteerableToolHandle
 import functools
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 
-class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
-    """Minimal LLM-backed handle used by SimulatedWebSearcher.ask/update."""
+class _SimulatedWebSearcherHandle(SimulatedHandleMixin, SteerableToolHandle):
+    """Minimal LLM-backed handle used by SimulatedWebSearcher.ask."""
 
     def __init__(
         self,
@@ -70,7 +71,9 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -98,7 +101,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -127,7 +130,9 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 
@@ -254,14 +259,9 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -273,10 +273,7 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -298,6 +295,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._log_events = log_events
         self._hold_completion = hold_completion
@@ -305,7 +303,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self._ask_tools = mirror_web_searcher_tools()
 
         # Stateful async LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, origin="SimulatedWebSearcher")
 
         # Reference the real prompt as context (no real tools here)
         ask_msg = build_ask_prompt(tools=self._ask_tools).flatten()
@@ -352,7 +350,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         # with the same system message to return structured output.
         llm_for_handle = self._llm
         if response_format is not None:
-            schema_llm = new_llm_client()
+            schema_llm = new_llm_client(origin="SimulatedWebSearcher")
             # Mirror the stateful system message for continuity
             try:
                 schema_llm.set_system_message(getattr(self._llm, "system_message"))
@@ -404,38 +402,3 @@ class SimulatedWebSearcher(BaseWebSearcher):
         if sched:
             label, cid, t0 = sched
             maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)
-
-    @functools.wraps(BaseWebSearcher.update, updated=())
-    async def update(
-        self,
-        text: str,
-        *,
-        response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: asyncio.Queue[str] | None = None,
-        _clarification_down_q: asyncio.Queue[str] | None = None,
-    ) -> SteerableToolHandle:
-        # Tool-style scheduled log (only when no parent lineage)
-        maybe_tool_log_scheduled(
-            "SimulatedWebSearcher.update",
-            "update",
-            {"text": text if isinstance(text, str) else repr(text)},
-        )
-        instruction = build_simulated_method_prompt(
-            "update",
-            text,
-            parent_chat_context=_parent_chat_context,
-        )
-
-        handle = _SimulatedWebSearcherHandle(
-            self._llm,
-            instruction,
-            mode="update",
-            _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=False,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            response_format=response_format,
-        )
-        return handle

@@ -443,7 +443,6 @@ def _format_execution_result(result: Any) -> str:
             "state_mode",
             "session_id",
             "duration_ms",
-            "computer_used",
         ):
             v = getattr(result, k, None)
             if v is not None and v != "" and v is not False:

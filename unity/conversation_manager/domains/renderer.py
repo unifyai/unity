@@ -455,6 +455,10 @@ class Renderer:
         max_action_history_events: int = 20,
         max_completed_actions: int = 20,
         max_completed_action_history_events: int = 5,
+        assistant_screen_share_active: bool = False,
+        user_screen_share_active: bool = False,
+        user_webcam_active: bool = False,
+        user_remote_control_active: bool = False,
     ) -> SnapshotState:
         """Render the full conversation state.
 
@@ -466,6 +470,15 @@ class Renderer:
         message_elements: list[MessageElement] = []
         notification_elements: list[NotificationElement] = []
         action_elements: list[ActionElement] = []
+
+        # Meet interaction state sections render at the top when active, and
+        # vanish entirely when inactive (no clutter for text-only sessions).
+        meet_render = self.render_meet_interaction_state(
+            assistant_screen_share_active=assistant_screen_share_active,
+            user_screen_share_active=user_screen_share_active,
+            user_webcam_active=user_webcam_active,
+            user_remote_control_active=user_remote_control_active,
+        )
 
         notif_render = self.render_notification_bar(
             notification_bar,
@@ -490,7 +503,18 @@ class Renderer:
             elements_out=message_elements,
         )
 
-        full_render = f"{notif_render}\n\n{actions_render}\n\n{completed_render}\n\n{convs_render}"
+        sections = [
+            s
+            for s in [
+                meet_render,
+                notif_render,
+                actions_render,
+                completed_render,
+                convs_render,
+            ]
+            if s
+        ]
+        full_render = "\n\n".join(sections)
 
         return SnapshotState(
             full_render=full_render,
@@ -499,6 +523,65 @@ class Renderer:
             actions=action_elements,
             snapshot_time=prompt_now(as_string=False),
         )
+
+    @staticmethod
+    def render_meet_interaction_state(
+        *,
+        assistant_screen_share_active: bool = False,
+        user_screen_share_active: bool = False,
+        user_webcam_active: bool = False,
+        user_remote_control_active: bool = False,
+    ) -> str:
+        """Render active meet interaction states as top-level sections.
+
+        Each active state gets its own prominent, self-contained XML section
+        with clear context explaining what is happening and what it means.
+        Inactive states produce no output — no clutter for text-only sessions.
+        """
+        parts: list[str] = []
+
+        if assistant_screen_share_active:
+            parts.append(
+                "<assistant_screen_share status='active'>\n"
+                "Your desktop is currently being shared with the user — they "
+                "can see everything on your screen in real time. Any actions "
+                "you take (navigation, typing, file operations) are visible "
+                "to the user as you perform them.\n"
+                "</assistant_screen_share>",
+            )
+
+        if user_screen_share_active:
+            parts.append(
+                "<user_screen_share status='active'>\n"
+                "The user is currently sharing their screen with you. You can "
+                "see what they are looking at. If they reference something on "
+                "their screen or ask for help with what they see, you have "
+                "visual context available.\n"
+                "</user_screen_share>",
+            )
+
+        if user_webcam_active:
+            parts.append(
+                "<user_webcam status='active'>\n"
+                "The user's webcam is currently on. You can see them via "
+                "captured frames paired with their speech. If they reference "
+                "their appearance or something visible on camera, you have "
+                "visual context available.\n"
+                "</user_webcam>",
+            )
+
+        if user_remote_control_active:
+            parts.append(
+                "<user_remote_control status='active'>\n"
+                "The user currently has remote control of your desktop — they "
+                "are operating your mouse and keyboard directly. Do not "
+                "perform any computer actions that would conflict with or "
+                "interrupt the user's input. Wait for them to release control "
+                "before resuming desktop operations.\n"
+                "</user_remote_control>",
+            )
+
+        return "\n\n".join(parts)
 
     def render_notification_bar(
         self,
@@ -619,7 +702,9 @@ class Renderer:
 
                 is_persistent = handle_data.get("persist", False)
                 mode_attr = " mode='persistent'" if is_persistent else ""
-                action_render = f"<action id='{handle_id}' short_name='{short_name}' status='{status}'{mode_attr}>\n"
+                action_type = handle_data.get("action_type", "act")
+                type_attr = f" type='{action_type}'"
+                action_render = f"<action id='{handle_id}' short_name='{short_name}' status='{status}'{type_attr}{mode_attr}>\n"
                 action_render += f"<original_request>{query}</original_request>\n"
                 if is_persistent:
                     action_render += (
@@ -952,6 +1037,9 @@ class Renderer:
 
             return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{attachments_line}{tz_block_line}"
 
+        if isinstance(message, GuidanceMessage):
+            return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}"
+
         # Simple Message (SMS, phone call utterances)
         # Show timezone info for the contact
         tz_block_line = ""
@@ -964,7 +1052,11 @@ class Renderer:
             if tz_block:
                 tz_block_line = f"\n{tz_block}"
 
-        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{tz_block_line}"
+        screenshots_line = ""
+        if isinstance(message, Message) and message.screenshots:
+            screenshots_line = f" [Screenshots: {', '.join(message.screenshots)}]"
+
+        return f"{new_marker}[{message.name} @ {timestamp_str}]: {message.content}{screenshots_line}{tz_block_line}"
 
     def render_completed_actions(
         self,
@@ -996,7 +1088,8 @@ class Renderer:
                         result = a.get("query", "")
                         break
 
-                out += f"<action id='{handle_id}' short_name='{short_name}' status='completed'>\n"
+                action_type = handle_data.get("action_type", "act")
+                out += f"<action id='{handle_id}' short_name='{short_name}' status='completed' type='{action_type}'>\n"
                 out += f"<original_request>{query}</original_request>\n"
 
                 if result is not None:

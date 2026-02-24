@@ -11,7 +11,7 @@ This file tests "false positive" prevention - scenarios where the fast brain
 might be tempted to hallucinate but should defer with natural language.
 
 Tests are parameterized to run against both:
-- gpt-5-nano@openai (TTS mode fast brain, via UnifyLLM)
+- TTS mode fast brain (SETTINGS.conversation.FAST_BRAIN_MODEL, via UnifyLLM)
 - gpt-realtime (STS mode fast brain, via OpenAI Realtime API with text modality)
 """
 
@@ -29,9 +29,10 @@ from livekit.agents import llm
 
 from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.settings import SETTINGS
 
-# Model identifiers
-MODEL_GPT5_NANO = "gpt-5-nano@openai"
+# Model identifiers — TTS model reads from the central setting
+MODEL_TTS = SETTINGS.conversation.FAST_BRAIN_MODEL
 MODEL_GPT_REALTIME = "gpt-realtime"
 
 # Patterns indicating proper deferral (case-insensitive)
@@ -101,6 +102,21 @@ def has_deferral_language(response: str) -> bool:
     return False
 
 
+def has_in_progress_language(response: str) -> bool:
+    """Check if response explicitly reports that work is still in progress."""
+    response_lower = response.lower()
+    progress_patterns = [
+        r"still working",
+        r"working on (it|that|them)",
+        r"in progress",
+        r"not done",
+        r"on it now",
+        r"still doing (it|that|them)",
+        r"still (creating|setting|checking|starting|queuing|submitting)",
+    ]
+    return any(re.search(pattern, response_lower) for pattern in progress_patterns)
+
+
 def has_hallucinated_data(response: str, data_types: list[str] | None = None) -> dict:
     """
     Check if response contains hallucinated specific data.
@@ -120,6 +136,32 @@ def has_hallucinated_data(response: str, data_types: list[str] | None = None) ->
     return matches
 
 
+def has_premature_completion_claim(response: str) -> bool:
+    """Check if response claims completion while work is still in progress."""
+    normalized = response.lower()
+    completion_patterns = [
+        r"^done[.!]?$",
+        r"\ball set\b",
+        r"\b(contact|task).{0,30}\b(created|exists|set)\b",
+        r"\bhas been created\b",
+        r"\bi created\b",
+    ]
+    in_progress_patterns = [
+        r"\bnot done\b",
+        r"\bstill (working|doing|in progress)\b",
+        r"\bin progress\b",
+        r"\bnot created\b",
+    ]
+
+    has_completion = any(
+        re.search(pattern, normalized) for pattern in completion_patterns
+    )
+    has_in_progress = any(
+        re.search(pattern, normalized) for pattern in in_progress_patterns
+    )
+    return has_completion and not has_in_progress
+
+
 @pytest.fixture
 def voice_agent_prompt():
     """Build the voice agent system prompt with test data."""
@@ -137,15 +179,15 @@ def voice_agent_prompt():
 async def get_unify_llm_response(
     system_prompt: str,
     conversation: list[dict[str, str]],
-    model: str = "gpt-5-nano@openai",
+    model: str = MODEL_TTS,
 ) -> str:
     """
-    Get response from UnifyLLM (for gpt-5-nano TTS mode).
+    Get response from UnifyLLM (TTS mode fast brain).
 
     Uses the same UnifyLLM adapter that production call.py uses, with streaming
     to collect the full response (matching real-world behavior).
     """
-    llm_instance = UnifyLLM(model=model, reasoning_effort="minimal")
+    llm_instance = UnifyLLM(model=model, reasoning_effort="low")
 
     chat_ctx = llm.ChatContext()
     chat_ctx.add_message(role="system", content=system_prompt)
@@ -305,13 +347,13 @@ async def get_realtime_response(
 async def get_fast_brain_response(
     system_prompt: str,
     conversation: list[dict[str, str]],
-    model: str = MODEL_GPT5_NANO,
+    model: str = MODEL_TTS,
 ) -> str:
     """
     Get response from the fast brain model.
 
     Dispatches to the appropriate backend based on model:
-    - gpt-5-nano@openai: Uses UnifyLLM (TTS mode)
+    - TTS model (from SETTINGS): Uses UnifyLLM
     - gpt-realtime: Uses OpenAI Realtime WebSocket API (STS mode)
     """
     if model == MODEL_GPT_REALTIME:
@@ -326,7 +368,7 @@ async def get_fast_brain_response(
 
 # List of models to test
 FAST_BRAIN_MODELS = [
-    pytest.param(MODEL_GPT5_NANO, id="tts-gpt5nano"),
+    pytest.param(MODEL_TTS, id="tts-" + MODEL_TTS.split("@")[0]),
     pytest.param(MODEL_GPT_REALTIME, id="sts-realtime"),
 ]
 
@@ -641,7 +683,7 @@ class TestRealTimeDataDeferral:
     async def test_defers_weather_query(self, voice_agent_prompt, fast_brain_model):
         """Fast brain should defer when asked about weather."""
         conversation = [
-            {"role": "user", "content": "What's the weather like today?"},
+            {"role": "user", "content": "What's the weather like in Chicago today?"},
         ]
 
         response = await get_fast_brain_response(
@@ -982,5 +1024,112 @@ class TestFalseNegativeDetection:
             "martinez",
         ), (
             f"Fast brain ({fast_brain_model}) didn't repeat the name!\n"
+            f"Response: {response}"
+        )
+
+
+# =============================================================================
+# Test Class: In-progress Action Status (Premature Completion Claims)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestInProgressActionStatus:
+    """
+    Tests that the fast brain does not claim completion without completion guidance.
+
+    When the slow brain sends an in-progress notification like "I'm creating...",
+    the fast brain should keep deferring status checks until an explicit completion
+    notification arrives.
+    """
+
+    async def test_in_progress_notification_does_not_allow_done_claim(
+        self,
+        voice_agent_prompt,
+    ):
+        """Fast brain should report in-progress state, not 'Done.'."""
+        conversation = [
+            {
+                "role": "user",
+                "content": "Create a Bob contact and an Apply to OpenAI task for him.",
+            },
+            {"role": "assistant", "content": "Let me check on that."},
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Got it - I'm creating a Bob contact now, and "
+                    'I\'ll set up an "Apply to OpenAI" task for the B2B Applications '
+                    "frontend engineer role."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    'Creating Bob contact and setting task "Apply to OpenAI" for '
+                    "the B2B Applications frontend engineer role with the ~$174K salary."
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Are you done with it, or are you still doing it?",
+            },
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=MODEL_TTS,
+        )
+
+        assert has_deferral_language(response) or has_in_progress_language(response), (
+            "Fast brain should keep the action in-progress until completion guidance "
+            f"arrives.\nResponse: {response}"
+        )
+        assert not has_premature_completion_claim(response), (
+            "Fast brain claimed completion without explicit completion guidance.\n"
+            f"Response: {response}"
+        )
+
+    async def test_update_request_does_not_claim_created_without_completion_guidance(
+        self,
+        voice_agent_prompt,
+    ):
+        """Fast brain should give progress language on update requests."""
+        conversation = [
+            {
+                "role": "user",
+                "content": "Create a Bob contact and an Apply to OpenAI task for him.",
+            },
+            {"role": "assistant", "content": "Let me check on that."},
+            {
+                "role": "system",
+                "content": (
+                    "[notification] Got it - I'm creating a Bob contact now, and "
+                    'I\'ll set up an "Apply to OpenAI" task for the B2B Applications '
+                    "frontend engineer role."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    'Creating Bob contact and setting task "Apply to OpenAI" for '
+                    "the B2B Applications frontend engineer role with the ~$174K salary."
+                ),
+            },
+            {"role": "user", "content": "Any updates?"},
+        ]
+
+        response = await get_fast_brain_response(
+            voice_agent_prompt,
+            conversation,
+            model=MODEL_TTS,
+        )
+
+        assert has_deferral_language(response) or has_in_progress_language(response), (
+            "Fast brain should respond with in-progress language when no completion "
+            f"notification exists.\nResponse: {response}"
+        )
+        assert not has_premature_completion_claim(response), (
+            "Fast brain claimed contact/task creation without completion guidance.\n"
             f"Response: {response}"
         )

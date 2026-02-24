@@ -142,7 +142,7 @@ Each manager owns a specific domain. The Actor plans and calls the appropriate m
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
 - Node.js 22+ (for agent-service)
-- Redis (for local development)
+
 
 ### Installation
 
@@ -213,17 +213,26 @@ brew install direnv
 # Add hook to ~/.zshrc
 echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc
 
-# Silence verbose output (direnv 2.36+)
+# Silence verbose output and whitelist unity directories (direnv 2.36+)
 mkdir -p ~/.config/direnv
-echo '[global]
-hide_env_diff = true' > ~/.config/direnv/direnv.toml
+cat > ~/.config/direnv/direnv.toml << 'EOF'
+[global]
+hide_env_diff = true
+
+[whitelist]
+prefix = [
+  "/PATH/TO/unity"
+]
+EOF
 
 direnv allow  # run once in the repo
 ```
 
+Replace `/PATH/TO/unity` with your actual repo path (e.g. `/Users/you/unity`). The prefix whitelist auto-allows `.envrc` in the main repo **and** any adjacent clones (`unity_*`) created by `clone_adjacent.sh`, so you never need to run `direnv allow` per clone.
+
 Note: Use `~/.zshrc` (not `~/.zshenv`) to ensure Homebrew's PATH is available when the hook runs.
 
-The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees.
+The repo includes an `.envrc` that automatically sources the main repo's `.env` in worktrees and clones.
 
 ### Parallel Development with Clones
 
@@ -302,20 +311,16 @@ python start.py
 
 ### Web Automation (Controller Mode)
 
-**Web Mode** (default):
-
-```bash
-# Start the agent service
-npx ts-node agent-service/src/index.ts
-
-# The Actor will use web mode by default (agent_mode="web")
-```
-
-**Desktop Mode** (for full desktop automation):
+**Desktop Mode** (default — full desktop automation):
 
 ```bash
 # See desktop/README.md for Docker-based virtual desktop setup
-# Then use agent_mode="desktop" in the Actor
+# Start the agent service
+npx ts-node agent-service/src/index.ts
+
+# Two interfaces:
+#   primitives.computer.desktop.*             -- singleton desktop control (mouse/keyboard)
+#   primitives.computer.web.new_session(...)  -- factory for browser sessions (visible or headless)
 ```
 
 ### Pre-commit Hooks
@@ -378,7 +383,6 @@ docker run -p 8000:8000 -p 6080:6080 unity
 ```
 
 The container includes:
-- Redis server
 - Virtual desktop (X11/VNC)
 - PipeWire audio
 - Agent service (Node.js)

@@ -15,11 +15,13 @@ from typing import (
     TYPE_CHECKING,
 )
 from ..logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from .llm_helpers import short_id
-from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
+from ._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
 from ._async_tool.propagation_mode import ChatContextPropagation
+from .context_dump import make_messages_safe_for_context_dump
 from typing import Iterable
 
 
@@ -31,6 +33,60 @@ from ._async_tool.tagging import tag_message_with_request
 
 if TYPE_CHECKING:
     from unillm.types import PromptCacheParam
+
+
+def _transform_inner_roles(messages: list[dict]) -> list[dict]:
+    """Transform 'user'/'assistant' roles to 'inner_user'/'inner_assistant'.
+
+    Disambiguates the inspected loop's transcript from the inspection loop's
+    own conversation and from the outer parent context (which uses
+    'outer_user'/'outer_assistant').
+    """
+    transformed = []
+    for msg in messages:
+        new_msg = dict(msg)
+        role = new_msg.get("role", "")
+        if role == "user":
+            new_msg["role"] = "inner_user"
+        elif role == "assistant":
+            new_msg["role"] = "inner_assistant"
+        transformed.append(new_msg)
+    return transformed
+
+
+_PARENT_CTX_POINTER = (
+    "## Parent Chat Context\n"
+    "[The parent chat context that was available to this loop has been omitted "
+    "from this transcript to avoid duplication. Refer to the Parent Chat Context "
+    "section in your system context for the full, up-to-date version.]"
+)
+
+
+def _replace_runtime_parent_context(messages: list[dict]) -> list[dict]:
+    """Replace runtime parent-context headers with a short pointer.
+
+    When the inspection loop receives fresh parent context via the standard
+    machinery, the stale copy embedded in the inspected transcript is redundant.
+    This finds any message tagged ``_parent_chat_context=True`` and replaces
+    the Parent Chat Context portion of its content with a pointer, preserving
+    other sections (e.g. Caller Context) in the same message.
+    """
+    result = []
+    for msg in messages:
+        if msg.get("_parent_chat_context"):
+            new_msg = dict(msg)
+            # The runtime context message may contain multiple sections
+            # (e.g. Caller Context + Parent Chat Context).  Replace only the
+            # Parent Chat Context portion.
+            content = new_msg.get("content") or ""
+            pcc_idx = content.find("## Parent Chat Context")
+            if pcc_idx >= 0:
+                new_msg["content"] = content[:pcc_idx] + _PARENT_CTX_POINTER
+            result.append(new_msg)
+        else:
+            result.append(msg)
+    return result
+
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -340,6 +396,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         question: str,
         *,
         _parent_chat_context: list[dict] | None = None,
+        _propagate_chat_context: ChatContextPropagation = ChatContextPropagation.LLM_DECIDES,
         _return_reasoning_steps: bool = False,
         **kwargs,
     ) -> "SteerableToolHandle":
@@ -352,18 +409,32 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         broader conversation that led to this question.
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
+        LOGGER.info(f"{ICONS['clarification']} [{_label}] Ask requested: {question}")
 
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, _parent_chat_context)
 
-        # 1.  Gather a *read-only* snapshot of the parent chat.
-        parent_ctx = []
+        # 1.  Gather a *read-only* snapshot of the loop being asked about.
+        loop_chat_context = []
         with suppress(Exception):
             msgs = getattr(self._client, "messages", []) if self._client else []
             if msgs is None:
                 msgs = []
-            parent_ctx = list(msgs)
+            loop_chat_context = list(msgs)
+        loop_chat_context_safe = make_messages_safe_for_context_dump(loop_chat_context)
+        parent_chat_context_safe = make_messages_safe_for_context_dump(
+            _parent_chat_context,
+        )
+
+        # When fresh parent context is provided, replace the stale runtime
+        # parent-context header in the transcript with a pointer.  This avoids
+        # duplicating the (potentially large) parent context while preserving
+        # the structural marker so the inspection LLM knows the loop received
+        # parent context and where it appeared in the conversation.
+        if _parent_chat_context:
+            loop_chat_context_safe = _replace_runtime_parent_context(
+                loop_chat_context_safe,
+            )
 
         # 1b. Snapshot ask_* tools available at invocation time so the
         #     inspection loop can propagate questions to inner handles.
@@ -383,35 +454,36 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         inspection_client = new_llm_client(parent_model)
 
-        # Build system message with transcript and optional parent context
+        # Build system message with the inspected loop's transcript.
+        # Transform roles to inner_user/inner_assistant so the inspection LLM
+        # can distinguish the inspected conversation from its own messages and
+        # from the outer parent context (which uses outer_user/outer_assistant).
+        loop_chat_context_transformed = _transform_inner_roles(
+            loop_chat_context_safe,
+        )
+
+        transcript_description = (
+            "This is the transcript of the tool/loop you are being asked about. "
+            "Messages use 'inner_user' and 'inner_assistant' roles to clearly "
+            "distinguish them from your current conversation. "
+            "Use this to answer the user's question about the current state or progress."
+        )
+        if _parent_chat_context:
+            transcript_description += (
+                " Note: this is separate from the Parent Chat Context that may "
+                "appear below — that context shows the broader conversation that "
+                "led to this request, while this transcript is what you are "
+                "answering questions about."
+            )
+
         sys_msg_parts = [
             "You are inspecting a running tool-use conversation to answer a question about it.",
             "",
             "## Inspected Loop Transcript",
-            (
-                "This is the transcript of the tool/loop you are being asked about. "
-                "Use this to answer the user's question about the current state or progress."
-            ),
+            transcript_description,
             "",
-            json.dumps(parent_ctx, indent=2),
+            json.dumps(loop_chat_context_transformed, indent=2),
         ]
-
-        # If parent context is provided, add it as a separate section
-        if _parent_chat_context:
-            sys_msg_parts.extend(
-                [
-                    "",
-                    "## Parent Chat Context",
-                    (
-                        "This is the broader conversation context from which this question originated. "
-                        "It may help explain why this question is being asked. Note: this is separate "
-                        "from the Inspected Loop Transcript above - that transcript is what you are "
-                        "answering questions about."
-                    ),
-                    "",
-                    json.dumps(_parent_chat_context, indent=2),
-                ],
-            )
 
         # If inner-handle ask_* tools are available, hint the LLM about them
         if ask_tools:
@@ -457,30 +529,81 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         loop_id_label = f"Question({parent_label})"
 
+        # ── Sibling lineage for the ask sub-loop ──────────────────────
+        # The ask loop is a *sibling* of the parent loop (not a child).
+        # It shares the parent's parent lineage so the frontend can
+        # place it at the correct nesting level in the action tree.
+        _parent_hierarchy = list(getattr(self, "_log_hierarchy", None) or [])
+        _sibling_lineage = _parent_hierarchy[:-1] if len(_parent_hierarchy) > 1 else []
+
+        # ── Boundary ManagerMethod events ─────────────────────────────
+        # Publish incoming/outgoing ManagerMethod events around the sub-loop
+        # so the frontend can create a distinct node for each ask() call.
+        # This mirrors the boundary wrapper pattern used by execute_code
+        # and execute_function in CodeActActor.
+        from secrets import token_hex as _token_hex
+        from ..events.manager_event_logging import (
+            new_call_id as _new_call_id,
+            publish_manager_method_event as _pub_mm,
+        )
+
+        _ask_call_id = _new_call_id()
+        _ask_suffix = _token_hex(2)
+        _ask_manager = (self._loop_id or "").split(".")[0] or "unknown"
+        _ask_hierarchy = [*_sibling_lineage, f"{loop_id_label}({_ask_suffix})"]
+
+        await _pub_mm(
+            _ask_call_id,
+            _ask_manager,
+            "ask",
+            phase="incoming",
+            display_label="Answering Question",
+            question=question,
+            hierarchy=_ask_hierarchy,
+        )
+
         # The question is sent as a plain user message (context is in system message)
         _ask_message = question
 
-        helper_handle = start_async_tool_loop(
-            inspection_client,
-            _ask_message,
-            ask_tools,  # ask_* tools for inner handle propagation
-            loop_id=loop_id_label,
-            parent_lineage=[],  # keep label concise (do not prepend outer lineage)
-            parent_chat_context=parent_ctx,  # ← nested context
-            propagate_chat_context=False,
-            prune_tool_duplicates=False,
-            interrupt_llm_with_interjections=False,
-            max_consecutive_failures=1,
-            timeout=300,
-        )
+        # Set _PENDING_LOOP_SUFFIX so the inner LoopConfig picks up
+        # the same suffix as our boundary event.
+        _suffix_token = _PENDING_LOOP_SUFFIX.set(_ask_suffix)
+        try:
+            helper_handle = start_async_tool_loop(
+                inspection_client,
+                _ask_message,
+                ask_tools,  # ask_* tools for inner handle propagation
+                loop_id=loop_id_label,
+                parent_lineage=_sibling_lineage,
+                parent_chat_context=(
+                    parent_chat_context_safe if _parent_chat_context else None
+                ),
+                propagate_chat_context=_propagate_chat_context,
+                prune_tool_duplicates=False,
+                interrupt_llm_with_interjections=False,
+                max_consecutive_failures=1,
+                timeout=300,
+            )
+        finally:
+            _PENDING_LOOP_SUFFIX.reset(_suffix_token)
 
         # Monkey-patch result() to record the assistant answer when available
+        # AND publish the outgoing ManagerMethod boundary event.
         if not _return_reasoning_steps:
             _orig_result = helper_handle.result
 
             async def _rec_result():  # type: ignore[return-type]
                 ans = await _orig_result()
                 self._append_user_visible_assistant(ans)
+                await _pub_mm(
+                    _ask_call_id,
+                    _ask_manager,
+                    "ask",
+                    phase="outgoing",
+                    display_label="Answering Question",
+                    answer=ans if isinstance(ans, str) else str(ans),
+                    hierarchy=_ask_hierarchy,
+                )
                 return ans
 
             helper_handle.result = _rec_result  # type: ignore[attr-defined]
@@ -504,6 +627,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         async def _wrap():
             answer = await helper_handle.result()
             self._append_user_visible_assistant(answer)
+            await _pub_mm(
+                _ask_call_id,
+                _ask_manager,
+                "ask",
+                phase="outgoing",
+                display_label="Answering Question",
+                answer=answer if isinstance(answer, str) else str(answer),
+                hierarchy=_ask_hierarchy,
+            )
             return answer, inspection_client.messages
 
         helper_handle.result = _wrap  # type: ignore[attr-defined]
@@ -535,7 +667,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         **kwargs,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
+        LOGGER.debug(
+            f"{ICONS['interjection']} [{_label}] Interject requested: {message}",
+        )
         # Record user-visible immediately
         self._append_user_visible_user(message, _parent_chat_context_cont)
 
@@ -605,9 +739,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     @functools.wraps(SteerableToolHandle.pause, updated=())
     async def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"⏸️ [{_label}] Pause requested")
+        LOGGER.info(f"{ICONS['pause']} [{_label}] Pause requested")
 
-        # Auto-pause base tools that are currently running
+        # Immediately toggle pause_event for base (non-steerable) tools.
+        # Steerable handles (h is not None) are intentionally skipped here;
+        # they are paused via the mirror path below, which synthesizes
+        # helper tool_calls in the transcript so the outer LLM has full
+        # visibility that the inner tool was paused. Base tools have no
+        # handle — only a raw pause_event — so the mirror's
+        # _dispatch_steering_to_child would reach them too, but toggling
+        # the event directly here eliminates any latency window between
+        # this call and the next loop iteration that drains the mirror.
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -620,7 +762,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.clear()
 
         self._pause_event.clear()
-        # Mirror as synthetic helper tool_call (no LLM step)
+        # Mirror as synthetic helper tool_call (no LLM step).
+        # The inner loop processes this via _synthesize_mirrored_helper_calls,
+        # which dispatches pause to ALL children (steerable and base alike).
         try:
             await self._queue.put(
                 {
@@ -636,8 +780,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     @functools.wraps(SteerableToolHandle.resume, updated=())
     async def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Auto-resume base tools that were started in paused state while the outer loop was paused
+        LOGGER.info(f"{ICONS['resume']} [{_label}] Resume requested")
+        # Immediately toggle pause_event for base (non-steerable) tools.
+        # Steerable handles are resumed via the mirror path below (see the
+        # symmetric comment in pause() for the full rationale). Direct
+        # toggling here gives base tools instant resume without waiting
+        # for the next loop iteration to drain the mirror.
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -650,7 +798,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.set()
 
         self._pause_event.set()
-        # Mirror as synthetic helper tool_call (no LLM step)
+        # Mirror as synthetic helper tool_call (no LLM step).
+        # The inner loop processes this via _synthesize_mirrored_helper_calls,
+        # which dispatches resume to ALL children (steerable and base alike).
         try:
             await self._queue.put(
                 {
@@ -762,7 +912,13 @@ def start_async_tool_loop(
     raise_on_limit: bool = False,
     include_class_in_dynamic_tool_names: bool = False,
     tool_policy: Optional[
-        Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]]
+        Union[
+            Callable[[int, Dict[str, Callable]], Tuple[str, Dict[str, Callable]]],
+            Callable[
+                [int, Dict[str, Callable], list[str]],
+                Tuple[str, Dict[str, Callable]],
+            ],
+        ]
     ] = None,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
     response_format: Optional[Any] = None,
@@ -772,6 +928,8 @@ def start_async_tool_loop(
     persist: bool = False,
     multi_handle: bool = False,
     prompt_caching: Optional["PromptCacheParam"] = None,
+    time_awareness: bool = False,
+    extra_ask_tools: Optional[Dict[str, Callable]] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -814,8 +972,16 @@ def start_async_tool_loop(
         to the running loop. Interjections are tagged with request IDs so the LLM
         knows which request they belong to. The loop terminates when all requests
         are completed/cancelled (unless persist=True).
+
+    time_awareness : bool, default True
+        If ``True``, a time-context system message is injected into the
+        conversation and updated after each tool completion, giving the LLM
+        awareness of wall-clock time and tool execution durations.  If
+        ``False``, the time-context table is omitted entirely.
     """
     # Ensure a stable loop_id for consistent logging across handle and inner loop
+    if loop_id is not None:
+        client.set_origin(loop_id)
     loop_id = loop_id if loop_id is not None else short_id()
     interject_queue: asyncio.Queue[dict | str] = asyncio.Queue()
     cancel_event = asyncio.Event()
@@ -888,6 +1054,8 @@ def start_async_tool_loop(
                 persist=persist,
                 multi_handle_coordinator=multi_handle_coordinator,
                 prompt_caching=prompt_caching,
+                time_awareness=time_awareness,
+                extra_ask_tools=extra_ask_tools,
             )
         except asyncio.CancelledError:
             raise
@@ -900,6 +1068,11 @@ def start_async_tool_loop(
         setattr(task, "task_info", {})  # asyncio.Task -> ToolCallMetadata
         setattr(task, "clarification_channels", {})  # call_id -> (up_q, down_q)
         setattr(task, "get_ask_tools", lambda: {})  # snapshot of ask_* dynamic tools
+        setattr(
+            task,
+            "get_completed_tool_metadata",
+            lambda: {},
+        )  # completed tool metadata with handle refs
     except Exception:
         pass
 

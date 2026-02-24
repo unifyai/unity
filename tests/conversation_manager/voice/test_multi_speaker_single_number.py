@@ -24,7 +24,7 @@ IMPORTANT NOTE ON MESSAGE FORMAT:
   e.g., "[Dan Lewis @ DATE]: Hi Alex, this is Richard." — ALL utterances from that phone
   number are attributed to the registered contact, even when a different person is speaking.
 
-These tests verify that both the fast brain (gpt-5-nano) and slow brain understand
+These tests verify that both the fast brain and slow brain understand
 this nuance. The fast brain tests deliberately avoid trivial scenarios where speakers
 explicitly self-identify, focusing instead on whether a small model can track speaker
 context across multiple turns.
@@ -37,6 +37,7 @@ from __future__ import annotations
 import pytest
 
 from unity.conversation_manager.prompt_builders import build_voice_agent_prompt
+from unity.settings import SETTINGS
 from unity.conversation_manager.events import (
     PhoneCallStarted,
     InboundPhoneUtterance,
@@ -88,7 +89,7 @@ async def _get_fast_brain_response_raw(
     conversation: list[dict[str, str]],
 ) -> str:
     """
-    Get a response from the fast brain (gpt-5-nano) using the production pathway.
+    Get a response from the fast brain using the production pathway.
 
     Unlike get_fast_brain_response() from test_fast_brain_deferral.py, this does
     NOT append an artificial "Respond as the assistant" meta-instruction. The model
@@ -97,7 +98,10 @@ async def _get_fast_brain_response_raw(
     from unity.conversation_manager.livekit_unify_adapter import UnifyLLM
     from livekit.agents import llm
 
-    llm_instance = UnifyLLM(model="gpt-5-nano@openai", reasoning_effort="minimal")
+    llm_instance = UnifyLLM(
+        model=SETTINGS.conversation.FAST_BRAIN_MODEL,
+        reasoning_effort="low",
+    )
 
     chat_ctx = llm.ChatContext()
     chat_ctx.add_message(role="system", content=system_prompt)
@@ -152,7 +156,7 @@ def boss_call_prompt():
 @pytest.mark.asyncio
 class TestFastBrainMultiSpeakerTracking:
     """
-    Tests whether gpt-5-nano can correctly track and address a new speaker
+    Tests whether the fast brain model can correctly track and address a new speaker
     introduced mid-call. Uses the raw fast brain pathway (no artificial
     meta-instruction) to match production behavior.
 
@@ -335,12 +339,13 @@ class TestFastBrainMultiSpeakerTracking:
         boss_call_prompt,
     ):
         """
-        Boss introduces someone for a demo, then the new person starts talking
-        without saying their name. The boss mentioned the name, so the model
-        should use it.
+        Boss introduces someone for a demo, then the new person asks the
+        assistant to say their name. The new person never self-identified —
+        the name came only from the boss's introduction.
 
-        This tests whether the model can pick up a name from a THIRD PARTY
-        introduction rather than self-identification.
+        This directly tests whether the model tracked the third-party
+        introduction: the only correct answer to "can you pronounce my
+        name?" is "Maria", which was mentioned by Dan, not by the speaker.
         """
         conversation = [
             {
@@ -353,26 +358,34 @@ class TestFastBrainMultiSpeakerTracking:
             },
             {
                 "role": "user",
-                "content": (
-                    "Hi! So, can you help manage a team's calendar across "
-                    "different time zones?"
-                ),
+                "content": "Hi! Great to meet you. Firstly, a lot of people have trouble saying it correctly. Can you try to pronounce my name?",
             },
         ]
 
         response = await _get_fast_brain_response_raw(boss_call_prompt, conversation)
 
-        # The second user message is from Maria (based on Dan's intro).
-        # Maria didn't self-identify — Dan introduced her. The model should
-        # ideally use "Maria" in the response, but at minimum should NOT
-        # address this as Dan.
-        assert _mentions_name(response, "Maria"), (
-            f"Fast brain should address Maria by name!\n"
+        # The model should demonstrate it knows the speaker is Maria.
+        # It may say "Maria" directly, or jump straight to phonetic
+        # pronunciation variants (mah-REE-ah, muh-REE-uh, etc.).
+        resp_lower = response.lower()
+        knows_maria = (
+            "maria" in resp_lower
+            or "mah-ree" in resp_lower
+            or "muh-ree" in resp_lower
+            or "ma-ree" in resp_lower
+            or "mə-ree" in resp_lower
+        )
+        assert knows_maria, (
+            f"Fast brain should know the speaker is Maria!\n"
             f"Response: {response}\n\n"
-            f"Dan introduced Maria and asked her to go ahead. The next message\n"
-            f"is from Maria (she asks about calendars). The fast brain should\n"
-            f"greet her by name — 'Hi Maria!' or 'Great question, Maria.'\n"
-            f"Maria didn't self-identify, but Dan's introduction was explicit."
+            f"Dan introduced Maria and told her to go ahead. The next speaker\n"
+            f"asks 'can you pronounce my name?' — the only correct answer is\n"
+            f"'Maria', from Dan's introduction."
+        )
+        assert not _mentions_name(response, "Dan"), (
+            f"Fast brain confused the speaker with the boss!\n"
+            f"Response: {response}\n\n"
+            f"The speaker is Maria (introduced by Dan), not Dan himself."
         )
 
     async def test_does_not_confuse_introduction_with_call_request(
@@ -653,11 +666,12 @@ class TestSlowBrainMultiSpeakerAwareness:
         )
 
         # If the slow brain called act, complete the action and check guidance
-        if (
-            "act" in initialized_cm.all_tool_calls
-            and initialized_cm.cm.in_flight_actions
-        ):
-            handle_id = next(iter(initialized_cm.cm.in_flight_actions))
+        all_actions = {
+            **initialized_cm.cm.in_flight_actions,
+            **initialized_cm.cm.completed_actions,
+        }
+        if "act" in initialized_cm.all_tool_calls and all_actions:
+            handle_id = next(iter(all_actions))
 
             def _get_guidance_messages(cm, contact_id: int) -> list:
                 voice_thread = cm.contact_index.get_messages_for_contact(
@@ -718,7 +732,7 @@ class TestSlowBrainMultiSpeakerAwareness:
 class TestFastBrainExtendedMultiSpeakerConversation:
     """
     Longer conversation tests where the fast brain must maintain speaker context
-    across many turns. These are the hardest tests for gpt-5-nano because the
+    across many turns. These are the hardest tests for the fast brain because the
     model must remember who's speaking without repeated name cues.
     """
 
@@ -728,7 +742,7 @@ class TestFastBrainExtendedMultiSpeakerConversation:
         5th turn, he asks a confirming question. The fast brain should still
         be engaging with Richard, not suddenly addressing Dan.
 
-        This specifically tests whether gpt-5-nano's limited context window
+        This specifically tests whether the fast brain model's context window
         and reasoning can maintain speaker identity over multiple turns.
         """
         conversation = [

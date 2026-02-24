@@ -18,6 +18,7 @@ import unify
 from tests.conversation_manager.cm_helpers import filter_events_by_type
 from unity.conversation_manager.events import (
     ActorHandleStarted,
+    ActorNotification,
     ActorResult,
     ActorClarificationRequest,
     Event,
@@ -141,6 +142,22 @@ def get_actor_started_event(result: Any) -> ActorHandleStarted:
     return matches[0]
 
 
+def get_action_data(cm: Any, handle_id: int) -> dict:
+    """Return the full action data dict for *handle_id*.
+
+    Checks both ``in_flight_actions`` and ``completed_actions`` so callers
+    are resilient to the action completing (and moving between dicts)
+    during ``step_until_wait``.
+    """
+    data = cm.cm.in_flight_actions.get(handle_id) or cm.cm.completed_actions.get(
+        handle_id,
+    )
+    assert (
+        data is not None
+    ), f"No action found for handle_id={handle_id} (checked in_flight and completed)"
+    return data
+
+
 def extract_actor_handle(cm: Any, handle_id: int) -> Any:
     """Extract the SteerableToolHandle for a given handle_id.
 
@@ -148,12 +165,7 @@ def extract_actor_handle(cm: Any, handle_id: int) -> Any:
     can await the result of a handle that was stopped via the CM steering
     tool path (which moves the handle to ``completed_actions``).
     """
-    handle_data = cm.cm.in_flight_actions.get(handle_id) or cm.cm.completed_actions.get(
-        handle_id,
-    )
-    assert (
-        handle_data is not None
-    ), f"No action found for handle_id={handle_id} (checked in_flight and completed)"
+    handle_data = get_action_data(cm, handle_id)
     handle = handle_data.get("handle")
     assert handle is not None, f"Action missing handle for handle_id={handle_id}"
     return handle
@@ -229,6 +241,24 @@ async def inject_actor_clarification_request(
 
     cm = cm_driver.cm
     evt = ActorClarificationRequest(handle_id=handle_id, query=query, call_id=call_id)
+    await EventHandler.handle_event(
+        evt,
+        cm,
+        is_voice_call=cm.call_manager.uses_realtime_api,
+    )
+
+
+async def inject_actor_notification(
+    cm_driver: Any,
+    *,
+    handle_id: int,
+    response: str,
+) -> None:
+    """Deterministically apply an ActorNotification to CM state."""
+    from unity.conversation_manager.domains.event_handlers import EventHandler
+
+    cm = cm_driver.cm
+    evt = ActorNotification(handle_id=handle_id, response=response)
     await EventHandler.handle_event(
         evt,
         cm,

@@ -49,6 +49,7 @@ from unity.conversation_manager.events import (
     UnifyMessageReceived,
     UnifyMessageSent,
 )
+from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.types import Medium
 
 pytestmark = pytest.mark.eval
@@ -1006,3 +1007,66 @@ async def test_email_with_all_plural_recipients(initialized_cm):
     assert (
         "diana@example.com" in email.bcc
     ), f"Expected diana@example.com in 'bcc', got bcc={email.bcc}"
+
+
+# ---------------------------------------------------------------------------
+#  Outbound comms failure recovery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_failed_sms_surfaces_error_in_conversation_thread(initialized_cm):
+    """When send_sms fails at the comms layer, the error should be pushed into
+    the conversation thread so the brain can see what went wrong on the next turn.
+
+    Today, failed outbound comms publish an Error event that has no registered
+    handler. The error is silently dropped: nothing appears in the conversation
+    thread, no notification is pushed, and no follow-up brain turn is triggered
+    in production. The brain is completely blind to the failure.
+
+    This test verifies that after a comms-layer SMS failure, the conversation
+    thread contains evidence of the error — enabling the brain to reason about
+    the failure and attempt recovery on subsequent turns.
+    """
+    cm = initialized_cm
+    contact = TEST_CONTACTS[0]  # Alice (has phone number)
+
+    # Patch comms to always fail so we can inspect the thread after the attempt.
+    original_send_sms = comms_utils.send_sms_message_via_number
+
+    async def always_fail(*args, **kwargs):
+        return {"success": False}
+
+    comms_utils.send_sms_message_via_number = always_fail
+    try:
+        result = await cm.step_until_wait(
+            SMSReceived(
+                contact=contact,
+                content="Tell me a joke",
+            ),
+            max_steps=3,
+        )
+    finally:
+        comms_utils.send_sms_message_via_number = original_send_sms
+
+    # The brain should have attempted send_sms at least once.
+    assert (
+        "send_sms" in cm.all_tool_calls
+    ), f"Expected brain to attempt send_sms, but tool calls were: {cm.all_tool_calls}"
+
+    # The failure should be visible in the conversation thread for this contact.
+    # After the fix, the comms error will be pushed as a system message so the
+    # brain can see it on the next turn and decide how to recover.
+    contact_messages = cm.contact_index.get_messages_for_contact(
+        contact["contact_id"],
+        medium=Medium.SMS_MESSAGE,
+    )
+    thread_text = " ".join(getattr(m, "content", "") for m in contact_messages).lower()
+
+    assert "fail" in thread_text or "error" in thread_text, (
+        "Failed outbound SMS should produce a visible error in the conversation "
+        "thread so the brain can reason about the failure on subsequent turns. "
+        "Currently the Error event is silently dropped (no registered handler). "
+        f"SMS thread messages: {[getattr(m, 'content', repr(m)) for m in contact_messages]}"
+    )

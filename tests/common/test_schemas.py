@@ -161,6 +161,23 @@ def test_model_to_fields_mutable_flag():
         assert field_spec.get("mutable") is True, f"Field {name} missing mutable=True"
 
 
+class _UniqueFieldModel(BaseModel):
+    normal: str
+    email: str = Field(json_schema_extra={"unique": True})
+    code: str = Field(json_schema_extra={"unique": True, "unify_type": "str"})
+
+
+def test_model_to_fields_unique_flag():
+    """json_schema_extra={'unique': True} propagates to the field entry."""
+    fields = model_to_fields(_UniqueFieldModel)
+
+    assert "unique" not in fields["normal"]
+    assert fields["email"].get("unique") is True
+    assert fields["code"].get("unique") is True
+    # unify_type override still works alongside unique
+    assert fields["code"]["type"] == "str"
+
+
 def test_model_to_fields_message_schema_complete():
     """Message model produces expected field structure."""
     fields = model_to_fields(Message)
@@ -175,6 +192,7 @@ def test_model_to_fields_message_schema_complete():
         "content",
         "exchange_id",
         "images",
+        "metadata",
     }
     assert expected_fields <= set(fields.keys())
 
@@ -454,6 +472,171 @@ def test_schema_prefers_child_docstring() -> None:
     desc = schema["function"]["description"]
     assert "Child doc: go fast." in desc
     assert "Base doc" not in desc
+
+
+# --------------------------------------------------------------------------- #
+#  INHERITED DOCSTRING + PRUNED WRAPPER SIGNATURE                              #
+#  When a thin wrapper inherits a docstring (via __doc__) from a base class    #
+#  that documents _-prefixed internal params, those params must be stripped     #
+#  from the LLM-facing description even though they don't appear in the        #
+#  wrapper's own signature.                                                    #
+# --------------------------------------------------------------------------- #
+def test_schema_strips_hidden_params_from_inherited_doc() -> None:
+    """
+    Regression: CodeActActor wraps FunctionManager methods with thin
+    closures that have pruned signatures (only public params) but inherit
+    the full base-class docstring via ``__doc__`` assignment.
+
+    The ``_``-prefixed internal params documented in the base docstring
+    must NOT leak through to the LLM-facing tool description.
+    """
+
+    class _BaseFM:
+        def search(
+            self,
+            *,
+            query: str,
+            n: int = 5,
+            _return_callable: bool = False,
+            _namespace: dict | None = None,
+        ) -> list:
+            """
+            Search for items by similarity.
+
+            Parameters
+            ----------
+            query : str
+                Natural-language search text.
+            n : int, default ``5``
+                Max results to return.
+            _return_callable : bool, default ``False``
+                When ``True``, return callables instead of metadata dicts.
+            _namespace : dict | None, default ``None``
+                Target namespace dict for callable injection when
+                ``_return_callable=True``.
+
+            Returns
+            -------
+            list
+                Up to ``n`` results.
+            """
+            return []
+
+    # Thin wrapper that includes _-prefixed params in the signature so the
+    # stripping machinery can see them, even though the body ignores them.
+    async def FunctionManager_search(
+        query: str,
+        n: int = 5,
+        _return_callable: bool = False,
+        _namespace: dict | None = None,
+    ) -> list:
+        return []
+
+    FunctionManager_search.__doc__ = _BaseFM.search.__doc__
+
+    schema = llmh.method_to_schema(FunctionManager_search)
+    props = schema["function"]["parameters"]["properties"]
+    desc = schema["function"]["description"]
+
+    # Public params visible in the schema
+    assert "query" in props
+    assert "n" in props
+
+    # Internal params must NOT appear in the schema
+    assert "_return_callable" not in props
+    assert "_namespace" not in props
+
+    # Internal param documentation must NOT appear in the description
+    assert "_return_callable" not in desc
+    assert "_namespace" not in desc
+    assert "callable injection" not in desc
+
+
+def test_schema_strips_hidden_param_references_from_returns() -> None:
+    """
+    The Returns section may contain conditional branches like
+    ``When ``_return_callable=False``: ...`` that reference hidden params.
+    These branches must be stripped from the LLM-facing description since
+    the LLM cannot control the param they depend on.
+    """
+
+    def search(
+        query: str,
+        n: int = 5,
+        _return_callable: bool = False,
+        _also_return_metadata: bool = False,
+    ) -> list:
+        """
+        Search for items.
+
+        Parameters
+        ----------
+        query : str
+            Search text.
+        n : int, default ``5``
+            Max results.
+        _return_callable : bool, default ``False``
+            When ``True``, return callables instead of metadata.
+        _also_return_metadata : bool, default ``False``
+            When ``True``, return both callables and metadata.
+
+        Returns
+        -------
+        list[dict] | list[Callable] | dict
+            - When ``_return_callable=False``: list of metadata dicts.
+            - When ``_return_callable=True``: list of callables.
+            - When ``_also_return_metadata=True``: a dict with both.
+        """
+        return []
+
+    schema = llmh.method_to_schema(search)
+    desc = schema["function"]["description"]
+
+    # The Returns section should not reference hidden params
+    assert "_return_callable" not in desc
+    assert "_also_return_metadata" not in desc
+
+
+def test_schema_strips_hidden_param_references_from_raises() -> None:
+    """
+    The Raises section may document errors for hidden-param validation
+    (e.g. ``If ``_return_callable=True`` but ``_namespace`` is ``None````).
+    These entries must be stripped from the LLM-facing description since
+    the LLM cannot trigger these errors.
+    """
+
+    def search(
+        query: str,
+        _return_callable: bool = False,
+        _namespace: dict | None = None,
+    ) -> list:
+        """
+        Search for items.
+
+        Parameters
+        ----------
+        query : str
+            Search text.
+        _return_callable : bool, default ``False``
+            When ``True``, return callables.
+        _namespace : dict | None, default ``None``
+            Target namespace for injection.
+
+        Raises
+        ------
+        ValueError
+            If ``_return_callable=True`` but ``_namespace`` is ``None``.
+        ValueError
+            If ``_return_callable`` is set without proper context.
+        """
+        return []
+
+    schema = llmh.method_to_schema(search)
+    desc = schema["function"]["description"]
+
+    # The Raises section should not reference hidden params
+    assert "_return_callable" not in desc
+    assert "_namespace" not in desc
 
 
 def test_schema_plain_function() -> None:

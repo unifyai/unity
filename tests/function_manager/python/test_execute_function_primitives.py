@@ -281,7 +281,8 @@ async def test_execute_function_composed_forwards_parent_chat_context(
     received_ctx = {}
 
     async def fake_ask(
-        text: str, _parent_chat_context: list[dict] | None = None
+        text: str,
+        _parent_chat_context: list[dict] | None = None,
     ):
         received_ctx["value"] = _parent_chat_context
         return f"Answer: {text}"
@@ -301,9 +302,9 @@ async def test_execute_function_composed_forwards_parent_chat_context(
 
     assert result["error"] is None, f"Unexpected error: {result['error']}"
     assert result["result"] == "Answer: Who is Alice?"
-    assert received_ctx.get("value") is parent_ctx, (
-        "_parent_chat_context was not forwarded via ContextForwardingProxy"
-    )
+    assert (
+        received_ctx.get("value") is parent_ctx
+    ), "_parent_chat_context was not forwarded via ContextForwardingProxy"
 
 
 # ────────────────────────────────────────────────────────────────────────────

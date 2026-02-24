@@ -355,9 +355,8 @@ def create_safe_globals(is_async: bool = True):
         "Set": typing.Set,
         "Union": typing.Union,
         "Literal": typing.Literal,
-        # Primitives proxies
+        # Primitives proxy (computer and actor accessible via primitives.computer.* etc.)
         "primitives": PrimitivesProxy(is_async=is_async),
-        "computer_primitives": ComputerPrimitivesProxy(is_async=is_async),
     }
 
     # Try to add pydantic if available in this venv
@@ -525,7 +524,7 @@ def _is_user_defined_state(key: str, value: Any, base_globals: dict) -> bool:
         return False
 
     # Skip proxies
-    if isinstance(value, (PrimitivesProxy, ComputerPrimitivesProxy, ManagerProxy)):
+    if isinstance(value, (PrimitivesProxy, ManagerProxy)):
         return False
 
     return True

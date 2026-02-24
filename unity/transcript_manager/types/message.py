@@ -48,6 +48,10 @@ class Message(BaseModel):
             "id, filename, gs_url, content_type, size_bytes."
         ),
     )
+    metadata: Optional[dict] = Field(
+        default=None,
+        description="Medium-specific metadata (e.g. email_id for email replies).",
+    )
 
     # Central, single source of truth for shorthand aliases (full → shorthand)
     SHORTHAND_MAP: ClassVar[dict[str, str]] = {
@@ -60,6 +64,7 @@ class Message(BaseModel):
         "exchange_id": "xid",
         "images": "imgs",
         "attachments": "atts",
+        "metadata": "meta",
     }
 
     @classmethod

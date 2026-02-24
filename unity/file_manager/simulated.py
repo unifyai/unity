@@ -30,12 +30,13 @@ from ..common.simulated import (
     SimulatedHandleMixin,
 )
 from ..logger import LOGGER
+from ..common.hierarchical_logger import ICONS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
+class _SimulatedFileHandle(SimulatedHandleMixin, SteerableToolHandle):
     """
     Handle returned by SimulatedFileManager.ask_about_file.
     """
@@ -50,6 +51,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
         response_format: Optional[Type[BaseModel]] = None,
+        hold_completion: bool = False,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -70,6 +72,8 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
             "SimulatedFileManager.ask_about_file",
         )
 
+        self._init_completion_gate(hold_completion)
+
         # fire clarification question immediately if queues supplied
         if self._needs_clar:
             try:
@@ -80,7 +84,9 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                    LOGGER.info(
+                        f"{ICONS['clarification']} [{self._log_label}] Clarification requested",
+                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -112,7 +118,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
             if self._needs_clar:
                 try:
                     LOGGER.info(
-                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                        f"{ICONS['pending']} [{self._log_label}] Waiting for clarification answer…",
                     )
                 except Exception:
                     pass
@@ -142,7 +148,9 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 except Exception:
                     pass
                 try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                    LOGGER.info(
+                        f"{ICONS['interjection']} [{self._log_label}] Clarification answer received",
+                    )
                 except Exception:
                     pass
 
@@ -163,6 +171,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": answer},
             ]
+            await self._await_completion_gate()
             self._done_event.set()
 
         # If cancellation happened after the coroutine started, return a stable post-cancel value.
@@ -202,6 +211,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         """
         self._log_stop(reason)
         self._cancelled = True
+        self._open_completion_gate()
         try:
             self._cancel_event.set()
         except Exception:
@@ -223,7 +233,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
         return "Resumed."
 
     def done(self) -> bool:
-        return self._done_event.is_set()
+        return self._done_event.is_set() and self._gate_open
 
     async def ask(
         self,
@@ -273,14 +283,9 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
-        """Retrieve the next clarification request, if any.
-
-        Only surfaces clarification events when this handle explicitly requested
-        clarification. This prevents cross-handle consumption of shared clarification
-        queues that may be injected by external processes.
-        """
+        """Block until a clarification arrives, or forever if not requested."""
         if not getattr(self, "_needs_clar", False):
-            return {}
+            return await super().next_clarification()
         try:
             if self._clar_up_q is not None:
                 msg = await self._clar_up_q.get()
@@ -292,10 +297,7 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
                 }
         except Exception:
             pass
-        return {}
-
-    async def next_notification(self) -> dict:
-        return {}
+        return await super().next_clarification()
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -322,9 +324,11 @@ class SimulatedFileManager(BaseFileManager):
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        hold_completion: bool = False,
         # Accept but ignore extra parameters for compatibility
         **kwargs: Any,
     ) -> None:
+        super().__init__()
         self._description = description
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
@@ -342,7 +346,7 @@ class SimulatedFileManager(BaseFileManager):
         self.__data_manager: Optional["DataManager"] = None
 
         # Shared, *stateful* **asynchronous** LLM
-        self._llm = new_llm_client(stateful=True)
+        self._llm = new_llm_client(stateful=True, origin="SimulatedFileManager")
 
         # Mirror the real file manager's tool exposure programmatically
         try:
@@ -483,15 +487,14 @@ class SimulatedFileManager(BaseFileManager):
         _call_id: Optional[str] = None,
         response_format: Optional[Any] = None,
     ) -> SteerableToolHandle:
-        if file_path not in self._files:
-            raise FileNotFoundError(file_path)
         instruction = build_simulated_method_prompt(
             "ask_about_file",
             f"File: {file_path}\nQuestion: {question}",
             parent_chat_context=_parent_chat_context,
         )
-        file_info = self._files[file_path]
-        instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
+        file_info = self._files.get(file_path)
+        if file_info is not None:
+            instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,

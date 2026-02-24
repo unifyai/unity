@@ -14,6 +14,7 @@ from tests.conversation_manager.conftest import BOSS
 from tests.conversation_manager.actions.integration.helpers import (
     assert_no_errors,
     answer_clarification_and_continue,
+    extract_actor_handle,
     find_task_id_by_exact_name,
     get_actor_started_event,
     wait_for_clarification,
@@ -89,7 +90,7 @@ async def test_task_lookup_by_name_returns_description(initialized_cm_codeact):
         ),
     )
     h2 = get_actor_started_event(result2).handle_id
-    handle = cm.cm.in_flight_actions[h2]["handle"]
+    handle = extract_actor_handle(cm, h2)
 
     # Task queries can occasionally trigger a manager clarification (e.g., if multiple
     # plausible matches exist). Make the test robust by answering with the exact name.

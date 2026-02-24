@@ -98,10 +98,24 @@ def _create_actor(args) -> BaseActor:
             )
         else:
             # Full computer mode (web/desktop)
-            return CodeActActor(
-                headless=args.headless,
-                agent_server_url=args.agent_url,
+            from unity.actor.environments import (
+                ComputerEnvironment,
+                StateManagerEnvironment,
+            )
+            from unity.function_manager.primitives import (
+                ComputerPrimitives,
+                Primitives,
+            )
+
+            cp = ComputerPrimitives(
                 computer_mode="magnitude",
+                agent_server_url=args.agent_url,
+            )
+            return CodeActActor(
+                environments=[
+                    ComputerEnvironment(cp),
+                    StateManagerEnvironment(),
+                ],
             )
     else:
         raise ValueError(f"Unknown actor type: {actor_choice}")
@@ -161,6 +175,8 @@ async def _main_async() -> None:
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
         log_file=".logs_actor_sandbox.txt",
+        tcp_port=args.log_tcp_port,
+        http_tcp_port=args.http_log_tcp_port,
     )
     LG.setLevel(logging.DEBUG)
 

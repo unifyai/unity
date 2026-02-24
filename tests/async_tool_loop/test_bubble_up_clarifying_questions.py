@@ -124,6 +124,7 @@ async def test_clarification_bubbles_up_two_tiers(llm_config) -> None:
         outer_client,
         message="Please email jonathan.smith123@gmail.com and politely tell him I (Dan) will be arriving at the BBQ around 5pm.",
         tools=outer_tools,
+        time_awareness=False,
     )
 
     # Deterministic ordering using triggers:

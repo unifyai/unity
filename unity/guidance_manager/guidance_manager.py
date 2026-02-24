@@ -1,33 +1,16 @@
 from __future__ import annotations
 
-from typing import List, Dict, Optional, Callable, Any, Tuple, Type
+from typing import FrozenSet, List, Dict, Optional, Any, Tuple
 import base64
-import asyncio
 import functools
 import re
-from pydantic import BaseModel
 
 import unify
 
 from ..common.log_utils import log as unity_log
-from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
-from ..common.llm_client import new_llm_client
-from ..common.llm_helpers import (
-    methods_to_tool_dict,
-    make_request_clarification_tool,
-)
-from ..common.async_tool_loop import (
-    start_async_tool_loop,
-    SteerableToolHandle,
-    TOOL_LOOP_LINEAGE,
-)
-from ..settings import SETTINGS
-from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..events.event_bus import EVENT_BUS, Event
-from ..events.manager_event_logging import log_manager_call
 from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
@@ -68,7 +51,13 @@ class GuidanceManager(BaseGuidanceManager):
             ),
         ]
 
-    def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        rolling_summary_in_prompts: bool = True,
+        filter_scope: Optional[str] = None,
+        exclude_ids: Optional[FrozenSet[int]] = None,
+    ) -> None:
         super().__init__()
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
@@ -89,40 +78,13 @@ class GuidanceManager(BaseGuidanceManager):
         self.include_in_multi_assistant_table = True
         self._ctx = ContextRegistry.get_context(self, "Guidance")
 
+        self._filter_scope = filter_scope
+        self._exclude_ids = frozenset(exclude_ids) if exclude_ids else None
+
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
-        # Public tools
-        ask_tools: Dict[str, Callable] = {
-            **methods_to_tool_dict(
-                self._list_columns,
-                self._filter,
-                self._search,
-                # Image-aware tools (read-only / persistent context helpers)
-                self._get_images_for_guidance,
-                self._ask_image,
-                self._attach_image_to_context,
-                self._attach_guidance_images_to_context,
-                # Function-aware helpers (read-only / context helpers)
-                self._get_functions_for_guidance,
-                self._attach_functions_for_guidance_to_context,
-                include_class_name=False,
-            ),
-        }
-        self.add_tools("ask", ask_tools)
-        update_tools: Dict[str, Callable] = {
-            **methods_to_tool_dict(
-                self.ask,
-                self._add_guidance,
-                self._update_guidance,
-                self._delete_guidance,
-                self._create_custom_column,
-                self._delete_custom_column,
-                include_class_name=False,
-            ),
-        }
-        self.add_tools("update", update_tools)
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Get ImageManager via registry for resolving and attaching images
@@ -134,195 +96,61 @@ class GuidanceManager(BaseGuidanceManager):
         # Ensure context/schema and prefill known custom fields
         self._provision_storage()
 
-    # ------------------------------- Public API -------------------------------
-    @functools.wraps(BaseGuidanceManager.ask, updated=())
-    @log_manager_call("GuidanceManager", "ask", payload_key="question")
-    async def ask(
-        self,
-        text: str,
-        *,
-        response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
-    ) -> SteerableToolHandle:
-        client = new_llm_client()
-
-        tools = dict(self.get_tools("ask"))
-        if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "ask",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
-
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "ask",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
-
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
-
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-
-        client.set_system_message(
-            build_ask_prompt(
-                tools=tools,
-                num_items=self._num_items(),
-                columns=self._list_columns(),
-                include_activity=include_activity,
-            ).to_list(),
-        )
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=_parent_chat_context,
-            tool_policy=self._default_ask_tool_policy,
-            response_format=response_format,
-            handle_cls=(
-                ReadOnlyAskGuardHandle if SETTINGS.UNITY_READONLY_ASK_GUARD else None
-            ),
-        )
-
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result  # type: ignore
-
-        return handle
-
-    @functools.wraps(BaseGuidanceManager.update, updated=())
-    @log_manager_call("GuidanceManager", "update", payload_key="request")
-    async def update(
-        self,
-        text: str,
-        *,
-        response_format: Optional[Type[BaseModel]] = None,
-        _return_reasoning_steps: bool = False,
-        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
-    ) -> SteerableToolHandle:
-        client = new_llm_client()
-
-        tools = dict(self.get_tools("update"))
-        if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "update",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
-
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "GuidanceManager",
-                            "method": "update",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
-
-            tools["request_clarification"] = make_request_clarification_tool(
-                _clarification_up_q,
-                _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
-            )
-
-        include_activity = (
-            self._rolling_summary_in_prompts
-            if rolling_summary_in_prompts is None
-            else rolling_summary_in_prompts
-        )
-
-        client.set_system_message(
-            build_update_prompt(
-                tools,
-                num_items=self._num_items(),
-                columns=self._list_columns(),
-                include_activity=include_activity,
-            ).to_list(),
-        )
-        handle = start_async_tool_loop(
-            client,
-            text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=_parent_chat_context,
-            tool_policy=self._default_update_tool_policy,
-            response_format=response_format,
-        )
-
-        if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result  # type: ignore
-
-        return handle
-
     # ------------------------------- Helpers ---------------------------------
+
+    # -- Scope / exclusion properties ----------------------------------------
+
+    @property
+    def filter_scope(self) -> Optional[str]:
+        """A boolean expression permanently applied to all read queries."""
+        return self._filter_scope
+
+    @filter_scope.setter
+    def filter_scope(self, value: Optional[str]) -> None:
+        self._filter_scope = value
+
+    @property
+    def exclude_ids(self) -> Optional[FrozenSet[int]]:
+        """Guidance IDs excluded from all read queries."""
+        return self._exclude_ids
+
+    @exclude_ids.setter
+    def exclude_ids(self, value: Optional[FrozenSet[int]]) -> None:
+        self._exclude_ids = frozenset(value) if value else None
+
+    @staticmethod
+    def _build_id_exclusion(ids: Optional[FrozenSet[int]]) -> Optional[str]:
+        """Build a ``guidance_id != X and ...`` filter clause from a set of IDs."""
+        if not ids:
+            return None
+        clauses = [f"guidance_id != {gid}" for gid in sorted(ids)]
+        return " and ".join(clauses)
+
+    def _scoped_filter(self, caller_filter: Optional[str]) -> Optional[str]:
+        """Compose *caller_filter* with ``_filter_scope`` and id exclusions.
+
+        Returns ``None`` when all parts are absent, meaning "no filter".
+        """
+        parts = [
+            p
+            for p in [
+                caller_filter,
+                self._filter_scope,
+                self._build_id_exclusion(self._exclude_ids),
+            ]
+            if p
+        ]
+        if not parts:
+            return None
+        if len(parts) == 1:
+            return parts[0]
+        return " and ".join(f"({p})" for p in parts)
+
     def _num_items(self) -> int:
         ret = unify.get_logs_metric(
             metric="count",
             key="guidance_id",
+            filter=self._scoped_filter(None),
             context=self._ctx,
         )
         if ret is None:
@@ -500,7 +328,7 @@ class GuidanceManager(BaseGuidanceManager):
         This tool is read-only and returns metadata only. It never exposes raw
         image bytes.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
         guidance_row = rows[0]
@@ -647,7 +475,7 @@ class GuidanceManager(BaseGuidanceManager):
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
             Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and an ``annotations`` list.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return {"attached_count": 0, "images": []}
         guidance_row = rows[0]
@@ -700,7 +528,23 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return {"attached_count": len(images), "images": images}
 
-    def _add_guidance(
+    def _resolve_image_refs(
+        self,
+        images: AnnotatedImageRefs | list | str,
+    ) -> AnnotatedImageRefs:
+        """Ensure every ref in *images* has a concrete ``image_id``."""
+        if isinstance(images, str):
+            import json
+
+            images = json.loads(images)
+        if not isinstance(images, AnnotatedImageRefs):
+            images = AnnotatedImageRefs.model_validate(images)
+        for ref in images.root:
+            ref.resolve_image_id(self._image_manager)
+        return images
+
+    @functools.wraps(BaseGuidanceManager.add_guidance, updated=())
+    def add_guidance(
         self,
         *,
         title: Optional[str] = None,
@@ -708,35 +552,12 @@ class GuidanceManager(BaseGuidanceManager):
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
-        """Create a new guidance entry.
-
-        Purpose
-        -------
-        Use this to persist distilled guidance, optionally linking annotated
-        images and related function ids. At least one of ``title``, ``content``
-        or ``images`` must be provided.
-
-        Parameters
-        ----------
-        title : str | None
-            Short human-readable title for the guidance entry.
-        content : str | None
-            Longer freeform guidance text.
-        images : AnnotatedImageRefs | None
-            Annotated image references to attach to this guidance entry.
-        function_ids : list[int] | None
-            Optional ids of related functions to surface in read flows.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome string and details containing the newly assigned
-            ``guidance_id``.
-        """
         if not title and not content and not images:
             raise ValueError(
                 "At least one field (title/content/images) must be provided.",
             )
+        if images is not None:
+            images = self._resolve_image_refs(images)
         g = Guidance(
             title=title or "",
             content=content or "",
@@ -758,7 +579,8 @@ class GuidanceManager(BaseGuidanceManager):
             "details": {"guidance_id": log.entries["guidance_id"]},
         }
 
-    def _update_guidance(
+    @functools.wraps(BaseGuidanceManager.update_guidance, updated=())
+    def update_guidance(
         self,
         *,
         guidance_id: int,
@@ -767,40 +589,17 @@ class GuidanceManager(BaseGuidanceManager):
         images: AnnotatedImageRefs | None = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
-        """Update fields of an existing guidance entry by id.
-
-        Parameters
-        ----------
-        guidance_id : int
-            Identifier of the row to update.
-        title : str | None
-            New title (omit to keep existing value).
-        content : str | None
-            New content (omit to keep existing value).
-        images : Any | None
-            Replacement image references; validated to the model format.
-        function_ids : list[int] | None
-            Replacement list of related function ids.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome string and details with the ``guidance_id``.
-        """
         updates: Dict[str, Any] = {}
         if title is not None:
             updates["title"] = title
         if content is not None:
             updates["content"] = content
         if images is not None:
+            images = self._resolve_image_refs(images)
             _ = Guidance(
                 title=title or "tmp",
                 content=content or "tmp",
-                images=(
-                    images
-                    if images is not None
-                    else AnnotatedImageRefs.model_validate([])
-                ),
+                images=images,
             )
             updates["images"] = _.model_dump(mode="json")["images"]
         if function_ids is not None:
@@ -865,7 +664,7 @@ class GuidanceManager(BaseGuidanceManager):
             One item per related function, including ``function_id``, ``name``,
             ``argspec``, ``docstring``, ``calls``, and ``precondition`` fields.
         """
-        rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
+        rows = self.filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
         fids = list(dict.fromkeys(int(fid) for fid in (rows[0].function_ids or [])))
@@ -922,19 +721,8 @@ class GuidanceManager(BaseGuidanceManager):
                 funcs = funcs[:limit]
         return {"attached_count": len(funcs), "functions": funcs}
 
-    def _delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
-        """Delete a guidance entry by id.
-
-        Parameters
-        ----------
-        guidance_id : int
-            Identifier of the row to delete.
-
-        Returns
-        -------
-        ToolOutcome
-            Outcome string and details with the removed ``guidance_id``.
-        """
+    @functools.wraps(BaseGuidanceManager.delete_guidance, updated=())
+    def delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
         ids = unify.get_logs(
             context=self._ctx,
             filter=f"guidance_id == {int(guidance_id)}",
@@ -952,28 +740,13 @@ class GuidanceManager(BaseGuidanceManager):
         unify.delete_logs(context=self._ctx, logs=ids[0])
         return {"outcome": "guidance deleted", "details": {"guidance_id": guidance_id}}
 
-    def _search(
+    @functools.wraps(BaseGuidanceManager.search, updated=())
+    def search(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Guidance]:
-        """Semantic search over guidance rows using shared table helper.
-
-        Parameters
-        ----------
-        references : Dict[str, str] | None, default None
-            Mapping of source expressions to reference text for semantic search.
-        k : int, default 10
-            Maximum number of results to return. Must be <= 1000.
-
-        Returns
-        -------
-        List[Guidance]
-            Up to k rows ranked by similarity, backfilled to k when
-            similarity yields fewer rows. Payload is restricted to built‑in
-            fields for efficiency.
-        """
         allowed_fields = list(self._BUILTIN_FIELDS)
         rows = table_search_top_k(
             context=self._ctx,
@@ -981,36 +754,20 @@ class GuidanceManager(BaseGuidanceManager):
             k=k,
             allowed_fields=allowed_fields,
             unique_id_field="guidance_id",
+            row_filter=self._scoped_filter(None),
         )
         return [Guidance(**r) for r in rows]
 
-    def _filter(
+    @functools.wraps(BaseGuidanceManager.filter, updated=())
+    def filter(
         self,
         *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
     ) -> List[Guidance]:
-        """
-        Filter guidance records using a boolean Python expression evaluated per row.
-
-        Parameters
-        ----------
-        filter : str | None, default None
-            A Python boolean expression evaluated with column names in scope.
-            When None, returns all guidance records.
-        offset : int, default 0
-            Zero-based index of the first result to include.
-        limit : int, default 100
-            Maximum number of records to return. Must be <= 1000.
-
-        Returns
-        -------
-        List[Guidance]
-            Matching guidance records as Guidance models.
-        """
         from_fields = list(self._BUILTIN_FIELDS)
-        normalized = normalize_filter_expr(filter)
+        normalized = self._scoped_filter(normalize_filter_expr(filter))
         logs = unify.get_logs(
             context=self._ctx,
             filter=normalized,
@@ -1019,36 +776,3 @@ class GuidanceManager(BaseGuidanceManager):
             from_fields=from_fields,
         )
         return [Guidance(**lg.entries) for lg in logs]
-
-    # ------------------------------- Policies ---------------------------------
-    @staticmethod
-    def _default_ask_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """Require search on the first step (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if (
-            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
-            and step_index < 1
-            and "search" in current_tools
-        ):
-            return ("required", {"search": current_tools["search"]})
-        return ("auto", current_tools)
-
-    @staticmethod
-    def _default_update_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        """Require ask on the first step (if enabled); auto thereafter."""
-        from unity.settings import SETTINGS
-
-        if (
-            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
-            and step_index < 1
-            and "ask" in current_tools
-        ):
-            return ("required", {"ask": current_tools["ask"]})
-        return ("auto", current_tools)

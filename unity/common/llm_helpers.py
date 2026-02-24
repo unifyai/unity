@@ -334,6 +334,18 @@ def _strip_hidden_params_from_doc(
                 i += 1
                 continue
 
+            # When skipping a hidden param block, check indent continuation
+            # BEFORE trying to match a new param line. Description lines are
+            # always more indented than the param heading in NumPy style; only
+            # when the indent drops back do we leave skip mode and try to
+            # match the line as a new parameter.
+            if skip:
+                indent = len(ln) - len(stripped)
+                if indent > base_indent:
+                    i += 1  # continuation of hidden param description
+                    continue
+                skip = False  # indent dropped → may be a new param
+
             # Parameter definition line
             m = _PARAM_LINE_RX.match(ln)
             if m:
@@ -351,13 +363,6 @@ def _strip_hidden_params_from_doc(
                     continue
                 else:
                     skip = False  # keep this parameter
-            # Parameter description line: keep skipping until indentation drops
-            elif skip:
-                indent = len(ln) - len(stripped)
-                if indent > base_indent:
-                    i += 1  # keep swallowing lines of the block
-                    continue
-                skip = False  # indent dropped → end of block
 
             if not skip:
                 out.append(ln)  # normal, unskipped content
@@ -369,6 +374,35 @@ def _strip_hidden_params_from_doc(
         # ───────────────────────────────────────────────────────────────── #
         out.append(ln)
         i += 1
+
+    # ───────────────────────────────────────────────────────────────────── #
+    # Second pass: strip lines in Returns / Raises / other sections that
+    # reference hidden param names (e.g. "When ``_return_callable=False``").
+    # Also strip more-indented continuation lines that follow them.
+    # ───────────────────────────────────────────────────────────────────── #
+    if hidden:
+        out2: list[str] = []
+        j = 0
+        ref_skip_indent = -1
+        while j < len(out):
+            ln2 = out[j]
+            stripped2 = ln2.lstrip()
+            indent2 = len(ln2) - len(stripped2)
+
+            if ref_skip_indent >= 0:
+                if stripped2 and indent2 > ref_skip_indent:
+                    j += 1
+                    continue
+                ref_skip_indent = -1
+
+            if any(h in ln2 for h in hidden):
+                ref_skip_indent = indent2
+                j += 1
+                continue
+
+            out2.append(ln2)
+            j += 1
+        out = out2
 
     # Collapse runs of >2 blank lines that the removals may have created
     doc_clean = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).rstrip()

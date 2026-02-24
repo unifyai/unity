@@ -7,13 +7,15 @@ import functools
 import json
 import os
 import re
-import traceback
 import signal
 import socket
 import sys
 import tempfile
 import logging
 from pathlib import Path
+
+from unity.logger import LOGGER
+from unity.common.hierarchical_logger import ICONS
 from secrets import token_hex
 from typing import (
     Any,
@@ -71,7 +73,6 @@ class _LineageTrackedFunction:
     It is injected into the Python namespace **in place of** the raw callable so that
     inter-function calls (function A calling function B) still pass through a boundary that:
     - updates `TOOL_LOOP_LINEAGE` (ContextVar)
-    - publishes ManagerMethod events with `hierarchy` + `hierarchy_label`
     - emits a concise boundary log line for terminal debugging
 
     Note: async functions can be awaited in a different task context than the call-site.
@@ -96,49 +97,16 @@ class _LineageTrackedFunction:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         # Local imports to avoid import-time cycles.
         from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
-        from unity.common.hierarchical_logger import (
-            build_hierarchy_label,
-            log_boundary_event,
-        )
-        from unity.events.manager_event_logging import (
-            new_call_id,
-            publish_manager_method_event,
-        )
+        from unity.common.hierarchical_logger import log_boundary_event
 
         suffix = token_hex(2)
-        call_id = new_call_id()
 
         parent = TOOL_LOOP_LINEAGE.get([])
         parent_lineage = list(parent) if isinstance(parent, list) else []
-        hierarchy = [*parent_lineage, self._function_name]
-        hierarchy_label = build_hierarchy_label(hierarchy, suffix)
+        hierarchy = [*parent_lineage, f"{self._function_name}({suffix})"]
 
-        async def _publish_safe(**payload: Any) -> None:
-            try:
-                await publish_manager_method_event(
-                    call_id,
-                    "FunctionManager",
-                    self._function_name,
-                    hierarchy=hierarchy,
-                    hierarchy_label=hierarchy_label,
-                    **payload,
-                )
-            except Exception as e:
-                # Best-effort visibility; never fail execution due to event issues.
-                log_boundary_event(
-                    hierarchy_label,
-                    f"Warning: failed to publish event: {type(e).__name__}: {e}",
-                    icon="⚠️",
-                    level="warning",
-                )
-
-        # Publish incoming before running the function (best-effort).
         try:
-            asyncio.create_task(_publish_safe(phase="incoming"))
-        except Exception:
-            pass
-        try:
-            log_boundary_event(hierarchy_label, "Executing function...", icon="🛠️")
+            log_boundary_event("->".join(hierarchy), "Executing function...", icon="🛠️")
         except Exception:
             pass
 
@@ -146,22 +114,8 @@ class _LineageTrackedFunction:
         token_call = TOOL_LOOP_LINEAGE.set(hierarchy)
         try:
             result = self._wrapped(*args, **kwargs)
-        except Exception as e:
-            try:
-                try:
-                    asyncio.create_task(
-                        _publish_safe(
-                            phase="outgoing",
-                            status="error",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            traceback=traceback.format_exc()[:2000],
-                        ),
-                    )
-                except Exception:
-                    pass
-            finally:
-                TOOL_LOOP_LINEAGE.reset(token_call)
+        except Exception:
+            TOOL_LOOP_LINEAGE.reset(token_call)
             raise
         finally:
             # For async results we only needed the lineage during coroutine construction.
@@ -177,38 +131,12 @@ class _LineageTrackedFunction:
             async def _await_and_finalize():
                 token_run = TOOL_LOOP_LINEAGE.set(hierarchy)
                 try:
-                    out = await result
-                    try:
-                        await _publish_safe(phase="outgoing", status="ok")
-                    except Exception:
-                        pass
-                    return out
-                except Exception as e:
-                    try:
-                        await _publish_safe(
-                            phase="outgoing",
-                            status="error",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            traceback=traceback.format_exc()[:2000],
-                        )
-                    except Exception:
-                        pass
-                    raise
+                    return await result
                 finally:
                     TOOL_LOOP_LINEAGE.reset(token_run)
 
             return _await_and_finalize()
 
-        # Sync success path: publish outgoing best-effort and restore lineage.
-        try:
-            try:
-                asyncio.create_task(_publish_safe(phase="outgoing", status="ok"))
-            except Exception:
-                pass
-        finally:
-            # token_call already reset above; nothing to do here.
-            pass
         return result
 
 
@@ -1125,10 +1053,9 @@ class _InProcessFunctionProxy:
         # mode. Forward environment namespace objects (primitives, etc.) but
         # NOT user-defined state variables -- those are managed by state_mode.
         proxy_ns: Dict[str, Any] = {}
-        for key in ("primitives", "computer_primitives"):
-            val = self._namespace.get(key)
-            if val is not None:
-                proxy_ns[key] = val
+        val = self._namespace.get("primitives")
+        if val is not None:
+            proxy_ns["primitives"] = val
         result = await self._function_manager.execute_function(
             function_name=self.__name__,
             call_kwargs=kwargs,
@@ -1384,7 +1311,9 @@ class _VenvFunctionProxy:
 
         # Resolve RPC targets from the injected namespace (caller-controlled).
         primitives = self._namespace.get("primitives")
-        computer_primitives = self._namespace.get("computer_primitives")
+        computer_primitives = (
+            getattr(primitives, "computer", None) if primitives else None
+        )
 
         call_kwargs = self._map_positional_args(
             args=args,
@@ -1855,15 +1784,21 @@ class FunctionManager(BaseFunctionManager):
         self,
         fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
         all_known_function_names: Set[str],
+        *,
+        environment_namespaces: FrozenSet[str] = frozenset(),
     ) -> Set[str]:
         """
         Uses the stateful _DependencyVisitor to find verified direct calls,
         indirect calls via variables, and returned function name references
         to other known library functions.
+
+        When *environment_namespaces* is provided, dotted calls whose root segment
+        matches one of the namespaces are also captured as dependencies.
         """
         return collect_dependencies_from_function_node(
             fn_node,
             all_known_function_names,
+            environment_namespaces=environment_namespaces,
         )
 
     def _collect_function_calls(
@@ -2795,6 +2730,14 @@ class FunctionManager(BaseFunctionManager):
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
 
+        # Sandbox namespace roots whose dotted calls should be recorded in
+        # depends_on (e.g. "primitives.actor.act" → depends_on includes
+        # "primitives.actor.act").  At runtime, _inject_dependencies reads
+        # these entries and calls construct_sandbox_root() to materialise
+        # the root object.  All primitives live under a single "primitives"
+        # namespace.
+        env_namespaces = frozenset({"primitives"})
+
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
                 continue
@@ -2803,6 +2746,7 @@ class FunctionManager(BaseFunctionManager):
                 dependencies = self._collect_verified_dependencies(
                     node,
                     all_known_function_names,
+                    environment_namespaces=env_namespaces,
                 )
                 dependencies_list = sorted(list(dependencies))
 
@@ -3314,11 +3258,27 @@ class FunctionManager(BaseFunctionManager):
     ) -> None:
         """Inject transitive dependencies into ``namespace`` (breadth-first).
 
-        For in-process functions, the raw function (from exec) remains in the
-        namespace for inter-function calls, decorators, and introspection.
-        For venv functions, the proxy is placed in namespace (no raw function exists).
+        This is the runtime counterpart to the AST-based dependency detection
+        in ``dependency_analysis.py``.  Every name that ``add_functions``
+        recorded in ``depends_on`` is resolved here into a live object in the
+        execution namespace.  The two categories:
+
+        **Bare names** (e.g. ``"helper"``) — other compositional functions.
+        The stored implementation is exec'd into the namespace so inter-
+        function calls resolve naturally.
+
+        **Dotted names** (e.g. ``"primitives.actor.act"``,
+        ``"primitives.contacts.ask"``) — environment-provided namespaces.
+        Only the *root* segment matters for injection (``"primitives"``).
+        If the root is not already present in the namespace,
+        ``construct_sandbox_root()`` from the primitive registry constructs
+        a fresh ``Primitives`` instance on demand.  ``Primitives`` is
+        fully stateless, so a freshly constructed instance works in
+        isolation without any ambient ContextVars or parent actor state.
         """
         from collections import deque
+
+        from unity.function_manager.primitives.registry import construct_sandbox_root
 
         deps = func_data.get("depends_on") or []
         if not isinstance(deps, list):
@@ -3331,6 +3291,27 @@ class FunctionManager(BaseFunctionManager):
                 continue
             visited.add(dep_name)
 
+            # ── Dotted dependency (e.g. "primitives.actor.act", "primitives.contacts.ask") ──
+            if "." in dep_name:
+                root = dep_name.split(".")[0]
+                if root not in namespace:
+                    root_obj = construct_sandbox_root(
+                        root,
+                        primitive_scope=self._primitive_scope,
+                    )
+                    if root_obj is not None:
+                        namespace[root] = root_obj
+                    else:
+                        logger.warning(
+                            "Dotted dependency %r for %r: root %r could not "
+                            "be constructed and is not in namespace, skipping",
+                            dep_name,
+                            func_data.get("name"),
+                            root,
+                        )
+                continue
+
+            # ── Bare dependency (compositional function) ─────────────────────
             dep_data = self._get_function_data_by_name(name=dep_name)
             if not dep_data:
                 logger.warning(
@@ -3409,10 +3390,8 @@ class FunctionManager(BaseFunctionManager):
                 )
 
                 primitives_obj = namespace.get("primitives")
-                computer_prims = namespace.get("computer_primitives")
                 fn = get_primitive_callable(
                     func_data,
-                    computer_primitives=computer_prims,
                     primitives=primitives_obj,
                 )
                 if fn is not None:
@@ -3487,15 +3466,15 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         # Query compositional context, and optionally primitives.
         compositional_logs = unify.get_logs(
@@ -3542,13 +3521,13 @@ class FunctionManager(BaseFunctionManager):
                 data["implementation"] = ent.get("implementation")
             metadata[name] = data
 
-        if not return_callable:
+        if not _return_callable:
             return metadata
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
         callables_list = self._inject_callables_for_functions(
             func_rows,
-            namespace=namespace,
+            namespace=_namespace,
         )
         callables_map = {
             row["name"]: cb
@@ -3556,7 +3535,7 @@ class FunctionManager(BaseFunctionManager):
             if isinstance(row.get("name"), str)
         }
 
-        if also_return_metadata:
+        if _also_return_metadata:
             return {"callables": callables_map, "metadata": metadata}  # type: ignore[return-value]
 
         return callables_map  # type: ignore[return-value]
@@ -3786,15 +3765,15 @@ class FunctionManager(BaseFunctionManager):
         offset: int = 0,
         limit: int = 100,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         normalized = self._scoped_filter(normalize_filter_expr(filter))
 
@@ -3825,7 +3804,7 @@ class FunctionManager(BaseFunctionManager):
         # Stack compositional first, primitives last, then apply offset+limit.
         rows = (compositional_rows + primitive_rows)[offset : offset + limit]
 
-        if not return_callable:
+        if not _return_callable:
             # Strip implementations if not requested (reduces payload size)
             if not include_implementations:
                 rows = [
@@ -3834,9 +3813,12 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return rows
 
-        assert namespace is not None  # validated above
-        callables_list = self._inject_callables_for_functions(rows, namespace=namespace)
-        if also_return_metadata:
+        assert _namespace is not None  # validated above
+        callables_list = self._inject_callables_for_functions(
+            rows,
+            namespace=_namespace,
+        )
+        if _also_return_metadata:
             # Strip implementations from metadata if not requested
             metadata_rows = rows
             if not include_implementations:
@@ -3855,29 +3837,15 @@ class FunctionManager(BaseFunctionManager):
         query: str,
         n: int = 5,
         include_implementations: bool = True,
-        return_callable: bool = False,
-        namespace: Optional[Dict[str, Any]] = None,
-        also_return_metadata: bool = False,
+        _return_callable: bool = False,
+        _namespace: Optional[Dict[str, Any]] = None,
+        _also_return_metadata: bool = False,
     ) -> List[Dict[str, Any]]:
-        """
-        Search for functions by semantic similarity to a natural-language query.
+        if _also_return_metadata and not _return_callable:
+            raise ValueError("_also_return_metadata requires _return_callable=True")
 
-        Searches both compositional (user-defined) and primitive (state manager)
-        functions, ranked purely by embedding distance.
-
-        Args:
-            query: Natural-language text describing the desired function(s).
-            n: Number of similar results to return.
-            include_implementations: If True (default), include full source code.
-
-        Returns:
-            Up to n results ordered by similarity across all function types.
-        """
-        if also_return_metadata and not return_callable:
-            raise ValueError("also_return_metadata requires return_callable=True")
-
-        if return_callable and namespace is None:
-            raise ValueError("namespace required when return_callable=True")
+        if _return_callable and _namespace is None:
+            raise ValueError("_namespace required when _return_callable=True")
 
         allowed_fields = list(Function.model_fields.keys())
 
@@ -3919,7 +3887,7 @@ class FunctionManager(BaseFunctionManager):
             all_rows.sort(key=lambda r: r.get(sort_key, float("inf")))
         results = all_rows[:n]
 
-        if not return_callable:
+        if not _return_callable:
             # Strip implementations if not requested (reduces payload size)
             if not include_implementations:
                 results = [
@@ -3928,13 +3896,13 @@ class FunctionManager(BaseFunctionManager):
                 ]
             return results
 
-        assert namespace is not None  # validated above
+        assert _namespace is not None  # validated above
         callables_list = self._inject_callables_for_functions(
             results,
-            namespace=namespace,
+            namespace=_namespace,
         )
 
-        if also_return_metadata:
+        if _also_return_metadata:
             # Strip implementations from metadata if not requested
             metadata_rows = results
             if not include_implementations:
@@ -4336,12 +4304,14 @@ class FunctionManager(BaseFunctionManager):
         The path includes the Unify context name to ensure isolation between
         different assistants/users and during parallel test runs.
         """
+        from unity.file_manager.settings import get_local_root
+
         # Get current context for isolation
         ctx = unify.get_active_context()
         ctx_name = ctx.get("read") or ctx.get("write") or "default"
         # Sanitize context name for filesystem use
         safe_ctx = ctx_name.replace("/", "_").replace("\\", "_")
-        return Path.home() / ".unity" / "venvs" / safe_ctx
+        return Path(get_local_root()) / ".unity" / "venvs" / safe_ctx
 
     def _get_venv_dir(self, venv_id: int) -> Path:
         """Get the directory for a specific venv."""
@@ -4823,8 +4793,8 @@ class FunctionManager(BaseFunctionManager):
             shell_pool: ShellPool for stateful/read_only modes with shell functions.
             extra_namespaces: Named objects to inject into the function's execution
                 namespace. For in-process execution, all entries are injected into
-                globals. For venv/subprocess execution, "primitives" and
-                "computer_primitives" entries are bridged via RPC.
+                globals. For venv/subprocess execution, the "primitives" entry
+                (including primitives.computer) is bridged via RPC.
 
         Returns:
             For composed functions: dict with keys result, error, stdout, stderr.
@@ -4927,7 +4897,6 @@ class FunctionManager(BaseFunctionManager):
 
         callable_fn = get_primitive_callable(
             func_data,
-            computer_primitives=extra_namespaces.get("computer_primitives"),
             primitives=extra_namespaces.get("primitives"),
         )
         if callable_fn is None:
@@ -4955,10 +4924,9 @@ class FunctionManager(BaseFunctionManager):
     #  Remote Windows Execution Helpers                                  #
     # ------------------------------------------------------------------ #
 
-    # Remote Windows workspace directory (matches UNITY_WORKSPACE_DIR in agent-service)
-    # agent-service: path.join(path.parse(process.cwd()).root, 'Unity')
-    # On Windows: 'C:\Unity'
-    REMOTE_WINDOWS_WORKSPACE_DIR = "C:\\Unity"
+    # Remote Windows local root (matches LOCAL_ROOT in agent-service)
+    # Both default to ~/Unity/Local; on Windows VMs this is C:\Unity\Local
+    REMOTE_WINDOWS_LOCAL_ROOT = "C:\\Unity\\Local"
 
     # Shell mode for remote Windows command execution ('powershell' or 'cmd')
     REMOTE_WINDOWS_SHELL_MODE = "powershell"
@@ -4984,10 +4952,14 @@ class FunctionManager(BaseFunctionManager):
         if sync_manager is None:
             return True  # No sync configured, continue anyway
 
-        print("[windows exec] Syncing files to remote...")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Syncing files to remote...",
+        )
         result = await sync_manager.sync_remote_changes()
         if not result.success:
-            print(f"[windows exec] Warning: sync failed: {result.errors}")
+            LOGGER.warning(
+                f"{ICONS['windows_exec']} [windows exec] Warning: sync failed: {result.errors}",
+            )
             return False
         return True
 
@@ -5000,10 +4972,14 @@ class FunctionManager(BaseFunctionManager):
         if sync_manager is None:
             return True
 
-        print("[windows exec] Syncing files from remote...")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Syncing files from remote...",
+        )
         result = await sync_manager.sync_remote_changes()
         if not result.success:
-            print(f"[windows exec] Warning: sync failed: {result.errors}")
+            LOGGER.warning(
+                f"{ICONS['windows_exec']} [windows exec] Warning: sync failed: {result.errors}",
+            )
             return False
         return True
 
@@ -5096,7 +5072,9 @@ class FunctionManager(BaseFunctionManager):
             )
 
         start_time = asyncio.get_event_loop().time()
-        print(f"[windows exec] Waiting for VM ready (timeout={timeout}s)")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Waiting for VM ready (timeout={timeout}s)",
+        )
 
         async with aiohttp.ClientSession() as session:
             while True:
@@ -5120,7 +5098,9 @@ class FunctionManager(BaseFunctionManager):
                             desktop_url = data.get("desktop_url")
 
                             if vm_ready and desktop_url:
-                                print(f"[windows exec] VM ready")
+                                LOGGER.info(
+                                    f"{ICONS['windows_exec']} [windows exec] VM ready",
+                                )
                                 logger.info(
                                     f"Windows VM ready for {assistant_id}: "
                                     f"{desktop_url}",
@@ -5178,7 +5158,7 @@ class FunctionManager(BaseFunctionManager):
         venv_dir = f"Local\\venvs\\venv_{venv_id}"
         headers = {"Authorization": f"Bearer {SESSION_DETAILS.unify_key}"}
 
-        print(f"[windows exec] Preparing venv {venv_id}")
+        LOGGER.debug(f"{ICONS['windows_exec']} [windows exec] Preparing venv {venv_id}")
 
         async with aiohttp.ClientSession() as session:
             # Step 1: Write pyproject.toml
@@ -5204,12 +5184,12 @@ class FunctionManager(BaseFunctionManager):
                     )
 
             # Step 2: Install uv via pip
-            print(f"[windows exec] Installing uv")
+            LOGGER.debug(f"{ICONS['windows_exec']} [windows exec] Installing uv")
             async with session.post(
                 f"{desktop_url}/api/exec",
                 json={
                     "command": "pip install uv",
-                    "cwd": self.REMOTE_WINDOWS_WORKSPACE_DIR,
+                    "cwd": self.REMOTE_WINDOWS_LOCAL_ROOT,
                     "timeout": 300000,
                     "shell_mode": self.REMOTE_WINDOWS_SHELL_MODE,
                 },
@@ -5219,8 +5199,8 @@ class FunctionManager(BaseFunctionManager):
                 await resp.json()  # Don't fail if uv already installed
 
             # Step 3: Run 'uv sync'
-            venv_full_path = f"{self.REMOTE_WINDOWS_WORKSPACE_DIR}\\{venv_dir}"
-            print(f"[windows exec] Running uv sync")
+            venv_full_path = f"{self.REMOTE_WINDOWS_LOCAL_ROOT}\\{venv_dir}"
+            LOGGER.debug(f"{ICONS['windows_exec']} [windows exec] Running uv sync")
             async with session.post(
                 f"{desktop_url}/api/exec",
                 json={
@@ -5282,7 +5262,9 @@ class FunctionManager(BaseFunctionManager):
         implementation = _strip_custom_function_decorators(implementation)
 
         func_name_meta = func_data.get("name", "unknown")
-        print(f"[windows exec] Executing '{func_name_meta}' on remote Windows")
+        LOGGER.info(
+            f"{ICONS['windows_exec']} [windows exec] Executing '{func_name_meta}' on remote Windows",
+        )
 
         # Step 1: Get desktop URL
         desktop_url = await self._wait_for_remote_windows_vm_ready()
@@ -5374,10 +5356,10 @@ if __name__ == "__main__":
                     }
 
             # Step 6: Execute script
-            cwd = self.REMOTE_WINDOWS_WORKSPACE_DIR
+            cwd = self.REMOTE_WINDOWS_LOCAL_ROOT
             exec_command = f'& "{python_path}" "{script_filename}"'
-            print(
-                f"[windows exec] Starting script: {exec_command} - CWD: {cwd} - "
+            LOGGER.debug(
+                f"{ICONS['windows_exec']} [windows exec] Starting script: {exec_command} - CWD: {cwd} - "
                 f"Kwargs: {call_kwargs}",
             )
 
@@ -5398,7 +5380,9 @@ if __name__ == "__main__":
             stdout = exec_result.get("stdout", "")
             stderr = exec_result.get("stderr", "")
             exit_code = exec_result.get("exitCode")
-            print(f"[windows exec] Execution complete (exitCode={exit_code})")
+            LOGGER.info(
+                f"{ICONS['windows_exec']} [windows exec] Execution complete (exitCode={exit_code})",
+            )
 
             # Step 7: Read result file
             result_filename = f"_result_{exec_id}.json"
@@ -5479,7 +5463,6 @@ if __name__ == "__main__":
 
         # Extract RPC-bridgeable namespaces for subprocess execution paths.
         primitives = extra_namespaces.get("primitives")
-        computer_primitives = extra_namespaces.get("computer_primitives")
 
         # Handle execution based on venv and state_mode
         if exec_venv_id is None:
@@ -5579,7 +5562,6 @@ if __name__ == "__main__":
                 implementation=implementation,
                 language=language,
                 primitives=extra_namespaces.get("primitives"),
-                computer_primitives=extra_namespaces.get("computer_primitives"),
             )
 
         elif state_mode == "stateful":

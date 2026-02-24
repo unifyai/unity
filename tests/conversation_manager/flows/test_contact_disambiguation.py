@@ -9,7 +9,11 @@ These tests encode general behavioral invariants:
 We intentionally avoid overfitting to a specific prompt string by asserting:
 - multiple candidate identifiers are present
 - a disambiguation question is asked
-- the CM does not call `act` repeatedly for the same input
+- the CM does not call action tools repeatedly for the same input
+
+The disambiguation result is injected at both the Actor and ContactManager levels
+so the test is routing-agnostic: the LLM may use ``act`` (routed to Actor) or
+``ask_about_contacts`` (routed directly to ContactManager.ask).
 """
 
 from __future__ import annotations
@@ -23,6 +27,21 @@ from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager.events import SMSReceived, SMSSent
 
 pytestmark = pytest.mark.eval
+
+_ACTION_TOOLS = {
+    "act",
+    "ask_about_contacts",
+    "update_contacts",
+    "query_past_transcripts",
+}
+
+_DISAMBIGUATION_RESULT = (
+    'Found 3 contacts named "Bob":\n'
+    "1. Bob Miller — +15555550001\n"
+    "2. Bob Chen — +15555550002\n"
+    "3. Bob Williams — +15555550003\n\n"
+    "Which Bob would you like to interact with?"
+)
 
 
 class _ImmediateResultHandle(SteerableToolHandle):
@@ -66,15 +85,12 @@ class _DeterministicActor:
     """Actor stub that returns a deterministic multi-candidate disambiguation result."""
 
     async def act(self, description: str, **kwargs):  # type: ignore[override]
-        # The exact names are not important; we use them as stable identifiers for the test.
-        result = (
-            'Found 3 contacts named "Bob":\n'
-            "1. Bob Miller — +15555550001\n"
-            "2. Bob Chen — +15555550002\n"
-            "3. Bob Williams — +15555550003\n\n"
-            "Which Bob would you like to interact with?"
-        )
-        return _ImmediateResultHandle(result)
+        return _ImmediateResultHandle(_DISAMBIGUATION_RESULT)
+
+
+async def _deterministic_contact_ask(text: str, **kwargs) -> _ImmediateResultHandle:
+    """ContactManager.ask stub returning the same disambiguation result."""
+    return _ImmediateResultHandle(_DISAMBIGUATION_RESULT)
 
 
 @pytest.mark.asyncio
@@ -84,15 +100,19 @@ async def test_contact_lookup_disambiguation_is_not_lossy_and_does_not_loop(
 ):
     cm = initialized_cm
 
-    # Swap in deterministic Actor output so we can test CM behavior downstream of a
-    # multi-candidate tool result without depending on contact DB contents.
+    # Inject a deterministic disambiguation result on *both* routing paths so the
+    # test is agnostic to which tool the LLM picks:
+    #   act              → Actor.act          (monkeypatched below)
+    #   ask_about_contacts → ContactManager.ask (monkeypatched below)
     original_actor = cm.cm.actor
+    original_contact_ask = cm.cm.contact_manager.ask
     # Ensure Actor watcher tasks publish onto the same broker the step driver patches.
     # (Some CM helper modules cache a broker singleton at import time.)
     from unity.conversation_manager.domains import managers_utils as _managers_utils
 
     original_broker = getattr(_managers_utils, "event_broker", None)
     cm.cm.actor = _DeterministicActor()
+    cm.cm.contact_manager.ask = _deterministic_contact_ask
     try:
         _managers_utils.event_broker = cm.cm.event_broker
         result = await cm.step_until_wait(
@@ -104,15 +124,16 @@ async def test_contact_lookup_disambiguation_is_not_lossy_and_does_not_loop(
         )
     finally:
         cm.cm.actor = original_actor
+        cm.cm.contact_manager.ask = original_contact_ask
         if original_broker is not None:
             _managers_utils.event_broker = original_broker
 
-    # The key regression: CM should not re-delegate to Actor repeatedly once it has
+    # The key regression: CM should not re-delegate repeatedly once it has
     # a valid multi-candidate result and should be asking the user to choose.
-    act_calls = [t for t in cm.all_tool_calls if t == "act"]
-    assert len(act_calls) <= 1, (
-        "Expected CM to call `act` at most once for this input, then ask user and wait. "
-        f"all_tool_calls={cm.all_tool_calls}"
+    action_calls = [t for t in cm.all_tool_calls if t in _ACTION_TOOLS]
+    assert len(action_calls) <= 1, (
+        "Expected CM to call an action tool at most once for this input, "
+        f"then ask user and wait. all_tool_calls={cm.all_tool_calls}"
     )
 
     # We expect at least one SMS back to the boss/user.

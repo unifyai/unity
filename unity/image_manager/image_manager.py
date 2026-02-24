@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from ..common.llm_client import new_llm_client
 from ..common.log_utils import log as unity_log, create_logs as unity_create_logs
+from ..common.context_dump import make_messages_safe_for_context_dump
 import unify
 
 
@@ -124,6 +125,10 @@ class ImageHandle:
     def timestamp(self) -> datetime:
         return self._image.timestamp
 
+    @property
+    def filepath(self) -> Optional[str]:
+        return self._image.filepath
+
     # ------------------------------ Local-only fields ----------------------
     @property
     def annotation(self) -> Optional[str]:
@@ -158,6 +163,7 @@ class ImageHandle:
         caption: Optional[str] = None,
         timestamp: Optional[datetime] = None,
         data: Optional[Union[bytes, bytearray, str]] = None,
+        filepath: Optional[str] = None,
     ) -> None:
         """
         Update metadata for this image in-place.
@@ -167,6 +173,7 @@ class ImageHandle:
         - If the image is resolved (not pending), also persists to the backend
           via ImageManager.update_images.
         """
+        _PERSIST_KEYS = ("caption", "timestamp", "data", "filepath")
         updates: Dict[str, Any] = {}
         if caption is not None:
             updates["caption"] = caption
@@ -195,6 +202,12 @@ class ImageHandle:
                 self._image.data = data_b64
             except Exception:
                 pass
+        if filepath is not None:
+            updates["filepath"] = filepath
+            try:
+                self._image.filepath = filepath
+            except Exception:
+                pass
 
         if not updates:
             return
@@ -212,7 +225,7 @@ class ImageHandle:
         # Persist to backend
         if not self.is_pending:
             payload: Dict[str, Any] = {"image_id": self.image_id}
-            for k in ("caption", "timestamp", "data"):
+            for k in _PERSIST_KEYS:
                 if k in updates:
                     payload[k] = updates[k]
             try:
@@ -224,7 +237,7 @@ class ImageHandle:
         # If pending, coalesce updates and schedule deferred persistence after resolution
         try:
             with self._deferred_lock:
-                for k in ("caption", "timestamp", "data"):
+                for k in _PERSIST_KEYS:
                     if k in updates:
                         self._deferred_updates[k] = updates[k]
                 if (
@@ -407,6 +420,7 @@ class ImageHandle:
 
         # Optional: inject broader parent chat context as a system header
         if _parent_chat_context:
+            parent_ctx_safe = make_messages_safe_for_context_dump(_parent_chat_context)
             messages.append(
                 {
                     "role": "system",
@@ -416,7 +430,7 @@ class ImageHandle:
                         "## Parent Chat Context\n"
                         "This is the broader conversation context from which this image question "
                         "originated. It may help explain why this question is being asked.\n\n"
-                        f"{json.dumps(_parent_chat_context, indent=2)}\n\n"
+                        f"{json.dumps(parent_ctx_safe, indent=2)}\n\n"
                         "Your task: Analyze the provided image and answer the question. "
                         "Respond with plain text only, do not attempt to call other tools."
                     ),
@@ -526,7 +540,7 @@ class ImageHandle:
 
                 # Filter to supported keys
                 payload_body: Dict[str, Any] = {}
-                for k in ("caption", "timestamp", "data"):
+                for k in ("caption", "timestamp", "data", "filepath"):
                     if k in pending_updates:
                         payload_body[k] = pending_updates[k]
 
@@ -877,6 +891,7 @@ class ImageManager(BaseImageManager):
             "timestamp": row.get("timestamp") or datetime.utcnow(),
             "caption": row.get("caption"),
             "data": row.get("data"),
+            "filepath": row.get("filepath"),
         }
         [real_id] = self.add_images([payload])  # reuse existing robust path
         try:
@@ -914,7 +929,8 @@ class ImageManager(BaseImageManager):
         return_handles: bool = False,
     ) -> Union[List[int], List[Optional[ImageHandle]]]:
         """
-        Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
+        Add new images. Each item may include ``timestamp``, ``caption``, ``data``,
+        and ``filepath``.
 
         Extended support
         ----------------
@@ -963,6 +979,7 @@ class ImageManager(BaseImageManager):
                     "timestamp": ts,
                     "caption": payload.get("caption"),
                     "data": d_b64,
+                    "filepath": payload.get("filepath"),
                 }
                 try:
                     self._data_store.put(row_local)
@@ -1194,7 +1211,8 @@ class ImageManager(BaseImageManager):
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
         """
         Update existing images. Each update dict must include ``image_id`` and may
-        set ``timestamp``, ``caption``, and/or ``data``. Returns updated ids.
+        set ``timestamp``, ``caption``, ``data``, and/or ``filepath``.
+        Returns updated ids.
         """
         updated: List[int] = []
         for change in updates or []:
@@ -1208,6 +1226,8 @@ class ImageManager(BaseImageManager):
                 entries["timestamp"] = change["timestamp"]
             if "caption" in change:
                 entries["caption"] = change["caption"]
+            if "filepath" in change:
+                entries["filepath"] = change["filepath"]
             if "data" in change and change["data"] is not None:
                 d = change["data"]
                 if isinstance(d, (bytes, bytearray)):
@@ -1248,6 +1268,44 @@ class ImageManager(BaseImageManager):
                 pass
             updated.append(image_id)
         return updated
+
+    # ------------------------------ Resolution -----------------------------
+    @functools.wraps(BaseImageManager.resolve_filepath, updated=())
+    def resolve_filepath(self, filepath: str) -> int:
+        from pathlib import Path
+        from datetime import timezone
+
+        existing = self.filter_images(
+            filter=f"filepath == '{filepath}'",
+            limit=1,
+        )
+        if existing:
+            return existing[0].image_id
+
+        path = Path(filepath)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"No image with filepath '{filepath}' in the Images context "
+                f"and the file does not exist on disk",
+            )
+
+        b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
+        ids = self.add_images(
+            [
+                {
+                    "data": b64,
+                    "filepath": filepath,
+                    "timestamp": datetime.now(timezone.utc),
+                },
+            ],
+            synchronous=True,
+        )
+        image_id = ids[0] if ids else None
+        if image_id is None:
+            raise RuntimeError(
+                f"Backend rejected upload for filepath '{filepath}'",
+            )
+        return image_id
 
     # ------------------------------ Maintenance ---------------------------
     @functools.wraps(BaseImageManager.clear, updated=())

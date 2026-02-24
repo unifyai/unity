@@ -13,6 +13,7 @@ from unity.actor.environments.base import (
     BaseEnvironment,
     ToolMetadata,
     _ClarificationQueueInjector,
+    build_filtered_method_docs,
 )
 from unity.function_manager.primitives import Primitives, PrimitiveScope, get_registry
 
@@ -117,11 +118,6 @@ class StateManagerEnvironment(BaseEnvironment):
         tools: Dict[str, ToolMetadata] = {}
 
         for alias in sorted(self._primitive_scope.scoped_managers):
-            # Skip ComputerPrimitives; those belong to the `computer_primitives` environment.
-            # Note: "computer" is not in VALID_MANAGER_ALIASES so this is a defensive check.
-            if alias == "computer":
-                continue
-
             method_names = self._registry.primitive_methods(manager_alias=alias)
             for method_name in method_names:
                 fq_name = f"{self.namespace}.{alias}.{method_name}"
@@ -161,6 +157,14 @@ purely from memory.
   - `await primitives.<manager>.update(...)`, `.execute(...)`, `.refactor(...)` \
 are **impure** (they mutate state or start work).
 
+- **Don't ask before updating**: when the task involves storing, saving, or \
+modifying records, go straight to the mutation method (`.update(...)`, \
+`.execute(...)`, `.refactor(...)`) — do NOT first call `.ask(...)` on the same \
+manager to check existing state. Mutation methods already inspect existing \
+records before writing, so a preemptive `.ask(...)` is duplicative. Bundle the \
+full intent (including any "check if exists" logic) into the mutation call's \
+natural-language `text` argument.
+
 - **Prefer return values as evidence**: treat return values from state managers \
 as the primary ground truth.
 
@@ -169,6 +173,20 @@ in-flight control.
   You can either **await the result** for immediate use, or **return the handle \
 as the last expression** of `execute_code` to hand steering control back to the \
 outer loop (see `execute_code` docstring).
+  Prefer returning the handle when the operation may be long-running or likely \
+to need user steering (progress updates, corrections, cancellation). Prefer \
+awaiting when you need the result immediately for additional logic in the same \
+code block. If intent is neutral or uncertain, default to returning the handle \
+and only await when same-block composition truly requires it.
+
+- **Progress notifications around primitives calls**:
+  - Treat `primitives.*` calls as potentially long-running by default.
+  - Emit `notify({...})` before each primitives call so the outer loop can surface progress.
+  - If you await a primitives call and continue with additional steps, emit another \
+`notify({...})` with concrete completion details.
+  - If you return a handle directly, send one kickoff notification before returning \
+the handle.
+  - Keep notifications user-facing and high-level; avoid internal diagnostics.
 
   **SteerableToolHandle API:**
 
@@ -211,48 +229,7 @@ outer loop (see `execute_code` docstring).
     def _build_filtered_method_docs(self) -> str:
         """Build method-level documentation for only the allowed methods."""
         assert self._allowed_methods is not None
-
-        # Determine which managers have at least one allowed method.
-        allowed_aliases: dict[str, list[str]] = {}
-        for fq in sorted(self._allowed_methods):
-            parts = fq.split(".")
-            if len(parts) != 3 or parts[0] != self.namespace:
-                continue
-            alias, method = parts[1], parts[2]
-            allowed_aliases.setdefault(alias, []).append(method)
-
-        if not allowed_aliases:
-            return ""
-
-        lines = ["### Method Reference\n"]
-        for alias in sorted(allowed_aliases):
-            spec = self._registry.get_manager_spec(alias)
-            mgr_cls = (
-                self._registry._load_manager_class(spec.primitive_class_path)
-                if spec
-                else None
-            )
-
-            lines.append(f"\n#### `primitives.{alias}`")
-            if spec:
-                lines.append(f"*{spec.domain}* — {spec.description}")
-
-            for method_name in sorted(allowed_aliases[alias]):
-                sig_str = self._registry._format_method_signature(
-                    mgr_cls,
-                    method_name,
-                )
-                full_doc = self._registry._extract_method_docstring(
-                    mgr_cls,
-                    method_name,
-                )
-                compact_doc = self._registry._extract_summary_and_params(full_doc)
-                lines.append(f"\n**`.{method_name}{sig_str}`**")
-                if compact_doc:
-                    for doc_line in compact_doc.splitlines():
-                        lines.append(f"  {doc_line}")
-
-        return "\n".join(lines)
+        return build_filtered_method_docs(self._allowed_methods, self.namespace)
 
     async def capture_state(self) -> Dict[str, Any]:
         """State manager state is primarily evidenced via return values."""

@@ -100,11 +100,13 @@ class Contact(BaseModel):
         default=None,
         description="Must contain exactly one @ with characters on either side",
         pattern=r"^[^@]+@[^@]+$",
+        json_schema_extra={"unique": True},
     )
     phone_number: Optional[str] = Field(
         default=None,
         description="Optional leading +, then digits only",
         pattern=r"^\+?[0-9]+$",
+        json_schema_extra={"unique": True},
     )
     bio: Optional[str] = Field(
         default=None,

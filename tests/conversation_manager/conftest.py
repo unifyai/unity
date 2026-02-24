@@ -10,9 +10,11 @@ Uses **direct handler testing** pattern (same as ContactManager tests):
 - Direct state inspection
 - Works reliably with pytest-asyncio
 
-These tests use **real** state managers (ContactManager, TranscriptManager, etc.)
-with only the **Actor** being simulated (SimulatedActor) to avoid computer
-environment dependencies while still testing real database-backed behavior.
+These tests use **simulated** state managers (SimulatedActor,
+SimulatedContactManager, SimulatedTranscriptManager) to avoid real LLM
+calls and computer environment dependencies. The brain tools route
+directly to ContactManager/TranscriptManager (ask_about_contacts,
+update_contacts, query_past_transcripts), so those must also be simulated.
 
 Parallel execution is coordinated using scenario_file_lock (same pattern as
 ContactManager tests) to prevent race conditions when multiple test processes
@@ -22,8 +24,9 @@ try to create system contacts simultaneously.
 from __future__ import annotations
 
 import os
-import pytest
+from unittest.mock import patch
 
+import pytest
 import pytest_asyncio
 
 from tests.helpers import scenario_file_lock, get_or_create_contact
@@ -107,16 +110,54 @@ TEST_CONTACTS = [
 
 
 # =============================================================================
+# Universal comms isolation
+# =============================================================================
+
+_COMMS_MODULE = "unity.conversation_manager.domains.comms_utils"
+
+
+@pytest.fixture(autouse=True)
+def _stub_outbound_comms(request):
+    """Prevent real HTTP calls to the communication service.
+
+    Patches the four outbound ``comms_utils`` functions that make HTTP/Pub-Sub
+    calls to the communication service (SMS, email, phone calls, unify messages).
+    Every test in ``tests/conversation_manager/`` gets this automatically.
+
+    Tests that exercise the real ``comms_utils`` implementations (with their own
+    mocked aiohttp / SESSION_DETAILS) opt out via ``@pytest.mark.real_comms_functions``.
+    """
+    if "real_comms_functions" in request.keywords:
+        yield
+        return
+
+    async def _success(*args, **kwargs):
+        return {"success": True}
+
+    with (
+        patch(f"{_COMMS_MODULE}.send_sms_message_via_number", _success),
+        patch(f"{_COMMS_MODULE}.send_unify_message", _success),
+        patch(f"{_COMMS_MODULE}.send_email_via_address", _success),
+        patch(f"{_COMMS_MODULE}.start_call", _success),
+    ):
+        yield
+
+
+# =============================================================================
 # Module-level setup: Configure environment for in-process mode
 # =============================================================================
 
 
 def pytest_configure(config):
     """Configure environment variables before any tests run."""
-    # Only Actor is simulated - all other state managers use real implementations
-    # This avoids computer environment dependencies while testing real DB behavior
+    # Actor, ContactManager, and TranscriptManager are all simulated.
+    # The brain tools route to these managers directly (ask_about_contacts,
+    # update_contacts, query_past_transcripts), so they must be simulated
+    # to avoid real LLM calls and _LoggedHandle wrapping.
     os.environ["UNITY_ACTOR_IMPL"] = "simulated"
     os.environ["UNITY_ACTOR_SIMULATED_STEPS"] = "0"  # Allows pause+resume interactions
+    os.environ.setdefault("UNITY_CONTACT_IMPL", "simulated")
+    os.environ.setdefault("UNITY_TRANSCRIPT_IMPL", "simulated")
 
     # Disable optional managers not needed for conversation manager tests
     os.environ["UNITY_MEMORY_ENABLED"] = "false"

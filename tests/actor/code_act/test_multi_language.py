@@ -4,7 +4,6 @@ import asyncio
 
 import pytest
 from pydantic import BaseModel, Field
-from unittest.mock import AsyncMock
 
 from unity.actor.code_act_actor import CodeActActor
 
@@ -30,10 +29,7 @@ async def test_repo_navigation_and_analysis_via_shell_then_python():
     """
     RepoNavSummary.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
+    actor = CodeActActor(timeout=60)
 
     handle = await actor.act(
         "Do the following steps using ONLY JSON tool calls (no prose until the final answer):\n"
@@ -71,10 +67,7 @@ async def test_validation_error_self_correction():
     """
     ValidationRecoveryResult.model_rebuild()
 
-    actor = CodeActActor(headless=True, computer_mode="mock", timeout=60)
-    actor._computer_primitives.navigate = AsyncMock(return_value=None)
-    actor._computer_primitives.act = AsyncMock(return_value="Action completed")
-    actor._computer_primitives.observe = AsyncMock(return_value="Page content observed")
+    actor = CodeActActor(timeout=60)
 
     handle = await actor.act(
         "You MUST do these steps in order:\n"

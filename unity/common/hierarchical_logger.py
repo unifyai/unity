@@ -2,17 +2,19 @@
 unity/common/hierarchical_logger.py
 ===================================
 
-Hierarchical logging infrastructure for components that don't use async tool loops
-but still need consistent nested logging (e.g., ConversationManager).
+Central icon registry and hierarchical logging infrastructure.
 
 This module provides:
-1. SessionLogger - session-level logger with consistent label formatting
-2. Event-specific emoji icons (distinct from async tool loop icons)
-3. Integration with TOOL_LOOP_LINEAGE for nested hierarchy propagation
+1. ``ICONS`` / ``DEFAULT_ICON`` -- the single source of truth for all emoji
+   prefixes used across SessionLogger, LoopLogger, FastBrainLogger, and raw
+   ``LOGGER`` calls.
+2. ``SessionLogger`` -- session-level logger with consistent label formatting.
+3. Integration with ``TOOL_LOOP_LINEAGE`` for nested hierarchy propagation.
 """
 
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from secrets import token_hex
 from typing import Optional
@@ -26,18 +28,22 @@ SESSION_LINEAGE: ContextVar[list[str]] = ContextVar("SESSION_LINEAGE", default=[
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Emoji icons for ConversationManager events (distinct from async tool loop)
+# Central icon registry
+#
+# Every emoji prefix in the codebase MUST be defined here.  No other module
+# should hardcode emoji characters in log calls.
 # ─────────────────────────────────────────────────────────────────────────────
-# Async tool loop already uses: 🤖 🧑‍💻 💬 ⏸️ ▶️ ❓ ✅ 🖼️ 📦 ❌ ⚠️ 🛑 🛠️ 🔄 🔔 📝 🎬
-# We use distinct emojis for CM-specific events:
 
-CM_ICONS = {
-    # Communication events
+DEFAULT_ICON = "⬥"
+
+ICONS = {
+    # ── Communication events ────────────────────────────────────────────
     "phone_call_received": "📞",
     "phone_call_started": "📞",
     "phone_call_ended": "📞",
     "phone_call_sent": "📞",
     "phone_call_answered": "📞",
+    "phone_call_not_answered": "📞",
     "unify_meet_received": "🎥",
     "unify_meet_started": "🎥",
     "unify_meet_ended": "🎥",
@@ -45,40 +51,105 @@ CM_ICONS = {
     "sms_sent": "📱",
     "email_received": "📧",
     "email_sent": "📧",
-    "unify_message_received": "💌",
-    "unify_message_sent": "💌",
-    # Voice/utterance events
+    "unify_message_received": "💬",
+    "unify_message_sent": "💬",
+    "comms_outbound": "📤",
+    # ── Voice / utterance ───────────────────────────────────────────────
     "inbound_utterance": "🎤",
     "outbound_utterance": "🔊",
     "call_guidance": "🎙️",
-    # Session lifecycle
+    "user_speech": "🧑‍💻",
+    "user_state": "🎤",
+    "assistant_speech": "🔊",
+    # ── Guidance pipeline ───────────────────────────────────────────────
+    "guidance_received": "📨",
+    "guidance_applied": "🎙️",
+    "guidance_buffered": "⏳",
+    "guidance_say": "🗣️",
+    # ── Proactive speech ────────────────────────────────────────────────
+    "proactive_speech": "🗣️",
+    "proactive_debounce": "⏱️",
+    "proactive_decision": "🎯",
+    "proactive_deferred": "⏸️",
+    "proactive_dormant": "💤",
+    "proactive_speaking": "🗣️",
+    "proactive_published": "📤",
+    "proactive_cancelled": "🚫",
+    "proactive_error": "❌",
+    # ── Session / lifecycle ─────────────────────────────────────────────
     "session_start": "🚀",
     "session_end": "🏁",
+    "session_ready": "⚡",
     "startup": "⚡",
-    # LLM brain
-    "llm_thinking": "🧠",
-    "llm_response": "💡",
-    # State management
+    "lifecycle": "🚀",
+    "shutdown": "🏁",
+    "call_status": "📞",
+    # ── LLM brain ───────────────────────────────────────────────────────
+    "llm_log_file": "📝",
+    "llm_thinking": "🔄",
+    "llm_response": "🤖",
+    "llm_completed": "✅",
+    "llm_cancelled": "⏹️",
+    "llm_error": "❌",
+    # ── Async tool loop ─────────────────────────────────────────────────
+    "system_message": "📋",
+    "user_message": "🧑‍💻",
+    "tool_seeding": "⬇️",
+    "stop_requested": "🛑",
+    "early_exit": "⏹️",
+    "clarification": "❓",
+    "notification": "🔔",
+    "interjection": "💬",
+    "wait": "🕒",
+    "auto_cancel": "🔚",
+    "completed": "✅",
+    "pending": "⏳",
+    "pause": "⏸️",
+    "resume": "▶️",
+    # ── State management ────────────────────────────────────────────────
     "state_update": "📋",
-    "notification_injected": "📨",
+    "notification_injected": "🔔",
     "notification_unpinned": "🗑️",
-    "direct_message": "💭",
-    # Actor integration
+    "direct_message": "💬",
+    # ── Actor integration ───────────────────────────────────────────────
     "actor_request": "🎯",
     "actor_response": "📥",
-    "actor_result": "🏆",
-    "actor_clarification": "❔",
-    # Generic
+    "actor_result": "✅",
+    "actor_clarification": "❓",
+    # ── Infrastructure clusters ─────────────────────────────────────────
+    "managers_worker": "⚙️",
+    "file_sync": "🔀",
+    "ipc": "🔌",
+    "liveview": "🖥️",
+    "assistant_jobs": "📋",
+    "metrics": "📊",
+    "windows_exec": "💻",
+    "subscription": "📡",
+    "process_cleanup": "🧹",
+    # ── IPC direction ───────────────────────────────────────────────────
+    "ipc_inbound": "⬇️",
+    "ipc_outbound": "⬆️",
+    "ipc_error": "❌",
+    # ── Inbound comms & boss events ─────────────────────────────────────
+    "participant_comms": "📱",
+    "boss_event": "📣",
+    # ── Screenshots / media ─────────────────────────────────────────────
+    "screenshot": "📸",
+    # ── Generic / misc ──────────────────────────────────────────────────
     "event": "📣",
-    "ping": "💓",
+    "ping": "🏓",
     "summarize": "📑",
-    "proactive_speech": "🗣️",
+    "config": "📋",
+    "dispatch": "🚀",
+    "info": "ℹ️",
+    "warning": "⚠️",
+    "error": "❌",
 }
 
 
-def get_cm_icon(event_type: str) -> str:
-    """Get the emoji icon for a ConversationManager event type."""
-    return CM_ICONS.get(event_type.lower().replace(" ", "_"), "📣")
+def get_icon(event_type: str) -> str:
+    """Look up the emoji for *event_type*, falling back to ``DEFAULT_ICON``."""
+    return ICONS.get(event_type.lower().replace(" ", "_"), DEFAULT_ICON)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,9 +215,8 @@ class SessionLogger:
 
     def _build_label(self) -> str:
         """Build the hierarchical label string."""
-        parts = self._parent_lineage + [self._component_name]
-        base = "->".join(parts)
-        return f"{base}({self._suffix})"
+        parts = self._parent_lineage + [f"{self._component_name}({self._suffix})"]
+        return "->".join(parts)
 
     @property
     def label(self) -> str:
@@ -172,6 +242,16 @@ class SessionLogger:
         """
         return self.lineage
 
+    def _log(
+        self,
+        level: int,
+        event_type: str,
+        message: str,
+        icon_override: Optional[str] = None,
+    ) -> None:
+        icon = icon_override or get_icon(event_type)
+        LOGGER.log(level, f"{icon} [{self._label}] {message}")
+
     def info(
         self,
         event_type: str,
@@ -187,8 +267,7 @@ class SessionLogger:
             message: The log message
             icon_override: Optional icon to use instead of event-type lookup
         """
-        icon = icon_override or get_cm_icon(event_type)
-        LOGGER.info(f"{icon} [{self._label}] {message}")
+        self._log(logging.INFO, event_type, message, icon_override)
 
     def debug(
         self,
@@ -198,8 +277,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log a debug-level message with event-specific icon."""
-        icon = icon_override or get_cm_icon(event_type)
-        LOGGER.debug(f"{icon} [{self._label}] {message}")
+        self._log(logging.DEBUG, event_type, message, icon_override)
 
     def warning(
         self,
@@ -209,8 +287,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log a warning-level message with event-specific icon."""
-        icon = icon_override or get_cm_icon(event_type)
-        LOGGER.warning(f"{icon} [{self._label}] {message}")
+        self._log(logging.WARNING, event_type, message, icon_override)
 
     def error(
         self,
@@ -220,8 +297,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log an error-level message with event-specific icon."""
-        icon = icon_override or get_cm_icon(event_type)
-        LOGGER.error(f"{icon} [{self._label}] {message}")
+        self._log(logging.ERROR, event_type, message, icon_override)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Convenience methods for common event types
@@ -305,26 +381,19 @@ def make_child_loop_id(parent_logger: SessionLogger, method_name: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_hierarchy_label(lineage: list[str], suffix: str) -> str:
-    """Build a hierarchy label from lineage segments and a suffix.
+def build_hierarchy_label(lineage: list[str], suffix: str = "") -> str:
+    """Build a hierarchy label from lineage segments.
 
-    Format: ``seg1->seg2->...->segN(suffix)``
+    With suffixed hierarchy segments, the label is just ``"->".join(lineage)``
+    since each segment already carries its own suffix. The ``suffix`` parameter
+    is accepted for backward compatibility but ignored.
 
-    Examples
-    --------
-    - [] + "a1b2" -> "(a1b2)"
-    - ["CodeActActor.act"] + "a1b2" -> "CodeActActor.act(a1b2)"
-    - ["A", "B", "C"] + "a1b2" -> "A->B->C(a1b2)"
+    TODO: remove this function once all callers are migrated.
     """
     try:
-        # Use the same "->" separator as LoopConfig labels so logs stay consistent across
-        # async tool loops and boundary wrappers.
-        base = "->".join([str(x) for x in (lineage or []) if str(x)])
+        return "->".join([str(x) for x in (lineage or []) if str(x)]) or ""
     except Exception:
-        base = ""
-    if base:
-        return f"{base}({suffix})"
-    return f"({suffix})"
+        return ""
 
 
 def log_boundary_event(
