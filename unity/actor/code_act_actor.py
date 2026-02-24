@@ -46,11 +46,8 @@ from unity.function_manager.base import BaseFunctionManager
 from unity.function_manager.primitives import ComputerPrimitives
 from unity.actor.prompt_builders import build_code_act_prompt
 from unity.events.manager_event_logging import log_manager_call
-from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
-from unity.common.hierarchical_logger import (
-    build_hierarchy_label,
-    log_boundary_event,
-)
+from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE, _PENDING_LOOP_SUFFIX
+from unity.common.hierarchical_logger import log_boundary_event
 from unity.events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -939,23 +936,65 @@ class _StorageCheckHandle(SteerableToolHandle):
 
             # ── Phase 2: storage check ────────────────────────────────
             self._phase = "storage"
-            storage_handle = _start_storage_check_loop(
-                trajectory=trajectory,
-                ask_tools=ask_tools,
-                completed_tool_metadata=completed_tool_metadata,
-                actor=self._actor,
-                original_result=str(self._original_result),
+
+            _sc_suffix = _token_hex(2)
+            _sc_call_id = new_call_id()
+            _sc_parent = TOOL_LOOP_LINEAGE.get([])
+            _sc_parent_lineage = (
+                list(_sc_parent) if isinstance(_sc_parent, list) else []
             )
-
-            if storage_handle is None:
-                return
-
-            self._storage_handle = storage_handle
+            _sc_hierarchy = [
+                *_sc_parent_lineage,
+                f"StorageCheck({_sc_suffix})",
+            ]
+            _sc_lineage_token = TOOL_LOOP_LINEAGE.set(_sc_hierarchy)
+            _sc_suffix_token = _PENDING_LOOP_SUFFIX.set(_sc_suffix)
 
             try:
-                await self._storage_handle.result()
-            except Exception:
-                pass
+                await publish_manager_method_event(
+                    _sc_call_id,
+                    "CodeActActor",
+                    "StorageCheck",
+                    phase="incoming",
+                    display_label="Storing Reusable Skills",
+                    hierarchy=_sc_hierarchy,
+                )
+
+                storage_handle = _start_storage_check_loop(
+                    trajectory=trajectory,
+                    ask_tools=ask_tools,
+                    completed_tool_metadata=completed_tool_metadata,
+                    actor=self._actor,
+                    original_result=str(self._original_result),
+                )
+
+                if storage_handle is None:
+                    await publish_manager_method_event(
+                        _sc_call_id,
+                        "CodeActActor",
+                        "StorageCheck",
+                        phase="outgoing",
+                        display_label="Storing Reusable Skills",
+                        hierarchy=_sc_hierarchy,
+                    )
+                else:
+                    self._storage_handle = storage_handle
+                    try:
+                        await self._storage_handle.result()
+                    except Exception:
+                        pass
+
+                    await publish_manager_method_event(
+                        _sc_call_id,
+                        "CodeActActor",
+                        "StorageCheck",
+                        phase="outgoing",
+                        display_label="Storing Reusable Skills",
+                        hierarchy=_sc_hierarchy,
+                    )
+            finally:
+                _PENDING_LOOP_SUFFIX.reset(_sc_suffix_token)
+                TOOL_LOOP_LINEAGE.reset(_sc_lineage_token)
 
         except asyncio.CancelledError:
             pass
@@ -1237,11 +1276,11 @@ class CodeActActor(BaseCodeActActor):
         function_manager: Optional["FunctionManager"] = None,
         guidance_manager: Optional["GuidanceManager"] = None,
         can_compose: bool = True,
-        can_store: bool = True,
-        timeout: float = 1000,
+        can_store: bool = False,
+        timeout: float = 3600,
         model: Optional[str] = None,
         preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]] = None,
-        prompt_caching: Optional["PromptCacheParam"] = None,
+        prompt_caching: Optional["PromptCacheParam"] = ("system", "tools", "messages"),
         tool_policy: Union[ToolPolicyFn, None, object] = _USE_DEFAULT,
     ):
         """
@@ -1566,13 +1605,14 @@ class CodeActActor(BaseCodeActActor):
         )
 
     def _get_computer_tools(self) -> Dict[str, Callable]:
-        """Extracts computer-related methods from the ComputerPrimitives."""
+        """Extracts computer-related methods from the desktop namespace."""
         if not self._computer_primitives:
             return {}
+        desktop = self._computer_primitives.desktop
         return {
-            "navigate": self._computer_primitives.navigate,
-            "act": self._computer_primitives.act,
-            "observe": self._computer_primitives.observe,
+            "navigate": desktop.navigate,
+            "act": desktop.act,
+            "observe": desktop.observe,
         }
 
     def _get_extra_ask_tools(self) -> Dict[str, Callable] | None:
@@ -1580,7 +1620,7 @@ class CodeActActor(BaseCodeActActor):
         if self._computer_primitives is None:
             return None
 
-        computer_query = self._computer_primitives.query
+        computer_query = self._computer_primitives.desktop.query
 
         async def ask_computer_progress(
             question: str,
@@ -1589,7 +1629,7 @@ class CodeActActor(BaseCodeActActor):
         ) -> str:
             """Inspect the in-flight computer action loop via browser-agent memory.
 
-            Use this to check progress/state of ongoing ``primitives.computer.act(...)``
+            Use this to check progress/state of ongoing ``session.act(...)``
             work when the inspected transcript lacks enough detail (for example,
             placeholders or terse summaries). This is memory/history introspection,
             not a fresh page read and not a way to trigger new actions.
@@ -1740,8 +1780,7 @@ class CodeActActor(BaseCodeActActor):
             _call_id = new_call_id()
             _parent = TOOL_LOOP_LINEAGE.get([])
             _parent_lineage = list(_parent) if isinstance(_parent, list) else []
-            _hierarchy = [*_parent_lineage, "execute_code"]
-            _hierarchy_label = build_hierarchy_label(_hierarchy, _suffix)
+            _hierarchy = [*_parent_lineage, f"execute_code({_suffix})"]
             # Establish a boundary lineage frame so nested calls (e.g., FunctionManager-injected
             # functions calling state managers) keep a consistent parent->child chain.
             _lineage_token = TOOL_LOOP_LINEAGE.set(_hierarchy)
@@ -1753,13 +1792,12 @@ class CodeActActor(BaseCodeActActor):
                         "CodeActActor",
                         "execute_code",
                         hierarchy=_hierarchy,
-                        hierarchy_label=_hierarchy_label,
                         display_label="Running Code",
                         **payload,
                     )
                 except Exception as e:
                     log_boundary_event(
-                        _hierarchy_label,
+                        "->".join(_hierarchy),
                         f"Warning: failed to publish event: {type(e).__name__}: {e}",
                         icon="⚠️",
                         level="warning",
@@ -1769,7 +1807,7 @@ class CodeActActor(BaseCodeActActor):
                 await _pub_safe(phase="incoming")
             except Exception:
                 pass
-            log_boundary_event(_hierarchy_label, "Executing code...", icon="🛠️")
+            log_boundary_event("->".join(_hierarchy), "Executing code...", icon="🛠️")
 
             out: dict[str, Any] | None = None
             tb_str: str | None = None
@@ -2174,12 +2212,8 @@ class CodeActActor(BaseCodeActActor):
                 )
                 _ef_hierarchy = [
                     *_ef_parent_lineage,
-                    f"execute_function({function_name})",
+                    f"execute_function({function_name})({_ef_suffix})",
                 ]
-                _ef_hierarchy_label = build_hierarchy_label(
-                    _ef_hierarchy,
-                    _ef_suffix,
-                )
                 _ef_lineage_token = TOOL_LOOP_LINEAGE.set(_ef_hierarchy)
 
                 async def _ef_pub_safe(**payload: Any) -> None:
@@ -2189,13 +2223,12 @@ class CodeActActor(BaseCodeActActor):
                             "CodeActActor",
                             "execute_function",
                             hierarchy=_ef_hierarchy,
-                            hierarchy_label=_ef_hierarchy_label,
                             display_label=f"Running: {function_name}",
                             **payload,
                         )
                     except Exception as e:
                         log_boundary_event(
-                            _ef_hierarchy_label,
+                            "->".join(_ef_hierarchy),
                             f"Warning: failed to publish event: {type(e).__name__}: {e}",
                             icon="⚠️",
                             level="warning",
@@ -2206,7 +2239,7 @@ class CodeActActor(BaseCodeActActor):
                 except Exception:
                     pass
                 log_boundary_event(
-                    _ef_hierarchy_label,
+                    "->".join(_ef_hierarchy),
                     f"Executing function {function_name}...",
                     icon="🛠️",
                 )

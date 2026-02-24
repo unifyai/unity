@@ -82,15 +82,22 @@ async def test_nested_logging_hierarchy_labels(llm_config):
 
     # Presence checks for hierarchy payloads
     has_outer_only = any(
-        (evt.payload or {}).get("hierarchy") == ["Outer"] for evt in events
+        isinstance((evt.payload or {}).get("hierarchy"), list)
+        and len((evt.payload or {}).get("hierarchy")) == 1
+        and (evt.payload or {}).get("hierarchy")[0].startswith("Outer(")
+        for evt in events
     )
     has_outer_inner = any(
-        (evt.payload or {}).get("hierarchy") == ["Outer", "Inner"] for evt in events
+        isinstance((evt.payload or {}).get("hierarchy"), list)
+        and len((evt.payload or {}).get("hierarchy")) == 2
+        and (evt.payload or {}).get("hierarchy")[0].startswith("Outer(")
+        and (evt.payload or {}).get("hierarchy")[1].startswith("Inner(")
+        for evt in events
     )
     has_outer_inner_label = any(
         isinstance((evt.payload or {}).get("hierarchy_label"), str)
         and re.fullmatch(
-            r"Outer->Inner(?:\([0-9a-f]{4}\))?",
+            r"Outer\([0-9a-f]{4}\)->Inner\([0-9a-f]{4}\)",
             (evt.payload or {}).get("hierarchy_label"),
         )
         for evt in events
@@ -140,19 +147,24 @@ async def test_single_loop_logging_hierarchy_label(llm_config):
 
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=200)
 
-    has_solo = any((evt.payload or {}).get("hierarchy") == ["Solo"] for evt in events)
+    has_solo = any(
+        isinstance((evt.payload or {}).get("hierarchy"), list)
+        and len((evt.payload or {}).get("hierarchy")) == 1
+        and (evt.payload or {}).get("hierarchy")[0].startswith("Solo(")
+        for evt in events
+    )
     has_solo_label = any(
         isinstance((evt.payload or {}).get("hierarchy_label"), str)
         and re.fullmatch(
-            r"Solo(?:\([0-9a-f]{4}\))?",
+            r"Solo\([0-9a-f]{4}\)",
             (evt.payload or {}).get("hierarchy_label"),
         )
         for evt in events
     )
     has_nested_under_solo = any(
         isinstance((evt.payload or {}).get("hierarchy"), list)
-        and (evt.payload or {}).get("hierarchy")[:1] == ["Solo"]
         and len((evt.payload or {}).get("hierarchy")) > 1
+        and (evt.payload or {}).get("hierarchy")[0].startswith("Solo(")
         for evt in events
     )
 

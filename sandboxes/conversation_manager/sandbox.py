@@ -38,9 +38,7 @@ from sandboxes.conversation_manager.config_manager import (
 )
 from sandboxes.conversation_manager.agent_service_bootstrap import (
     free_agent_service_port,
-    get_agent_service_log_path,
     try_start_agent_service_direct,
-    try_auto_bootstrap_agent_service,
 )
 from sandboxes.conversation_manager.desktop_bootstrap import (
     try_start_desktop_direct,
@@ -140,7 +138,7 @@ def _build_worker_config(*, args: Any, actor_config: ActorConfig) -> dict:
         "computer_backend_mode": actor_config.computer_backend_mode,
         # Computer backend / agent-service
         "agent_server_url": getattr(args, "agent_server_url", None),
-        "agent_mode": getattr(args, "agent_mode", "desktop"),
+        "agent_mode": getattr(args, "agent_mode", "web-vm"),
         "headless": bool(getattr(args, "headless", False)),
         # UX
         "voice": bool(getattr(args, "voice", False)),
@@ -271,21 +269,21 @@ async def _run_gui_mode_multiprocess(*, args: Any, config: dict) -> bool:
         _terminate_process_tree(ui_process)
         _terminate_process_tree(worker_process)
 
-        # Best-effort cleanup: ensure agent-service / desktop container is not left
-        # running if the runtime process was terminated before it could shut down.
+        # Best-effort cleanup: stop both container and local agent-service.
         try:
-            if config.get("agent_mode") == "desktop":
-                await asyncio.to_thread(
-                    stop_desktop_container,
-                    progress=(lambda _m: None),
-                )
-            else:
-                await asyncio.to_thread(
-                    free_agent_service_port,
-                    repo_root=Path(__file__).resolve().parents[2],
-                    agent_server_url=config.get("agent_server_url"),
-                    progress=(lambda _m: None),
-                )
+            await asyncio.to_thread(
+                stop_desktop_container,
+                progress=(lambda _m: None),
+            )
+        except Exception:
+            pass
+        try:
+            await asyncio.to_thread(
+                free_agent_service_port,
+                repo_root=Path(__file__).resolve().parents[2],
+                agent_server_url=config.get("agent_server_url"),
+                progress=(lambda _m: None),
+            )
         except Exception:
             pass
 
@@ -318,9 +316,9 @@ async def _main_async() -> None:
     parser.add_argument(
         "--agent-mode",
         dest="agent_mode",
-        default="desktop",
-        choices=["web", "desktop"],
-        help="agent-service mode (default: desktop)",
+        default="web-vm",
+        choices=["web", "desktop", "web-vm"],
+        help="(deprecated, all modes are now active simultaneously)",
     )
     parser.add_argument(
         "--headless",
@@ -413,25 +411,11 @@ async def _main_async() -> None:
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
         log_file=".logs_conversation_sandbox.txt",
-        tcp_port=getattr(args, "log_tcp_port", 0) or 0,
-        http_tcp_port=getattr(args, "http_log_tcp_port", 0) or 0,
+        tcp_port=args.log_tcp_port,
+        http_tcp_port=args.http_log_tcp_port,
         unify_requests_log_file=".logs_unify_requests.txt" if args.debug else None,
     )
     LG.setLevel(logging.DEBUG if args.debug else logging.INFO)
-
-    from unity.logger import LOGGER as _UNITY_LOGGER
-
-    class _ExcludeSDKNoise(logging.Filter):
-        _PREFIXES = ("unify", "unillm", "PIL")
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            return not any((record.name or "").startswith(p) for p in self._PREFIXES)
-
-    for _h in logging.getLogger().handlers:
-        if isinstance(_h, logging.FileHandler):
-            _h.addFilter(_ExcludeSDKNoise())
-            _UNITY_LOGGER.addHandler(_h)
-            break
     try:
         LG.info(
             "Sandbox starting pid=%s project=%s gui=%s",
@@ -519,134 +503,91 @@ async def _main_async() -> None:
                 )
 
             async def _attempt_agent_service_recovery() -> None:
+                """Start both the Docker container (desktop + web-vm) and
+                a local agent-service (web mode).  Either may silently
+                fail without blocking the other.
                 """
-                One consolidated action that branches on agent_mode:
-                - desktop: start the Docker desktop container (bundles agent-service)
-                - web: start agent-service locally (direct, then auto-bootstrap)
-                """
-                agent_server_url = getattr(
+                container_url = getattr(
                     args,
                     "agent_server_url",
                     "http://localhost:3000",
                 )
-                agent_mode = getattr(args, "agent_mode", "desktop")
+                local_url = getattr(args, "local_url", "http://localhost:3001")
 
-                if agent_mode == "desktop":
-                    # Desktop mode: Docker container handles everything.
-                    existing_container = getattr(args, "_desktop_container_id", None)
-                    if existing_container is not None:
-                        return
-
+                # 1) Container (desktop + web-vm)
+                existing_container = getattr(args, "_desktop_container_id", None)
+                if existing_container is None:
                     try:
-                        print("\n[desktop] Attempting to start (direct)...\n")
-                        res1 = await asyncio.to_thread(
+                        print("\n[container] Attempting to start (direct)...\n")
+                        res = await asyncio.to_thread(
                             try_start_desktop_direct,
                             repo_root=project_root,
-                            agent_server_url=agent_server_url,
+                            agent_server_url=container_url,
                             progress=(lambda m: print(m)),
                         )
-                        if res1.ok:
-                            setattr(args, "_desktop_container_id", res1.container_id)
-                            print(f"[desktop] {res1.summary}\n")
-                            return
-                        print(f"[desktop] {res1.summary}\n")
-                    except Exception as exc:
-                        print(f"[desktop] Direct start failed: {exc}\n")
-
-                    try:
-                        print("[desktop] Falling back to auto-bootstrap...\n")
-                        res2 = await asyncio.to_thread(
-                            try_auto_bootstrap_desktop,
-                            repo_root=project_root,
-                            agent_server_url=agent_server_url,
-                            progress=(lambda m: print(m)),
-                        )
-                        if res2.ok:
-                            setattr(args, "_desktop_container_id", res2.container_id)
-                            print(f"[desktop] {res2.summary}\n")
-                            return
-                        print(f"[desktop] {res2.summary}\n")
-                    except Exception as exc:
-                        print(f"[desktop] Auto-bootstrap failed: {exc}\n")
-                else:
-                    # Web mode: local agent-service process.
-                    existing = getattr(args, "_agent_service_process", None)
-                    if (
-                        existing is not None
-                        and hasattr(existing, "poll")
-                        and existing.poll() is None
-                    ):
-                        return
-
-                    try:
-                        setattr(
-                            args,
-                            "_agent_service_log_path",
-                            str(
-                                get_agent_service_log_path(
+                        if res.ok:
+                            setattr(args, "_desktop_container_id", res.container_id)
+                            setattr(args, "container_url", container_url)
+                            print(f"[container] {res.summary}\n")
+                        else:
+                            print(f"[container] {res.summary}\n")
+                            try:
+                                print("[container] Falling back to auto-bootstrap...\n")
+                                res2 = await asyncio.to_thread(
+                                    try_auto_bootstrap_desktop,
                                     repo_root=project_root,
-                                    agent_server_url=str(agent_server_url),
-                                ),
-                            ),
-                        )
-                    except Exception:
-                        pass
+                                    agent_server_url=container_url,
+                                    progress=(lambda m: print(m)),
+                                )
+                                if res2.ok:
+                                    setattr(
+                                        args,
+                                        "_desktop_container_id",
+                                        res2.container_id,
+                                    )
+                                    setattr(args, "container_url", container_url)
+                                    print(f"[container] {res2.summary}\n")
+                                else:
+                                    print(f"[container] {res2.summary}\n")
+                            except Exception as exc:
+                                print(f"[container] Auto-bootstrap failed: {exc}\n")
+                    except Exception as exc:
+                        print(f"[container] Direct start failed: {exc}\n")
 
+                # 2) Local agent-service (web mode) -- best-effort
+                existing_proc = getattr(args, "_agent_service_process", None)
+                if existing_proc is None or not (
+                    hasattr(existing_proc, "poll") and existing_proc.poll() is None
+                ):
                     try:
                         await asyncio.to_thread(
                             free_agent_service_port,
                             repo_root=project_root,
-                            agent_server_url=agent_server_url,
+                            agent_server_url=local_url,
                             progress=(lambda m: print(m)),
                         )
-                        print("\n[agent-service] Attempting to start (direct)...\n")
-                        res1 = await asyncio.to_thread(
+                        print("\n[local-web] Attempting to start agent-service...\n")
+                        res = await asyncio.to_thread(
                             try_start_agent_service_direct,
                             repo_root=project_root,
-                            agent_server_url=agent_server_url,
+                            agent_server_url=local_url,
                             progress=(lambda m: print(m)),
                         )
-                        if res1.ok and res1.process is not None:
-                            setattr(args, "_agent_service_process", res1.process)
-                            print(f"[agent-service] {res1.summary}\n")
-                            return
-                        if res1.process is not None:
-                            try:
-                                res1.process.terminate()
-                                res1.process.wait(timeout=2.0)
-                            except Exception:
+                        if res.ok and res.process is not None:
+                            setattr(args, "_agent_service_process", res.process)
+                            setattr(args, "local_url", local_url)
+                            print(f"[local-web] {res.summary}\n")
+                        else:
+                            if res.process is not None:
                                 try:
-                                    res1.process.kill()
+                                    res.process.terminate()
                                 except Exception:
                                     pass
-                        print(f"[agent-service] {res1.summary}\n")
+                            print(f"[local-web] {res.summary} (web mode unavailable)\n")
                     except Exception as exc:
-                        print(f"[agent-service] Direct start failed: {exc}\n")
-
-                    try:
-                        print("[agent-service] Falling back to auto-bootstrap...\n")
-                        res2 = await asyncio.to_thread(
-                            try_auto_bootstrap_agent_service,
-                            repo_root=project_root,
-                            agent_server_url=agent_server_url,
-                            progress=(lambda m: print(m)),
+                        print(
+                            f"[local-web] Start failed: {exc} (web mode unavailable)\n",
                         )
-                        if res2.ok and res2.process is not None:
-                            setattr(args, "_agent_service_process", res2.process)
-                            print(f"[agent-service] {res2.summary}\n")
-                            return
-                        if res2.process is not None:
-                            try:
-                                res2.process.terminate()
-                                res2.process.wait(timeout=2.0)
-                            except Exception:
-                                try:
-                                    res2.process.kill()
-                                except Exception:
-                                    pass
-                        print(f"[agent-service] {res2.summary}\n")
-                    except Exception as exc:
-                        print(f"[agent-service] Auto-bootstrap failed: {exc}\n")
 
             # In REPL mode, we can optionally attempt agent-service recovery before
             # validation. In multi-process GUI mode, the worker owns this lifecycle.
@@ -657,9 +598,7 @@ async def _main_async() -> None:
                 ):
                     await _attempt_agent_service_recovery()
 
-            vr = await asyncio.to_thread(
-                cfg_mgr.validate_config,
-                selected,
+            _validate_kwargs = dict(
                 agent_server_url=getattr(
                     args,
                     "agent_server_url",
@@ -667,8 +606,25 @@ async def _main_async() -> None:
                 ),
                 require_agent_service_running=(not bool(getattr(args, "gui", False))),
             )
+            vr = await asyncio.to_thread(
+                cfg_mgr.validate_config,
+                selected,
+                **_validate_kwargs,
+            )
             if vr.ok:
                 break
+
+            # Auto-recover: if agent-service is down, try starting it before
+            # falling through to the interactive error prompt.
+            if not bool(getattr(args, "gui", False)) and _should_offer_agent_help():
+                await _attempt_agent_service_recovery()
+                vr = await asyncio.to_thread(
+                    cfg_mgr.validate_config,
+                    selected,
+                    **_validate_kwargs,
+                )
+                if vr.ok:
+                    break
 
             print("❌ Configuration Error")
             print("═══════════════════════════════════════════════════════════")
@@ -802,6 +758,7 @@ async def _main_async() -> None:
             except Exception:
                 pass
             print(line)
+            print("> ", end="", flush=True)
             try:
                 r = getattr(args, "_router", None)
                 if r is not None:

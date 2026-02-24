@@ -159,10 +159,4 @@ class ScenarioGenerator:
             await self.publisher.publish_event(event)
             published += 1
 
-        # Best-effort: return to idle after seeding.
-        try:
-            self.state.brain_run_in_flight = False
-        except Exception:
-            pass
-
         print(f"✅ Published {published} event(s) into ConversationManager.")

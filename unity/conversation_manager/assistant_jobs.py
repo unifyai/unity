@@ -185,7 +185,7 @@ def mark_job_label(job_name: str, status: str):
             timeout=10,
         )
         if resp.ok:
-            LOGGER.info(
+            LOGGER.debug(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Marked job as {status}: {job_name}",
             )
         else:
@@ -237,7 +237,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
         if existing_logs:
             log = existing_logs[0]
             log.update_entries(job_name=job_name)
-            LOGGER.info(
+            LOGGER.debug(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with job_name={job_name}",
             )
 
@@ -278,7 +278,7 @@ def log_job_startup(job_name: str, user_id: str, assistant_id: str):
             traceback.print_exc()
             liveview_url = None
         log.update_entries(liveview_url=liveview_url)
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Updated record with liveview_url={liveview_url}",
         )
 
@@ -310,7 +310,7 @@ def _stop_vm(assistant_id: str, vm_type: str) -> None:
             timeout=60,
         )
         if response.ok:
-            LOGGER.info(
+            LOGGER.debug(
                 f"{ICONS['assistant_jobs']} [assistant_jobs] {vm_type.capitalize()} VM stopped for assistant "
                 f"{assistant_id}: {response.json()}",
             )
@@ -362,7 +362,7 @@ def mark_job_done(job_name: str):
     if _session_start_perf is not None:
         dur = time.perf_counter() - _session_start_perf
         _m_session_dur.record(dur)
-        LOGGER.info(
+        LOGGER.debug(
             f"{ICONS['assistant_jobs']} [assistant_jobs] Session duration: {dur:.1f}s",
         )
 

@@ -546,13 +546,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             new_call_id as _new_call_id,
             publish_manager_method_event as _pub_mm,
         )
-        from ..common.hierarchical_logger import build_hierarchy_label as _build_hl
 
         _ask_call_id = _new_call_id()
         _ask_suffix = _token_hex(2)
         _ask_manager = (self._loop_id or "").split(".")[0] or "unknown"
-        _ask_hierarchy = [*_sibling_lineage, loop_id_label]
-        _ask_hierarchy_label = _build_hl(_ask_hierarchy, _ask_suffix)
+        _ask_hierarchy = [*_sibling_lineage, f"{loop_id_label}({_ask_suffix})"]
 
         await _pub_mm(
             _ask_call_id,
@@ -562,7 +560,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             display_label="Answering Question",
             question=question,
             hierarchy=_ask_hierarchy,
-            hierarchy_label=_ask_hierarchy_label,
         )
 
         # The question is sent as a plain user message (context is in system message)
@@ -606,7 +603,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     display_label="Answering Question",
                     answer=ans if isinstance(ans, str) else str(ans),
                     hierarchy=_ask_hierarchy,
-                    hierarchy_label=_ask_hierarchy_label,
                 )
                 return ans
 
@@ -639,7 +635,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 display_label="Answering Question",
                 answer=answer if isinstance(answer, str) else str(answer),
                 hierarchy=_ask_hierarchy,
-                hierarchy_label=_ask_hierarchy_label,
             )
             return answer, inspection_client.messages
 

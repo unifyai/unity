@@ -103,6 +103,25 @@ async def _delete_room(room_name: str) -> None:
         await lk.aclose()
 
 
+async def _dispatch_agent(room_name: str) -> None:
+    """Explicitly dispatch the agent to the room via the LiveKit API.
+
+    In dev mode, auto-dispatch is unreliable (multiprocessing child may not
+    connect in time). In start mode, dispatch is always required. This call
+    is idempotent — LiveKit ignores duplicate dispatches.
+    """
+    lk = api.LiveKitAPI()
+    try:
+        await lk.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                room=room_name,
+                agent_name=room_name,
+            ),
+        )
+    finally:
+        await lk.aclose()
+
+
 # ── Output suppression ───────────────────────────────────────────────────
 
 
@@ -462,13 +481,24 @@ async def _wait_for_readiness(
 # ── Public API ───────────────────────────────────────────────────────────
 
 
+def _restore_call_manager_methods(cm) -> None:
+    """Undo test mocks on call_manager so live voice can use the real methods."""
+    from unity.conversation_manager.domains.call_manager import LivekitCallManager
+
+    mgr = cm.call_manager
+    for name in ("start_call", "start_unify_meet"):
+        real = getattr(LivekitCallManager, name, None)
+        if real is not None:
+            setattr(mgr, name, real.__get__(mgr, type(mgr)))
+
+
 async def start_session(
     cm,
     contact: dict,
     boss: dict,
     *,
     open_browser: bool = True,
-    ready_timeout_seconds: float = 20.0,
+    ready_timeout_seconds: float = 45.0,
 ) -> LiveVoiceSession:
     """Create a LiveKit room, spawn voice agent, and wait for readiness."""
     livekit_url = _require_env("LIVEKIT_URL")
@@ -476,14 +506,12 @@ async def start_session(
     _require_env("LIVEKIT_API_SECRET")
 
     room_name = f"sandbox_{uuid.uuid4().hex[:8]}"
-    agent_name = f"sandbox_{uuid.uuid4().hex[:8]}"
 
     _ensure_call_manager_config(cm)
+    _restore_call_manager_methods(cm)
     cm.call_manager.call_contact = contact
     await _create_room(room_name)
 
-    # The subprocess runs ``agents.cli.run_app()`` in "dev" mode which
-    # auto-joins the room — no separate dispatch_agent() call needed.
     voice_agent_log = _voice_agent_log_path()
     log_fh, restore = _spawn_quiet(voice_agent_log)
     try:
@@ -495,13 +523,22 @@ async def start_session(
     finally:
         restore()
 
+    # Give the agent worker time to register with the LiveKit server,
+    # then explicitly dispatch it to the room.  Dev-mode auto-dispatch is
+    # unreliable and UNITY_COMMS_URL is typically unset in the sandbox.
+    await asyncio.sleep(8)
+    try:
+        await _dispatch_agent(room_name)
+    except Exception:
+        pass  # best-effort; readiness poll will detect success
+
     user_token = _generate_user_token(room_name)
     playground_base = _ensure_playground_server()
     playground_url = _build_playground_url(playground_base, livekit_url, user_token)
 
     session = LiveVoiceSession(
         room_name=room_name,
-        agent_name=agent_name,
+        agent_name=room_name,
         user_token=user_token,
         livekit_url=livekit_url,
         playground_url=playground_url,

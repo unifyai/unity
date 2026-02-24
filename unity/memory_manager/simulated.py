@@ -67,6 +67,7 @@ class SimulatedMemoryManager(MemoryManager):
             knowledge_manager=km,
             task_scheduler=ts,
             config=cfg,
+            loop=loop,
         )
 
     # ------------------------------------------------------------------ #

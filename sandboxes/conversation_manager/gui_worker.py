@@ -35,7 +35,6 @@ from dotenv import load_dotenv
 from sandboxes.utils import activate_project, configure_sandbox_logging
 
 from sandboxes.conversation_manager.agent_service_bootstrap import (
-    try_auto_bootstrap_agent_service,
     try_start_agent_service_direct,
     free_agent_service_port,
 )
@@ -210,26 +209,20 @@ def _filter_kwargs_for_callable(fn: Any, kwargs: dict[str, Any]) -> dict[str, An
 class WorkerSandboxState:
     """
     Minimal sandbox state needed by `CommandRouter` + `subscribe_to_responses`.
-
-    UI-specific state (e.g. "steering hint visible") is intentionally omitted.
     """
 
     chat_history: list[dict] = field(default_factory=list)
     in_call: bool = False
-    brain_run_in_flight: bool = False
-    paused: bool = False
+    in_meet: bool = False
     last_event_published_at: float = 0.0
-    queued_events: list[Any] = field(default_factory=list)
     awaiting_config_choice: bool = False
     pending_clarification: bool = False
 
     def reset_ephemeral(self) -> None:
         self.chat_history.clear()
         self.in_call = False
-        self.brain_run_in_flight = False
-        self.paused = False
+        self.in_meet = False
         self.last_event_published_at = 0.0
-        self.queued_events.clear()
         self.awaiting_config_choice = False
         self.pending_clarification = False
 
@@ -465,7 +458,7 @@ def _build_args_namespace(*, config: dict, sender: _Sender) -> Any:
     if not hasattr(args, "headless"):
         setattr(args, "headless", False)
     if not hasattr(args, "agent_mode"):
-        setattr(args, "agent_mode", "desktop")
+        setattr(args, "agent_mode", "web-vm")
     if not hasattr(args, "real_comms"):
         setattr(args, "real_comms", False)
     if not hasattr(args, "auto_confirm"):
@@ -754,7 +747,7 @@ async def _state_broadcaster(
     last: tuple[bool, bool, bool] | None = None
     while not stop_event.is_set():
         try:
-            active = bool(getattr(state, "brain_run_in_flight", False))
+            active = False
             in_call = bool(getattr(state, "in_call", False))
             pending = bool(getattr(state, "pending_clarification", False))
             cur = (active, in_call, pending)
@@ -791,22 +784,6 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
             unify_requests_log_file=None,
         )
         LG.setLevel(logging.INFO)
-
-        from unity.logger import LOGGER as _UNITY_LOGGER
-
-        class _ExcludeSDKNoise(logging.Filter):
-            _PREFIXES = ("unify", "unillm", "PIL")
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                return not any(
-                    (record.name or "").startswith(p) for p in self._PREFIXES
-                )
-
-        for _h in logging.getLogger().handlers:
-            if isinstance(_h, logging.FileHandler):
-                _h.addFilter(_ExcludeSDKNoise())
-                _UNITY_LOGGER.addHandler(_h)
-                break
         try:
             import os as _os
 
@@ -846,80 +823,70 @@ async def _run_worker(*, ui_to_worker, worker_to_ui, config: dict) -> None:
         if actor_cfg.actor_type == "codeact_real":
             from unity.function_manager.primitives import DEFAULT_AGENT_SERVER_URL
 
-            agent_server_url = (
+            container_url = (
                 getattr(args, "agent_server_url", None) or DEFAULT_AGENT_SERVER_URL
             )
-            agent_mode = getattr(args, "agent_mode", "desktop")
+            local_url = getattr(args, "local_url", "http://localhost:3001")
             do_bootstrap = bool(getattr(args, "agent_service_bootstrap", False))
 
-            if agent_mode == "desktop":
-                # Desktop mode: start the Docker container (bundles agent-service).
-                if do_bootstrap:
-                    res = await asyncio.to_thread(
-                        try_auto_bootstrap_desktop,
-                        repo_root=repo_root,
-                        agent_server_url=agent_server_url,
-                        progress=lambda m: sender.send_lines([str(m)]),
-                    )
-                else:
-                    res = await asyncio.to_thread(
-                        try_start_desktop_direct,
-                        repo_root=repo_root,
-                        agent_server_url=agent_server_url,
-                        progress=lambda m: sender.send_lines([str(m)]),
-                    )
-                if not res.ok:
-                    sender.send_error(res.summary)
-                    sender.send_worker_exit(restart=False, config=None)
-                    return
-                desktop_container_id = res.container_id
-                sender.send_lines([f"[desktop] {res.summary}"])
-                try:
-                    import webbrowser
-
-                    from sandboxes.conversation_manager.desktop_bootstrap import (
-                        _desktop_novnc_url,
-                    )
-
-                    url = _desktop_novnc_url()
-                    webbrowser.open(url)
-                    sender.send_lines(
-                        [f"🖥️  Opened assistant desktop in browser: {url}"],
-                    )
-                except Exception:
-                    pass
+            # 1) Container (desktop + web-vm)
+            if do_bootstrap:
+                res = await asyncio.to_thread(
+                    try_auto_bootstrap_desktop,
+                    repo_root=repo_root,
+                    agent_server_url=container_url,
+                    progress=lambda m: sender.send_lines([str(m)]),
+                )
             else:
-                # Web mode: start a local agent-service process.
-                # Free the port first (only kills repo-owned agent-service).
-                try:
-                    free_agent_service_port(
-                        repo_root=repo_root,
-                        agent_server_url=agent_server_url,
-                        progress=lambda m: sender.send_lines([str(m)]),
-                    )
-                except Exception:
-                    pass
+                res = await asyncio.to_thread(
+                    try_start_desktop_direct,
+                    repo_root=repo_root,
+                    agent_server_url=container_url,
+                    progress=lambda m: sender.send_lines([str(m)]),
+                )
+            if not res.ok:
+                sender.send_error(res.summary)
+                sender.send_worker_exit(restart=False, config=None)
+                return
+            desktop_container_id = res.container_id
+            setattr(args, "container_url", container_url)
+            sender.send_lines([f"[container] {res.summary}"])
+            try:
+                import webbrowser
+                from sandboxes.conversation_manager.desktop_bootstrap import (
+                    _desktop_novnc_url,
+                )
 
-                if do_bootstrap:
-                    res = await asyncio.to_thread(
-                        try_auto_bootstrap_agent_service,
-                        repo_root=repo_root,
-                        agent_server_url=agent_server_url,
-                        progress=lambda m: sender.send_lines([str(m)]),
-                    )
+                url = _desktop_novnc_url()
+                webbrowser.open(url)
+                sender.send_lines(
+                    [f"Opened assistant desktop in browser: {url}"],
+                )
+            except Exception:
+                pass
+
+            # 2) Local agent-service (web mode) -- best-effort
+            try:
+                free_agent_service_port(
+                    repo_root=repo_root,
+                    agent_server_url=local_url,
+                    progress=lambda m: sender.send_lines([str(m)]),
+                )
+                local_res = await asyncio.to_thread(
+                    try_start_agent_service_direct,
+                    repo_root=repo_root,
+                    agent_server_url=local_url,
+                    progress=lambda m: sender.send_lines([str(m)]),
+                )
+                if local_res.ok and local_res.process is not None:
+                    agent_proc = local_res.process
+                    setattr(args, "_agent_service_process", agent_proc)
+                    setattr(args, "local_url", local_url)
+                    sender.send_lines([f"[local-web] {local_res.summary}"])
                 else:
-                    res = await asyncio.to_thread(
-                        try_start_agent_service_direct,
-                        repo_root=repo_root,
-                        agent_server_url=agent_server_url,
-                        progress=lambda m: sender.send_lines([str(m)]),
-                    )
-                if not res.ok:
-                    sender.send_error(res.summary)
-                    sender.send_worker_exit(restart=False, config=None)
-                    return
-                agent_proc = res.process
-                setattr(args, "_agent_service_process", agent_proc)
+                    sender.send_lines(["[local-web] Unavailable (web mode disabled)"])
+            except Exception:
+                sender.send_lines(["[local-web] Failed to start (web mode disabled)"])
     except Exception as exc:
         sender.send_error(
             f"agent-service bootstrap failed: {type(exc).__name__}: {exc}",

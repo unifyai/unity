@@ -175,25 +175,27 @@ class ActorFactory:
             return cp
 
         # real
-        agent_server_url = getattr(args, "agent_server_url", None)
+        container_url = getattr(args, "container_url", None) or getattr(
+            args,
+            "agent_server_url",
+            None,
+        )
+        local_url = getattr(args, "local_url", None)
         progress("[computer] Connecting to agent-service...")
         cp = ComputerPrimitives(
-            headless=bool(getattr(args, "headless", False)),
             computer_mode="magnitude",
-            agent_mode=getattr(args, "agent_mode", "desktop"),
-            agent_server_url=str(agent_server_url),
-            connect_now=True,
+            container_url=str(container_url) if container_url else None,
+            local_url=str(local_url) if local_url else None,
         )
         activity = ComputerActivity()
         setattr(args, "_computer_activity", activity)
-        # We only know "connected" if `connect_now` succeeded.
         activity.mark_connected_sync(True)
         install_computer_activity_hooks(
             computer_primitives=cp,
             activity=activity,
             emit_line=getattr(args, "_computer_log_sink", None),
         )
-        progress("✓ Computer ready (agent-service connected)")
+        progress("✓ Computer ready (backend initialized)")
         return cp
 
     @staticmethod

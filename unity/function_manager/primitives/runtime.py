@@ -30,7 +30,6 @@ from unity.function_manager.primitives.registry import (
 from unity.manager_registry import SingletonABCMeta
 
 if TYPE_CHECKING:
-    from PIL import Image
     from unity.function_manager.computer_backends import ComputerBackend
     from unity.contact_manager.contact_manager import ContactManager
     from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -55,18 +54,180 @@ DEFAULT_AGENT_SERVER_URL = "http://localhost:3000"
 _vm_ready = threading.Event()
 
 
+_COMPUTER_METHODS = (
+    "act",
+    "observe",
+    "query",
+    "navigate",
+    "get_links",
+    "get_content",
+    "get_screenshot",
+)
+
+
+def _make_session_method(
+    method_name: str,
+    owner: "ComputerPrimitives",
+    session_resolver,
+):
+    """Build a wrapped async method that routes through a session.
+
+    ``session_resolver`` is an async callable returning a ``ComputerSession``.
+    Shared by ``_ComputerNamespace`` (lazy singleton) and ``WebSessionHandle``
+    (bound instance).
+    """
+    from unity.function_manager.computer_backends import ComputerSession
+
+    if method_name == "get_screenshot":
+
+        async def screenshot_wrapper(*args, **kwargs):
+            kwargs.pop("_clarification_up_q", None)
+            kwargs.pop("_clarification_down_q", None)
+            if not _vm_ready.is_set():
+                ready = await asyncio.to_thread(_vm_ready.wait, 300)
+                if not ready:
+                    raise RuntimeError(
+                        "Managed VM did not become ready within 5 minutes",
+                    )
+            import base64, io
+            from PIL import Image as _Image
+
+            session = await session_resolver()
+            b64 = await session.get_screenshot()
+            return _Image.open(io.BytesIO(base64.b64decode(b64)))
+
+        screenshot_wrapper.__name__ = method_name
+        from unity.function_manager.computer_backends import ComputerBackend
+
+        screenshot_wrapper.__doc__ = (
+            getattr(ComputerBackend, method_name, None).__doc__
+            or getattr(ComputerSession, method_name, None).__doc__
+        )
+        return screenshot_wrapper
+
+    async def wrapper(*args, **kwargs):
+        kwargs.pop("_clarification_up_q", None)
+        kwargs.pop("_clarification_down_q", None)
+        if not _vm_ready.is_set():
+            ready = await asyncio.to_thread(_vm_ready.wait, 300)
+            if not ready:
+                raise RuntimeError("Managed VM did not become ready within 5 minutes")
+        if method_name in owner._SECRET_INJECTED_METHODS and args:
+            resolved = await owner.secret_manager.from_placeholder(args[0])
+            args = (resolved,) + args[1:]
+        session = await session_resolver()
+        return await getattr(session, method_name)(*args, **kwargs)
+
+    wrapper.__name__ = method_name
+    # Prefer the rich docstrings from ComputerBackend ABC over ComputerSession's terse ones
+    from unity.function_manager.computer_backends import ComputerBackend
+
+    wrapper.__doc__ = (
+        getattr(ComputerBackend, method_name, None).__doc__
+        or getattr(ComputerSession, method_name, None).__doc__
+    )
+    return wrapper
+
+
+class _ComputerNamespace:
+    """Thin wrapper that routes method calls to a lazily-created singleton session.
+
+    Used for ``primitives.computer.desktop``.
+    """
+
+    def __init__(self, owner: "ComputerPrimitives", mode: str):
+        self._owner = owner
+        self._mode = mode
+
+        async def _resolve():
+            return await owner.backend.get_session(mode)
+
+        for name in _COMPUTER_METHODS:
+            setattr(self, name, _make_session_method(name, owner, _resolve))
+
+
+class WebSessionHandle:
+    """Wrapped browser session returned by ``primitives.computer.web.new_session()``.
+
+    Has the same method set as ``primitives.computer.desktop``: ``act``,
+    ``observe``, ``query``, ``navigate``, ``get_links``, ``get_content``,
+    ``get_screenshot``.  Additionally exposes ``stop()`` for explicit
+    lifecycle management.
+    """
+
+    def __init__(self, session: "ComputerSession", owner: "ComputerPrimitives"):
+        self._session = session
+        self._owner = owner
+
+        async def _resolve():
+            return self._session
+
+        for name in _COMPUTER_METHODS:
+            setattr(self, name, _make_session_method(name, owner, _resolve))
+
+    async def stop(self):
+        """Stop the browser session and release resources."""
+        await self._session.stop()
+
+
+class _WebSessionFactory:
+    """Factory for independent browser sessions.
+
+    Accessed as ``primitives.computer.web``.  Has no default session --
+    every browser session is explicitly created via ``new_session()`` and
+    must be stopped when no longer needed.
+    """
+
+    def __init__(self, owner: "ComputerPrimitives"):
+        self._owner = owner
+
+    async def new_session(self, visible: bool = True) -> WebSessionHandle:
+        """Create a new independent browser session.
+
+        Each call spawns a fresh Chromium process with its own browsing
+        context (cookies, storage, etc.).  Multiple sessions can run in
+        parallel without interfering with each other.
+
+        Parameters
+        ----------
+        visible : bool, default True
+            If True, the browser window renders on the VM desktop (visible
+            via noVNC) but is controlled entirely via CDP -- no mouse or
+            keyboard involvement.  The user can un-minimize the window in
+            noVNC to observe the session in real time.
+
+            If False, the browser runs headless on the host machine for
+            fast background lookups where visibility is unnecessary.
+
+        Returns
+        -------
+        WebSessionHandle
+            Session handle with methods: ``act``, ``observe``, ``query``,
+            ``navigate``, ``get_links``, ``get_content``, ``get_screenshot``,
+            and ``stop``.  Call ``stop()`` when done to release resources.
+        """
+        mode = "web-vm" if visible else "web"
+        session = await self._owner.backend.create_session(mode)
+        return WebSessionHandle(session, self._owner)
+
+
 class ComputerPrimitives(metaclass=SingletonABCMeta):
-    """
-    Provides a library of high-level, agentic actions for the Actor.
-    Each public method is a tool that the actor can incorporate into its generated code.
+    """Multi-mode computer control interface.
 
-    There is exactly one VM and one screen per assistant, so this class is a
-    singleton (via ``SingletonABCMeta`` / ``ManagerRegistry``).  All actors —
-    including nested sub-agents — share the same backend connection.  Call
-    ``ManagerRegistry.clear()`` to reset the singleton (e.g. between tests).
+    Two attributes:
+
+    - ``primitives.computer.desktop`` -- singleton namespace for full desktop
+      control (mouse/keyboard via noVNC).  Methods: ``act``, ``observe``,
+      ``query``, ``navigate``, ``get_links``, ``get_content``,
+      ``get_screenshot``.
+    - ``primitives.computer.web`` -- factory for independent browser sessions.
+      Call ``new_session(visible=True/False)`` to create a session handle with
+      the same method set as the desktop namespace, plus ``stop()``.
+
+    Singleton via ``SingletonABCMeta`` / ``ManagerRegistry``.  All actors
+    (including nested sub-agents) share the same backend connection.
     """
 
-    # Methods dynamically created from the backend (single source of truth)
     _DYNAMIC_METHODS = (
         "act",
         "observe",
@@ -75,150 +236,73 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
         "get_links",
         "get_content",
     )
-    # All primitive methods (used for discovery).
-    # Includes _DYNAMIC_METHODS plus hand-written methods like get_screenshot.
     _PRIMITIVE_METHODS = _DYNAMIC_METHODS + ("get_screenshot",)
+    _SECRET_INJECTED_METHODS = frozenset({"act", "observe"})
 
     @staticmethod
-    def _resolve_agent_server_url(explicit_url: str | None) -> str:
-        """
-        Resolve agent_server_url with priority:
-        1. Explicit non-default override (user's personal desktop)
-        2. SESSION_DETAILS.assistant.desktop_url (managed VM)
-        3. Fallback to DEFAULT_AGENT_SERVER_URL (local dev)
-        """
-        # If user explicitly provided a non-default URL, honor it
+    def _resolve_container_url(explicit_url: str | None) -> str:
         if explicit_url is not None and explicit_url != DEFAULT_AGENT_SERVER_URL:
             return explicit_url
-
-        # Try SESSION_DETAILS.assistant.desktop_url
         try:
             from unity.session_details import SESSION_DETAILS
 
             if SESSION_DETAILS.assistant.desktop_url:
-                return SESSION_DETAILS.assistant.desktop_url.rstrip("/") + "/api"
+                from urllib.parse import urlparse
+
+                parsed = urlparse(SESSION_DETAILS.assistant.desktop_url)
+                return f"{parsed.scheme}://{parsed.netloc}/api"
         except Exception:
             pass
-
         return DEFAULT_AGENT_SERVER_URL
 
     def __init__(
         self,
-        headless: bool = False,
         computer_mode: str = "magnitude",
-        agent_mode: str = "desktop",
-        agent_server_url: str | None = None,
         *,
+        container_url: str | None = None,
+        local_url: str | None = None,
         connect_now: bool = False,
-        # Deprecated parameters (kept for backward compatibility, ignored)
-        session_connect_url: str | None = None,
-        controller_mode: str = "hybrid",
+        # Legacy compat: callers that pass agent_server_url get it mapped to container_url
+        agent_server_url: str | None = None,
+        **_kwargs,
     ):
-        # Resolve URL centrally from SESSION_DETAILS or explicit override
-        resolved_url = self._resolve_agent_server_url(agent_server_url)
+        resolved_container = container_url or self._resolve_container_url(
+            agent_server_url,
+        )
 
-        # Cache computer configuration for lazy initialization
-        computer_kwargs = {
+        self._computer_mode = computer_mode
+        self._computer_kwargs_map = {
             "magnitude": {
-                "headless": headless,
-                "agent_mode": agent_mode,
-                "agent_server_url": resolved_url,
+                "container_url": resolved_container,
+                "local_url": local_url,
             },
-            "mock": {
-                # MockComputerBackend accepts optional url, screenshot, etc.
-                # but works fine with no kwargs
-            },
+            "mock": {},
         }
 
         self._secret_manager = None
         self._backend = None
-        self._computer_mode = computer_mode
-        self._computer_kwargs_map = computer_kwargs
+        self._desktop_ns: Optional[_ComputerNamespace] = None
+        self._web_factory: Optional[_WebSessionFactory] = None
 
-        # Interject queue registry: every active CodeActActor.act() loop
-        # registers its interject_queue here so that environmental state
-        # changes (e.g. user taking remote control) can be broadcast to
-        # all actors in the call stack simultaneously.
         self._interject_queues: set[asyncio.Queue] = set()
         self._user_remote_control_active: bool = False
 
-        # No VM to wait for when using mock backend or co-located agent-service
-        if computer_mode == "mock" or resolved_url == DEFAULT_AGENT_SERVER_URL:
+        if computer_mode == "mock" or resolved_container == DEFAULT_AGENT_SERVER_URL:
             _vm_ready.set()
 
-        # Eagerly create the backend if requested (otherwise lazily via property)
         if connect_now:
             _ = self.backend
-        self._setup_computer_methods()
 
     @property
     def secret_manager(self):
-        """Lazily initialize and return the SecretManager via ManagerRegistry."""
         if self._secret_manager is None:
             from unity.manager_registry import ManagerRegistry
 
             self._secret_manager = ManagerRegistry.get_secret_manager()
         return self._secret_manager
 
-    # Methods whose first positional arg contains user-facing text that may
-    # include ${SECRET_NAME} placeholders requiring substitution.
-    _SECRET_INJECTED_METHODS = frozenset({"act", "observe"})
-
-    def _setup_computer_methods(self):
-        """Dynamically create tool methods without forcing an early backend connection."""
-        from unity.function_manager.computer_backends import (
-            MagnitudeBackend,
-            MockComputerBackend,
-        )
-
-        if self._computer_mode == "magnitude":
-            backend_class = MagnitudeBackend
-        elif self._computer_mode == "mock":
-            backend_class = MockComputerBackend
-        else:
-            raise ValueError(
-                f"Unknown computer_mode: '{self._computer_mode}'. Must be 'magnitude' or 'mock'.",
-            )
-
-        def _make_lazy_wrapper(method_name: str, backend_class):
-            async def wrapper(*args, **kwargs):
-                # Internal-only kwargs may be injected by environment wrappers (e.g.
-                # clarification queue propagation). Backend implementations (notably
-                # MagnitudeBackend) do not accept these, so strip them here.
-                kwargs.pop("_clarification_up_q", None)
-                kwargs.pop("_clarification_down_q", None)
-                # Block until the managed VM is confirmed ready (instant for
-                # localhost / mock since the event is pre-set).
-                if not _vm_ready.is_set():
-                    ready = await asyncio.to_thread(_vm_ready.wait, 300)
-                    if not ready:
-                        raise RuntimeError(
-                            "Managed VM did not become ready within 5 minutes",
-                        )
-                # Substitute ${SECRET_NAME} placeholders with real values
-                if method_name in self._SECRET_INJECTED_METHODS and args:
-                    resolved = await self.secret_manager.from_placeholder(args[0])
-                    args = (resolved,) + args[1:]
-                backend_method = getattr(self.backend, method_name)
-                return await backend_method(*args, **kwargs)
-
-            wrapper.__name__ = method_name
-            wrapper.__qualname__ = method_name
-            backend_method = getattr(backend_class, method_name, None)
-            if backend_method and hasattr(backend_method, "__doc__"):
-                wrapper.__doc__ = backend_method.__doc__
-            return wrapper
-
-        for method_name in self._DYNAMIC_METHODS:
-            setattr(
-                self,
-                method_name,
-                _make_lazy_wrapper(method_name, backend_class),
-            )
-
     @property
     def backend(self) -> "ComputerBackend":
-        """Lazily initialize and return the computer backend instance."""
         if self._backend is None:
             from unity.function_manager.computer_backends import (
                 MagnitudeBackend,
@@ -234,39 +318,27 @@ class ComputerPrimitives(metaclass=SingletonABCMeta):
                     **self._computer_kwargs_map.get("mock", {}),
                 )
             else:
-                raise ValueError(
-                    f"Unknown computer_mode: '{self._computer_mode}'.",
-                )
+                raise ValueError(f"Unknown computer_mode: '{self._computer_mode}'.")
         return self._backend
 
-    async def get_screenshot(self) -> "Image.Image":
-        """Capture a screenshot of the current screen and return it as a PIL Image.
+    # ── Sub-namespace properties ─────────────────────────────────────────
 
-        Takes a visual snapshot of the current browser viewport (web mode) or
-        entire screen (desktop mode). Use ``display()`` to render the image as
-        visual output the model can inspect::
+    @property
+    def desktop(self) -> _ComputerNamespace:
+        """Desktop control namespace (mouse/keyboard via noVNC)."""
+        if self._desktop_ns is None:
+            self._desktop_ns = _ComputerNamespace(self, "desktop")
+        return self._desktop_ns
 
-            screenshot = await primitives.computer.get_screenshot()
-            display(screenshot)
+    @property
+    def web(self) -> _WebSessionFactory:
+        """Factory for independent browser sessions.
 
-        Returns
-        -------
-        PIL.Image.Image
-            The current screen contents as an RGB image.
+        Call ``new_session(visible=True/False)`` to create a session.
         """
-        import base64
-        import io
-
-        from PIL import Image
-
-        if not _vm_ready.is_set():
-            ready = await asyncio.to_thread(_vm_ready.wait, 300)
-            if not ready:
-                raise RuntimeError(
-                    "Managed VM did not become ready within 5 minutes",
-                )
-        b64 = await self.backend.get_screenshot()
-        return Image.open(io.BytesIO(base64.b64decode(b64)))
+        if self._web_factory is None:
+            self._web_factory = _WebSessionFactory(self)
+        return self._web_factory
 
     # ── Steering control (not exposed as actor tools) ────────────────────
 

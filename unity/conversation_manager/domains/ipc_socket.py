@@ -225,7 +225,7 @@ class CallEventSocketServer:
                 pass
             self._socket_path = None
 
-        LOGGER.info(f"{ICONS['ipc']} [CallEventSocketServer] Stopped")
+        LOGGER.debug(f"{ICONS['ipc']} [CallEventSocketServer] Stopped")
 
     async def set_forward_channels(self, channels: list[str]) -> None:
         """Update the forwarded channel patterns, restarting the subscription."""

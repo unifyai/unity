@@ -55,7 +55,7 @@ class ParsedCommand:
 HELP_TEXT = """
 ConversationManager Sandbox (REPL)
 --------------------------------
-Type a command at the prompt.
+Type a command at the prompt. <arg> = required, [arg] = optional.
 
 Meta commands:
   help | h            Show this help
@@ -75,19 +75,22 @@ Display commands:
   agent_logs [N]      Show last N lines of sandbox-started agent-service logs (default: 80)
 
 Inbound event simulation:
-  sms <msg>                     Simulate incoming SMS
+  msg <content>                 Simulate incoming Unify message
+  sms <content>                 Simulate incoming SMS
   email <subject> | <body>      Simulate incoming email
-  call                          Start phone call (simulated, or live via LiveKit with --live-voice)
-  say <text>                    Phone utterance (during a simulated call)
-  sayv                          Record voice, transcribe, and send as a phone utterance (requires --voice)
-  sayv <text>                   Send <text> as a phone utterance (convenience; no recording)
+  call                          Start simulated phone call
+  meet                          Start simulated Unify Meet session
+  say <content>                 Voice utterance (during a call or meet)
+  sayv                          Record voice, transcribe, and send as utterance (requires --voice)
+  sayv <content>                Send <content> as utterance (convenience; no recording)
   end_call                      End active phone call
+  end_meet                      End active Unify Meet session
 
 Scenario seeding (idle-only):
   us <description>              Generate a synthetic scenario from text
   usv                           Generate a synthetic scenario from voice (requires --voice)
 
-Meet interaction events (Unify Meet session simulation):
+Meet interaction events (requires active meet):
   assistant_screen_share_start [reason]    User enables viewing the assistant's desktop
   assistant_screen_share_stop [reason]     User disables viewing the assistant's desktop
   user_screen_share_start [reason]         User starts sharing their screen with the assistant
@@ -96,9 +99,6 @@ Meet interaction events (Unify Meet session simulation):
   user_webcam_stop [reason]                User disables their webcam
   user_remote_control_start [reason]       User takes remote control of the assistant's desktop
   user_remote_control_stop [reason]        User releases remote control
-
-Steering (only while active):
-  /pause, /resume, /i <msg>, /ask <q>, /stop [reason], /help
 """.strip(
     "\n",
 )
@@ -221,19 +221,14 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
             args=trimmed[3:].strip(),
         )
 
-    # 3) Steering commands — only when active
-    if trimmed.startswith("/"):
-        if not active:
-            return ParsedCommand(
-                kind="unknown",
-                raw=raw,
-                name="steering",
-                error="(no active conversation) Steering commands only available during conversations.",
-            )
-        # Keep the raw slash-command intact; the router will dispatch.
-        return ParsedCommand(kind="steering", raw=raw, name="steering", args=trimmed)
-
-    # 4) Event commands
+    # 3) Event commands
+    if lower.startswith("msg "):
+        return ParsedCommand(
+            kind="event",
+            raw=raw,
+            name="message",
+            args=trimmed[4:].strip(),
+        )
     if lower.startswith("sms "):
         return ParsedCommand(
             kind="event",
@@ -250,6 +245,8 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         )
     if lower == "call":
         return ParsedCommand(kind="event", raw=raw, name="call")
+    if lower == "meet":
+        return ParsedCommand(kind="event", raw=raw, name="meet")
     if lower.startswith("say "):
         return ParsedCommand(
             kind="event",
@@ -268,6 +265,8 @@ def parse_command(*, text: str, in_call: bool, active: bool) -> ParsedCommand:
         )
     if lower == "end_call":
         return ParsedCommand(kind="event", raw=raw, name="end_call")
+    if lower == "end_meet":
+        return ParsedCommand(kind="event", raw=raw, name="end_meet")
 
     for _cmd_name in _MEET_INTERACTION_COMMANDS:
         if lower == _cmd_name:

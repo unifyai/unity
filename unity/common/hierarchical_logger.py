@@ -14,6 +14,7 @@ This module provides:
 
 from __future__ import annotations
 
+import logging
 from contextvars import ContextVar
 from secrets import token_hex
 from typing import Optional
@@ -214,9 +215,8 @@ class SessionLogger:
 
     def _build_label(self) -> str:
         """Build the hierarchical label string."""
-        parts = self._parent_lineage + [self._component_name]
-        base = "->".join(parts)
-        return f"{base}({self._suffix})"
+        parts = self._parent_lineage + [f"{self._component_name}({self._suffix})"]
+        return "->".join(parts)
 
     @property
     def label(self) -> str:
@@ -242,6 +242,16 @@ class SessionLogger:
         """
         return self.lineage
 
+    def _log(
+        self,
+        level: int,
+        event_type: str,
+        message: str,
+        icon_override: Optional[str] = None,
+    ) -> None:
+        icon = icon_override or get_icon(event_type)
+        LOGGER.log(level, f"{icon} [{self._label}] {message}")
+
     def info(
         self,
         event_type: str,
@@ -257,8 +267,7 @@ class SessionLogger:
             message: The log message
             icon_override: Optional icon to use instead of event-type lookup
         """
-        icon = icon_override or get_icon(event_type)
-        LOGGER.info(f"{icon} [{self._label}] {message}")
+        self._log(logging.INFO, event_type, message, icon_override)
 
     def debug(
         self,
@@ -268,8 +277,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log a debug-level message with event-specific icon."""
-        icon = icon_override or get_icon(event_type)
-        LOGGER.debug(f"{icon} [{self._label}] {message}")
+        self._log(logging.DEBUG, event_type, message, icon_override)
 
     def warning(
         self,
@@ -279,8 +287,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log a warning-level message with event-specific icon."""
-        icon = icon_override or get_icon(event_type)
-        LOGGER.warning(f"{icon} [{self._label}] {message}")
+        self._log(logging.WARNING, event_type, message, icon_override)
 
     def error(
         self,
@@ -290,8 +297,7 @@ class SessionLogger:
         icon_override: Optional[str] = None,
     ) -> None:
         """Log an error-level message with event-specific icon."""
-        icon = icon_override or get_icon(event_type)
-        LOGGER.error(f"{icon} [{self._label}] {message}")
+        self._log(logging.ERROR, event_type, message, icon_override)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Convenience methods for common event types
@@ -375,26 +381,19 @@ def make_child_loop_id(parent_logger: SessionLogger, method_name: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_hierarchy_label(lineage: list[str], suffix: str) -> str:
-    """Build a hierarchy label from lineage segments and a suffix.
+def build_hierarchy_label(lineage: list[str], suffix: str = "") -> str:
+    """Build a hierarchy label from lineage segments.
 
-    Format: ``seg1->seg2->...->segN(suffix)``
+    With suffixed hierarchy segments, the label is just ``"->".join(lineage)``
+    since each segment already carries its own suffix. The ``suffix`` parameter
+    is accepted for backward compatibility but ignored.
 
-    Examples
-    --------
-    - [] + "a1b2" -> "(a1b2)"
-    - ["CodeActActor.act"] + "a1b2" -> "CodeActActor.act(a1b2)"
-    - ["A", "B", "C"] + "a1b2" -> "A->B->C(a1b2)"
+    TODO: remove this function once all callers are migrated.
     """
     try:
-        # Use the same "->" separator as LoopConfig labels so logs stay consistent across
-        # async tool loops and boundary wrappers.
-        base = "->".join([str(x) for x in (lineage or []) if str(x)])
+        return "->".join([str(x) for x in (lineage or []) if str(x)]) or ""
     except Exception:
-        base = ""
-    if base:
-        return f"{base}({suffix})"
-    return f"({suffix})"
+        return ""
 
 
 def log_boundary_event(

@@ -25,8 +25,13 @@ def _make_actor_with_mock_computer(
 ) -> CodeActActor:
     """Construct a CodeActActor with a mock _computer_primitives for testing."""
     actor = CodeActActor(timeout=timeout)
+    mock_desktop = MagicMock()
+    mock_desktop.query = AsyncMock(return_value=query_return)
+    mock_desktop.navigate = AsyncMock(return_value="navigated")
+    mock_desktop.act = AsyncMock(return_value="acted")
+    mock_desktop.observe = AsyncMock(return_value="observed")
     mock_cp = MagicMock()
-    mock_cp.query = AsyncMock(return_value=query_return)
+    mock_cp.desktop = mock_desktop
     mock_cp.pause = AsyncMock()
     mock_cp.resume = AsyncMock()
     actor._computer_primitives = mock_cp
@@ -123,7 +128,7 @@ async def test_code_act_ask_includes_computer_progress_tool(monkeypatch):
         question = "Did the browser finish submitting the form?"
         progress = await ask_tools["ask_computer_progress"](question)
         assert progress == "browser-progress-details"
-        actor._computer_primitives.query.assert_awaited_once_with(question)
+        actor._computer_primitives.desktop.query.assert_awaited_once_with(question)
 
         await handle.result()
     finally:
@@ -224,9 +229,9 @@ async def test_code_act_ask_uses_computer_progress_for_inflight_action(monkeypat
         )
         answer = await helper.result()
 
-        assert actor._computer_primitives.query.await_count >= 1, (
+        assert actor._computer_primitives.desktop.query.await_count >= 1, (
             "Expected ask inspection to call ask_computer_progress, "
-            "which delegates to computer_primitives.query."
+            "which delegates to computer_primitives.desktop.query."
         )
 
         helper_history = helper.get_history()
